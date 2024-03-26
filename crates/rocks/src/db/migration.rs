@@ -1,0 +1,216 @@
+use {
+    super::{
+        cf::DbColumn,
+        schema,
+        types::common::{iterators::DbIterator, KeyPosition},
+    },
+    crate::{
+        db::{batch, cf::Column, schema::ColumnFamilyName, types::common::CommonStorage},
+        Error,
+        RocksBackend,
+    },
+    futures::{Stream, StreamExt},
+    serde::{Deserialize, Serialize},
+    std::{
+        fmt::{self, Debug},
+        ops::Range,
+        pin::pin,
+    },
+};
+
+pub mod hinted_ops;
+
+/// Maximum number of key-value pairs to be imported in one batch.
+///
+/// When importing, data is coming one key-value pair at a time, it is
+/// recommended to accumulate them in batches, to reduce the number of disk
+/// operations.
+const IMPORTER_BATCH_SIZE: u64 = 1024;
+
+/// Container/frame used to box key-value data.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExportFrame {
+    pub cf: ColumnFamilyName,
+    pub key: Box<[u8]>,
+    pub value: Box<[u8]>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ExportItem {
+    Frame(Result<ExportFrame, Error>),
+    Done(u64),
+}
+
+impl RocksBackend {
+    /// Imports key-value pairs from incoming stream of key range values.
+    ///
+    /// Records are imported as they come, data stream is processed
+    /// incrementally, without waiting for the whole data to come.
+    ///
+    /// Writes are batched to improve performance.
+    pub async fn import_all<E: fmt::Debug>(
+        &self,
+        data: impl Stream<Item = Result<ExportItem, E>>,
+    ) -> Result<(), Error> {
+        let backend = self.clone();
+        let mut total_items_processed = 0;
+        let mut items_processed = 0;
+        let mut batch = batch::WriteBatch::new(backend.clone());
+
+        let mut data = pin!(data);
+        while let Some(res) = data.next().await {
+            let item = res.map_err(|e| Error::Other(format!("Data stream errored: {e:?}")))?;
+
+            let ExportFrame { cf, key, value } = match item {
+                ExportItem::Frame(frame) => {
+                    frame.map_err(|e| Error::Other(format!("Exporter errored: {e:?}")))?
+                }
+                ExportItem::Done(n) if n != total_items_processed => {
+                    return Err(Error::Other(format!(
+                        "`Done({n})` frame indicates more items than were actually processed ({})",
+                        total_items_processed
+                    )));
+                }
+                ExportItem::Done(_) => {
+                    // Write the last batch to database.
+                    return backend.write_batch(batch);
+                }
+            };
+
+            batch.put(cf, &key, &value);
+
+            // Write batch to database if it is full. Start a new batch.
+            total_items_processed += 1;
+            items_processed += 1;
+            if items_processed >= IMPORTER_BATCH_SIZE {
+                backend.write_batch(batch)?;
+                batch = batch::WriteBatch::new(backend.clone());
+                items_processed = 0;
+            }
+        }
+
+        Err(Error::Other(
+            "Corrupted data stream: `Done` frame missing".to_string(),
+        ))
+    }
+
+    /// Exports key-value pairs as a [`Stream`].
+    pub fn export(
+        &self,
+        (string, map): (DbColumn<schema::StringColumn>, DbColumn<schema::MapColumn>),
+        ranges: impl Iterator<Item = Range<Option<KeyPosition>>>,
+    ) -> impl Stream<Item = ExportItem> {
+        // Because rocks iterators capture DB lifetime we would also need to include it
+        // in "Exporter" stream, and then it's going to leak through the whole
+        // codebase. The way to fix it is to own `DBColumn`s, but that requires
+        // having a self-referential struct. And the only way to implement it
+        // without using `unsafe` is via an anonymous stream (`async_stream`'s
+        // using local thread channel under the hood).
+        async_stream::try_stream! {
+            let mut items_processed = 0;
+
+            for r in ranges {
+                let string_iter = DbIterator::new(
+                    schema::StringColumn::NAME,
+                    string.scan_by_position(r.start, r.end)?,
+                );
+
+                let map_iter = DbIterator::new(
+                    schema::MapColumn::NAME,
+                    map.scan_by_position(r.start, r.end)?,
+                );
+
+                for item in string_iter.into_iter().chain(map_iter) {
+                    yield ExportItem::Frame(item);
+                    items_processed += 1;
+                }
+            }
+
+            yield ExportItem::Done(items_processed);
+        }
+        .map(|res| match res {
+            Ok(item) => item,
+            Err(e) => ExportItem::Frame(Err(e)),
+        })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use {
+        crate::{
+            db::{
+                schema::{
+                    test_types::{TestKey, TestValue},
+                    MapColumn,
+                    StringColumn,
+                },
+                types::{map::Pair, MapStorage, StringStorage},
+            },
+            util::{db_path::DBPath, timestamp_micros},
+            RocksDatabaseBuilder,
+        },
+        futures::StreamExt,
+        std::convert::Infallible,
+    };
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn export_import() {
+        const NUM_ENTRIES: usize = 1000;
+
+        let path = DBPath::new("export_import_src");
+        let src_db = RocksDatabaseBuilder::new(&path)
+            .with_column_family(StringColumn)
+            .with_column_family(MapColumn)
+            .build()
+            .unwrap();
+
+        let path = DBPath::new("export_import_dest");
+        let dest_db = RocksDatabaseBuilder::new(&path)
+            .with_column_family(StringColumn)
+            .with_column_family(MapColumn)
+            .build()
+            .unwrap();
+
+        let mut string_entries = Vec::with_capacity(NUM_ENTRIES);
+        let mut map_entries = Vec::with_capacity(NUM_ENTRIES);
+
+        let string = src_db.column::<StringColumn>().unwrap();
+        let map = src_db.column::<MapColumn>().unwrap();
+        for _ in 0..NUM_ENTRIES {
+            let key = TestKey::new(rand::random::<u64>()).into();
+            let subkey = TestKey::new(rand::random::<u64>()).into();
+            let val = TestValue::new(rand::random::<u64>().to_string()).into();
+
+            string
+                .set(&key, &val, None, timestamp_micros())
+                .await
+                .unwrap();
+            string_entries.push((key.clone(), val.clone()));
+
+            let pair = Pair::new(subkey, val);
+            map.hset(&key, &pair, None, timestamp_micros())
+                .await
+                .unwrap();
+            map_entries.push((key, pair));
+        }
+
+        let data = src_db.export((string, map), [(None..None)].into_iter());
+        dest_db
+            .import_all(data.map(Ok::<_, Infallible>))
+            .await
+            .unwrap();
+
+        let string = dest_db.column::<StringColumn>().unwrap();
+        for (key, val) in string_entries {
+            let got = string.get(&key).await.unwrap();
+            assert_eq!(got, Some(val));
+        }
+
+        let map = dest_db.column::<MapColumn>().unwrap();
+        for (key, pair) in map_entries {
+            let got = map.hget(&key, &pair.field).await.unwrap();
+            assert_eq!(got, Some(pair.value));
+        }
+    }
+}

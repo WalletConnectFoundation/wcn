@@ -1,0 +1,31 @@
+[package]
+name = "raft"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = "0.1"
+futures = "0.3"
+openraft = { git = "https://github.com/datafuselabs/openraft.git", rev = "ca55cef", features = [
+    "serde",
+] }
+thiserror = "1.0"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+tokio = { version = "1", default-features = false, features = ["sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+irn = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+derive_more = { workspace = true, features = [
+    "as_ref",
+    "display",
+    "from",
+    "try_into",
+] }
+tracing-subscriber = "0.3"

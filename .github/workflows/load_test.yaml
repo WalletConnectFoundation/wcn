@@ -1,0 +1,69 @@
+name: load_test
+
+on:
+  workflow_dispatch:
+    inputs:
+      clients:
+        description: 'The amount of clients to be spun up per task'
+        default: 300
+        type: number
+        required: true
+      messages-per-client:
+        description: 'The amount of messages to be sent per client'
+        default: 1000
+        type: number
+        required: true
+      tasks:
+        description: 'How many ECS tasks to start'
+        default: 1
+        type: number
+        required: true
+      environment:
+        description: 'The environment to test against'
+        required: true
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+concurrency: ${{ github.workflow }}
+
+env:
+  AWS_REGION: "eu-central-1"
+  COUNT: ${{ inputs.tasks }}
+  ENVIRONMENT: ${{ inputs.environment }}
+  CLIENTS: ${{ inputs.clients }}
+  MESSAGES_PER_CLIENT: ${{ inputs.messages-per-client }}
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print Workflow Input
+        run: |
+          echo "Running load test with $COUNT tasks and $CLIENTS client pairs and $MESSAGES_PER_CLIENT messages/client"
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - name: Run Load Test
+        run: |
+          COUNT=($COUNT + 0)
+          TO_LAUNCH=$COUNT
+
+          ARR=( $(for i in $(seq 1 $COUNT)}; do echo i; done) )
+          BATCH_SIZE=10
+          # prod.eu-central-1.relay-public-eu-central-1b
+          SECURITY_GROUPS=$(aws ec2 describe-security-groups --filters "[{\"Name\":\"tag:Name\", \"Values\":[\""$ENVIRONMENT"_rs-relay_load_test-vpc-egress-from-load-test\"]}]" | jq -r '.SecurityGroups[0].GroupId')
+          SUBNETS=$(aws ec2 describe-subnets --filters '[{"Name":"tag:Application", "Values":["relay"]}, {"Name":"tag:Visibility", "Values":["private"]}, {"Name":"tag:Env", "Values":["'$ENVIRONMENT'"]}]' | jq -r '.Subnets | map(.SubnetId) | join(",")')
+          OVERRIDES="{\"containerOverrides\": [{\"name\":\"${ENVIRONMENT}_rs-relay_load_test\",\"environment\": [{\"name\": \"MESSAGES_PER_CLIENT\",\"value\": \"$MESSAGES_PER_CLIENT\"},{\"name\": \"CLIENTS\",\"value\": \"$CLIENTS\"}]}]}"
+
+          for ((i=0; i<=${#ARR[@]}; i+=BATCH_SIZE)); do
+              TASKS_IN_BATCH=$((TO_LAUNCH<BATCH_SIZE ? TO_LAUNCH : BATCH_SIZE))
+              aws ecs run-task --cluster "${ENVIRONMENT}_rs-relay_load_test_cluster" --task-definition "${ENVIRONMENT}_rs-relay_load_test" --count $TASKS_IN_BATCH --overrides "$OVERRIDES" --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS]}"
+              TO_LAUNCH=$(expr $TO_LAUNCH - $BATCH_SIZE)
+          done

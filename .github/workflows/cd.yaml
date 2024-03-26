@@ -1,0 +1,161 @@
+name: cd
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_app_version:
+        description: 'The app version to deploy e.g. 1.76.0 or master'
+        default: 'latest'
+        required: true
+        type: string
+      fastTrack:
+        description: 'Run minimal set of tests (JS + Kotlin)'
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      deploy_app_version:
+        description: 'The app version to deploy e.g. 1.76.0 or master'
+        default: 'latest'
+        required: false
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+
+concurrency: cd
+
+env:
+  TF_VAR_ofac_countries: ${{ vars.OFAC_BLOCKED_COUNTRIES }}
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+      image: ${{ steps.set-version.outputs.image }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Fetch latest release version
+        id: fetch-latest-release
+        uses: reloc8/action-latest-release-version@1.0.0
+
+      - id: set-version
+        env:
+          VERSION: ${{ inputs.deploy_app_version == 'latest' && steps.fetch-latest-release.outputs.latest-release || format('v{0}', inputs.deploy_app_version) }}
+        run: |
+          # Version without `v` prefix
+          VERSION="${VERSION:1}"
+          IMAGE="relay:$VERSION"
+          echo "Using version $VERSION"
+          echo "Using image $IMAGE"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+  deploy-staging:
+    needs: [get-version]
+    runs-on: ubuntu-latest
+    name: "Deploy & validate: ${{ matrix.env.name }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - name: staging
+    environment:
+      name: infra/${{ matrix.env.name }}
+      url: https://${{ matrix.env.name }}.relay.walletconnect.com/hello
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: WalletConnect/actions/actions/deploy-terraform@master
+        env:
+          TF_VAR_rpc_rate_limit_whitelist: ${{ secrets.RPC_RATE_LIMIT_WHITELIST }}
+          TF_VAR_registry_api_auth_token: ${{ secrets.REGISTRY_API_AUTH_TOKEN }}
+          TF_VAR_canary_project_id: ${{ secrets.TEST_PROJECT_ID }}
+          TF_VAR_canary_project_id_irn: ${{ secrets.TEST_PROJECT_ID_IRN }}
+          TF_VAR_ed25519_private_key: ${{ secrets.ED25519_PRIVATE_KEY }}
+          TF_VAR_ecr_app_version: ${{needs.get-version.outputs.version}}
+          TF_VAR_irn_node_ecr_image_tag: ${{needs.get-version.outputs.version}}
+          TF_VAR_statuspage_api_key: ${{secrets.STATUSPAGE_API_KEY}}
+          TF_CLI_ARGS_apply: -parallelism=30
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+          environment: ${{ matrix.env.name }}
+          app-name: ${{ github.event.repository.name }}
+
+  validate-staging:
+    needs: [deploy-staging]
+    if: ${{ !cancelled() && (always() && contains(join(needs.*.result, ','), 'success')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - name: staging
+    uses: ./.github/workflows/validate.yaml
+    secrets: inherit
+    with:
+      environment: ${{ matrix.env.name }}
+      fastTrack: ${{ inputs.fastTrack || false }}
+
+  deployment_windows:
+    if: ${{ !cancelled() && (always() && contains(join(needs.*.result, ','), 'success')) }}
+    needs: [validate-staging]
+    outputs:
+      result: ${{ steps.decide.outputs.deploy_or_not }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: decide
+        uses: cobot/deploy-window-action@v1
+        with:
+          earliest-hour: "6"
+          latest-hour: "20"
+          latest-weekday: "5"
+          time-zone: UTC
+          force-deploy-phrase: force deploy
+
+  deploy-prod:
+    # Only deploy if tests passed and deployment windows are open
+    # Ignore deployment windows if workflow was started manually
+    if: ${{ always() && (needs.deploy-staging.result == 'success' && needs.validate-staging.result == 'success') && (needs.deployment_windows.outputs.result == 'yes' || github.event_name == 'workflow_dispatch') }}
+    needs: [get-version, deploy-staging, validate-staging, deployment_windows]
+    runs-on: ubuntu-latest
+    environment:
+      name: infra/prod
+      url: https://relay.walletconnect.com/hello
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+      - id: deploy-prod
+        uses: WalletConnect/actions/actions/deploy-terraform@master
+        env:
+          TF_VAR_rpc_rate_limit_whitelist: ${{ secrets.RPC_RATE_LIMIT_WHITELIST }}
+          TF_VAR_registry_api_auth_token: ${{ secrets.REGISTRY_API_AUTH_TOKEN }}
+          TF_VAR_canary_project_id: ${{ secrets.TEST_PROJECT_ID }}
+          TF_VAR_canary_project_id_irn: ${{ secrets.TEST_PROJECT_ID_IRN }}
+          TF_VAR_ed25519_private_key: ${{ secrets.ED25519_PRIVATE_KEY }}
+          TF_VAR_ecr_app_version: ${{ needs.get-version.outputs.version }}
+          TF_VAR_irn_node_ecr_image_tag: ${{ needs.get-version.outputs.version }}
+          TF_VAR_statuspage_api_key: ${{ secrets.STATUSPAGE_API_KEY }}
+          TF_CLI_ARGS_apply: -parallelism=30
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+          environment: prod
+          app-name: ${{ github.event.repository.name }}

@@ -1,0 +1,45 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ecr_tag:
+        description: 'The ECR tag to deploy e.g. 1.76.0 or pr-545'
+        required: true
+        type: string
+      domain:
+        description: 'The domain to deploy to dev/staging/prod'
+        required: true
+        default: staging
+        type: string
+
+# Use `cd` here as this might conflict with
+# deployments triggered by CD
+concurrency: cd
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: [eu-central-1, us-east-1, ap-southeast-1]
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+      - uses: aws-actions/amazon-ecr-login@v1      
+        id: login-ecr
+      - id: deploy
+        uses: WalletConnect/actions/actions/deploy-ecs@master
+        env:
+          DOMAIN: ${{ inputs.domain }}
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ matrix.region }}
+          cluster-name: ${{ env.DOMAIN }}_${{ matrix.region }}_relay_cluster
+          service-name: ${{ env.DOMAIN }}_${{ matrix.region }}_relay-service
+          task-definition-name: ${{ env.DOMAIN }}_${{ matrix.region }}_relay
+          image-name: ${{ steps.login-ecr.outputs.registry }}/relay:${{ inputs.ecr_tag }}

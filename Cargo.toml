@@ -1,0 +1,183 @@
+[package]
+name = "irn"
+version = "1.0.0"
+edition = "2021"
+authors = [
+    "Victor Farazdagi <victor@walletconnect.com>",
+    "Ivan Reshetnikov <ivan@walletconnect.com>",
+    "Nodar Darksome <nodar@walletconnect.com>",
+]
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+members = ["crates/*"]
+
+[profile.release]
+lto = "fat"
+
+[profile.release-lite]
+inherits = "release"
+lto = "thin"
+
+[profile.release-debug]
+inherits = "release"
+lto = "thin"
+debug = 1
+
+[lib]
+path = "src/lib.rs"
+name = "irn_bin"
+
+[features]
+default = ["test-cluster"]
+test-cluster = [
+    "dep:tempfile",
+    "dep:once_cell",
+    "dep:rand",
+    "dep:test_utils",
+    "irn/testing",
+    "api/client",
+]
+
+[lints]
+workspace = true
+
+[workspace.dependencies]
+cerberus = { git = "https://github.com/WalletConnect/cerberus.git", tag = "v0.11.0" }
+relay_rpc = { git = "https://github.com/WalletConnect/WalletConnectRust.git", tag = "v0.29.1" }
+relay_client = { git = "https://github.com/WalletConnect/WalletConnectRust.git", tag = "v0.29.1" }
+wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.8.0", default-features = false }
+derive_more = { version = "=1.0.0-beta.6", features = [
+    "display",
+    "from",
+    "as_ref",
+    "display",
+    "from",
+    "try_into",
+    "deref",
+] }
+irn = { package = "relay_irn", path = "crates/relay_irn" }
+api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
+raft = { path = "crates/raft" }
+network = { path = "crates/network" }
+relay_storage = { package = "irn_storage", path = "crates/storage" }
+relay_rocks = { path = "crates/rocks" }
+
+[dependencies]
+irn = { workspace = true }
+api = { workspace = true }
+raft = { workspace = true }
+network = { workspace = true }
+relay_rocks = { workspace = true }
+relay_storage = { workspace = true }
+
+cerberus = { workspace = true }
+relay_rpc = { workspace = true }
+wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+
+anyhow = "1"
+atty = "0.2"
+axum = "0.6"
+async-trait = "0.1"
+base64 = "0.20"
+backoff = { version = "0.4", features = ["tokio"] }
+derive_more = { workspace = true, features = [
+    "as_ref",
+    "display",
+    "from",
+    "try_into",
+    "deref",
+] }
+derivative = "2"
+envy = "0.4"
+futures = "0.3"
+hyper = { version = "0.14", default-features = false, features = ["full"] }
+tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = "0.1"
+serde = "1"
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "parking_lot",
+    "json",
+] }
+tap = "1.0"
+sysinfo = "0.29.10"
+
+# These are required by the tests and the `test_cluster` module.
+tempfile = { version = "3", optional = true }
+once_cell = { version = "1.17", optional = true }
+rand = { version = "0.7", optional = true }
+test_utils = { path = "crates/test_utils", optional = true } # Cannot be made a workspace dependency
+vergen-pretty = { version = "0.3", features = ["trace"] }
+
+[dev-dependencies]
+tempfile = "3"
+test-log = "0.2"
+once_cell = "1.17"
+rand = "0.7"
+test_utils = { path = "crates/test_utils" }
+smallvec = { version = "1.11", features = ["serde"] }
+anyhow = "1"
+env_logger = "0.10"
+chrono = "0.4"
+rstest = "0.18"
+itertools = "0.11"
+
+[build-dependencies]
+vergen = { version = "8", default-features = false, features = [
+    "build",
+    "cargo",
+    "git",
+    "gitoxide",
+    "rustc",
+] }
+
+# for sandbox-cluster-client example
+clap = { version = "4", features = ["derive"] }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+style = { level = "warn", priority = -1 }
+absolute_paths = "warn"
+bool_to_int_with_if = "warn"
+clear_with_drain = "warn"
+cloned_instead_of_copied = "warn"
+collection_is_never_read = "warn"
+empty_structs_with_brackets = "warn"
+explicit_into_iter_loop = "warn"
+filter_map_next = "warn"
+implicit_clone = "warn"
+implied_bounds_in_impls = "warn"
+inconsistent_struct_constructor = "warn"
+inefficient_to_string = "warn"
+into_iter_without_iter = "warn"
+iter_not_returning_iterator = "warn"
+iter_with_drain = "warn"
+manual_assert = "warn"
+manual_instant_elapsed = "warn"
+manual_string_new = "warn"
+match_bool = "warn"
+mem_forget = "warn"
+mismatching_type_param_order = "warn"
+needless_continue = "warn"
+needless_for_each = "warn"
+needless_pass_by_ref_mut = "warn"
+print_stdout = "warn"
+readonly_write_lock = "warn"
+redundant_clone = "warn"
+redundant_type_annotations = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_functions_in_if_condition = "warn"
+struct_excessive_bools = "warn"
+trait_duplication_in_bounds = "warn"
+type_repetition_in_bounds = "warn"
+unnecessary_box_returns = "warn"
+unnecessary_self_imports = "warn"
+unused_peekable = "warn"
+useless_let_if_seq = "warn"

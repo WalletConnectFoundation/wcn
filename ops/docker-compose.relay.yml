@@ -1,0 +1,210 @@
+version: "3.9"
+services:
+  rs-relay-srv0: # relay node based on master branch
+    build:
+      dockerfile: ./ops/Dockerfile-dev
+      context: ../
+      args:
+        GIT_BRANCH: master
+    image: rs-relay:master
+    pull_policy: build
+    container_name: relay-0
+    networks:
+      walletconnect-rs-relay:
+        ipv4_address: 
+    ports:
+      - 9080:8080
+      - 9081:8081
+    healthcheck:
+      test: ["CMD", "curl", "localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      activemq:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    environment:
+      - RELAY_BIND_IP=
+      - RELAY_EXTERNAL_IP=
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_PERSISTENT_MAILBOX_MONGO_ADDR=mongodb://admin:admin@mongo:27017/relay?authSource=admin
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_PRIMARY=amqp://admin:admin@activemq:5672
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_SECONDARY=amqp://admin:admin@activemq:5672
+      - RELAY_OTEL_EXPORTER_SERVICE_NAME=rs-relay-srv1
+      - RELAY_OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - RELAY_AUTH_AUD=wss://relay.walletconnect.com,ws://:9080,https://relay.walletconnect.com,http://:9080
+      - LOG_LEVEL=debug,relay=debug
+      - LOG_LEVEL_OTEL=info,relay=trace
+      - RUST_BACKTRACE=1
+      - RELAY_REGISTRY_API_URL=https://registry-prod-cf.walletconnect.com
+      - RELAY_REGISTRY_API_AUTH_TOKEN
+  rs-relay-srv1: # relay node based on head branch
+    build:
+      dockerfile: ./ops/Dockerfile-dev
+      context: ../
+      args:
+        GIT_BRANCH: HEAD
+    image: rs-relay:latest
+    pull_policy: build
+    container_name: relay-1
+    networks:
+      walletconnect-rs-relay:
+        ipv4_address: 
+    ports:
+      - 8080:8080
+      - 8081:8081
+    healthcheck:
+      test: ["CMD", "curl", "localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      activemq:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    environment:
+      - RELAY_BIND_IP=
+      - RELAY_EXTERNAL_IP=
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_PERSISTENT_MAILBOX_MONGO_ADDR=mongodb://admin:admin@mongo:27017/relay?authSource=admin
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_PRIMARY=amqp://admin:admin@activemq:5672
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_SECONDARY=amqp://admin:admin@activemq:5672
+      - RELAY_ANALYTICS_S3_ENDPOINT=http://minio:9000
+      - RELAY_ANALYTICS_EXPORT_BUCKET=datalake
+      - RELAY_OTEL_EXPORTER_SERVICE_NAME=rs-relay-srv1
+      - RELAY_OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - RELAY_AUTH_AUD=wss://relay.walletconnect.com,ws://:8080,https://relay.walletconnect.com,http://:8080
+      - LOG_LEVEL=debug,relay=debug
+      - LOG_LEVEL_OTEL=info,relay=trace
+      - RUST_BACKTRACE=1
+      - RELAY_REGISTRY_API_URL=https://registry-prod-cf.walletconnect.com
+      - RELAY_REGISTRY_API_AUTH_TOKEN
+  rs-relay-srv2:
+    image: rs-relay:latest
+    pull_policy: never
+    container_name: relay-2
+    networks:
+      walletconnect-rs-relay:
+        ipv4_address: 
+    ports:
+      - 9082:8080
+      - 9083:8081
+    healthcheck:
+      test: ["CMD", "curl", "localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      rs-relay-srv1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      activemq:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    environment:
+      - RELAY_BIND_IP=
+      - RELAY_EXTERNAL_IP=
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_PERSISTENT_MAILBOX_MONGO_ADDR=mongodb://admin:admin@mongo:27017/relay?authSource=admin
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_PRIMARY=amqp://admin:admin@activemq:5672
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_SECONDARY=amqp://admin:admin@activemq:5672
+      - RELAY_OTEL_EXPORTER_SERVICE_NAME=rs-relay-srv2
+      - RELAY_OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - RELAY_AUTH_AUD=wss://relay.walletconnect.com,ws://:9082,https://relay.walletconnect.com,http://:9082
+      - LOG_LEVEL=debug,relay=debug
+      - LOG_LEVEL_OTEL=info,relay=trace
+      - RUST_BACKTRACE=1
+      - RELAY_REGISTRY_API_URL=https://registry-prod-cf.walletconnect.com
+      - RELAY_REGISTRY_API_AUTH_TOKEN
+  rs-relay-srv3:
+    image: rs-relay:latest
+    pull_policy: never
+    container_name: relay-3
+    networks:
+      walletconnect-rs-relay:
+        ipv4_address: 
+    ports:
+      - 9084:8080
+      - 9085:8081
+    healthcheck:
+      test: ["CMD", "curl", "localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      rs-relay-srv1:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      activemq:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    environment:
+      - RELAY_BIND_IP=
+      - RELAY_EXTERNAL_IP=
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_UNADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ADDRESSED_MAILBOX_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_NOTIFICATIONS_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_ROUTING_TABLE_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_WRITE=redis://redis:6379/0
+      - RELAY_STORAGE_PROJECT_DATA_REDIS_ADDR_READ=redis://redis:6379/0
+      - RELAY_STORAGE_PERSISTENT_MAILBOX_MONGO_ADDR=mongodb://admin:admin@mongo:27017/relay?authSource=admin
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_PRIMARY=amqp://admin:admin@activemq:5672
+      - RELAY_STORAGE_WEBHOOK_AMQP_ADDR_SECONDARY=amqp://admin:admin@activemq:5672
+      - RELAY_OTEL_EXPORTER_SERVICE_NAME=rs-relay-srv3
+      - RELAY_OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - RELAY_AUTH_AUD=wss://relay.walletconnect.com,ws://:9084,https://relay.walletconnect.com,http://:9084
+      - LOG_LEVEL=debug,relay=debug
+      - LOG_LEVEL_OTEL=info,relay=trace
+      - RUST_BACKTRACE=1
+      - RELAY_REGISTRY_API_URL=https://registry-prod-cf.walletconnect.com
+      - RELAY_REGISTRY_API_AUTH_TOKEN

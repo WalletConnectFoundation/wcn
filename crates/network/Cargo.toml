@@ -1,0 +1,40 @@
+[package]
+name = "network"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+derive_more = { version = "0.99" } # can't switch this to the workspace version, because #[from(forward)] doesn't work for some reason
+derivative = "2.2"
+futures = "0.3"
+indexmap = "2"
+tracing = { version = "0.1" }
+tokio = { version = "1", default-features = false, features = [
+    "sync",
+    "time",
+    "io-util",
+] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["compat", "codec"] }
+tokio-serde = "0.8"
+rand = { version = "0.8", features = ["small_rng"] }
+libp2p = { version = "0.53", features = ["serde", "tokio"] }
+pin-project = "1.0"
+serde = { version = "1" }
+thiserror = "1.0"
+wc = { workspace = true, features = ["collections", "future", "metrics"] }
+
+quinn = "0.10"
+quinn-proto = "0.10"
+libp2p-tls = "0.3"
+backoff = { version = "0.4", features = ["tokio"] }
+tap = "1"
+socket2 = "0.5.5"
+tokio-serde-postcard = "0.1"
+
+[dev-dependencies]
+tracing-subscriber = "0.3"

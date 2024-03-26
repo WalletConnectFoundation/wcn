@@ -1,0 +1,17 @@
+*
+!crates/amqp
+!crates/irn/src
+!crates/irn/benches
+!crates/irn_api/src
+!crates/irn_bin/src
+!crates/network/src
+!crates/raft/src
+!crates/rocks/src
+!crates/shadowing/src
+!crates/storage/src
+!crates/test_utils/src
+!src
+!**/Cargo.toml
+!Cargo.lock
+!build.rs
+!.git

@@ -1,21 +1,9 @@
-variable "target_groups" {
-  type = map(any)
-}
-
-variable "load_balancers" {
-  type = map(any)
-}
-
 variable "environment" {
   type = string
 }
 
 variable "prometheus_workspace_id" {
   type = string
-}
-
-variable "ecs_service_names" {
-  type = list(string)
 }
 
 variable "irn_nodes" {
@@ -27,12 +15,4 @@ variable "irn_nodes" {
     ecs_cluster_name = string
     ecs_service_name = string
   }))
-}
-
-variable "fqdn" {
-  type = string
-}
-
-variable "regionalized_fqdns" {
-  type = list(string)
 }

@@ -19,7 +19,7 @@ terraform {
     region               = "eu-central-1"
     bucket               = "opz"
     workspace_key_prefix = "infra/env"
-    key                  = "apps/relay.tfstate"
+    key                  = "apps/irn.tfstate"
 
     force_path_style = true
   }

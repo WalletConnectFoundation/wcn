@@ -1,6 +1,6 @@
 [package]
-name = "irn"
-version = "1.0.0"
+name = "irn_node"
+version = "0.0.0"
 edition = "2021"
 authors = [
     "Victor Farazdagi <victor@walletconnect.com>",
@@ -27,7 +27,7 @@ debug = 1
 
 [lib]
 path = "src/lib.rs"
-name = "irn_bin"
+name = "lib"
 
 [features]
 default = ["test-cluster"]

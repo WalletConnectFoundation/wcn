@@ -5,7 +5,7 @@ use {
         keyspace::{hashring, Keyspace},
         replication::{ConsistencyLevel, Strategy},
     },
-    irn_bin::{
+    lib::{
         storage::{
             Del,
             Get,

@@ -5,7 +5,7 @@ use {
         StreamExt,
     },
     irn::cluster::replication::{ConsistencyLevel, Strategy},
-    irn_bin::test_cluster::Cluster,
+    lib::test_cluster::Cluster,
     relay_storage::{
         keys::{FromBytes, ToBytes},
         StorageResult,

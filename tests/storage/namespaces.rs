@@ -20,7 +20,7 @@ async fn test_namespaces() {
         })
         .collect::<Vec<_>>();
 
-    let cluster = irn_bin::test_cluster::Cluster::setup_with_opts(Default::default())
+    let cluster = lib::test_cluster::Cluster::setup_with_opts(Default::default())
         .await
         .unwrap();
 

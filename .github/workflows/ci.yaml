@@ -57,10 +57,7 @@ jobs:
             cmd: cargo fmt --all --check
             rust: nightly-2024-02-18
           - name: "tests"
-            cmd: >- 
-              cargo test --workspace --doc --all-features
-              && cargo nextest run --workspace --exclude irn_bin
-              && cargo nextest run -p irn_bin
+            cmd: cargo test --workspace --doc --all-features && cargo nextest run --workspace 
             rust: 1.76.0
           - name: "legacy storage tests"
             cmd: cargo nextest run -p relay --features legacy-storage-tests
@@ -104,8 +101,6 @@ jobs:
       fail-fast: false
       matrix:
         images:
-          - repo_name: irn
-            dockerfile: ./ops/Dockerfile-irn
           - repo_name: relay
             dockerfile: ./Dockerfile
     steps:

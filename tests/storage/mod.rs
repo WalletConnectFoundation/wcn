@@ -8,7 +8,7 @@ use {
         replication::{ReplicaError, ReplicatableOperation, ReplicatedRequest},
         Storage as _,
     },
-    irn_bin::{
+    lib::{
         network::{self, rpc, MapRpc},
         storage::{Del, Get, GetExp, HDel, HGet, HGetExp, HSet, HSetExp, Set, SetExp, Storage},
         test_cluster::Cluster,

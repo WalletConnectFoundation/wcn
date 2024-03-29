@@ -2732,8 +2732,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
-name = "irn"
-version = "1.0.0"
+name = "irn_api"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "derive_more 1.0.0-beta.6",
+ "futures",
+ "futures-util",
+ "network",
+ "postcard",
+ "rand 0.8.5",
+ "ring 0.17.8",
+ "serde",
+ "serde-big-array",
+ "static_assertions",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tryhard",
+ "wc",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "irn_node"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2779,30 +2803,6 @@ dependencies = [
  "vergen",
  "vergen-pretty",
  "wc",
-]
-
-[[package]]
-name = "irn_api"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "derive_more 1.0.0-beta.6",
- "futures",
- "futures-util",
- "network",
- "postcard",
- "rand 0.8.5",
- "ring 0.17.8",
- "serde",
- "serde-big-array",
- "static_assertions",
- "tap",
- "thiserror",
- "tokio",
- "tracing",
- "tryhard",
- "wc",
- "xxhash-rust",
 ]
 
 [[package]]

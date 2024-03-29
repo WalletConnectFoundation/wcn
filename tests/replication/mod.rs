@@ -5,7 +5,7 @@ use {
         cluster::replication::ConsistencyLevel,
         replication::shared_tests::{ReplicationTestCase, ReplicationTestSuite},
     },
-    irn_bin::test_cluster,
+    lib::test_cluster,
 };
 
 mod basic;

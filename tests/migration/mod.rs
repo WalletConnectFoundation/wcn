@@ -1,4 +1,4 @@
-use {irn_bin::test_cluster::Cluster, test_log::test};
+use {lib::test_cluster::Cluster, test_log::test};
 
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn full_node_rotation() {

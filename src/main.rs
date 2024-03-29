@@ -2,7 +2,7 @@ use {
     anyhow::Context as _,
     futures::{future::FusedFuture, Future, FutureExt},
     irn::ShutdownReason,
-    irn_bin::{Config, Node},
+    lib::{Config, Node},
     std::pin::pin,
     tokio::signal::unix::{self, Signal, SignalKind},
     tracing_appender::non_blocking::WorkerGuard,

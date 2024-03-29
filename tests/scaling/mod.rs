@@ -1,6 +1,6 @@
 use {
     irn::{cluster::replication::Strategy, ShutdownReason},
-    irn_bin::test_cluster::Cluster,
+    lib::test_cluster::Cluster,
     std::time::Duration,
     test_log::test,
 };

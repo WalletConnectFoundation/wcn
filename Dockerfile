@@ -46,7 +46,7 @@ WORKDIR             ${WORK_DIR}
 
 # Build the local binary
 COPY                . .
-RUN                 cargo build -p irn_bin ${BUILD_SHARED_ARGS}
+RUN                 cargo build ${BUILD_SHARED_ARGS}
 
 # Put the artifacts to a known path so we don't have to pass an extra arg to the runtime image
 RUN                 ln -s ${WORK_DIR}/target/${BUILD_PROFILE_DIR} ${WORK_DIR}/target/out
@@ -75,12 +75,12 @@ RUN                 apt-get update \
 
 WORKDIR             ${WORK_DIR}
 
-COPY --from=build   ${WORK_DIR}/target/out/irn_bin /usr/local/bin/irn
+COPY --from=build   ${WORK_DIR}/target/out/irn_node /usr/local/bin/irn_node
 
 # Preset the `LOG_LEVEL` env var based on the global log level.
-ENV                 LOG_LEVEL="info,irn_bin=${LOG_LEVEL}"
+ENV                 LOG_LEVEL="info,irn_node=${LOG_LEVEL}"
 
 RUN                 mkdir /irn && chown 1001:1001 /irn
 
 USER                1001:1001
-ENTRYPOINT          ["/usr/local/bin/irn"]
+ENTRYPOINT          ["/usr/local/bin/irn_node"]

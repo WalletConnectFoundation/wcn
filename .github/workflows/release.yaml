@@ -2,16 +2,13 @@ name: "release"
 
 on:
   push:
-    branches: [ "master" ]
-    paths-ignore:
-      - '.github/**'
-      - 'terraform/**'
-      - 'docs/**'
-      - 'README.md'
-      - '.env.example'
-      - 'justfile'
-      - 'rustfmt.toml'
-      - 'LICENSE'
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Dockerfile'
+      - 'build.rs'
   workflow_dispatch:
 
 jobs:

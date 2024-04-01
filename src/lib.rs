@@ -34,7 +34,7 @@ pub mod storage;
 #[cfg(feature = "test-cluster")]
 pub mod test_cluster;
 
-/// Handle to the external and internal api servers.
+/// Handle to the external and internal api servers
 #[derive(Clone)]
 pub struct Servers {
     node: Node,

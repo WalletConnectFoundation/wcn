@@ -1,0 +1,5 @@
+await-holding-invalid-types = [
+  "tracing::trace::Entered",
+  "tracing::trace::EnteredSpan",
+]
+absolute-paths-max-segments = 4

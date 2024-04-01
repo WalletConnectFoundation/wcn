@@ -5,20 +5,13 @@ on:
     types: ["published"]
 
   pull_request:
-    paths-ignore:
-      - ".github/**"
-      - "terraform/**"
-      - "docs/**"
-      - "README.md"
-
-  push:
-    branches: ["master"]
-    paths-ignore:
-      - ".github/**"
-      - "terraform/**"
-      - "docs/**"
-      - "README.md"
-
+    paths:
+      - 'src/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Dockerfile'
+      - 'build.rs'
+      
   workflow_dispatch:
     inputs:
       push:
@@ -59,9 +52,6 @@ jobs:
           - name: "tests"
             cmd: cargo test --workspace --doc --all-features && cargo nextest run --workspace 
             rust: 1.76.0
-          - name: "legacy storage tests"
-            cmd: cargo nextest run -p relay --features legacy-storage-tests
-            rust: 1.76.0
     env:
       RUST_BACKTRACE: full
     steps:
@@ -101,7 +91,7 @@ jobs:
       fail-fast: false
       matrix:
         images:
-          - repo_name: relay
+          - repo_name: irn
             dockerfile: ./Dockerfile
     steps:
       - uses: actions/checkout@v3
@@ -164,7 +154,6 @@ jobs:
       matrix:
         images:
           - repo_name: irn
-          - repo_name: relay
     steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -187,9 +176,3 @@ jobs:
         run: |
           docker load --input /tmp/image-${{ matrix.images.repo_name }}.tar
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-
-  kick-off-cd:
-    needs: publish
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.push == 'true')
-    uses: ./.github/workflows/cd.yaml
-    secrets: inherit

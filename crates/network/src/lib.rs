@@ -157,7 +157,7 @@ impl<H: Handshake> Client<H> {
 
     /// Unregisters a peer.
     pub async fn unregister_peer(&self, id: PeerId) {
-        self.connection_handlers_mut(|handlers| drop(handlers.remove(&id)))
+        self.connection_handlers_mut(|handlers| drop(handlers.shift_remove(&id)))
             .await;
     }
 

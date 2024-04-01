@@ -50,7 +50,7 @@
 
           RUST_SRC_PATH = "${fenix.packages.${system}.stable.rust-src}/bin/rust-lib/src";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath nativeBuildInputs;
-          # LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
           # Use the dyn library for local development to improve build times.
           # Name of this var is defined here https://github.com/rust-rocksdb/rust-rocksdb/blob/master/librocksdb-sys/build.rs 

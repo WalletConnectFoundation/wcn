@@ -74,7 +74,7 @@ async fn project_data_cache() {
     // Update key on node 0. Make sure it is still not present on node 1.
     let (_, value_updated) = sample_project_data_cache_item_ser("UUID1_UPD", "NAME1_UPD");
 
-    set.value = value_updated.clone();
+    set.value.clone_from(&value_updated);
     set.version = timestamp_micros();
     assert_storage_request(&cluster, (1, 0), set, Ok(())).await;
     let expected = Ok(Some(value_updated.clone()));
@@ -169,13 +169,13 @@ async fn string_type_hinted_ops() {
     assert_operation_hint(&cluster, 0, set.clone(), Ok(())).await;
 
     // set(key=key2, value=value2)
-    set.key = keys[1].clone();
-    set.value = vals[1].clone();
+    set.key.clone_from(&keys[1]);
+    set.value.clone_from(&vals[1]);
     assert_operation_hint(&cluster, 0, set.clone(), Ok(())).await;
 
     // set(key=key3, value=value3)
-    set.key = keys[2].clone();
-    set.value = vals[2].clone();
+    set.key.clone_from(&keys[2]);
+    set.value.clone_from(&vals[2]);
     assert_operation_hint(&cluster, 0, set.clone(), Ok(())).await;
 
     // setexp(key=key2, expiration=5)

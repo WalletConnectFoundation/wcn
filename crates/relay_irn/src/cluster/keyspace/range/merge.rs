@@ -80,9 +80,8 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::reversed_empty_ranges)]
 mod tests {
-    #![allow(clippy::reversed_empty_ranges)]
-
     use {super::*, std::ops::Range};
 
     fn r(range: Range<u64>) -> KeyRange<u64> {

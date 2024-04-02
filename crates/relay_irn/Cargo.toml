@@ -21,13 +21,22 @@ tokio-stream = { version = "0.1", features = ["time"] }
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["codec"] }
 thiserror = "1.0"
-derive_more = { workspace = true, features = ["as_ref", "display", "from", "try_into"] }
+derive_more = { workspace = true, features = [
+    "as_ref",
+    "display",
+    "from",
+    "try_into",
+] }
 futures = "0.3"
 dashmap = "5.4"
 tap = "1.0"
 async-trait = "0.1"
 bitflags = { version = "2.3", default-features = false, features = ["serde"] }
-chrono = { version = "0.4", default-features = false, features = ["alloc", "std", "clock"] }
+chrono = { version = "0.4", default-features = false, features = [
+    "alloc",
+    "std",
+    "clock",
+] }
 rand = "0.7"
 once_cell = "1.17"
 smallvec = { version = "1.11", features = ["serde", "write"] }
@@ -46,7 +55,10 @@ test_utils = { path = "../test_utils" }
 tui = "0.19"
 structopt = { version = "0.3", default-features = false }
 better-panic = "0.3"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "parking_lot"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "parking_lot",
+] }
 tracing-appender = "0.2"
 hex = "0.4"
 difference = "2.0"

@@ -6,6 +6,7 @@ authors = [
     "Victor Farazdagi <victor@walletconnect.com>",
     "Ivan Reshetnikov <ivan@walletconnect.com>",
     "Nodar Darksome <nodar@walletconnect.com>",
+    "Daniel Martinez <daniel@walletconnect.com>",
 ]
 license = "Apache-2.0"
 publish = false

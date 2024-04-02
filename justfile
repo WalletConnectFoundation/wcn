@@ -57,32 +57,28 @@ clean-tmp:
 # Build IRN docker image
 build-docker:
   @echo '=> Build IRN docker image'
-  docker compose -f ./ops/docker-compose.irn-sandbox-cluster.yml build
+  docker compose -f ./docker-compose.yml build
 
 # Start IRN sandbox cluster on docker
 run-docker:
   @echo '==> Start IRN sandbox cluster on docker'
-  docker compose -f ./ops/docker-compose.irn-sandbox-cluster.yml up -d
+  docker compose -f ./docker-compose.yml up -d
 
 # Stop IRN sandbox cluster on docker
 stop-docker:
   @echo '==> Stop IRN sandbox cluster on docker'
-  docker compose -f ./ops/docker-compose.irn-sandbox-cluster.yml down
+  docker compose -f ./docker-compose.yml down
 
 # Clean up docker IRN sandbox cluster
 clean-docker:
   @echo '==> Clean IRN sandbox cluster on docker'
-  docker compose  -f ./ops/docker-compose.irn-sandbox-cluster.yml stop
-  docker compose -f ./ops/docker-compose.irn-sandbox-cluster.yml rm -f
+  docker compose  -f ./docker-compose.yml stop
+  docker compose -f ./docker-compose.yml rm -f
 
 # List services running on docker
 ps-docker:
   @echo '==> List services on docker'
-  docker compose -f ./ops/docker-compose.irn-sandbox-cluster.yml ps
-
-run-jaeger:
-  @echo '==> Run opentelemetry jaeger docker container'
-  docker run --rm -p4317:4317 -p16686:16686 jaegertracing/all-in-one:latest
+  docker compose -f ./docker-compose.yml ps
 
 # Bumps the binary version to the given version
 bump-version to: (_bump-cargo-version to irn-binary-crate + "/Cargo.toml")

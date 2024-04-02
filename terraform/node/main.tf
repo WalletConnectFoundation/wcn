@@ -260,21 +260,33 @@ resource "aws_ecs_service" "this" {
 
   wait_for_steady_state = true
 
-  depends_on = [aws_instance.this]
+  depends_on = [
+    aws_subnet.this,
+    aws_route_table_association.this,
+    aws_cloudwatch_log_group.this,
+    aws_ebs_volume.this,
+    aws_volume_attachment.this,
+    aws_instance.this,
+    aws_ecs_cluster.this,
+  ]
 
   tags = local.tags
 }
 
-# resource "terraform_data" "decommission_guard" {
-#   input = {
-#     region       = var.region
-#     cluster_name = aws_ecs_cluster.this.name
-#   }
+resource "terraform_data" "decommission_guard" {
+  input = {
+    region       = var.region
+    cluster_name = aws_ecs_cluster.this.name
 
-#   provisioner "local-exec" {
-#     when    = destroy
-#     command = "bash ${path.module}/decommission.sh ${self.input.region} ${self.input.cluster_name}"
-#   }
+    # This safety switch is going to prevent unintentional node decommissions.
+    # If you intend to decommission a node set `decommision_safety_switch` variable to `false`, and don't forget to enable it back when you're done.
+    safety_switch = coalesce(var.decommission_safety_switch, true)
+  }
 
-#   depends_on = [aws_ecs_service.this]
-# }
+  provisioner "local-exec" {
+    when    = destroy
+    command = "bash ${path.module}/decommission.sh ${self.input.region} ${self.input.cluster_name} ${self.input.safety_switch}"
+  }
+
+  depends_on = [aws_ecs_service.this]
+}

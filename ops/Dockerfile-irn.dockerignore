@@ -1,7 +1,0 @@
-*
-!src
-!crates/*
-!**/Cargo.toml
-!Cargo.lock
-!build.rs
-!.git

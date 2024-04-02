@@ -110,3 +110,8 @@ variable "ebs_volume_size" {
 variable "cache_buster" {
   type = string
 }
+
+variable "decommission_safety_switch" {
+  type    = bool
+  default = true
+}

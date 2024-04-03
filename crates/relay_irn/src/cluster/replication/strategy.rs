@@ -13,7 +13,7 @@ use {
     smallvec::SmallVec,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Strategy {
     factor: usize,
     level: ConsistencyLevel,

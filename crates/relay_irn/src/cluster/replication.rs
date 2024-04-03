@@ -11,7 +11,7 @@ pub mod strategy;
 ///
 /// Defines how many replicas must be updated before the operation is considered
 /// successful.
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ConsistencyLevel {
     One,
     #[default]

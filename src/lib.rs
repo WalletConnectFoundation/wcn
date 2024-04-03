@@ -183,7 +183,6 @@ impl Node {
             .map_err(NodeCreationError::Consensus)?;
 
         let node_opts = irn::NodeOpts {
-            id: cfg.id,
             replication_strategy: cfg.replication_strategy.clone(),
             replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
             replication_concurrency_limit: cfg.request_concurrency_limit,
@@ -191,7 +190,7 @@ impl Node {
             warmup_delay: Duration::from_millis(cfg.warmup_delay),
         };
 
-        let node = irn::Node::new(node_opts, consensus, network, storage);
+        let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
 
         Ok(Running {
             handle: Node {

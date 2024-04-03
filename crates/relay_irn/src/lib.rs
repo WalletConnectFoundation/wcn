@@ -23,15 +23,16 @@ pub mod identity;
 pub mod network;
 pub mod storage;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 mod fsm;
 pub mod migration;
 pub mod replication;
 
 /// [`Node`] configuration options.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct NodeOpts {
-    /// [`PeerId`] of the [`Node`].
-    pub id: PeerId,
-
     /// Replication strategy to use.
     pub replication_strategy: Strategy,
 
@@ -112,14 +113,14 @@ where
     migration::Manager<N, S>: BootingMigrations + LeavingMigrations,
 {
     /// Creates a new [`Node`] using the provided [`NodeOpts`] and dependencies.
-    pub fn new(opts: NodeOpts, consensus: C, network: N, storage: S) -> Self {
+    pub fn new(id: PeerId, opts: NodeOpts, consensus: C, network: N, storage: S) -> Self {
         let cluster = Arc::new(RwLock::new(Cluster::new(opts.replication_strategy)));
 
         let migration_manager =
-            migration::Manager::new(opts.id, network.clone(), storage.clone(), cluster.clone());
+            migration::Manager::new(id, network.clone(), storage.clone(), cluster.clone());
 
         Node {
-            id: opts.id,
+            id,
             storage,
             cluster,
             consensus,
@@ -527,7 +528,6 @@ mod stub {
     impl StubbedNode {
         fn new_stubbed(consensus: consensus::Stub, strategy: Strategy) -> Self {
             let opts = NodeOpts {
-                id: PeerId::random(),
                 replication_strategy: strategy,
                 replication_request_timeout: Duration::from_secs(15),
                 replication_concurrency_limit: 1000,
@@ -535,7 +535,14 @@ mod stub {
                 warmup_delay: Duration::from_millis(10),
             };
 
-            Node::new(opts, consensus, network::Stub::new(), storage::Stub::new()).register()
+            Node::new(
+                PeerId::random(),
+                opts,
+                consensus,
+                network::Stub::new(),
+                storage::Stub::new(),
+            )
+            .register()
         }
 
         fn view(&self, mode: NodeOperationMode) -> cluster::Node {

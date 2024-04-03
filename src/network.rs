@@ -47,8 +47,7 @@ use {
         WithTimeoutsExt as _,
     },
     raft::Raft,
-    relay_rocks::{db::migration::ExportItem, util::timestamp_micros},
-    relay_storage::StorageError,
+    relay_rocks::{db::migration::ExportItem, util::timestamp_micros, StorageError},
     std::{
         collections::{HashMap, HashSet},
         convert::Infallible,
@@ -97,7 +96,7 @@ pub mod rpc {
                 replication::{ReplicaError, ReplicatedRequest as Request},
             },
             network::rpc,
-            relay_storage::StorageError,
+            relay_rocks::StorageError,
         };
 
         pub type Result<T> = std::result::Result<T, ReplicaError<StorageError>>;

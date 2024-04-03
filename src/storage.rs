@@ -1,4 +1,4 @@
-pub use relay_storage::StorageError as Error;
+pub use relay_rocks::StorageError as Error;
 use {
     async_trait::async_trait,
     derive_more::{AsRef, From, TryInto},
@@ -42,9 +42,10 @@ use {
         util::timestamp_micros,
         RocksBackend,
         RocksDatabaseBuilder,
+        StorageError,
+        StorageResult,
         UnixTimestampSecs,
     },
-    relay_storage::{StorageError, StorageResult},
     serde::{Deserialize, Serialize},
     std::{fmt, fmt::Debug, path::Path},
     wc::{

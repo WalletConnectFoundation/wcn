@@ -175,15 +175,15 @@ async fn test_namespaces() {
 
         // Validate `hvals`.
         assert_eq!(
-            client0.hvals(key.clone()).await.unwrap(),
-            data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>()
+            crate::sort_data(client0.hvals(key.clone()).await.unwrap()),
+            crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
         );
 
         // Validate `hscan`.
         let (values, _) = client0.hscan(key, 10, None).await.unwrap();
         assert_eq!(
-            values,
-            data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>()
+            crate::sort_data(values),
+            crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
         );
     }
 }

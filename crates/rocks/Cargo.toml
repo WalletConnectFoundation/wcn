@@ -8,7 +8,6 @@ publish = false
 workspace = true
 
 [dependencies]
-relay_rpc = { workspace = true }
 wc = { workspace = true, features = ["metrics"] }
 
 thiserror = "1.0"

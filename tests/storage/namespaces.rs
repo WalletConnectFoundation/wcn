@@ -1,7 +1,7 @@
 use {
+    crate::Data,
     api::{namespace, Key},
     std::time::Duration,
-    test_utils::samples::TestData,
 };
 
 #[tokio::test]
@@ -98,15 +98,11 @@ async fn test_namespaces() {
     ));
 
     // Validate map type.
-    let keys = [
-        TestData::new("key1"),
-        TestData::new("key2"),
-        TestData::new("key3"),
-    ];
+    let keys = [Data::generate(), Data::generate(), Data::generate()];
     let data = [
-        (TestData::new("field1"), TestData::new("value1")),
-        (TestData::new("field2"), TestData::new("value2")),
-        (TestData::new("field3"), TestData::new("value3")),
+        (Data::generate(), Data::generate()),
+        (Data::generate(), Data::generate()),
+        (Data::generate(), Data::generate()),
     ];
 
     // Add a few maps filled with multiple entries to the private namespace.
@@ -152,15 +148,15 @@ async fn test_namespaces() {
 
         // Validate `hvals`.
         assert_eq!(
-            client0.hvals(key.clone()).await.unwrap(),
-            data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>()
+            crate::sort_data(client0.hvals(key.clone()).await.unwrap()),
+            crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
         );
 
         // Validate `hscan`.
         let (values, _) = client0.hscan(key, 10, None).await.unwrap();
         assert_eq!(
-            values,
-            data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>()
+            crate::sort_data(values),
+            crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
         );
     }
 

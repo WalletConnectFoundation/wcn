@@ -6,32 +6,9 @@ use {
     },
     irn::cluster::replication::{ConsistencyLevel, Strategy},
     lib::test_cluster::Cluster,
-    relay_storage::{
-        keys::{FromBytes, ToBytes},
-        StorageResult,
-    },
-    serde::{Deserialize, Serialize},
     std::time::Duration,
     test_log::test,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Payload(pub u32);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Key(pub u32);
-
-impl ToBytes for Key {
-    fn to_bytes(&self) -> StorageResult<Vec<u8>> {
-        relay_storage::serialize(self)
-    }
-}
-
-impl FromBytes for Key {
-    fn from_bytes(bytes: &[u8]) -> StorageResult<Self> {
-        relay_storage::deserialize(bytes)
-    }
-}
 
 #[allow(dead_code)]
 #[test(tokio::test(flavor = "multi_thread", worker_threads = 2))]

@@ -1,17 +1,12 @@
 use {
-    crate::util::serde::{deserialize_from_bytes, serialize_to_bytes},
-    byteorder::{BigEndian, ReadBytesExt, WriteBytesExt},
-    relay_storage::{
-        keys::{DataTag, FromBytes, PositionedKey, ToBytes},
-        ClusterKey,
+    crate::{
+        util::serde::{deserialize_from_bytes, serialize_to_bytes, FromBytes, ToBytes},
         StorageError,
         StorageResult,
     },
+    byteorder::{BigEndian, ReadBytesExt, WriteBytesExt},
     serde::{Deserialize, Serialize},
-    std::{
-        fmt::{Display, Formatter},
-        io::{Cursor, Write},
-    },
+    std::io::{Cursor, Write},
 };
 
 /// Length of the `u64` prefix used as the keyring position.
@@ -30,25 +25,6 @@ pub struct RawGenericKey<'a> {
 pub struct GenericKey {
     position: u64,
     data: Vec<u8>,
-}
-
-impl Display for GenericKey {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // TODO: Do we need this?
-        write!(f, "{:?}", self.data)
-    }
-}
-
-impl PositionedKey for GenericKey {
-    fn position(&self) -> u64 {
-        self.position
-    }
-}
-
-impl ClusterKey for GenericKey {
-    fn data_tag(&self) -> DataTag {
-        DataTag::Unknown
-    }
 }
 
 impl ToBytes for GenericKey {
@@ -143,6 +119,10 @@ impl GenericKey {
     /// Data associated with this key.
     pub fn data(&self) -> &Vec<u8> {
         &self.data
+    }
+
+    pub fn position(&self) -> u64 {
+        self.position
     }
 
     pub fn calculate_size(data: &[u8]) -> Result<usize, KeyError> {

@@ -9,7 +9,6 @@ workspace = true
 
 [dependencies]
 relay_rpc = { workspace = true }
-relay_storage = { workspace = true }
 wc = { workspace = true, features = ["metrics"] }
 
 thiserror = "1.0"

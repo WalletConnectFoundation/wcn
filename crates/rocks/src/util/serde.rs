@@ -1,9 +1,27 @@
 use {
-    crate::Error,
-    relay_storage::keys::{FromBytes, ToBytes},
+    crate::{Error, StorageResult},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     tap::TapFallible,
 };
+
+/// Convert a key to bytes that can be used in sharded storage.
+///
+/// Cluster keys that include partitioning information are serialized using
+/// custom logic. They start with a partition key, followed by the actual key,
+/// without any extra formatting (or representation optimization).
+///
+/// The minimal yet unaltered representation must be provided, i.e. fields'
+/// binary representations are concatenated, without any kind of metadata. This
+/// helps avoiding any unnecessary space overhead. Additionally, this allows the
+/// key range queries based on partition key to work correctly.
+pub trait ToBytes {
+    fn to_bytes(&self) -> StorageResult<Vec<u8>>;
+}
+
+/// Convert bytes produced by `to_bytes` back to a key structure.
+pub trait FromBytes: Sized {
+    fn from_bytes(bytes: &[u8]) -> StorageResult<Self>;
+}
 
 pub fn serialize<T: Serialize>(data: &T) -> Result<Vec<u8>, Error> {
     postcard::experimental::serialized_size(data)

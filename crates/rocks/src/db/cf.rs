@@ -3,17 +3,13 @@ use {
     super::types::{MapStorage, StringStorage},
     crate::{
         db::{compaction, schema::GenericKey},
-        util::serde::{deserialize, serialize},
+        util::serde::{deserialize, serialize, FromBytes, ToBytes},
         Error,
         RocksBackend,
     },
-    relay_storage::{
-        keys::{FromBytes, ToBytes},
-        ClusterKey,
-        Serializable,
-    },
     rocksdb::ColumnFamily,
-    std::{fmt::Debug, marker::PhantomData, sync::Arc},
+    serde::{de::DeserializeOwned, Serialize},
+    std::{fmt::Debug, hash::Hash, marker::PhantomData, sync::Arc},
 };
 
 pub use crate::db::schema::ColumnFamilyName;
@@ -40,7 +36,7 @@ pub trait Column: 'static + Debug + Send + Sync + Sized {
     type CompactionFilterFactory: compaction::CompactionFilterFactory<Self>;
 
     /// Primary key identifying an object within a column family.
-    type KeyType: ClusterKey + ToBytes + FromBytes;
+    type KeyType: Send + Sync + Clone + Hash + ToBytes + FromBytes;
 
     /// Some data types store multi-part keys, to uniquely identify an object.
     ///
@@ -50,10 +46,10 @@ pub trait Column: 'static + Debug + Send + Sync + Sized {
     ///
     /// Maps are stored as `(key, sub-key) -> value`, where `sub-key` is a field
     /// name within a map identified by `key`.
-    type SubKeyType: Serializable;
+    type SubKeyType: Serialize + DeserializeOwned + Send + Sync;
 
     /// Defines how column family values are stored.
-    type ValueType: Serializable;
+    type ValueType: Serialize + DeserializeOwned + Send + Sync;
 
     /// Defines how values are merged.
     type MergeOperator: compaction::MergeOperator;

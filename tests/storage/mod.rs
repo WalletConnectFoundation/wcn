@@ -14,9 +14,7 @@ use {
         test_cluster::Cluster,
     },
     relay_rocks::{util::timestamp_micros, StorageError},
-    relay_storage::keys::PositionedKey,
     std::fmt,
-    test_utils::samples::sample_project_data_cache_item_ser,
 };
 
 mod namespaces;
@@ -51,7 +49,7 @@ async fn assert_storage_request<Op: ReplicatableOperation<Key = Vec<u8>> + MapRp
 async fn project_data_cache() {
     let cluster = Cluster::setup(2, Strategy::default()).await.unwrap();
 
-    let (key, value) = sample_project_data_cache_item_ser("UUID1", "NAME1");
+    let (key, value) = crate::generate_kv_data_ser();
 
     let get = Get { key: key.clone() };
 
@@ -72,7 +70,7 @@ async fn project_data_cache() {
     assert_storage_request(&cluster, (0, 1), get.clone(), Ok(None)).await;
 
     // Update key on node 0. Make sure it is still not present on node 1.
-    let (_, value_updated) = sample_project_data_cache_item_ser("UUID1_UPD", "NAME1_UPD");
+    let (_, value_updated) = crate::generate_kv_data_ser();
 
     set.value.clone_from(&value_updated);
     set.version = timestamp_micros();
@@ -376,7 +374,7 @@ async fn cluster_version_mismatch() {
 
     let node = cluster.peers[0].node();
 
-    let (key, _) = sample_project_data_cache_item_ser("UUID1", "NAME1");
+    let (key, _) = crate::generate_kv_data_ser();
 
     let req = ReplicatedRequest {
         key_position: test_key(&key).position(),

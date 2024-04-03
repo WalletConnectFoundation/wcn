@@ -10,7 +10,6 @@ allow = [
     "BSD-2-Clause",
     "0BSD",
     "ISC",
-    "MPL-2.0",
     "BSL-1.0",
 ]
 

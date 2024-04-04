@@ -10,6 +10,15 @@ authors = [
 ]
 license = "Apache-2.0"
 publish = false
+default-run = "irn_node"
+
+[[bin]]
+name = "irn_node"
+path = "src/main.rs"
+
+[[bin]]
+name = "cli"
+path = "crates/cli/src/main.rs"
 
 [workspace]
 members = ["crates/*"]
@@ -25,10 +34,6 @@ lto = "thin"
 inherits = "release"
 lto = "thin"
 debug = 1
-
-[lib]
-path = "src/lib.rs"
-name = "lib"
 
 [features]
 default = ["test-cluster"]
@@ -59,8 +64,13 @@ api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 raft = { path = "crates/raft" }
 network = { path = "crates/network" }
 relay_rocks = { path = "crates/rocks" }
+irn_core = { path = "crates/irn_core" }
+cli = { path = "crates/cli" }
 
 [dependencies]
+# NOTE: previously everything that was in irn-node/src/
+irn_core = { workspace = true }
+cli = { workspace = true }
 irn = { workspace = true }
 api = { workspace = true }
 raft = { workspace = true }

@@ -707,6 +707,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98cc8fbded0c607b7ba9dd60cd98df59af97e84d24e49c8557331cfc26d301ce"
 
 [[package]]
+name = "cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap 4.5.4",
+ "eyre",
+ "irn_core",
+ "tracing",
+ "vergen-pretty",
+]
+
+[[package]]
 name = "clru"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,6 +1355,16 @@ checksum = "958e4d70b6d5e81971bebec42271ec641e7ff4e170a6fa605f2b8a8b65cb97d3"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "eyre"
+version = "0.6.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cd915d99f24784cdc19fd37ef22b97e3ff0ae756c7e492e9fbfe897d61e2aec"
+dependencies = [
+ "indenter",
+ "once_cell",
 ]
 
 [[package]]
@@ -2472,6 +2494,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "indenter"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2565,8 +2593,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "irn_node"
-version = "0.0.0"
+name = "irn_core"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2583,6 +2611,55 @@ dependencies = [
  "futures",
  "hyper 0.14.28",
  "irn_api",
+ "itertools 0.11.0",
+ "network",
+ "once_cell",
+ "raft",
+ "rand 0.7.3",
+ "relay_irn",
+ "relay_rocks",
+ "rmp-serde",
+ "rstest",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "sysinfo",
+ "tap",
+ "tempfile",
+ "test-log",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "vergen",
+ "vergen-pretty",
+ "wc",
+]
+
+[[package]]
+name = "irn_node"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "atty",
+ "axum",
+ "backoff",
+ "base64 0.20.0",
+ "chrono",
+ "clap 4.5.4",
+ "cli",
+ "derivative",
+ "derive_more 1.0.0-beta.6",
+ "env_logger 0.10.2",
+ "envy",
+ "futures",
+ "hyper 0.14.28",
+ "irn_api",
+ "irn_core",
  "itertools 0.11.0",
  "network",
  "once_cell",

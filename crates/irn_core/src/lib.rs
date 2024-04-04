@@ -23,9 +23,10 @@ pub use self::{
     network::{Multiaddr, Multihash, Network, RemoteNode},
 };
 
-mod config;
+pub mod config;
 pub mod consensus;
 pub mod network;
+pub mod run;
 pub mod storage;
 
 type Node = irn::Node<Consensus, Network, Storage>;

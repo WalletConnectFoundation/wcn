@@ -1,0 +1,89 @@
+[package]
+name = "irn_core"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[features]
+default = ["test-cluster"]
+test-cluster = [
+    "dep:tempfile",
+    "dep:once_cell",
+    "dep:rand",
+    "irn/testing",
+    "api/client",
+]
+
+[dependencies]
+irn = { workspace = true }
+api = { workspace = true }
+raft = { workspace = true }
+network = { workspace = true }
+relay_rocks = { workspace = true }
+wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+
+anyhow = "1"
+atty = "0.2"
+axum = "0.6"
+async-trait = "0.1"
+base64 = "0.20"
+backoff = { version = "0.4", features = ["tokio"] }
+derive_more = { workspace = true, features = [
+    "as_ref",
+    "display",
+    "from",
+    "try_into",
+    "deref",
+] }
+derivative = "2"
+envy = "0.4"
+futures = "0.3"
+hyper = { version = "0.14", default-features = false, features = ["full"] }
+tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = "0.1"
+serde = "1"
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "parking_lot",
+    "json",
+] }
+tap = "1.0"
+sysinfo = "0.29.10"
+
+# These are required by the tests and the `test_cluster` module.
+tempfile = { version = "3", optional = true }
+once_cell = { version = "1.17", optional = true }
+rand = { version = "0.7", optional = true }
+vergen-pretty = { version = "0.3", features = ["trace"] }
+
+[dev-dependencies]
+tempfile = "3"
+test-log = "0.2"
+once_cell = "1.17"
+rand = "0.7"
+smallvec = { version = "1.11", features = ["serde"] }
+anyhow = "1"
+env_logger = "0.10"
+chrono = "0.4"
+rstest = "0.18"
+itertools = "0.11"
+rmp-serde = "=1.1.2"
+
+[build-dependencies]
+vergen = { version = "8", default-features = false, features = [
+    "build",
+    "cargo",
+    "git",
+    "gitoxide",
+    "rustc",
+] }
+
+# for sandbox-cluster-client example
+clap = { version = "4", features = ["derive"] }

@@ -1,0 +1,18 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+lib = { path = "src/lib.rs" }
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+eyre = "0.6.12"
+tracing = "0.1"
+irn_core = { workspace = true }
+vergen-pretty = { version = "0.3", features = ["trace"] }
+anyhow = "1"
+
+[lints]
+workspace = true

@@ -46,6 +46,7 @@ pub mod stub {
         crate::{
             cluster::VersionedRequest,
             migration::{
+                self,
                 booting::{PullDataRequest, PullDataRequestArgs, PullDataResponse},
                 leaving::{PushDataRequest, PushDataRequestArgs, PushDataResponse},
             },
@@ -54,34 +55,49 @@ pub mod stub {
                 self,
                 stub::{Data, Del, Get, Set},
             },
-            stub::StubbedNode,
+            StubbedNode,
         },
-        once_cell::sync::Lazy,
         std::{
             collections::{HashMap, HashSet},
             sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
         },
     };
 
-    static REGISTRY: Lazy<Mutex<HashMap<Multiaddr, StubbedNode>>> =
-        Lazy::new(|| Mutex::new(HashMap::new()));
-
-    #[derive(Debug)]
-    struct RegisteredMultiaddr {
-        inner: Multiaddr,
+    #[derive(Clone, Debug, Default)]
+    pub struct Registry {
+        nodes: Arc<Mutex<HashMap<Multiaddr, StubbedNode>>>,
+        migration_managers: Arc<Mutex<HashMap<Multiaddr, migration::StubbedManager>>>,
     }
 
-    impl Drop for RegisteredMultiaddr {
-        fn drop(&mut self) {
-            REGISTRY.lock().unwrap().remove(&self.inner);
+    impl Registry {
+        pub fn new_network_handle(
+            &self,
+            multiaddr: Multiaddr,
+            peers: HashMap<PeerId, HashSet<Multiaddr>>,
+        ) -> Network {
+            Network {
+                inner: Arc::new(RwLock::new(Inner {
+                    multiaddr,
+                    peers,
+                    registry: self.clone(),
+                })),
+            }
         }
-    }
 
-    fn random_multiaddr() -> Multiaddr {
-        let port = rand::random::<u16>();
-        format!("/ip4/127.0.0.1/udp/{port}/quic-v1")
-            .parse()
-            .unwrap()
+        pub fn register_node(&self, multiaddr: Multiaddr, node: StubbedNode) {
+            self.nodes.lock().unwrap().insert(multiaddr, node);
+        }
+
+        pub fn register_migration_manager(
+            &self,
+            multiaddr: Multiaddr,
+            manager: migration::StubbedManager,
+        ) {
+            self.migration_managers
+                .lock()
+                .unwrap()
+                .insert(multiaddr, manager);
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -89,28 +105,21 @@ pub mod stub {
         inner: Arc<RwLock<Inner>>,
     }
 
-    impl Default for Network {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
     #[derive(Debug)]
     struct Inner {
-        multiaddr: Option<RegisteredMultiaddr>,
+        multiaddr: Multiaddr,
         peers: HashMap<PeerId, HashSet<Multiaddr>>,
+
+        registry: Registry,
+    }
+
+    impl Drop for Inner {
+        fn drop(&mut self) {
+            self.registry.nodes.lock().unwrap().remove(&self.multiaddr);
+        }
     }
 
     impl Network {
-        pub fn new() -> Self {
-            Self {
-                inner: Arc::new(RwLock::new(Inner {
-                    multiaddr: None,
-                    peers: HashMap::new(),
-                })),
-            }
-        }
-
         fn read(&self) -> RwLockReadGuard<Inner> {
             self.inner.read().unwrap()
         }
@@ -119,50 +128,45 @@ pub mod stub {
             self.inner.write().unwrap()
         }
 
-        fn resolve(&self, peer_id: PeerId) -> Result<StubbedNode, Error> {
-            let addr = self
-                .read()
+        fn peer_addr(&self, peer_id: PeerId) -> Result<Multiaddr, Error> {
+            self.read()
                 .peers
                 .get(&peer_id)
                 .and_then(|addrs| addrs.iter().next().cloned())
-                .ok_or_else(|| Error("Unknown peer".to_string()))?;
+                .ok_or_else(|| Error("Unknown peer".to_string()))
+        }
 
-            REGISTRY
-                .lock()
-                .unwrap()
-                .get(&addr)
-                .cloned()
+        fn node(&self, peer_id: PeerId) -> Result<StubbedNode, Error> {
+            self.resolve_node(&self.peer_addr(peer_id)?)
                 .ok_or_else(|| Error("Node not registered".to_string()))
         }
 
-        pub fn local_multiaddr(&self) -> Multiaddr {
-            self.read()
-                .multiaddr
-                .as_ref()
-                .expect("Not registered")
-                .inner
-                .clone()
+        fn resolve_node(&self, addr: &Multiaddr) -> Option<StubbedNode> {
+            self.inner
+                .read()
+                .unwrap()
+                .registry
+                .nodes
+                .lock()
+                .unwrap()
+                .get(addr)
+                .cloned()
         }
-    }
 
-    impl StubbedNode {
-        pub fn register(self) -> Self {
-            let mut registry = REGISTRY.lock().unwrap();
-            assert!(
-                registry.len() <= (u16::MAX / 2) as usize,
-                "Too many REGISTRY entries"
-            );
+        fn resolve_migration_manager(&self, addr: &Multiaddr) -> Option<migration::StubbedManager> {
+            self.inner
+                .read()
+                .unwrap()
+                .registry
+                .migration_managers
+                .lock()
+                .unwrap()
+                .get(addr)
+                .cloned()
+        }
 
-            let addr = loop {
-                let addr = random_multiaddr();
-                if !registry.contains_key(&addr) {
-                    registry.insert(addr.clone(), self.clone());
-                    break RegisteredMultiaddr { inner: addr };
-                }
-            };
-
-            let _ = self.network.write().multiaddr.insert(addr);
-            self
+        pub fn local_multiaddr(&self) -> Multiaddr {
+            self.read().multiaddr.clone()
         }
     }
 
@@ -197,7 +201,8 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Get>,
         ) -> Result<Self::Response, Self::Error> {
-            Ok(self.resolve(peer_id)?.exec_replicated(req).await)
+            // TODO
+            Ok(Ok(self.node(peer_id)?.exec_replicated(req).await.unwrap()))
         }
     }
 
@@ -211,7 +216,7 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Set>,
         ) -> Result<Self::Response, Self::Error> {
-            Ok(self.resolve(peer_id)?.exec_replicated(req).await)
+            Ok(self.node(peer_id)?.exec_replicated(req).await)
         }
     }
 
@@ -225,7 +230,7 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Del>,
         ) -> Result<Self::Response, Self::Error> {
-            Ok(self.resolve(peer_id)?.exec_replicated(req).await)
+            Ok(self.node(peer_id)?.exec_replicated(req).await)
         }
     }
 
@@ -244,7 +249,14 @@ pub mod stub {
             };
             let req = VersionedRequest::new(args, req.cluster_view_version);
 
-            Ok(self.resolve(peer_id)?.handle_pull_data_request(req).await)
+            let addr = self.peer_addr(peer_id)?;
+            Ok(if let Some(node) = self.resolve_node(&addr) {
+                node.handle_pull_data_request(req).await
+            } else if let Some(mgr) = self.resolve_migration_manager(&addr) {
+                mgr.handle_pull_data_request(req).await
+            } else {
+                panic!("Not registered");
+            })
         }
     }
 
@@ -264,7 +276,14 @@ pub mod stub {
             };
             let req = VersionedRequest::new(args, req.cluster_view_version);
 
-            Ok(self.resolve(peer_id)?.handle_push_data_request(req).await)
+            let addr = self.peer_addr(peer_id)?;
+            Ok(if let Some(node) = self.resolve_node(&addr) {
+                node.handle_push_data_request(req).await
+            } else if let Some(mgr) = self.resolve_migration_manager(&addr) {
+                mgr.handle_push_data_request(req).await
+            } else {
+                panic!("Not registered");
+            })
         }
     }
 }

@@ -24,7 +24,7 @@ pub mod stub {
         serde::{Deserialize, Serialize},
         std::{
             collections::{BTreeMap, HashSet},
-            sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+            sync::{atomic::AtomicU64, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
             time::Duration,
         },
     };
@@ -98,6 +98,7 @@ pub mod stub {
     #[derive(Clone, Debug)]
     pub struct Stub {
         inner: Arc<RwLock<Inner>>,
+        calls: Arc<AtomicU64>,
     }
 
     impl Default for Stub {
@@ -114,6 +115,19 @@ pub mod stub {
         hinted_ops_commit_in_progress: HashSet<KeyRange<KeyPosition>>,
     }
 
+    // impl std::fmt::Debug for Inner {
+    //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    //         f.debug_struct("Inner")
+    //             .field("entries", &self.entries.len())
+    //             .field("hinted_ops", &self.hinted_ops.len())
+    //             .field(
+    //                 "hinted_ops_commit_in_progress",
+    //                 &self.hinted_ops_commit_in_progress.len(),
+    //             )
+    //             .finish_non_exhaustive()
+    //     }
+    // }
+
     impl Stub {
         pub fn new() -> Self {
             Self {
@@ -122,6 +136,7 @@ pub mod stub {
                     hinted_ops: Vec::new(),
                     hinted_ops_commit_in_progress: HashSet::new(),
                 })),
+                calls: Arc::new(Default::default()),
             }
         }
 
@@ -193,6 +208,8 @@ pub mod stub {
             self.write()
                 .entries
                 .insert((op.position, op.inner.0), op.inner.1);
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         }
     }

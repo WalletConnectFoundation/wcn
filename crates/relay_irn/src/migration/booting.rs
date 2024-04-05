@@ -52,14 +52,22 @@ impl<C, N, S> Node<C, N, S> {
     where
         S: Storage<Export>,
     {
+        self.migration_manager.handle_pull_data_request(req).await
+    }
+}
+
+impl<N, S> migration::Manager<N, S> {
+    pub async fn handle_pull_data_request(&self, req: PullDataRequest) -> PullDataResponse<S::Ok>
+    where
+        S: Storage<Export>,
+    {
         let req = req.validate_and_unpack(self.cluster.read().await.view().version())?;
 
         let export = Export {
             key_range: req.key_range,
         };
 
-        self.migration_manager
-            .storage
+        self.storage
             .exec(export)
             .await
             .tap_err(|err| error!(?err, "Export operation failed"))
@@ -204,9 +212,12 @@ enum PullError<N> {
 mod test {
     use {
         crate::{
-            cluster::keyspace::{hashring::Positioned, pending_ranges::PendingRange},
+            cluster::{
+                keyspace::{hashring::Positioned, pending_ranges::PendingRange},
+                NodeOperationMode,
+            },
+            migration,
             storage::stub::Set,
-            stub,
             BootingMigrations,
         },
         std::time::Duration,
@@ -214,17 +225,15 @@ mod test {
 
     #[tokio::test]
     async fn all_pending_keyranges_migrated() {
-        let mut cluster = stub::Cluster::new_dummy(5).await;
-        cluster.populate_storages().await;
-        cluster.add_dummy_node(None).await;
+        let managers = migration::stub::cluster(NodeOperationMode::Booting);
 
-        let booting_node = cluster.nodes.last().unwrap();
+        let booting_mgr = managers.last().unwrap();
 
-        let pending_ranges = booting_node
+        let pending_ranges = booting_mgr
             .cluster
             .read()
             .await
-            .pending_ranges(&booting_node.id)
+            .pending_ranges(&booting_mgr.id)
             .cloned()
             .expect("Pending ranges");
 
@@ -236,29 +245,23 @@ mod test {
             })
             .collect();
 
-        booting_node
-            .migration_manager
-            .clone()
-            .run_booting_migrations()
-            .await;
+        booting_mgr.clone().run_booting_migrations().await;
 
-        let expected_data = cluster.nodes[0].storage.data_from_ranges(&pull_ranges);
+        let expected_data = managers[0].storage.data_from_ranges(&pull_ranges);
         assert!(!expected_data.entries.is_empty());
 
-        assert_eq!(expected_data, booting_node.storage.data());
+        assert_eq!(expected_data, booting_mgr.storage.data());
     }
 
     #[tokio::test]
     async fn hinted_ops_not_stored_during_commit() {
         // Invariant of this test case is being ensured inside `storage::Stub` impl
 
-        let mut cluster = stub::Cluster::new_dummy(5).await;
-        cluster.populate_storages().await;
-        cluster.add_dummy_node(None).await;
+        let managers = migration::stub::cluster(NodeOperationMode::Booting);
 
-        let booting_node = cluster.nodes.last().unwrap();
+        let booting_mgr = managers.last().unwrap();
 
-        let manager = booting_node.migration_manager.clone();
+        let manager = booting_mgr.clone();
         tokio::spawn(async move {
             for _ in 0..100 {
                 let op = Positioned {
@@ -271,10 +274,6 @@ mod test {
             }
         });
 
-        booting_node
-            .migration_manager
-            .clone()
-            .run_booting_migrations()
-            .await;
+        booting_mgr.clone().run_booting_migrations().await;
     }
 }

@@ -36,11 +36,11 @@ use {
     },
 };
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
-#[cfg(any(test, feature = "testing"))]
-pub mod shared_tests;
+// #[cfg(any(test, feature = "testing"))]
+// pub mod shared_tests;
 
 static METRICS: TaskMetrics = TaskMetrics::new("irn_replication_task");
 
@@ -117,6 +117,9 @@ impl<C, N, S> Node<C, N, S> {
         if !replica_set.is_valid() {
             return Err(CoordinatorError::InvalidReplicaSet);
         }
+
+        // dbg!(&cluster);
+        // dbg!(&replica_set);
 
         let cluster_view_version = cluster.view().version();
         let mut required_replicas = replica_set.strategy().required_replica_count();

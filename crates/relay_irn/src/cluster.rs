@@ -261,7 +261,7 @@ pub struct NodeDiff {
     pub new: Node,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Cluster {
     view: ClusterView,
     keyspace: hashring::Keyspace,

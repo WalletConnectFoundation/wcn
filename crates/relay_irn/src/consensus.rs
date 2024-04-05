@@ -104,7 +104,9 @@ pub mod stub {
         }
 
         fn changes(&self) -> Self::Stream {
-            WatchStream::from_changes(self.rx.clone())
+            let mut rx = self.rx.clone();
+            rx.mark_changed();
+            WatchStream::from_changes(rx)
         }
     }
 }

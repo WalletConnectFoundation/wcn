@@ -29,7 +29,7 @@ dependencies = [
 [[package]]
 name = "alloc"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.8.0#ad42551ea3e9f6ee1bf8513f267033b46c567867"
+source = "git+https://github.com/WalletConnect/utils-rs.git?branch=feat/axum-0.7#05eab9f9baa88fa5da22c02e79aba44a537e8004"
 dependencies = [
  "metrics",
  "serde",
@@ -317,8 +317,8 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.28",
  "itoa",
  "matchit",
  "memchr",
@@ -347,7 +347,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "mime",
  "rustversion",
  "tower-layer",
@@ -735,7 +735,7 @@ checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.8.0#ad42551ea3e9f6ee1bf8513f267033b46c567867"
+source = "git+https://github.com/WalletConnect/utils-rs.git?branch=feat/axum-0.7#05eab9f9baa88fa5da22c02e79aba44a537e8004"
 
 [[package]]
 name = "colorchoice"
@@ -1441,7 +1441,7 @@ dependencies = [
 [[package]]
 name = "future"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.8.0#ad42551ea3e9f6ee1bf8513f267033b46c567867"
+source = "git+https://github.com/WalletConnect/utils-rs.git?branch=feat/axum-0.7#05eab9f9baa88fa5da22c02e79aba44a537e8004"
 dependencies = [
  "metrics",
  "pin-project",
@@ -2307,10 +2307,10 @@ dependencies = [
 [[package]]
 name = "http"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.8.0#ad42551ea3e9f6ee1bf8513f267033b46c567867"
+source = "git+https://github.com/WalletConnect/utils-rs.git?branch=feat/axum-0.7#05eab9f9baa88fa5da22c02e79aba44a537e8004"
 dependencies = [
  "future",
- "hyper",
+ "hyper 1.2.0",
  "metrics",
  "tokio",
 ]
@@ -2327,6 +2327,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "http"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21b9ddb458710bc376481b842f5da65cdf31522de232c1ca8146abce2a358258"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa",
+]
+
+[[package]]
 name = "http-body"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2335,6 +2346,16 @@ dependencies = [
  "bytes",
  "http 0.2.12",
  "pin-project-lite",
+]
+
+[[package]]
+name = "http-body"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cac85db508abc24a2e48553ba12a996e87244a0395ce011e62b37158745d643"
+dependencies = [
+ "bytes",
+ "http 1.1.0",
 ]
 
 [[package]]
@@ -2367,7 +2388,7 @@ dependencies = [
  "futures-util",
  "h2",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "httparse",
  "httpdate",
  "itoa",
@@ -2380,13 +2401,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "186548d73ac615b32a73aafe38fb4f56c0d340e110e5a200bcadbaf2e199263a"
+dependencies = [
+ "bytes",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "tokio",
+]
+
+[[package]]
 name = "hyper-tls"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
 dependencies = [
  "bytes",
- "hyper",
+ "hyper 0.14.28",
  "native-tls",
  "tokio",
  "tokio-native-tls",
@@ -2481,7 +2514,7 @@ dependencies = [
  "bytes",
  "futures",
  "http 0.2.12",
- "hyper",
+ "hyper 0.14.28",
  "log",
  "rand 0.8.5",
  "tokio",
@@ -2600,7 +2633,7 @@ dependencies = [
  "env_logger 0.10.2",
  "envy",
  "futures",
- "hyper",
+ "hyper 0.14.28",
  "irn_api",
  "itertools 0.11.0",
  "network",
@@ -3180,7 +3213,7 @@ dependencies = [
 [[package]]
 name = "metrics"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.8.0#ad42551ea3e9f6ee1bf8513f267033b46c567867"
+source = "git+https://github.com/WalletConnect/utils-rs.git?branch=feat/axum-0.7#05eab9f9baa88fa5da22c02e79aba44a537e8004"
 dependencies = [
  "once_cell",
  "opentelemetry",
@@ -4291,8 +4324,8 @@ dependencies = [
  "futures-util",
  "h2",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.28",
  "hyper-tls",
  "ipnet",
  "js-sys",
@@ -5668,7 +5701,7 @@ checksum = "af190c94f2773fdb3729c55b007a722abb5384da03bc0986df4c289bf5567e96"
 [[package]]
 name = "wc"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.8.0#ad42551ea3e9f6ee1bf8513f267033b46c567867"
+source = "git+https://github.com/WalletConnect/utils-rs.git?branch=feat/axum-0.7#05eab9f9baa88fa5da22c02e79aba44a537e8004"
 dependencies = [
  "alloc",
  "collections",

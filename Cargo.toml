@@ -45,7 +45,7 @@ workspace = true
 
 [workspace.dependencies]
 cerberus = { git = "https://github.com/WalletConnect/cerberus.git", tag = "v0.11.0" }
-wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.8.0", default-features = false }
+wc = { git = "https://github.com/WalletConnect/utils-rs.git", branch = "feat/axum-0.7", default-features = false }
 derive_more = { version = "=1.0.0-beta.6", features = [
     "display",
     "from",

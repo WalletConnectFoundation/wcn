@@ -83,8 +83,12 @@ ps-docker:
 # Bumps the binary version to the given version
 bump-version to: (_bump-cargo-version to irn-binary-crate + "/Cargo.toml")
 
+# Make sure we are running the right submodule versions
+update-submodules:
+  git submodule update --init --recursive
+
 # Lint the project for any quality issues
-lint: check fmt clippy commit-check clean-tmp
+lint: update-submodules check fmt clippy commit-check clean-tmp
 
 devloop: lint test-doc test
 

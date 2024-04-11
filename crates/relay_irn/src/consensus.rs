@@ -29,9 +29,9 @@ pub trait Consensus: Clone + Send + Sync + 'static {
     fn changes(&self) -> Self::Stream;
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub use stub::Consensus as Stub;
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub mod stub {
     use {
         super::{async_trait, cluster, ClusterView, PeerId},

@@ -213,10 +213,14 @@ mod test {
     use {
         crate::{
             cluster::{
+                self,
                 keyspace::{hashring::Positioned, pending_ranges::PendingRange},
                 NodeOperationMode,
             },
-            migration,
+            migration::{
+                self,
+                booting::{PullDataError, PullDataRequest, PullDataRequestArgs},
+            },
             storage::stub::Set,
             BootingMigrations,
         },
@@ -275,5 +279,25 @@ mod test {
         });
 
         booting_mgr.clone().run_booting_migrations().await;
+    }
+
+    #[tokio::test]
+    async fn cluster_view_version_validation() {
+        // Invariant of this test case is being ensured inside `storage::Stub` impl
+
+        let managers = migration::stub::cluster(NodeOperationMode::Normal);
+
+        let booting_mgr = managers.last().unwrap();
+
+        let resp = booting_mgr
+            .handle_pull_data_request(PullDataRequest {
+                inner: PullDataRequestArgs {
+                    key_range: (0..42).into(),
+                },
+                cluster_view_version: u128::MAX,
+            })
+            .await;
+
+        assert_eq!(resp, Err(PullDataError::from(cluster::ViewVersionMismatch)))
     }
 }

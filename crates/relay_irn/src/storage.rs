@@ -8,9 +8,9 @@ pub trait Storage<Op>: Clone + Send + Sync + 'static {
     async fn exec(&self, op: Op) -> Result<Self::Ok, Self::Error>;
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub use stub::Stub;
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub mod stub {
     use {
         super::async_trait,
@@ -114,19 +114,6 @@ pub mod stub {
         hinted_ops: Vec<HintedOperation>,
         hinted_ops_commit_in_progress: HashSet<KeyRange<KeyPosition>>,
     }
-
-    // impl std::fmt::Debug for Inner {
-    //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    //         f.debug_struct("Inner")
-    //             .field("entries", &self.entries.len())
-    //             .field("hinted_ops", &self.hinted_ops.len())
-    //             .field(
-    //                 "hinted_ops_commit_in_progress",
-    //                 &self.hinted_ops_commit_in_progress.len(),
-    //             )
-    //             .finish_non_exhaustive()
-    //     }
-    // }
 
     impl Stub {
         pub fn new() -> Self {

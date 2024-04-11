@@ -182,7 +182,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub mod stub {
     use {
         crate::{
@@ -267,5 +267,5 @@ pub mod stub {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub type StubbedManager = stub::Manager;

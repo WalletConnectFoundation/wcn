@@ -1,12 +1,15 @@
 pub use network::{Multiaddr, Multihash};
 use {
     crate::{
-        storage,
-        storage::{Cursor, Value},
+        storage::{self, Cursor, Storage, Value},
+        Config,
+        Consensus,
+        Error,
         Node,
     },
     api::{namespace, server::HandshakeData},
     async_trait::async_trait,
+    derive_more::AsRef,
     futures::{
         stream::{Map, Peekable},
         Future,
@@ -33,13 +36,13 @@ use {
         PeerId,
     },
     network::{
-        inbound,
-        inbound::ConnectionInfo,
+        inbound::{self, ConnectionInfo},
         outbound,
         rpc::Send as _,
         BiDirectionalStream,
         Metered,
         MeteredExt as _,
+        NoHandshake,
         RecvStream,
         Rpc as _,
         SendStream,
@@ -56,13 +59,14 @@ use {
         net::SocketAddr,
         pin::{pin, Pin},
         sync::{Arc, RwLock},
+        time::Duration,
     },
     tokio::sync::mpsc,
-    wc::metrics,
+    wc::{future::StaticFutureExt, metrics},
 };
 
 pub mod rpc {
-    pub use network::rpc::{Id, Name, Result, Send};
+    pub use network::rpc::{Id, Name, Result, Send, Timeouts};
 
     pub mod raft {
         use {crate::consensus::*, network::rpc};
@@ -171,7 +175,33 @@ pub mod rpc {
     }
 }
 
-impl inbound::RpcHandler<HandshakeData> for Node {
+#[derive(AsRef, Clone)]
+struct RpcHandler {
+    #[as_ref]
+    node: Arc<irn::Node<Consensus, Network, Storage>>,
+    rpc_timeouts: rpc::Timeouts,
+
+    pubsub: Pubsub,
+}
+
+impl RpcHandler {
+    fn node(&self) -> &irn::Node<Consensus, Network, Storage> {
+        &self.node
+    }
+
+    fn consensus(&self) -> &Consensus {
+        self.node.consensus()
+    }
+
+    // Initiates shut down process of this [`Node`].
+    // pub fn shutdown(&self, reason: ShutdownReason) {
+    //     if let Err(err @ ShutdownError) = self.inner.shutdown(reason) {
+    //         tracing::warn!("{err}");
+    //     }
+    // }
+}
+
+impl inbound::RpcHandler<HandshakeData> for RpcHandler {
     fn handle_rpc(
         &self,
         id: rpc::Id,
@@ -182,7 +212,7 @@ impl inbound::RpcHandler<HandshakeData> for Node {
     }
 }
 
-impl inbound::RpcHandler for Node {
+impl inbound::RpcHandler for RpcHandler {
     fn handle_rpc(
         &self,
         id: rpc::Id,
@@ -229,7 +259,7 @@ fn prepare_key(key: api::Key, conn_info: &ConnectionInfo<HandshakeData>) -> api:
     }
 }
 
-impl Node {
+impl RpcHandler {
     async fn handle_coordinator_rpc(
         &self,
         id: rpc::Id,
@@ -709,6 +739,63 @@ pub struct Network {
 }
 
 impl Network {
+    pub fn new(cfg: &Config) -> Result<Self, Error> {
+        let rpc_timeout = Duration::from_millis(cfg.network_request_timeout);
+        let rpc_timeouts = rpc::Timeouts {
+            unary: Some(rpc_timeout),
+            streaming: None,
+            oneshot: Some(rpc_timeout),
+        };
+
+        Ok(Self {
+            local_id: cfg.id,
+            client: ::network::Client::new(::network::ClientConfig {
+                keypair: cfg.keypair.clone(),
+                known_peers: cfg
+                    .known_peers
+                    .iter()
+                    .map(|(id, addr)| (id.id, addr.clone()))
+                    .collect(),
+                handshake: NoHandshake,
+                connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
+            })?
+            .with_timeouts(rpc_timeouts)
+            .metered(),
+        })
+    }
+
+    pub fn spawn_servers(cfg: &Config, node: Node) -> Result<tokio::task::JoinHandle<()>, Error> {
+        let server_config = ::network::ServerConfig {
+            addr: cfg.addr.clone(),
+            keypair: cfg.keypair.clone(),
+        };
+
+        let api_server_config = ::network::ServerConfig {
+            addr: cfg.api_addr.clone(),
+            keypair: cfg.keypair.clone(),
+        };
+
+        let rpc_timeout = Duration::from_millis(cfg.network_request_timeout);
+        let rpc_timeouts = rpc::Timeouts {
+            unary: Some(rpc_timeout),
+            streaming: None,
+            oneshot: Some(rpc_timeout),
+        };
+
+        let handler = RpcHandler {
+            node: Arc::new(node),
+            rpc_timeouts,
+            pubsub: Pubsub::new(),
+        };
+
+        let server = ::network::run_server(server_config, NoHandshake, handler.clone())?;
+        let api_server = ::api::server::run(api_server_config, handler)?;
+
+        Ok(async move { tokio::join!(server, api_server) }
+            .map(drop)
+            .spawn("servers"))
+    }
+
     pub(crate) fn get_peer(&self, node_id: PeerId) -> RemoteNode {
         RemoteNode {
             id: node_id,

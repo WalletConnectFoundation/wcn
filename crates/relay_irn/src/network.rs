@@ -37,9 +37,9 @@ pub trait Network: fmt::Debug + Clone + Send + Sync + 'static {
     async fn broadcast_heartbeat(&self) -> Result<(), Self::BroadcastError>;
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub use stub::Network as Stub;
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub mod stub {
     use {
         super::{async_trait, Multiaddr, PeerId, SendRequest},
@@ -111,12 +111,6 @@ pub mod stub {
         peers: HashMap<PeerId, HashSet<Multiaddr>>,
 
         registry: Registry,
-    }
-
-    impl Drop for Inner {
-        fn drop(&mut self) {
-            self.registry.nodes.lock().unwrap().remove(&self.multiaddr);
-        }
     }
 
     impl Network {
@@ -201,8 +195,7 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Get>,
         ) -> Result<Self::Response, Self::Error> {
-            // TODO
-            Ok(Ok(self.node(peer_id)?.exec_replicated(req).await.unwrap()))
+            Ok(self.node(peer_id)?.exec_replicated(req).await)
         }
     }
 

@@ -220,11 +220,15 @@ mod test {
     use {
         crate::{
             cluster::{
+                self,
                 keyspace::{hashring::Positioned, pending_ranges::PendingRange},
                 NodeOperationMode,
             },
-            migration,
-            storage::stub::Set,
+            migration::{
+                self,
+                leaving::{PushDataError, PushDataRequest, PushDataRequestArgs},
+            },
+            storage::stub::{Data, Set},
             LeavingMigrations,
         },
         std::{collections::HashMap, time::Duration},
@@ -296,5 +300,23 @@ mod test {
         });
 
         leaving_mgr.clone().run_leaving_migrations().await;
+    }
+
+    #[tokio::test]
+    async fn cluster_view_version_validation() {
+        let managers = migration::stub::cluster(NodeOperationMode::Normal);
+        let mgr = managers.last().unwrap();
+
+        let resp = mgr
+            .handle_push_data_request(PushDataRequest {
+                inner: PushDataRequestArgs {
+                    key_range: (0..42).into(),
+                    data: Data::generate(),
+                },
+                cluster_view_version: u128::MAX,
+            })
+            .await;
+
+        assert_eq!(resp, Err(PushDataError::from(cluster::ViewVersionMismatch)))
     }
 }

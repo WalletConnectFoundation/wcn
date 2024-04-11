@@ -119,10 +119,7 @@ pub enum InitializationError {
 
 impl Consensus {
     /// Spawns a new [`Consensus`] task and returns it's handle.
-    pub(super) async fn new(
-        cfg: &Config,
-        network: Network,
-    ) -> Result<Consensus, InitializationError> {
+    pub async fn new(cfg: &Config, network: Network) -> Result<Consensus, InitializationError> {
         tokio::fs::create_dir_all(&cfg.raft_dir)
             .await
             .map_err(InitializationError::DirectoryCreation)?;
@@ -161,42 +158,50 @@ impl Consensus {
         .map_err(InitializationError::Task)
     }
 
-    pub(super) async fn init(&self, cfg: &Config) -> Result<(), InitializationError> {
+    pub async fn init(&self, cfg: &Config) -> Result<(), InitializationError> {
         // If it's a bootstrap launch or a subsequent launch of a bootnode we don't need
         // to add a new member manually.
         if cfg.bootstrap_nodes.is_some() {
             return Ok(());
         }
 
-        let req = AddMemberRequest {
-            node_id: self.id,
-            node: Node(cfg.addr.clone()),
-            learner_only: !cfg.is_raft_member,
+        let backoff = ExponentialBackoff {
+            initial_interval: Duration::from_secs(1),
+            max_elapsed_time: Some(Duration::from_secs(10)),
+            ..Default::default()
         };
+        retry(backoff, move || async {
+            let req = AddMemberRequest {
+                node_id: self.id,
+                node: Node(cfg.addr.clone()),
+                learner_only: !cfg.is_raft_member,
+            };
 
-        for peer_id in cfg.known_peers.keys() {
-            let peer = self.network.get_peer(*peer_id);
+            for peer_id in cfg.known_peers.keys() {
+                let peer = self.network.get_peer(*peer_id);
 
-            let res = async {
-                peer.send_rpc::<rpc::raft::AddMember, _>(req.clone())
-                    .await
-                    .context("outbound::Error")??
-                    .pipe(Ok::<_, anyhow::Error>)
-            }
-            .await;
+                let res = async {
+                    peer.send_rpc::<rpc::raft::AddMember, _>(req.clone())
+                        .await
+                        .context("outbound::Error")??
+                        .pipe(Ok::<_, anyhow::Error>)
+                }
+                .await;
 
-            match res {
-                Ok(_) => return Ok(()),
-                Err(err) => {
-                    tracing::warn!(?err, %peer_id, "failed to add a member via a remote peer")
+                match res {
+                    Ok(_) => return Ok(()),
+                    Err(err) => {
+                        tracing::warn!(?err, %peer_id, "failed to add a member via a remote peer")
+                    }
                 }
             }
-        }
 
-        Err(InitializationError::Join)
+            Err(InitializationError::Join.into())
+        })
+        .await
     }
 
-    pub(super) async fn shutdown(&self, reason: ShutdownReason) {
+    pub async fn shutdown(&self, reason: ShutdownReason) {
         match reason {
             ShutdownReason::Decommission => {
                 let mut voter_ids = self.raft.state().membership.voter_ids();

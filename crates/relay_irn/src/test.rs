@@ -48,6 +48,7 @@ pub struct ClusterConfig {
     pub node_opts: NodeOpts,
 }
 
+#[allow(clippy::trait_duplication_in_bounds)] // false positive
 impl<C: Context, SE: fmt::Debug + PartialEq, NE: fmt::Debug> Cluster<C>
 where
     migration::Manager<C::Network, C::Storage>: BootingMigrations + LeavingMigrations,
@@ -76,7 +77,6 @@ where
         };
 
         let bootnode_identities = (0..cfg.num_bootnodes)
-            .into_iter()
             .map(|_| cluster.next_node_identity())
             .collect_vec();
 
@@ -125,7 +125,7 @@ where
 
         tracing::info!("Replication and read repairs");
 
-        let strategy = self.config.node_opts.replication_strategy;
+        let strategy = self.config.node_opts.replication_strategy.clone();
 
         // How many peers are targeted for the request.
         let replication_factor = strategy.replication_factor();
@@ -354,7 +354,7 @@ where
     }
 
     fn node_mut(&mut self, id: &PeerId) -> &mut NodeHandle<C> {
-        self.nodes.get_mut(&id).unwrap()
+        self.nodes.get_mut(id).unwrap()
     }
 
     fn next_node_addr(&mut self) -> Multiaddr {
@@ -403,14 +403,13 @@ where
             .init_deps(idt.clone(), peers, bootnodes.is_some())
             .await;
 
-        let node = crate::Node::new(
+        crate::Node::new(
             idt.peer_id,
-            self.config.node_opts,
+            self.config.node_opts.clone(),
             deps.consensus,
             deps.network,
             deps.storage,
-        );
-        node
+        )
     }
 
     async fn bootup_node(&mut self, idt: NodeIdentity, bootnodes: Option<&[NodeIdentity]>) {
@@ -524,11 +523,11 @@ impl<S: Context> NodeHandle<S> {
                         Some(id) => match view.nodes().get(&id) {
                             Some(n) if n.mode == mode => {}
                             None if mode == NodeOperationMode::Left => {}
-                            _ => continue,
+                            _ => break,
                         },
                         None => {
                             if !view.nodes().values().all(|n| n.mode == mode) {
-                                continue;
+                                break;
                             }
                         }
                     };

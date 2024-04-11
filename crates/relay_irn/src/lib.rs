@@ -31,7 +31,7 @@ pub mod migration;
 pub mod replication;
 
 /// [`Node`] configuration options.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct NodeOpts {
     /// Replication strategy to use.
     pub replication_strategy: Strategy,

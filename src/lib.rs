@@ -57,15 +57,15 @@ pub async fn run(
 ) -> Result<impl Future<Output = ()>, Error> {
     metrics::ServiceMetrics::init_with_name("irn_node");
 
-    let storage = Storage::new(&cfg).map_err(Error::Storage)?;
+    let storage = Storage::new(cfg).map_err(Error::Storage)?;
 
-    let network = Network::new(&cfg)?;
+    let network = Network::new(cfg)?;
 
-    let consensus = Consensus::new(&cfg, network.clone())
+    let consensus = Consensus::new(cfg, network.clone())
         .await
         .map_err(Error::Consensus)?;
 
-    consensus.init(&cfg).await.map_err(Error::Consensus)?;
+    consensus.init(cfg).await.map_err(Error::Consensus)?;
 
     let node_opts = irn::NodeOpts {
         replication_strategy: cfg.replication_strategy.clone(),
@@ -77,7 +77,7 @@ pub async fn run(
 
     let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
 
-    Network::spawn_servers(&cfg, node.clone())?;
+    Network::spawn_servers(cfg, node.clone())?;
 
     let metrics_srv = serve_metrics(&cfg.metrics_addr, node.clone())?.spawn("metrics_server");
 

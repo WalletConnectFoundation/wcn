@@ -24,7 +24,13 @@ pub mod stub {
         serde::{Deserialize, Serialize},
         std::{
             collections::{BTreeMap, HashSet},
-            sync::{atomic::AtomicU64, Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+            sync::{
+                atomic::{self, AtomicU64},
+                Arc,
+                RwLock,
+                RwLockReadGuard,
+                RwLockWriteGuard,
+            },
             time::Duration,
         },
     };
@@ -195,8 +201,7 @@ pub mod stub {
             self.write()
                 .entries
                 .insert((op.position, op.inner.0), op.inner.1);
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.calls.fetch_add(1, atomic::Ordering::Relaxed);
             Ok(())
         }
     }

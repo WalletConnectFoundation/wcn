@@ -204,7 +204,6 @@ pub mod stub {
         use NodeOperationMode as M;
 
         let nodes: Vec<_> = (0..=4)
-            .into_iter()
             .map(|idx| {
                 let id = PeerId::random();
                 let addr = format!("/ip4/127.0.0.1/udp/300{idx}/quic-v1")
@@ -260,7 +259,7 @@ pub mod stub {
                     Arc::new(RwLock::new(cluster.clone())),
                 );
 
-                network_registry.register_migration_manager(n.addr.clone(), manager.clone());
+                network_registry.register_migration_manager(n.addr, manager.clone());
                 manager
             })
             .collect()

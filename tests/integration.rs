@@ -67,7 +67,7 @@ impl test::Context for Context {
             });
         });
 
-        let is_raft_member = self.nodes.len() + 1 <= self.max_raft_members;
+        let is_raft_member = self.nodes.len() < self.max_raft_members;
 
         let (cfg, deps) = runtime_handle
             .clone()
@@ -201,11 +201,11 @@ async fn test_suite() {
 
     cluster.run_test_suite().await;
 
-    pubsub(&mut cluster).await;
-    namespaces(&mut cluster).await;
+    pubsub(&cluster).await;
+    namespaces(&cluster).await;
 }
 
-async fn pubsub(cluster: &mut test::Cluster<Context>) {
+async fn pubsub(cluster: &test::Cluster<Context>) {
     let channel1 = b"channel1";
     let channel2 = b"channel2";
     let payload1 = b"payload1";
@@ -312,7 +312,7 @@ async fn pubsub(cluster: &mut test::Cluster<Context>) {
         .await;
 }
 
-async fn namespaces(cluster: &mut test::Cluster<Context>) {
+async fn namespaces(cluster: &test::Cluster<Context>) {
     let namespaces = (0..2)
         .map(|i| {
             let auth = namespace::Auth::from_secret(

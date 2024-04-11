@@ -76,7 +76,10 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async move { Ok(lib::run(shutdown_signal()?, &cfg).await?.await) })
+        .block_on(async move {
+            lib::run(shutdown_signal()?, &cfg).await?.await;
+            Ok(())
+        })
 }
 
 fn shutdown_signal() -> anyhow::Result<impl Future<Output = ShutdownReason>> {

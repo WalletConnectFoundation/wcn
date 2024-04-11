@@ -29,7 +29,7 @@ use {
     itertools::Itertools,
     libp2p::{identity::Keypair, Multiaddr},
     rand::seq::IteratorRandom,
-    std::{collections::HashMap, fmt, pin::pin, time::Duration},
+    std::{collections::HashMap, fmt, time::Duration},
 };
 
 pub struct Cluster<C: Context> {
@@ -331,18 +331,8 @@ where
 
     async fn wait_op_mode(&self, mode: NodeOperationMode, node_id: Option<PeerId>) {
         tokio::time::timeout(Duration::from_secs(30), async {
-            let mut cluster_view_version = 0;
-
-            'out: loop {
-                for node in self.nodes.values() {
-                    let version = node.wait_op_mode(mode, node_id).await;
-                    if version != cluster_view_version {
-                        cluster_view_version = version;
-                        continue 'out;
-                    }
-                }
-
-                return;
+            for node in self.nodes.values() {
+                node.wait_op_mode(mode, node_id).await;
             }
         })
         .await
@@ -503,37 +493,25 @@ pub type ReadOutput<S> = ReplicatableOperationOutput<<S as Context>::ReadOperati
 pub type WriteOutput<S> = ReplicatableOperationOutput<<S as Context>::WriteOperation>;
 
 impl<S: Context> NodeHandle<S> {
-    async fn wait_op_mode(&self, mode: NodeOperationMode, node_id: Option<PeerId>) -> u128 {
+    async fn wait_op_mode(&self, mode: NodeOperationMode, node_id: Option<PeerId>) {
         tokio::time::timeout(Duration::from_secs(30), async {
-            let mut changes = pin!(self.consensus.changes());
-
             loop {
-                let version = changes.next().await.unwrap().version();
+                let view = self.cluster.read().await.view().clone();
 
-                loop {
-                    let view = self.cluster.read().await.view().clone();
-                    let view_version = view.version();
-
-                    if view.version() < version {
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        continue;
-                    }
-
-                    match node_id {
-                        Some(id) => match view.nodes().get(&id) {
-                            Some(n) if n.mode == mode => {}
-                            None if mode == NodeOperationMode::Left => {}
-                            _ => break,
-                        },
-                        None => {
-                            if !view.nodes().values().all(|n| n.mode == mode) {
-                                break;
-                            }
+                match node_id {
+                    Some(id) => match view.nodes().get(&id) {
+                        Some(n) if n.mode == mode => return,
+                        None if mode == NodeOperationMode::Left => return,
+                        _ => {}
+                    },
+                    None => {
+                        if view.nodes().values().all(|n| n.mode == mode) {
+                            return;
                         }
-                    };
+                    }
+                };
 
-                    return view_version;
-                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
         })
         .await

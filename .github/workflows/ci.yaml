@@ -50,7 +50,7 @@ jobs:
             cmd: cargo fmt --all --check
             rust: nightly-2024-02-18
           - name: "tests"
-            cmd: RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --workspace --doc --all-features && cargo test --all-features --workspace 
+            cmd: cargo test --workspace --doc --all-features && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features --workspace 
             rust: 1.76.0
     env:
       RUST_BACKTRACE: full

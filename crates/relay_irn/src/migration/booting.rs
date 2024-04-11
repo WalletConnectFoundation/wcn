@@ -283,13 +283,10 @@ mod test {
 
     #[tokio::test]
     async fn cluster_view_version_validation() {
-        // Invariant of this test case is being ensured inside `storage::Stub` impl
-
         let managers = migration::stub::cluster(NodeOperationMode::Normal);
+        let mgr = managers.last().unwrap();
 
-        let booting_mgr = managers.last().unwrap();
-
-        let resp = booting_mgr
+        let resp = mgr
             .handle_pull_data_request(PullDataRequest {
                 inner: PullDataRequestArgs {
                     key_range: (0..42).into(),

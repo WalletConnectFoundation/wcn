@@ -519,6 +519,8 @@ impl<S: Context> NodeHandle<S> {
                         continue;
                     }
 
+                    tracing::info!("{:?}", view);
+
                     match node_id {
                         Some(id) => match view.nodes().get(&id) {
                             Some(n) if n.mode == mode => {}

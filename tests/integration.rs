@@ -89,7 +89,7 @@ impl test::Context for Context {
                     rocksdb_dir: dir.join("rocksdb"),
                     rocksdb_num_batch_threads: 1,
                     rocksdb_num_callback_threads: 1,
-                    network_connection_timeout: 500,
+                    network_connection_timeout: 5000,
                     network_request_timeout: 5000,
 
                     // these are being overwritten by the test machinery

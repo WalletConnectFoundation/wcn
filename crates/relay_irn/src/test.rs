@@ -2,8 +2,8 @@
 
 use {
     crate::{
-        cluster::NodeOperationMode,
-        migration::{self},
+        cluster::{self, ClusterView, NodeOperationMode},
+        migration,
         network::HandleRequest,
         replication::{
             CoordinatorResponse,
@@ -25,7 +25,7 @@ use {
         ShutdownReason,
     },
     derive_more::Deref,
-    futures::{stream, StreamExt},
+    futures::{stream, FutureExt, StreamExt},
     itertools::Itertools,
     libp2p::{identity::Keypair, Multiaddr},
     rand::seq::IteratorRandom,
@@ -39,6 +39,8 @@ pub struct Cluster<C: Context> {
     test_context: C,
     next_port: u16,
     node_count: u16,
+
+    expected_view: ClusterView,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -74,11 +76,25 @@ where
             test_context: ctx,
             next_port: 42000,
             node_count: 0,
+            expected_view: ClusterView::default(),
         };
 
         let bootnode_identities = (0..cfg.num_bootnodes)
             .map(|_| cluster.next_node_identity())
             .collect_vec();
+
+        cluster.expected_view.set_peers(
+            bootnode_identities
+                .iter()
+                .map(|idt| {
+                    (idt.peer_id, cluster::Node {
+                        peer_id: idt.peer_id,
+                        addr: idt.addr.clone(),
+                        mode: NodeOperationMode::Started,
+                    })
+                })
+                .collect(),
+        );
 
         for idt in &bootnode_identities {
             cluster
@@ -87,7 +103,7 @@ where
         }
 
         // wait for all nodes in the cluster to become `Normal`
-        cluster.wait_op_mode(NodeOperationMode::Normal, None).await;
+        cluster.wait_for_consistency().await;
 
         cluster
     }
@@ -252,15 +268,12 @@ where
 
         for id in self.nodes.keys().copied().collect_vec() {
             let idt = self.next_node_identity();
-            let new_id = idt.peer_id;
+
             // spin up new node and wait for the cluster to become `Normal`
             self.bootup_node(idt, None).await;
-            self.wait_op_mode(NodeOperationMode::Normal, Some(new_id))
-                .await;
 
             // decomission a node and wait for it to become `Left`
             self.shutdown_node(&id, ShutdownReason::Decommission).await;
-            self.wait_op_mode(NodeOperationMode::Left, Some(id)).await;
         }
 
         let node = &self.random_node();
@@ -292,18 +305,19 @@ where
         let idt = self.next_node_identity();
         let id = idt.peer_id;
 
-        self.bootup_node(idt.clone(), None).await;
-        self.wait_op_mode(NodeOperationMode::Normal, Some(id)).await;
+        tracing::info!("==================1");
 
+        self.bootup_node(idt.clone(), None).await;
+        tracing::info!("==================2");
         self.shutdown_node(&id, ShutdownReason::Restart).await;
-        self.wait_op_mode(NodeOperationMode::Restarting, Some(id))
-            .await;
+        tracing::info!("==================3");
+
+        tracing::info!("{:#?}", self.expected_view);
 
         self.bootup_node(idt, None).await;
-        self.wait_op_mode(NodeOperationMode::Normal, Some(id)).await;
-
+        tracing::info!("==================4");
         self.shutdown_node(&id, ShutdownReason::Decommission).await;
-        self.wait_op_mode(NodeOperationMode::Left, Some(id)).await;
+        tracing::info!("==================5");
     }
 
     /// Scale cluster 2x, then scale back down.
@@ -318,25 +332,59 @@ where
             let id = idt.peer_id;
 
             self.bootup_node(idt.clone(), None).await;
-            self.wait_op_mode(NodeOperationMode::Normal, Some(id)).await;
 
             new_nodes.push(id);
         }
 
         for id in new_nodes {
             self.shutdown_node(&id, ShutdownReason::Decommission).await;
-            self.wait_op_mode(NodeOperationMode::Left, Some(id)).await;
         }
     }
 
-    async fn wait_op_mode(&self, mode: NodeOperationMode, node_id: Option<PeerId>) {
+    async fn wait_for_consistency(&self) {
+        let mut views = HashMap::new();
+
         tokio::time::timeout(Duration::from_secs(30), async {
-            for node in self.nodes.values() {
-                node.wait_op_mode(mode, node_id).await;
+            loop {
+                views = stream::iter(self.nodes.values())
+                    .then(|n| n.cluster.read().map(|c| (n.id, c.view().clone())))
+                    .collect()
+                    .await;
+
+                if views.values().all(|v| &self.expected_view == v) {
+                    return;
+                }
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|_| {
+            panic!(
+                "Inconsistent ClusterView!\nExpected: {:#?}\nGot: {:#?}",
+                self.expected_view, views
+            )
+        });
+    }
+
+    fn add_expected_peer(&mut self, id: PeerId, addr: Multiaddr) {
+        let mut expected_peers = self.expected_view.nodes().clone();
+        expected_peers.insert(id, cluster::Node {
+            peer_id: id,
+            addr,
+            mode: NodeOperationMode::Started,
+        });
+        self.expected_view.set_peers(expected_peers);
+    }
+
+    fn remove_expected_peer(&mut self, id: PeerId) {
+        let mut expected_peers = self.expected_view.nodes().clone();
+        expected_peers.remove(&id);
+        self.expected_view.set_peers(expected_peers);
+    }
+
+    fn set_expected_mode(&mut self, id: PeerId, mode: NodeOperationMode) {
+        self.expected_view.update_node_op_mode(id, mode).unwrap();
     }
 
     fn random_node(&self) -> &NodeHandle<C> {
@@ -412,6 +460,22 @@ where
             identity: idt.clone(),
             task_handle: Some(tokio::spawn(async move { node.run().await.unwrap() })),
         });
+
+        if self.expected_view.nodes().get(&idt.peer_id).map(|n| n.mode)
+            != Some(NodeOperationMode::Restarting)
+        {
+            if bootnodes.is_none() {
+                self.add_expected_peer(idt.peer_id, idt.addr);
+            }
+
+            self.set_expected_mode(idt.peer_id, NodeOperationMode::Booting);
+        }
+
+        self.set_expected_mode(idt.peer_id, NodeOperationMode::Normal);
+
+        if bootnodes.is_none() {
+            self.wait_for_consistency().await;
+        }
     }
 
     async fn shutdown_node(&mut self, id: &PeerId, reason: ShutdownReason) {
@@ -425,6 +489,17 @@ where
 
         let node = self.nodes.remove(id).unwrap();
         self.test_context.post_shutdown(&node, reason).await;
+
+        match reason {
+            ShutdownReason::Restart => self.set_expected_mode(*id, NodeOperationMode::Restarting),
+            ShutdownReason::Decommission => {
+                self.set_expected_mode(*id, NodeOperationMode::Leaving);
+                self.set_expected_mode(*id, NodeOperationMode::Left);
+                self.remove_expected_peer(*id);
+            }
+        }
+
+        self.wait_for_consistency().await;
     }
 }
 
@@ -491,30 +566,3 @@ pub struct Operations<S: Context> {
 
 pub type ReadOutput<S> = ReplicatableOperationOutput<<S as Context>::ReadOperation>;
 pub type WriteOutput<S> = ReplicatableOperationOutput<<S as Context>::WriteOperation>;
-
-impl<S: Context> NodeHandle<S> {
-    async fn wait_op_mode(&self, mode: NodeOperationMode, node_id: Option<PeerId>) {
-        tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let view = self.cluster.read().await.view().clone();
-
-                match node_id {
-                    Some(id) => match view.nodes().get(&id) {
-                        Some(n) if n.mode == mode => return,
-                        None if mode == NodeOperationMode::Left => return,
-                        _ => {}
-                    },
-                    None => {
-                        if view.nodes().values().all(|n| n.mode == mode) {
-                            return;
-                        }
-                    }
-                };
-
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        })
-        .await
-        .unwrap()
-    }
-}

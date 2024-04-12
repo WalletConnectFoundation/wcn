@@ -451,6 +451,8 @@ where
     }
 
     async fn bootup_node(&mut self, idt: NodeIdentity, bootnodes: Option<&[NodeIdentity]>) {
+        tracing::info!(id = %idt.peer_id, addr = %idt.addr, "Booting up node");
+
         let node = self.create_node(idt.clone(), bootnodes).await;
 
         self.test_context.pre_bootup(&idt, &node).await;
@@ -479,6 +481,8 @@ where
     }
 
     async fn shutdown_node(&mut self, id: &PeerId, reason: ShutdownReason) {
+        tracing::info!(%id, ?reason, "Shutting down node");
+
         let node = self.node_mut(id);
         node.shutdown(reason).unwrap();
         node.task_handle

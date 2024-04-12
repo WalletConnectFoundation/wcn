@@ -65,11 +65,6 @@ impl test::Context for Context {
             runtime.block_on(async move {
                 let _ = rx.await;
             });
-
-            // IMPORTANT: give it some time to finish IO operations
-            // somehow not doing this (sometimes!) lead to Raft failing to write the state
-            // machine on shutdown.
-            runtime.shutdown_timeout(Duration::from_secs(1));
         });
 
         let is_raft_member = self.nodes.len() < self.max_raft_members;
@@ -172,6 +167,11 @@ impl test::Context for Context {
             .spawn(async move { node_ctx.consensus.shutdown(reason).await })
             .await
             .unwrap();
+
+        // Seems like `openraft` resolves the shutdown future before finishing all of
+        // its spawned tasks. Not waiting here (sometimes!) causes it to fail to
+        // write the latest FSM state to disk.
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
         node_ctx.runtime_shutdown_tx.send(()).unwrap();
         node_ctx.runtime_thread.join().unwrap();

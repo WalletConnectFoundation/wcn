@@ -65,6 +65,11 @@ impl test::Context for Context {
             runtime.block_on(async move {
                 let _ = rx.await;
             });
+
+            // IMPORTANT: give it some time to finish IO operations
+            // somehow not doing this (sometimes!) lead to Raft failing to write the state
+            // machine on shutdown.
+            runtime.shutdown_timeout(Duration::from_secs(1));
         });
 
         let is_raft_member = self.nodes.len() < self.max_raft_members;

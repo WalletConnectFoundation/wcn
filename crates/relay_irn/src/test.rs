@@ -83,6 +83,11 @@ where
             .map(|_| cluster.next_node_identity())
             .collect_vec();
 
+        cluster
+            .test_context
+            .pre_bootstrap(&bootnode_identities)
+            .await;
+
         cluster.expected_view.set_peers(
             bootnode_identities
                 .iter()
@@ -305,19 +310,11 @@ where
         let idt = self.next_node_identity();
         let id = idt.peer_id;
 
-        tracing::info!("==================1");
-
         self.bootup_node(idt.clone(), None).await;
-        tracing::info!("==================2");
         self.shutdown_node(&id, ShutdownReason::Restart).await;
-        tracing::info!("==================3");
-
-        tracing::info!("{:#?}", self.expected_view);
 
         self.bootup_node(idt, None).await;
-        tracing::info!("==================4");
         self.shutdown_node(&id, ShutdownReason::Decommission).await;
-        tracing::info!("==================5");
     }
 
     /// Scale cluster 2x, then scale back down.
@@ -549,6 +546,7 @@ pub trait Context: Sized + Send + Sync + 'static {
 
     fn gen_test_ops() -> Operations<Self>;
 
+    async fn pre_bootstrap(&mut self, bootnodes: &[NodeIdentity]);
     async fn pre_bootup(&mut self, idt: &NodeIdentity, node: &Node<Self>);
     async fn post_shutdown(&mut self, node: &NodeHandle<Self>, reason: ShutdownReason);
 }

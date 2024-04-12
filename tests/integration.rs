@@ -157,6 +157,8 @@ impl test::Context for Context {
         }
     }
 
+    async fn pre_bootstrap(&mut self, _bootnodes: &[NodeIdentity]) {}
+
     async fn pre_bootup(&mut self, idt: &test::NodeIdentity, node: &test::Node<Self>) {
         let node_ctx = self.nodes.get_mut(&idt.peer_id).unwrap();
         let _guard = node_ctx.runtime.enter();

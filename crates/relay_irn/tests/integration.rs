@@ -21,6 +21,8 @@ struct Context {
     consensus: consensus::Stub,
     network_registry: network::stub::Registry,
     storages: HashMap<PeerId, storage::Stub>,
+
+    bootnodes: Vec<cluster::Node>,
 }
 
 impl test::Context for Context {
@@ -66,24 +68,46 @@ impl test::Context for Context {
         }
     }
 
+    async fn pre_bootstrap(&mut self, bootnodes: &[NodeIdentity]) {
+        self.bootnodes = bootnodes
+            .iter()
+            .map(|n| cluster::Node {
+                peer_id: n.peer_id,
+                addr: n.addr.clone(),
+                mode: cluster::NodeOperationMode::Started,
+            })
+            .collect();
+
+        self.consensus.set_nodes(self.bootnodes.clone());
+    }
+
     async fn pre_bootup(&mut self, _idt: &NodeIdentity, node: &test::Node<Self>) {
         self.network_registry
             .register_node(node.network().local_multiaddr(), node.clone());
 
-        if self.consensus.get_view().nodes().get(node.id()).is_none() {
+        let is_bootnode = self.bootnodes.iter().any(|n| &n.peer_id == node.id());
+        let is_restarting = self.consensus.get_view().nodes().contains_key(node.id());
+
+        if !is_bootnode && !is_restarting {
             self.consensus.set_node(cluster::Node {
                 peer_id: *node.id(),
                 addr: node.network().local_multiaddr(),
                 mode: cluster::NodeOperationMode::Started,
             })
-        }
+        };
     }
 
-    async fn post_shutdown(&mut self, _node: &test::NodeHandle<Self>, _reason: ShutdownReason) {}
+    async fn post_shutdown(&mut self, node: &test::NodeHandle<Self>, reason: ShutdownReason) {
+        if reason == ShutdownReason::Decommission {
+            self.consensus.remove_node(node.id())
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_suite() {
+    const NUM_BOOTNODES: usize = 5;
+
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::INFO)
         .with_env_filter(EnvFilter::from_default_env())
@@ -91,7 +115,7 @@ async fn test_suite() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
     test::Cluster::new(Context::default(), test::ClusterConfig {
-        num_bootnodes: 5,
+        num_bootnodes: NUM_BOOTNODES,
         num_groups: 3,
         node_opts: NodeOpts {
             replication_strategy: Strategy::new(3, cluster::replication::ConsistencyLevel::Quorum),

@@ -117,5 +117,5 @@ variable "decommission_safety_switch" {
 }
 
 variable "tags" {
-  type = object
+  type = any
 }

@@ -192,13 +192,6 @@ impl RpcHandler {
     fn consensus(&self) -> &Consensus {
         self.node.consensus()
     }
-
-    // Initiates shut down process of this [`Node`].
-    // pub fn shutdown(&self, reason: ShutdownReason) {
-    //     if let Err(err @ ShutdownError) = self.inner.shutdown(reason) {
-    //         tracing::warn!("{err}");
-    //     }
-    // }
 }
 
 impl inbound::RpcHandler<HandshakeData> for RpcHandler {

@@ -122,7 +122,6 @@ pub mod stub {
                     hinted_ops: Vec::new(),
                     hinted_ops_commit_in_progress: HashSet::new(),
                 })),
-                calls: Arc::new(Default::default()),
             }
         }
 

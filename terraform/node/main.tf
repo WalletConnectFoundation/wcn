@@ -19,11 +19,7 @@ locals {
     "ap-southeast-1" = "ami-0b2249b9e9a5fe80e"
   }
 
-  tags = {
-    Name        = local.name
-    Group       = "irn"
-    Environment = var.environment
-  }
+  tags = merge(var.tags, { Name = local.name })
 }
 
 resource "aws_subnet" "this" {

@@ -18,12 +18,6 @@ locals {
     "us-east-1"      = "ami-09b21680970b4eb8b"
     "ap-southeast-1" = "ami-0b2249b9e9a5fe80e"
   }
-
-  tags = {
-    Name        = local.name
-    Group       = "irn"
-    Environment = var.environment
-  }
 }
 
 resource "aws_subnet" "this" {
@@ -35,7 +29,7 @@ resource "aws_subnet" "this" {
   # `10.1.111.10` -> `10.1.111.0/24`
   cidr_block = format("%s.0/24", join(".", slice(split(".", var.ipv4_address), 0, 3)))
 
-  tags = local.tags
+  tags = var.tags
 }
 
 # Connect the subnet to a NAT gateway defined outside of this module.
@@ -48,7 +42,7 @@ resource "aws_cloudwatch_log_group" "this" {
   name              = "${local.name}-logs"
   retention_in_days = 14
 
-  tags = local.tags
+  tags = var.tags
 }
 
 resource "aws_ebs_volume" "this" {
@@ -56,7 +50,7 @@ resource "aws_ebs_volume" "this" {
   type              = "gp3"
   size              = var.ebs_volume_size
 
-  tags = local.tags
+  tags = var.tags
 }
 
 resource "aws_instance" "this" {
@@ -74,7 +68,7 @@ resource "aws_instance" "this" {
 
   depends_on = [aws_ebs_volume.this]
 
-  tags = local.tags
+  tags = var.tags
 }
 
 resource "aws_volume_attachment" "this" {
@@ -103,7 +97,7 @@ resource "aws_ecs_cluster" "this" {
     value = "enabled"
   }
 
-  tags = local.tags
+  tags = var.tags
 }
 
 locals {
@@ -243,7 +237,7 @@ resource "aws_ecs_task_definition" "this" {
     operating_system_family = "LINUX"
   }
 
-  tags = local.tags
+  tags = var.tags
 }
 
 resource "aws_ecs_service" "this" {
@@ -270,7 +264,7 @@ resource "aws_ecs_service" "this" {
     aws_ecs_cluster.this,
   ]
 
-  tags = local.tags
+  tags = var.tags
 }
 
 resource "terraform_data" "decommission_guard" {

@@ -7,5 +7,6 @@ variable "environment" {
 }
 
 variable "tags" {
-  type = any
+  type    = any
+  default = {}
 }

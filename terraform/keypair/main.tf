@@ -14,7 +14,7 @@ resource "aws_secretsmanager_secret" "secret_key" {
   # Otherwise Terraform won't be able to delete it
   recovery_window_in_days = 0
 
-  tags = var.tags
+  tags = merge(var.tags, { Name = local.name })
 }
 
 resource "aws_secretsmanager_secret_version" "secret_key" {

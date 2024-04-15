@@ -117,5 +117,6 @@ variable "decommission_safety_switch" {
 }
 
 variable "tags" {
-  type = any
+  type    = any
+  default = {}
 }

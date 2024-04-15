@@ -24,13 +24,7 @@ pub mod stub {
         serde::{Deserialize, Serialize},
         std::{
             collections::{BTreeMap, HashSet},
-            sync::{
-                atomic::{self, AtomicU64},
-                Arc,
-                RwLock,
-                RwLockReadGuard,
-                RwLockWriteGuard,
-            },
+            sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
             time::Duration,
         },
     };
@@ -104,7 +98,6 @@ pub mod stub {
     #[derive(Clone, Debug)]
     pub struct Stub {
         inner: Arc<RwLock<Inner>>,
-        calls: Arc<AtomicU64>,
     }
 
     impl Default for Stub {
@@ -201,7 +194,6 @@ pub mod stub {
             self.write()
                 .entries
                 .insert((op.position, op.inner.0), op.inner.1);
-            self.calls.fetch_add(1, atomic::Ordering::Relaxed);
             Ok(())
         }
     }

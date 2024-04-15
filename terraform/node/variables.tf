@@ -115,3 +115,8 @@ variable "decommission_safety_switch" {
   type    = bool
   default = true
 }
+
+variable "tags" {
+  type    = any
+  default = {}
+}

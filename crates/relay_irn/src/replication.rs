@@ -674,7 +674,7 @@ fn reconciliation_metrics(
         otel::KeyValue::new(name, metrics::value_bucket(num_items, &BUCKETS) as i64)
     };
 
-    counter.add(&otel::Context::new(), 1, &[
+    counter.add(1, &[
         items_kv("min", min.unwrap_or(0)),
         items_kv("max", max.unwrap_or(0)),
         items_kv("result", result),

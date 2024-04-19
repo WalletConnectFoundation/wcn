@@ -138,20 +138,16 @@ impl<C: cf::Column> Drop for ExpiredDataCompactionFilter<C> {
 
         let cf_name_kv = KeyValue::new("cf_name", C::NAME.as_str());
         let counter = wc::metrics::counter!("rocksdb_compaction_keys_processed");
-        let cx = wc::metrics::otel::Context::new();
 
-        counter.add(&cx, self.num_remove, &[
+        counter.add(self.num_remove, &[
             cf_name_kv.clone(),
             decision_kv("remove"),
         ]);
-        counter.add(&cx, self.num_change, &[
+        counter.add(self.num_change, &[
             cf_name_kv.clone(),
             decision_kv("change"),
         ]);
-        counter.add(&cx, self.num_keep, &[
-            cf_name_kv.clone(),
-            decision_kv("keep"),
-        ]);
+        counter.add(self.num_keep, &[cf_name_kv.clone(), decision_kv("keep")]);
 
         let elapsed = self.started.elapsed();
 

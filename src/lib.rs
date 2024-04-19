@@ -384,31 +384,27 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
         }
     };
 
-    let cx = otel::Context::new();
-
     for (name, stat) in stats {
         let name = format!("irn_{}", name.replace('.', "_"));
 
         match stat {
             relay_rocks::db::Statistic::Ticker(count) => {
-                metrics.counter(name).add(&cx, count, &[]);
+                metrics.counter(name).add(count, &[]);
             }
 
             relay_rocks::db::Statistic::Histogram(h) => {
                 // The distribution is already calculated for us by RocksDB, so we use
                 // `gauge`/`counter` here instead of `histogram`.
 
-                metrics
-                    .counter(format!("{name}_count"))
-                    .add(&cx, h.count, &[]);
-                metrics.counter(format!("{name}_sum")).add(&cx, h.sum, &[]);
+                metrics.counter(format!("{name}_count")).add(h.count, &[]);
+                metrics.counter(format!("{name}_sum")).add(h.sum, &[]);
 
                 let meter = metrics.gauge(name);
 
-                meter.observe(&cx, h.p50, &[otel::KeyValue::new("p", "50")]);
-                meter.observe(&cx, h.p95, &[otel::KeyValue::new("p", "95")]);
-                meter.observe(&cx, h.p99, &[otel::KeyValue::new("p", "99")]);
-                meter.observe(&cx, h.p100, &[otel::KeyValue::new("p", "100")]);
+                meter.observe(h.p50, &[otel::KeyValue::new("p", "50")]);
+                meter.observe(h.p95, &[otel::KeyValue::new("p", "95")]);
+                meter.observe(h.p99, &[otel::KeyValue::new("p", "99")]);
+                meter.observe(h.p100, &[otel::KeyValue::new("p", "100")]);
             }
         }
     }

@@ -630,30 +630,30 @@ fn key_remapping() {
     assert_key_remaps(&ring, num_keys, expected_moves, &mut mapping);
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct CustomPeer {
+    // This id comes from the outside, from the swarm, for instance.
+    external_id: PeerId,
+    // This is the id that is used for hashing. This way we can have deterministic hashing
+    // and therefore deterministic node placement on the ring. We can always extract the
+    // external id, when needed.
+    internal_id: PeerId,
+}
+
+impl From<CustomPeer> for PeerId {
+    fn from(peer: CustomPeer) -> PeerId {
+        peer.external_id
+    }
+}
+
+impl Hash for CustomPeer {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.internal_id.hash(state);
+    }
+}
+
 #[test]
 fn custom_peer() {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-    struct CustomPeer {
-        // This id comes from the outside, from the swarm, for instance.
-        external_id: PeerId,
-        // This is the id that is used for hashing. This way we can have deterministic hashing
-        // and therefore deterministic node placement on the ring. We can always extract the
-        // external id, when needed.
-        internal_id: PeerId,
-    }
-
-    impl From<CustomPeer> for PeerId {
-        fn from(peer: CustomPeer) -> PeerId {
-            peer.external_id
-        }
-    }
-
-    impl Hash for CustomPeer {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            self.internal_id.hash(state);
-        }
-    }
-
     // These peers are pre-selected and are not random.
     let peers = preset_peers();
 

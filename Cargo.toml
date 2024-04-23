@@ -44,7 +44,6 @@ test-cluster = [
 workspace = true
 
 [workspace.dependencies]
-cerberus = { git = "https://github.com/WalletConnect/cerberus.git", tag = "v0.11.0" }
 wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.11.0", default-features = false }
 derive_more = { version = "=1.0.0-beta.6", features = [
     "display",
@@ -67,8 +66,6 @@ api = { workspace = true }
 raft = { workspace = true }
 network = { workspace = true }
 relay_rocks = { workspace = true }
-
-cerberus = { workspace = true }
 wc = { workspace = true, features = ["alloc", "future", "metrics"] }
 
 anyhow = "1"

@@ -42,13 +42,14 @@
           stable = fenixPackages.stable.rust-std;
           nightly = fenixPackages.minimal.rust-std;
         };
+        rust-src = fenixPackages.stable.rust-src;
         rustfmt = fenixPackages.default.rustfmt;
         clippy = fenixPackages.default.clippy;
       in {
         devShells.default = pkgs.mkShell {
           inherit nativeBuildInputs;
 
-          RUST_SRC_PATH = "${fenix.packages.${system}.stable.rust-src}/bin/rust-lib/src";
+          RUST_SRC_PATH = "${rust-src}/bin/rust-lib/src";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath nativeBuildInputs;
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
@@ -61,7 +62,7 @@
             -F${pkgs.darwin.apple_sdk.frameworks.CoreFoundation}/Library/Frameworks -framework CoreFoundation"}";
           
           buildInputs = with pkgs; [
-            (fenixPackages.combine [ cargo.stable rustc.stable rust-std.stable rustfmt ])
+            (fenixPackages.combine [ cargo.stable rustc.stable rust-std.stable rust-src rustfmt ])
 
             (writeShellApplication {
               name = "cargo-nightly";

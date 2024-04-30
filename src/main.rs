@@ -1,8 +1,8 @@
 use {
     anyhow::Context as _,
-    futures::{future::FusedFuture, Future, FutureExt},
+    futures::Future,
     irn::ShutdownReason,
-    lib::{Config, Node},
+    lib::Config,
     std::pin::pin,
     tokio::signal::unix::{self, Signal, SignalKind},
     tracing_appender::non_blocking::WorkerGuard,
@@ -76,21 +76,8 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async {
-            let mut shutdown = pin!(shutdown_signal()?.fuse());
-            let mut servers = pin!(Node::serve(cfg).await.context("Node::serve")?);
-
-            loop {
-                tokio::select! {
-                    reason = &mut shutdown, if !shutdown.is_terminated() => {
-                        servers.handle.node().shutdown(reason);
-                    }
-                    _ = &mut servers => {
-                        break;
-                    }
-                };
-            }
-
+        .block_on(async move {
+            lib::run(shutdown_signal()?, &cfg).await?.await;
             Ok(())
         })
 }

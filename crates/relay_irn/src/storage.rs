@@ -8,9 +8,9 @@ pub trait Storage<Op>: Clone + Send + Sync + 'static {
     async fn exec(&self, op: Op) -> Result<Self::Ok, Self::Error>;
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub use stub::Stub;
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub mod stub {
     use {
         super::async_trait,

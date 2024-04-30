@@ -1,8 +1,6 @@
 use {
-    ::network::{rpc, MeteredExt as _, NoHandshake, WithTimeoutsExt},
-    derive_more::AsRef,
     futures::{future::FusedFuture, FutureExt},
-    irn::{Running, ShutdownError, ShutdownReason},
+    irn::ShutdownReason,
     serde::{Deserialize, Serialize},
     std::{
         collections::HashMap,
@@ -10,7 +8,6 @@ use {
         future::Future,
         net::SocketAddr,
         pin::pin,
-        sync::Arc,
         time::Duration,
     },
     storage::Storage,
@@ -27,62 +24,26 @@ pub use self::{
 };
 
 mod config;
-mod consensus;
+pub mod consensus;
 pub mod network;
 pub mod storage;
 
-#[cfg(feature = "test-cluster")]
-pub mod test_cluster;
-
-/// Handle to the external and internal api servers
-#[derive(Clone)]
-pub struct Servers {
-    node: Node,
-}
-
-impl Servers {
-    /// Returns a reference to the [`Node`] being served.
-    pub fn node(&self) -> &Node {
-        &self.node
-    }
-}
-
-/// Local node being handled by this application.
-#[derive(AsRef, Clone)]
-pub struct Node {
-    #[as_ref]
-    inner: Arc<irn::Node<Consensus, Network, Storage>>,
-    rpc_timeouts: rpc::Timeouts,
-
-    pubsub: network::Pubsub,
-}
+type Node = irn::Node<Consensus, Network, Storage>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum MetricsError {
-    #[error("Invalid address: {0}")]
-    InvalidAddress(#[from] std::net::AddrParseError),
+pub enum Error {
+    #[error("Invalid metrics address: {0}")]
+    InvalidMetricsAddress(#[from] std::net::AddrParseError),
 
-    #[error("Server error: {0}")]
-    Server(#[from] hyper::Error),
-}
+    #[error("Metrics server error: {0}")]
+    MetricsServer(#[from] hyper::Error),
 
-#[derive(Debug, thiserror::Error)]
-pub enum ServeError {
     #[error("Failed to start API server: {0:?}")]
     ApiServer(#[from] api::Error),
-
-    #[error("Failed to start metrics server: {0:?}")]
-    MetricsServer(#[from] MetricsError),
 
     #[error("Failed to initialize networking: {0:?}")]
     Network(#[from] ::network::Error),
 
-    #[error(transparent)]
-    NodeCreation(#[from] NodeCreationError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum NodeCreationError {
     #[error("Failed to initialize storage: {0:?}")]
     Storage(storage::Error),
 
@@ -90,149 +51,69 @@ pub enum NodeCreationError {
     Consensus(consensus::InitializationError),
 }
 
-impl Node {
-    /// Creates a new [`Node`] and serves it via [`Servers`].
-    pub async fn serve(
-        cfg: Config,
-    ) -> Result<Running<Servers, impl Future<Output = ()>>, ServeError> {
-        metrics::ServiceMetrics::init_with_name("irn_node");
+pub async fn run(
+    shutdown_fut: impl Future<Output = ShutdownReason>,
+    cfg: &Config,
+) -> Result<impl Future<Output = ()>, Error> {
+    metrics::ServiceMetrics::init_with_name("irn_node");
 
-        let rpc_timeout = Duration::from_millis(cfg.network_request_timeout);
-        let rpc_timeouts = rpc::Timeouts {
-            unary: Some(rpc_timeout),
-            streaming: None,
-            oneshot: Some(rpc_timeout),
+    let storage = Storage::new(cfg).map_err(Error::Storage)?;
+
+    let network = Network::new(cfg)?;
+
+    let consensus = Consensus::new(cfg, network.clone())
+        .await
+        .map_err(Error::Consensus)?;
+
+    consensus.init(cfg).await.map_err(Error::Consensus)?;
+
+    let node_opts = irn::NodeOpts {
+        replication_strategy: cfg.replication_strategy.clone(),
+        replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
+        replication_concurrency_limit: cfg.request_concurrency_limit,
+        replication_request_queue: cfg.request_limiter_queue,
+        warmup_delay: Duration::from_millis(cfg.warmup_delay),
+    };
+
+    let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
+
+    Network::spawn_servers(cfg, node.clone())?;
+
+    let metrics_srv = serve_metrics(&cfg.metrics_addr, node.clone())?.spawn("metrics_server");
+
+    let node_clone = node.clone();
+    let node_fut = async move {
+        match node.clone().run().await {
+            Ok(shutdown_reason) => node.consensus().shutdown(shutdown_reason).await,
+            Err(err) => tracing::warn!(?err, "Node::run"),
         };
+    };
 
-        let client = ::network::Client::new(::network::ClientConfig {
-            keypair: cfg.keypair.clone(),
-            known_peers: cfg
-                .known_peers
-                .iter()
-                .map(|(id, addr)| (id.id, addr.clone()))
-                .collect(),
-            handshake: NoHandshake,
-            connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
-        })?
-        .with_timeouts(rpc_timeouts)
-        .metered();
+    Ok(async move {
+        let mut shutdown_fut = pin!(shutdown_fut.fuse());
+        let mut metrics_server_fut = pin!(metrics_srv.fuse());
+        let mut node_fut = pin!(node_fut);
 
-        let network = Network {
-            local_id: cfg.id,
-            client,
-        };
+        loop {
+            tokio::select! {
+                biased;
 
-        let node_fut = Self::new(&cfg, network, rpc_timeouts).await?;
-        let node = node_fut.handle.clone();
-
-        let server_config = ::network::ServerConfig {
-            addr: cfg.addr.clone(),
-            keypair: cfg.keypair.clone(),
-        };
-
-        let api_server_config = ::network::ServerConfig {
-            addr: cfg.api_addr.clone(),
-            keypair: cfg.keypair.clone(),
-        };
-
-        ::network::run_server(server_config, NoHandshake, node.clone())?.spawn("rpc_server");
-        ::api::server::run(api_server_config, node.clone())?.spawn("api_rpc_server");
-
-        node.init(&cfg).await?;
-
-        let metrics_srv = serve_metrics(&cfg.metrics_addr, node.clone())?.spawn("metrics_server");
-
-        Ok(Running {
-            handle: Servers { node },
-            future: async move {
-                let mut node_fut = pin!(node_fut);
-                let mut metrics_server_fut = pin!(metrics_srv.fuse());
-
-                loop {
-                    tokio::select! {
-                        biased;
-
-                        _ = &mut metrics_server_fut, if !metrics_server_fut.is_terminated() => {
-                            tracing::warn!("metrics server unexpectedly finished");
-                        }
-
-                        _ = &mut node_fut => {
-                            break;
-                        }
+                reason = &mut shutdown_fut, if !shutdown_fut.is_terminated() => {
+                    if let Err(err) = node_clone.shutdown(reason) {
+                        tracing::warn!("{err}");
                     }
                 }
-            },
-        })
-    }
 
-    /// Creates a new [`Running`] [`Node`] using the provided [`Config`] and
-    /// [`Network`].
-    async fn new(
-        cfg: &Config,
-        network: Network,
-        rpc_timeouts: rpc::Timeouts,
-    ) -> Result<Running<Self, impl Future<Output = ()>>, NodeCreationError> {
-        let storage = Storage::new(cfg.rocksdb_dir.clone(), storage::Config {
-            num_batch_threads: cfg.rocksdb_num_batch_threads,
-            num_callback_threads: cfg.rocksdb_num_callback_threads,
-        })
-        .map_err(NodeCreationError::Storage)?;
+                _ = &mut metrics_server_fut, if !metrics_server_fut.is_terminated() => {
+                    tracing::warn!("metrics server unexpectedly finished");
+                }
 
-        let consensus = Consensus::new(cfg, network.clone())
-            .await
-            .map_err(NodeCreationError::Consensus)?;
-
-        let node_opts = irn::NodeOpts {
-            id: cfg.id,
-            replication_strategy: cfg.replication_strategy.clone(),
-            replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
-            replication_concurrency_limit: cfg.request_concurrency_limit,
-            replication_request_queue: cfg.request_limiter_queue,
-            warmup_delay: Duration::from_millis(cfg.warmup_delay),
-        };
-
-        let node = irn::Node::new(node_opts, consensus, network, storage);
-
-        Ok(Running {
-            handle: Node {
-                inner: Arc::new(node.clone()),
-                rpc_timeouts,
-                pubsub: network::Pubsub::new(),
-            },
-            future: async move {
-                match node.clone().run().await {
-                    Ok(shutdown_reason) => node.consensus().shutdown(shutdown_reason).await,
-                    Err(err) => tracing::warn!(?err, "Node::run"),
-                };
-            },
-        })
-    }
-
-    async fn init(&self, cfg: &Config) -> Result<(), NodeCreationError> {
-        self.node()
-            .consensus()
-            .init(cfg)
-            .await
-            .map_err(NodeCreationError::Consensus)
-    }
-}
-
-impl Node {
-    /// Returns a reference to the inner [`irn::Node`].
-    pub fn node(&self) -> &irn::Node<Consensus, Network, Storage> {
-        &self.inner
-    }
-
-    fn consensus(&self) -> &Consensus {
-        self.inner.consensus()
-    }
-
-    /// Initiates shut down process of this [`Node`].
-    pub fn shutdown(&self, reason: ShutdownReason) {
-        if let Err(err @ ShutdownError) = self.inner.shutdown(reason) {
-            tracing::warn!("{err}");
+                _ = &mut node_fut => {
+                    break;
+                }
+            }
         }
-    }
+    })
 }
 
 #[derive(
@@ -240,10 +121,7 @@ impl Node {
 )]
 pub struct TypeConfig;
 
-fn serve_metrics(
-    addr: &str,
-    node: Node,
-) -> Result<impl Future<Output = Result<(), MetricsError>>, MetricsError> {
+fn serve_metrics(addr: &str, node: Node) -> Result<impl Future<Output = Result<(), Error>>, Error> {
     let addr: SocketAddr = addr.parse()?;
 
     let updater_handle = tokio::spawn(metrics_update_loop(node));
@@ -315,7 +193,7 @@ async fn metrics_update_loop(node: Node) {
     // PhysicalCoreID() consumes 5-10% CPU
     // TODO: Consider fixing this & re-enabling the stats
     let _rocks_update_fut = async {
-        let db = node.inner.storage().db();
+        let db = node.storage().db();
         let mut metrics = RocksMetrics::default();
 
         loop {

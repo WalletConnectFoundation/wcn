@@ -29,9 +29,9 @@ pub trait Consensus: Clone + Send + Sync + 'static {
     fn changes(&self) -> Self::Stream;
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub use stub::Consensus as Stub;
-#[cfg(test)]
+#[cfg(any(feature = "testing", test))]
 pub mod stub {
     use {
         super::{async_trait, cluster, ClusterView, PeerId},
@@ -72,9 +72,25 @@ pub mod stub {
         }
 
         pub fn set_node(&self, node: cluster::Node) {
+            self.set_nodes(vec![node]);
+        }
+
+        pub fn remove_node(&self, id: &PeerId) {
             let mut view = self.cluster_view.lock().unwrap();
             let mut peers = view.nodes().clone();
-            peers.insert(node.peer_id, node);
+            peers.remove(id);
+
+            view.set_peers(peers);
+
+            self.tx.send(view.clone()).unwrap();
+        }
+
+        pub fn set_nodes(&self, nodes: Vec<cluster::Node>) {
+            let mut view = self.cluster_view.lock().unwrap();
+            let mut peers = view.nodes().clone();
+            for node in nodes {
+                peers.insert(node.peer_id, node);
+            }
             view.set_peers(peers);
 
             self.tx.send(view.clone()).unwrap();
@@ -104,7 +120,9 @@ pub mod stub {
         }
 
         fn changes(&self) -> Self::Stream {
-            WatchStream::from_changes(self.rx.clone())
+            let mut rx = self.rx.clone();
+            rx.mark_changed();
+            WatchStream::from_changes(rx)
         }
     }
 }

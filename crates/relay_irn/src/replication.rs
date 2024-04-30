@@ -39,9 +39,6 @@ use {
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(test, feature = "testing"))]
-pub mod shared_tests;
-
 static METRICS: TaskMetrics = TaskMetrics::new("irn_replication_task");
 
 /// Maximum time a request can spend in queue awaiting the execution permit.
@@ -296,6 +293,21 @@ impl<C, N, S> Node<C, N, S> {
                 .ok()
         }
     }
+
+    #[cfg(any(feature = "testing", test))]
+    pub async fn new_replicated_request<Op: ReplicatableOperation>(
+        &self,
+        op: Op,
+    ) -> ReplicatedRequest<Op> {
+        let cluster = self.cluster.read().await;
+        let key = op.as_ref();
+
+        ReplicatedRequest {
+            key_position: cluster.keyspace().key_position(key),
+            operation: op,
+            cluster_view_version: cluster.view().version(),
+        }
+    }
 }
 
 #[async_trait]
@@ -318,6 +330,25 @@ where
 
     async fn handle_request(&self, req: DispatchReplicated<Op>) -> Self::Response {
         self.dispatch_replicated(req.operation).await
+    }
+}
+
+#[async_trait]
+impl<Op, C, N, S> HandleRequest<ReplicatedRequest<Op>> for Node<C, N, S>
+where
+    Op: ReplicatableOperation,
+    C: Send + Sync + 'static,
+    N: Send + Sync + 'static,
+    S: Storage<Positioned<Op>, Ok = Op::Output>,
+    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
+{
+    type Response = ReplicaResponse<Op::Output, S::Error>;
+
+    async fn handle_request(
+        &self,
+        req: ReplicatedRequest<Op>,
+    ) -> ReplicaResponse<Op::Output, S::Error> {
+        self.exec_replicated(req).await
     }
 }
 

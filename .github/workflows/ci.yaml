@@ -50,7 +50,10 @@ jobs:
             cmd: cargo fmt --all --check
             rust: nightly-2024-02-18
           - name: "tests"
-            cmd: cargo test --workspace --doc --all-features && cargo nextest run --workspace 
+            cmd: |
+              cargo test --workspace --doc --all-features \
+              && RUST_LOG=info cargo test --all-features --workspace --exclude irn_node \
+              && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features
             rust: 1.76.0
     env:
       RUST_BACKTRACE: full

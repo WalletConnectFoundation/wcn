@@ -13,7 +13,7 @@ use {
     smallvec::SmallVec,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Strategy {
     factor: usize,
     level: ConsistencyLevel,
@@ -40,7 +40,7 @@ impl Strategy {
 
     /// Returns the consistency level for the given replication strategy.
     pub fn consistency_level(&self) -> ConsistencyLevel {
-        self.level.clone()
+        self.level
     }
 
     /// Returns the number of replicas required for a replicated operation to

@@ -1,5 +1,6 @@
 pub use relay_rocks::StorageError as Error;
 use {
+    crate::Config,
     async_trait::async_trait,
     derive_more::{AsRef, From, TryInto},
     futures::{stream, stream::BoxStream, Stream, StreamExt, TryStreamExt},
@@ -47,7 +48,7 @@ use {
         UnixTimestampSecs,
     },
     serde::{Deserialize, Serialize},
-    std::{fmt, fmt::Debug, path::Path},
+    std::{fmt, fmt::Debug},
     wc::{
         future::FutureExt,
         metrics::{AsTaskName, TaskMetrics},
@@ -375,11 +376,6 @@ impl Operation for HScan {
     type RepairOperation = ();
 }
 
-pub struct Config {
-    pub num_batch_threads: usize,
-    pub num_callback_threads: usize,
-}
-
 /// [`Storage`] backend.
 #[derive(Clone, Debug)]
 pub struct Storage {
@@ -394,10 +390,10 @@ impl Storage {
     /// Create a new storage instance.
     ///
     /// The `path` is a path to the database directory.
-    pub fn new<P: AsRef<Path>>(path: P, config: Config) -> StorageResult<Self> {
-        let db = RocksDatabaseBuilder::new(path)
-            .reader_batch_threads(config.num_batch_threads)
-            .reader_callback_threads(config.num_callback_threads)
+    pub fn new(config: &Config) -> StorageResult<Self> {
+        let db = RocksDatabaseBuilder::new(config.rocksdb_dir.clone())
+            .reader_batch_threads(config.rocksdb_num_batch_threads)
+            .reader_callback_threads(config.rocksdb_num_callback_threads)
             .with_column_family(schema::StringColumn)
             .with_column_family(schema::InternalStringColumn)
             .with_column_family(schema::MapColumn)

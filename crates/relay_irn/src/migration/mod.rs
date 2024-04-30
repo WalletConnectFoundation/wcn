@@ -181,3 +181,90 @@ where
             .retain(|range, _| ranges.contains(range));
     }
 }
+
+#[cfg(any(feature = "testing", test))]
+pub mod stub {
+    use {
+        crate::{
+            cluster::{self, Cluster, ClusterView, NodeOperationMode},
+            network,
+            storage::{self, stub::Data},
+            PeerId,
+        },
+        std::{
+            collections::{HashMap, HashSet},
+            sync::Arc,
+        },
+        tokio::sync::RwLock,
+    };
+
+    pub type Manager = super::Manager<network::Stub, storage::Stub>;
+
+    pub fn cluster(test_mode: NodeOperationMode) -> Vec<Manager> {
+        use NodeOperationMode as M;
+
+        let nodes: Vec<_> = (0..=4)
+            .map(|idx| {
+                let id = PeerId::random();
+                let addr = format!("/ip4//udp/300{idx}/quic-v1")
+                    .parse()
+                    .unwrap();
+                let mut node = cluster::Node::new(id, addr);
+
+                node.mode = match idx {
+                    4 => test_mode,
+                    _ => NodeOperationMode::Normal,
+                };
+
+                (id, node)
+            })
+            .collect();
+
+        let mut view = ClusterView::new();
+        view.set_peers(nodes.clone().into_iter().collect());
+
+        let peers: HashMap<_, HashSet<_>> = view
+            .nodes()
+            .values()
+            .map(|n| (n.peer_id, [n.addr.clone()].into_iter().collect()))
+            .collect();
+
+        let data = Data::generate();
+        let network_registry = network::stub::Registry::default();
+
+        let mut cluster = Cluster::new(cluster::replication::Strategy::new(
+            3,
+            cluster::replication::ConsistencyLevel::Quorum,
+        ));
+        cluster.install_view_update(view.clone());
+
+        nodes
+            .into_iter()
+            .map(|(_, n)| {
+                let storage = storage::Stub::new();
+
+                match (test_mode, n.mode) {
+                    (M::Booting, M::Normal) | (M::Leaving, M::Leaving) => {
+                        storage.populate(data.clone())
+                    }
+                    _ => {}
+                };
+
+                let network = network_registry.new_network_handle(n.addr.clone(), peers.clone());
+
+                let manager = super::Manager::new(
+                    n.peer_id,
+                    network,
+                    storage,
+                    Arc::new(RwLock::new(cluster.clone())),
+                );
+
+                network_registry.register_migration_manager(n.addr, manager.clone());
+                manager
+            })
+            .collect()
+    }
+}
+
+#[cfg(any(feature = "testing", test))]
+pub type StubbedManager = stub::Manager;

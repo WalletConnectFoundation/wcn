@@ -59,6 +59,18 @@ impl<C, N, S> Node<C, N, S> {
     where
         S: Storage<Import<Data>> + Storage<CommitHintedOperations>,
     {
+        self.migration_manager.handle_push_data_request(req).await
+    }
+}
+
+impl<N, S> migration::Manager<N, S> {
+    pub async fn handle_push_data_request<Data>(
+        &self,
+        req: PushDataRequest<Data>,
+    ) -> PushDataResponse
+    where
+        S: Storage<Import<Data>> + Storage<CommitHintedOperations>,
+    {
         let req = req.validate_and_unpack(self.cluster.read().await.view().version())?;
 
         let key_range = req.key_range;
@@ -68,15 +80,13 @@ impl<C, N, S> Node<C, N, S> {
             data: req.data,
         };
 
-        self.migration_manager
-            .storage
+        self.storage
             .exec(import)
             .await
             .tap_err(|err| tracing::warn!(?err, "Import operation failed"))
             .map_err(|err| PushDataError::Import(err.to_string()))?;
 
-        self.migration_manager
-            .commit_hinted_operations(key_range)
+        self.commit_hinted_operations(key_range)
             .await
             .tap_err(|err| error!(?err, "Failed to commit hinted ops"))
             .map_err(|err| PushDataError::CommitHintedOperations(err.to_string()))?;
@@ -210,11 +220,15 @@ mod test {
     use {
         crate::{
             cluster::{
+                self,
                 keyspace::{hashring::Positioned, pending_ranges::PendingRange},
                 NodeOperationMode,
             },
+            migration::{
+                self,
+                leaving::{PushDataError, PushDataRequest, PushDataRequestArgs},
+            },
             storage::stub::{Data, Set},
-            stub,
             LeavingMigrations,
         },
         std::{collections::HashMap, time::Duration},
@@ -222,19 +236,15 @@ mod test {
 
     #[tokio::test]
     async fn all_pending_keyranges_migrated() {
-        let cluster = stub::Cluster::new_dummy(5).await;
-        cluster
-            .set_node_op_mode(cluster.nodes.len() - 1, NodeOperationMode::Leaving)
-            .await;
+        let managers = migration::stub::cluster(NodeOperationMode::Leaving);
 
-        let leaving_node = cluster.nodes.last().unwrap();
-        leaving_node.storage.populate(Data::generate());
+        let leaving_mgr = managers.last().unwrap();
 
-        let pending_ranges = leaving_node
+        let pending_ranges = leaving_mgr
             .cluster
             .read()
             .await
-            .pending_ranges(&leaving_node.id)
+            .pending_ranges(&leaving_mgr.id)
             .cloned()
             .expect("Pending ranges");
 
@@ -250,18 +260,14 @@ mod test {
                 });
         assert!(!push_ranges.is_empty());
 
-        leaving_node
-            .migration_manager
-            .clone()
-            .run_leaving_migrations()
-            .await;
+        leaving_mgr.clone().run_leaving_migrations().await;
 
-        for node in &cluster.nodes[0..cluster.nodes.len() - 1] {
+        for node in &managers[0..managers.len() - 1] {
             let Some(ranges) = push_ranges.remove(&node.id) else {
                 continue;
             };
 
-            let expected_data = leaving_node.storage.data_from_ranges(&ranges);
+            let expected_data = leaving_mgr.storage.data_from_ranges(&ranges);
             assert!(!expected_data.entries.is_empty());
 
             assert_eq!(expected_data, node.storage.data());
@@ -274,15 +280,11 @@ mod test {
     async fn hinted_ops_not_stored_during_commit() {
         // Invariant of this test case is being ensured inside `storage::Stub` impl
 
-        let cluster = stub::Cluster::new_dummy(5).await;
-        cluster
-            .set_node_op_mode(cluster.nodes.len() - 1, NodeOperationMode::Leaving)
-            .await;
+        let managers = migration::stub::cluster(NodeOperationMode::Booting);
 
-        let leaving_node = cluster.nodes.last().unwrap();
-        leaving_node.storage.populate(Data::generate());
+        let leaving_mgr = managers.last().unwrap();
 
-        let peers: Vec<_> = cluster.nodes[0..cluster.nodes.len() - 1].to_vec();
+        let peers: Vec<_> = managers[0..managers.len() - 1].to_vec();
         tokio::spawn(async move {
             for _ in 0..100 {
                 let op = Positioned {
@@ -290,19 +292,31 @@ mod test {
                     inner: Set(rand::random(), rand::random()),
                 };
 
-                let futs = peers
-                    .iter()
-                    .map(|peer| peer.migration_manager.store_hinted(op.clone()));
+                let futs = peers.iter().map(|peer| peer.store_hinted(op.clone()));
                 futures::future::try_join_all(futs).await.unwrap();
 
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         });
 
-        leaving_node
-            .migration_manager
-            .clone()
-            .run_leaving_migrations()
+        leaving_mgr.clone().run_leaving_migrations().await;
+    }
+
+    #[tokio::test]
+    async fn cluster_view_version_validation() {
+        let managers = migration::stub::cluster(NodeOperationMode::Normal);
+        let mgr = managers.last().unwrap();
+
+        let resp = mgr
+            .handle_push_data_request(PushDataRequest {
+                inner: PushDataRequestArgs {
+                    key_range: (0..42).into(),
+                    data: Data::generate(),
+                },
+                cluster_view_version: u128::MAX,
+            })
             .await;
+
+        assert_eq!(resp, Err(PushDataError::from(cluster::ViewVersionMismatch)))
     }
 }

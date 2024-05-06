@@ -90,6 +90,11 @@ variable "ipv4_address" {
   type = string
 }
 
+variable "eip_id" {
+  type = string
+  default = null
+}
+
 variable "node_cpu" {
   type = number
 }
@@ -109,6 +114,7 @@ variable "ebs_volume_size" {
 
 variable "cache_buster" {
   type = string
+  default = ""
 }
 
 variable "decommission_safety_switch" {

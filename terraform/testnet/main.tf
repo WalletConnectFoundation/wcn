@@ -217,3 +217,9 @@ resource "aws_iam_instance_profile" "ec2_instance_profile" {
   name = "irn_node_ec2_instance_profile"
   role = aws_iam_role.ec2_instance_role.name
 }
+
+# For connecting to IRN EC2 instances from AWS console.
+resource "aws_ec2_instance_connect_endpoint" "this" {
+  subnet_id          = module.node["eu-central-1a-1"].subnet_id
+  preserve_client_ip = false
+}

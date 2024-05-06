@@ -91,7 +91,7 @@ variable "ipv4_address" {
 }
 
 variable "eip_id" {
-  type = string
+  type    = string
   default = null
 }
 
@@ -113,7 +113,7 @@ variable "ebs_volume_size" {
 }
 
 variable "cache_buster" {
-  type = string
+  type    = string
   default = ""
 }
 

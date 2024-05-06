@@ -75,7 +75,7 @@ resource "aws_instance" "this" {
 
 resource "aws_eip_association" "this" {
   count = var.eip_id == null ? 0 : 1
-  
+
   instance_id   = aws_instance.this.id
   allocation_id = var.eip_id
 }
@@ -116,8 +116,8 @@ resource "aws_ecs_cluster" "this" {
 }
 
 locals {
-  address = var.eip_id == null ? var.ipv4_address : data.aws_eip.this[0].public_ip 
-  
+  address = var.eip_id == null ? var.ipv4_address : data.aws_eip.this[0].public_ip
+
   irn_container_definition = {
     name = local.name
     environment = concat([

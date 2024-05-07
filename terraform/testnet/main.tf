@@ -87,10 +87,6 @@ data "aws_ecr_repository" "node" {
   name = "irn-node"
 }
 
-data "aws_ecr_repository" "aws_otel_collector" {
-  name = "aws-otel-collector"
-}
-
 resource "aws_security_group" "node" {
   name   = "irn-node"
   vpc_id = aws_vpc.vpc_id
@@ -150,7 +146,6 @@ module "node" {
   metrics_port    = local.metrics_port
   log_level       = "INFO"
 
-  aws_otel_collector_ecr_repository_url = data.aws_ecr_repository.aws_otel_collector.repository_url
   prometheus_endpoint                   = aws_prometheus_workspace.this.prometheus_endpoint
 
   vpc_id             = aws_vpc.vpc_id

@@ -209,7 +209,8 @@ locals {
     environment : [
       { name : "AWS_PROMETHEUS_SCRAPING_ENDPOINT", value : "0.0.0.0:${var.metrics_port}" },
       { name : "AWS_PROMETHEUS_ENDPOINT", value : "${var.prometheus_endpoint}api/v1/remote_write" },
-      { name : "AWS_REGION", value : "eu-central-1" }
+      { name : "AWS_REGION", value : "eu-central-1" },
+      { name : "AOT_CONFIG_CONTENT", value : file("${path.module}/aws-otel-collector.yml") }
     ],
     portMappings : [
       {
@@ -219,9 +220,6 @@ locals {
       }
     ],
     essential : true,
-    command : [
-      "--config=/walletconnect/relay.yaml"
-    ],
     logConfiguration : {
       logDriver : "awslogs",
       options : {

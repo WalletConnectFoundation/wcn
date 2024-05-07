@@ -84,7 +84,7 @@ resource "aws_prometheus_workspace" "this" {
 }
 
 data "aws_ecr_repository" "node" {
-  name = "irn-node"
+  name = "irn"
 }
 
 resource "aws_security_group" "node" {

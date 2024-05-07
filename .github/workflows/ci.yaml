@@ -182,5 +182,5 @@ jobs:
 
       - name: Push the image to ECR
         run: |
-          docker load --input /tmp/image-${{ matrix.images.repo_name }}.tar
+          docker load --input /tmp/image-irn.tar
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}

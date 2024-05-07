@@ -177,7 +177,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
-          name: image-${{ matrix.images.repo_name }}
+          name: image-irn
           path: /tmp
 
       - name: Push the image to ECR

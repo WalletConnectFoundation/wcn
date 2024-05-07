@@ -167,7 +167,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets[matrix.images.aws-access-key-id] }}
-          aws-secret-access-key: ${{ secrets[matrix.images.aws-access-key-id] }}
+          aws-secret-access-key: ${{ secrets[matrix.images.aws-secret-access-key] }}
           aws-region: eu-central-1
 
       - name: Login to Amazon ECR

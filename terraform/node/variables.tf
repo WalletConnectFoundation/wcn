@@ -67,7 +67,7 @@ variable "prometheus_endpoint" {
 }
 
 variable "aws_otel_collector_ecr_repository_url" {
-  type = string
+  type    = string
   default = "amazon/aws-otel-collector:v0.35.0"
 }
 

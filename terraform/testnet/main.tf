@@ -146,7 +146,7 @@ module "node" {
   metrics_port    = local.metrics_port
   log_level       = "INFO"
 
-  prometheus_endpoint                   = aws_prometheus_workspace.this.prometheus_endpoint
+  prometheus_endpoint = aws_prometheus_workspace.this.prometheus_endpoint
 
   vpc_id             = aws_vpc.vpc_id
   route_table_id     = aws_route_table.public.id

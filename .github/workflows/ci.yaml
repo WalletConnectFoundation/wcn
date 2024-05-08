@@ -87,38 +87,23 @@ jobs:
           command: check license
 
   build:
-    name: "Build image: ${{ matrix.images.repo_name }}"
+    name: "Build image"
     runs-on:
       group: ubuntu-runners
     strategy:
       fail-fast: false
-      matrix:
-        images:
-          - repo_name: irn
-            dockerfile: ./Dockerfile
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+            irn
           flavor: |
             latest=auto
           tags: |
@@ -134,24 +119,24 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           context: .
-          file: ${{ matrix.images.dockerfile }}
+          file: ./Dockerfile
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/image-${{ matrix.images.repo_name }}.tar
+          outputs: type=docker,dest=/tmp/image-irn.tar
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: image-${{ matrix.images.repo_name }}
-          path: /tmp/image-${{ matrix.images.repo_name }}.tar
+          name: image-irn
+          path: /tmp/image-irn.tar
 
   publish:
     needs: [tests, build, cargo-deny]
-    name: "Publish image: ${{ matrix.images.repo_name }}"
+    name: "Publish image"
     runs-on:
-      group: ubuntu-runners
+      group: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -183,4 +168,5 @@ jobs:
       - name: Push the image to ECR
         run: |
           docker load --input /tmp/image-irn.tar
+          docker tag irn ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}

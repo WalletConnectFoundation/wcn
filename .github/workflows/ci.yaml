@@ -135,8 +135,7 @@ jobs:
   publish:
     needs: [tests, build, cargo-deny]
     name: "Publish image"
-    runs-on:
-      group: ubuntu-latest
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:

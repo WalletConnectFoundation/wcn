@@ -172,4 +172,4 @@ jobs:
               docker tag irn:tmp $tag
           done          
 
-          docker image push --all-tags $repo
+          docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}

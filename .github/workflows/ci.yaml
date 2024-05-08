@@ -98,21 +98,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            irn
-          flavor: |
-            latest=auto
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=sha
-            type=raw,value=tmp
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
@@ -121,8 +106,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: irn:tmp
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/image-irn.tar
@@ -159,6 +143,20 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha
+
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
@@ -168,6 +166,10 @@ jobs:
       - name: Push the image to ECR
         run: |
           docker load --input /tmp/image-irn.tar
-          docker tag irn:tmp ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-          docker rmi irn:tmp
-          docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+
+          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
+          for tag in "${tags[@]}"; do
+              docker tag irn:tmp $tag
+          done          
+
+          docker image push --all-tags $repo

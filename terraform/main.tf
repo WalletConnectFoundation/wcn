@@ -53,10 +53,12 @@ resource "aws_route" "internet_gateway" {
 
 locals {
   nodes = {
-    "eu-central-1a-1" = { ip = "10.1.111.10", group_id = 1 },
-    "eu-central-1b-1" = { ip = "10.1.121.10", group_id = 2 },
-    "eu-central-1c-1" = { ip = "10.1.131.10", group_id = 3 },
+    "eu-central-1a-1" = { ip = "10.0.111.10", group_id = 1 },
+    "eu-central-1b-1" = { ip = "10.0.121.10", group_id = 2 },
+    "eu-central-1c-1" = { ip = "10.0.131.10", group_id = 3 },
   }
+
+  node_peer_ids = [for id, node in local.nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
 
   known_peers = { for id, node in local.nodes : "${module.keypair[id].peer_id}_${node.group_id}" => aws_eip.this[id].public_ip }
 
@@ -72,9 +74,10 @@ resource "aws_eip" "this" {
 module "keypair" {
   source = "./keypair"
 
-  for_each    = local.nodes
-  node_id     = each.key
-  environment = local.environment
+  for_each      = local.nodes
+  node_id       = each.key
+  environment   = local.environment
+  query_staging = false
 
   tags = local.tags
 }
@@ -89,7 +92,7 @@ data "aws_ecr_repository" "node" {
 
 resource "aws_security_group" "node" {
   name   = "irn-node"
-  vpc_id = aws_vpc.vpc_id
+  vpc_id = aws_vpc.this.id
 
   ingress {
     from_port   = local.port
@@ -110,7 +113,7 @@ resource "aws_security_group" "node" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [aws_vpc.cidr_block]
+    cidr_blocks = [aws_vpc.this.cidr_block]
   }
 
   egress {
@@ -131,8 +134,8 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:latest"
-  node_memory = 4096
+  image       = "${data.aws_ecr_repository.node.repository_url}:pr-16"
+  node_memory = 4096 - 512
   node_cpu    = 2048
 
   secret_key = module.keypair[each.key].secret_key
@@ -140,7 +143,7 @@ module "node" {
   group_id   = each.value.group_id
 
   known_peers     = local.known_peers
-  bootstrap_nodes = local.nodes
+  bootstrap_nodes = local.node_peer_ids
   libp2p_port     = local.port
   api_port        = local.api_port
   metrics_port    = local.metrics_port
@@ -148,18 +151,32 @@ module "node" {
 
   prometheus_endpoint = aws_prometheus_workspace.this.prometheus_endpoint
 
-  vpc_id             = aws_vpc.vpc_id
+  vpc_id             = aws_vpc.this.id
   route_table_id     = aws_route_table.public.id
-  security_group_ids = [aws_security_group.irn_node.id]
+  security_group_ids = [aws_security_group.node.id]
 
-  ipv4_address                = each.value.ip
+  ipv4_address     = each.value.ip
+  expose_public_ip = true
+  eip_id           = aws_eip.this[each.key].id
+
   ec2_instance_type           = "c5a.large"
-  ec2_instance_profile        = aws_iam_instance_profile.ec2_instance_profile.arn
+  ec2_instance_profile        = aws_iam_instance_profile.ec2_instance_profile.name
   ecs_task_execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
   ecs_task_role_arn           = aws_iam_role.ecs_task_execution_role.arn
   ebs_volume_size             = 10
 
   tags = local.tags
+}
+
+data "aws_iam_policy_document" "assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_role" "ecs_task_execution_role" {

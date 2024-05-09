@@ -4,10 +4,6 @@ locals {
   # filter out the peer_id of the current node from the map
   known_peers = { for k, v in var.known_peers : k => v if k != var.peer_id }
 
-  # See: https://github.com/WalletConnect/aws-otel-collector
-  otel_collector_image_tag = "v0.4.0"
-  otel_collector_image     = "${var.aws_otel_collector_ecr_repository_url}:${local.otel_collector_image_tag}"
-
   # Amazon Linux AMI 2023.0.20231204 x86_64 ECS HVM EBS
   # The same image has different ids per region.
   # Changing this would require replacement of the instances, so do this very carefully.
@@ -74,16 +70,10 @@ resource "aws_instance" "this" {
 }
 
 resource "aws_eip_association" "this" {
-  count = var.eip_id == null ? 0 : 1
+  count = var.expose_public_ip ? 1 : 0
 
   instance_id   = aws_instance.this.id
   allocation_id = var.eip_id
-}
-
-data "aws_eip" "this" {
-  count = var.eip_id == null ? 0 : 1
-
-  id = var.eip_id
 }
 
 resource "aws_volume_attachment" "this" {
@@ -116,13 +106,11 @@ resource "aws_ecs_cluster" "this" {
 }
 
 locals {
-  address = var.eip_id == null ? var.ipv4_address : data.aws_eip.this[0].public_ip
-
   irn_container_definition = {
     name = local.name
     environment = concat([
-      { name = "ADDR", value = "/ip4/${local.address}/udp/${var.libp2p_port}/quic-v1" },
-      { name = "API_ADDR", value = "/ip4/${local.address}/udp/${var.api_port}/quic-v1" },
+      { name = "ADDR", value = "/ip4/${var.ipv4_address}/udp/${var.libp2p_port}/quic-v1" },
+      { name = "API_ADDR", value = "/ip4/${var.ipv4_address}/udp/${var.api_port}/quic-v1" },
       { name = "METRICS_ADDR", value = "0.0.0.0:${var.metrics_port}" },
       { name = "REPLICATION_STRATEGY_FACTOR", value = "3" },
       { name = "REPLICATION_STRATEGY_LEVEL", value = "Quorum" },
@@ -205,7 +193,7 @@ locals {
 
   otel_container_definition = {
     name : "aws-otel-collector",
-    image : "${local.otel_collector_image}",
+    image : var.aws_otel_collector_image,
     environment : [
       { name : "AWS_PROMETHEUS_SCRAPING_ENDPOINT", value : "0.0.0.0:${var.metrics_port}" },
       { name : "AWS_PROMETHEUS_ENDPOINT", value : "${var.prometheus_endpoint}api/v1/remote_write" },
@@ -272,6 +260,7 @@ resource "aws_ecs_service" "this" {
   depends_on = [
     aws_subnet.this,
     aws_route_table_association.this,
+    aws_eip_association.this,
     aws_cloudwatch_log_group.this,
     aws_ebs_volume.this,
     aws_volume_attachment.this,

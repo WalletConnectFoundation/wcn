@@ -14,9 +14,5 @@ terraform {
       source  = "WalletConnect/libp2p"
       version = "~> 0.1.0"
     }
-    libp2pold = {
-      source  = "xDarksome/libp2p"
-      version = "~> 0.1.1"
-    }
   }
 }

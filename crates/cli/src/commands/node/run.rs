@@ -1,4 +1,4 @@
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 
 const DEFAULT_ADDR_STR: &str = "127.0.0.1:10999";
 
@@ -8,7 +8,7 @@ pub struct RunCmd {
     addr: SocketAddr,
 }
 
-#[tracing::instrument(skip(args))]
-pub fn exec(args: RunCmd) -> anyhow::Result<()> {
-    irn_core::run::run()
+#[tracing::instrument(skip(_args))]
+pub fn exec(_args: RunCmd) -> anyhow::Result<()> {
+    irn_core::exec::exec()
 }

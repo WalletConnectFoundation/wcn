@@ -1,7 +1,7 @@
 #[derive(Debug, clap::Args)]
 pub struct ConfigCmd {}
 
-#[tracing::instrument(skip(args))]
-pub fn exec(args: ConfigCmd) -> anyhow::Result<()> {
+#[tracing::instrument(skip(_args))]
+pub fn exec(_args: ConfigCmd) -> anyhow::Result<()> {
     Ok(())
 }

@@ -1,4 +1,4 @@
-use {anyhow::Context, clap::Parser};
+use clap::Parser;
 mod commands;
 
 /// Control nodes and clusters in the IRN Network
@@ -21,8 +21,5 @@ pub fn exec() -> anyhow::Result<()> {
     match app.commands {
         commands::SubCmd::Node(args) => commands::node::exec(args),
         commands::SubCmd::Config(args) => commands::config::exec(args),
-        _ => {
-            anyhow::bail!("Not supported yet");
-        }
     }
 }

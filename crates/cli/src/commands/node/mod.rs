@@ -19,11 +19,6 @@ pub enum NodeSub {
 pub fn exec(cmd: NodeCmd) -> anyhow::Result<()> {
     match cmd.commands {
         NodeSub::Run(args) => run::exec(args),
-
         NodeSub::Config(args) => node_config::exec(args),
-
-        _ => {
-            anyhow::bail!("Not supported yet");
-        }
     }
 }

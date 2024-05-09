@@ -87,26 +87,56 @@ jobs:
           command: check license
 
   build:
-    name: "Build image: ${{ matrix.images.repo_name }}"
+    name: "Build image"
     runs-on:
       group: ubuntu-runners
     strategy:
       fail-fast: false
-      matrix:
-        images:
-          - repo_name: irn
-            dockerfile: ./Dockerfile
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build, tag and cache the image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: irn:tmp
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/image-irn.tar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-irn
+          path: /tmp/image-irn.tar
+
+  publish:
+    needs: [tests, build, cargo-deny]
+    name: "Publish image"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        images:
+          - repo_name: irn
+            aws-access-key-id: AWS_ACCESS_KEY_ID
+            aws-secret-access-key: AWS_SECRET_ACCESS_KEY
+          - repo_name: irn
+            aws-access-key-id: TESTNET_AWS_ACCESS_KEY_ID
+            aws-secret-access-key: TESTNET_AWS_SECRET_ACCESS_KEY
+    steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ secrets[matrix.images.aws-access-key-id] }}
+          aws-secret-access-key: ${{ secrets[matrix.images.aws-secret-access-key] }}
           aws-region: eu-central-1
 
       - name: Login to Amazon ECR
@@ -127,55 +157,19 @@ jobs:
             type=semver,pattern={{version}}
             type=sha
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build, tag and cache the image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          file: ${{ matrix.images.dockerfile }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/image-${{ matrix.images.repo_name }}.tar
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: image-${{ matrix.images.repo_name }}
-          path: /tmp/image-${{ matrix.images.repo_name }}.tar
-
-  publish:
-    needs: [tests, build, cargo-deny]
-    name: "Publish image: ${{ matrix.images.repo_name }}"
-    runs-on:
-      group: ubuntu-runners
-    strategy:
-      fail-fast: false
-      matrix:
-        images:
-          - repo_name: irn
-    steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
-          name: image-${{ matrix.images.repo_name }}
+          name: image-irn
           path: /tmp
 
       - name: Push the image to ECR
         run: |
-          docker load --input /tmp/image-${{ matrix.images.repo_name }}.tar
+          docker load --input /tmp/image-irn.tar
+
+          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
+          for tag in "${tags[@]}"; do
+              docker tag irn:tmp $tag
+          done          
+
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}

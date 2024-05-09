@@ -4,10 +4,6 @@ locals {
   # filter out the peer_id of the current node from the map
   known_peers = { for k, v in var.known_peers : k => v if k != var.peer_id }
 
-  # See: https://github.com/WalletConnect/aws-otel-collector
-  otel_collector_image_tag = "v0.4.0"
-  otel_collector_image     = "${var.aws_otel_collector_ecr_repository_url}:${local.otel_collector_image_tag}"
-
   # Amazon Linux AMI 2023.0.20231204 x86_64 ECS HVM EBS
   # The same image has different ids per region.
   # Changing this would require replacement of the instances, so do this very carefully.
@@ -71,6 +67,13 @@ resource "aws_instance" "this" {
   depends_on = [aws_ebs_volume.this]
 
   tags = local.tags
+}
+
+resource "aws_eip_association" "this" {
+  count = var.expose_public_ip ? 1 : 0
+
+  instance_id   = aws_instance.this.id
+  allocation_id = var.eip_id
 }
 
 resource "aws_volume_attachment" "this" {
@@ -190,11 +193,12 @@ locals {
 
   otel_container_definition = {
     name : "aws-otel-collector",
-    image : "${local.otel_collector_image}",
+    image : var.aws_otel_collector_image,
     environment : [
       { name : "AWS_PROMETHEUS_SCRAPING_ENDPOINT", value : ":${var.metrics_port}" },
       { name : "AWS_PROMETHEUS_ENDPOINT", value : "${var.prometheus_endpoint}api/v1/remote_write" },
-      { name : "AWS_REGION", value : "eu-central-1" }
+      { name : "AWS_REGION", value : "eu-central-1" },
+      { name : "AOT_CONFIG_CONTENT", value : file("${path.module}/aws-otel-collector.yml") }
     ],
     portMappings : [
       {
@@ -204,9 +208,6 @@ locals {
       }
     ],
     essential : true,
-    command : [
-      "--config=/walletconnect/relay.yaml"
-    ],
     logConfiguration : {
       logDriver : "awslogs",
       options : {
@@ -259,6 +260,7 @@ resource "aws_ecs_service" "this" {
   depends_on = [
     aws_subnet.this,
     aws_route_table_association.this,
+    aws_eip_association.this,
     aws_cloudwatch_log_group.this,
     aws_ebs_volume.this,
     aws_volume_attachment.this,

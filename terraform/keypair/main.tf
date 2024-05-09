@@ -27,13 +27,16 @@ data "libp2p_peer_id" "this" {
 }
 
 data "aws_secretsmanager_secret" "staging_secret_key" {
-  name = local.staging_name
+  count = var.query_staging ? 1 : 0
+  name  = local.staging_name
 }
 
 data "aws_secretsmanager_secret_version" "staging_secret_key" {
-  secret_id = data.aws_secretsmanager_secret.staging_secret_key.id
+  count     = var.query_staging ? 1 : 0
+  secret_id = data.aws_secretsmanager_secret.staging_secret_key[0].id
 }
 
 data "libp2p_peer_id" "staging" {
-  ed25519_secret_key = data.aws_secretsmanager_secret_version.staging_secret_key.secret_string
+  count              = var.query_staging ? 1 : 0
+  ed25519_secret_key = data.aws_secretsmanager_secret_version.staging_secret_key[0].secret_string
 }

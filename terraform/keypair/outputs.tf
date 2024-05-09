@@ -9,6 +9,6 @@ output "peer_id" {
 }
 
 output "staging_peer_id" {
-  value = data.libp2p_peer_id.staging.base58
+  value = var.query_staging ? data.libp2p_peer_id.staging[0].base58 : null
 }
 

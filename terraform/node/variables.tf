@@ -66,8 +66,9 @@ variable "prometheus_endpoint" {
   type = string
 }
 
-variable "aws_otel_collector_ecr_repository_url" {
-  type = string
+variable "aws_otel_collector_image" {
+  type    = string
+  default = "docker.io/amazon/aws-otel-collector:v0.35.0"
 }
 
 variable "ec2_instance_profile" {
@@ -90,6 +91,16 @@ variable "ipv4_address" {
   type = string
 }
 
+variable "expose_public_ip" {
+  type    = bool
+  default = false
+}
+
+variable "eip_id" {
+  type    = string
+  default = null
+}
+
 variable "node_cpu" {
   type = number
 }
@@ -108,7 +119,8 @@ variable "ebs_volume_size" {
 }
 
 variable "cache_buster" {
-  type = string
+  type    = string
+  default = ""
 }
 
 variable "decommission_safety_switch" {

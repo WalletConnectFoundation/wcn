@@ -272,7 +272,7 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
 
             relay_rocks::db::Statistic::Histogram(h) => {
                 // The distribution is already calculated for us by RocksDB, so we use
-                // `gauge`/`counter` here instead of `histogram`
+                // `gauge`/`counter` here instead of `histogram`.
 
                 metrics.counter(format!("{name}_count")).add(h.count, &[]);
                 metrics.counter(format!("{name}_sum")).add(h.sum, &[]);

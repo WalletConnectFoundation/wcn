@@ -28,7 +28,11 @@ debug = 1
 
 [lib]
 path = "src/lib.rs"
-name = "lib"
+name = "irn_node"
+
+[[bin]]
+path = "src/main.rs"
+name = "irn_node"
 
 [features]
 default = ["testing"]

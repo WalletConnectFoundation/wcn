@@ -12,13 +12,13 @@ use {
         PeerId,
         ShutdownReason,
     },
-    itertools::Itertools,
-    lib::{
+    irn_node::{
         storage::{Get, Set, Storage},
         Config,
         Consensus,
         Network,
     },
+    itertools::Itertools,
     rand::Rng,
     relay_rocks::util::timestamp_micros,
     std::{collections::HashMap, path::PathBuf, time::Duration},

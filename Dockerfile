@@ -46,7 +46,7 @@ WORKDIR             ${WORK_DIR}
 
 # Build the local binary
 COPY                . .
-RUN                 cargo build irn ${BUILD_SHARED_ARGS}
+RUN                 cargo build ${BUILD_SHARED_ARGS}
 
 # Put the artifacts to a known path so we don't have to pass an extra arg to the runtime image
 RUN                 ln -s ${WORK_DIR}/target/${BUILD_PROFILE_DIR} ${WORK_DIR}/target/out

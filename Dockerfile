@@ -46,7 +46,7 @@ WORKDIR             ${WORK_DIR}
 
 # Build the local binary
 COPY                . .
-RUN                 cargo build -p irn ${BUILD_SHARED_ARGS}
+RUN                 cargo build irn ${BUILD_SHARED_ARGS}
 
 # Put the artifacts to a known path so we don't have to pass an extra arg to the runtime image
 RUN                 ln -s ${WORK_DIR}/target/${BUILD_PROFILE_DIR} ${WORK_DIR}/target/out
@@ -83,4 +83,4 @@ ENV                 LOG_LEVEL="info,irn_node=${LOG_LEVEL}"
 RUN                 mkdir /irn && chown 1001:1001 /irn
 
 USER                1001:1001
-ENTRYPOINT          ["/usr/local/bin/irn", "node", "run"]
+ENTRYPOINT          ["/usr/local/bin/irn_node"]

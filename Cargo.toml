@@ -31,8 +31,8 @@ path = "src/lib.rs"
 name = "lib"
 
 [features]
-default = ["test-cluster"]
-test-cluster = [
+default = ["testing"]
+testing = [
     "dep:tempfile",
     "dep:once_cell",
     "dep:rand",
@@ -54,14 +54,14 @@ derive_more = { version = "=1.0.0-beta.6", features = [
     "try_into",
     "deref",
 ] }
-irn = { package = "relay_irn", path = "crates/relay_irn" }
+core = { package = "irn_core", path = "crates/core" }
 api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 raft = { path = "crates/raft" }
 network = { path = "crates/network" }
 relay_rocks = { path = "crates/rocks" }
 
 [dependencies]
-irn = { workspace = true }
+irn = { package = "irn_core", path = "crates/core" }
 api = { workspace = true }
 raft = { workspace = true }
 network = { workspace = true }

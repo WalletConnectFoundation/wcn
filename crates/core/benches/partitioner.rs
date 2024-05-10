@@ -1,7 +1,7 @@
 use {
     alloc_counter::{count_alloc, AllocCounterSystem},
     criterion::{black_box, criterion_group, criterion_main, Criterion},
-    relay_irn::cluster::keyspace::partitioner::{Partitioner, Xxh3Partitioner},
+    irn_core::cluster::keyspace::partitioner::{Partitioner, Xxh3Partitioner},
     std::time::{Duration, Instant},
 };
 

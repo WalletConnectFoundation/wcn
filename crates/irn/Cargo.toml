@@ -1,0 +1,20 @@
+[package]
+name = "irn"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "irn"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+eyre = "0.6.12"
+tracing = "0.1"
+node = { package = "irn_node", path = "../../." }
+vergen-pretty = { version = "0.3", features = ["trace"] }
+anyhow = "1"
+
+[lints]
+workspace = true

@@ -1,6 +1,8 @@
 use {
+    anyhow::Context as _,
     futures::{future::FusedFuture, FutureExt},
     irn::ShutdownReason,
+    logger::Logger,
     serde::{Deserialize, Serialize},
     std::{
         collections::HashMap,
@@ -10,22 +12,23 @@ use {
         pin::pin,
         time::Duration,
     },
-    storage::Storage,
     wc::{
         future::StaticFutureExt,
         metrics::{self, otel},
     },
 };
-
-pub use self::{
+pub use {
     config::Config,
     consensus::Consensus,
     network::{Multiaddr, Multihash, Network, RemoteNode},
+    storage::Storage,
 };
 
-mod config;
+pub mod config;
 pub mod consensus;
+pub mod logger;
 pub mod network;
+pub mod signal;
 pub mod storage;
 
 type Node = irn::Node<Consensus, Network, Storage>;
@@ -49,6 +52,30 @@ pub enum Error {
 
     #[error("Failed to initialize Consensus: {0:?}")]
     Consensus(consensus::InitializationError),
+}
+
+#[global_allocator]
+static GLOBAL: wc::alloc::Jemalloc = wc::alloc::Jemalloc;
+
+pub fn exec() -> anyhow::Result<()> {
+    let _logger = Logger::init();
+
+    for (key, value) in vergen_pretty::vergen_pretty_env!() {
+        if let Some(value) = value {
+            tracing::warn!(key, value, "build info");
+        }
+    }
+
+    let cfg = Config::from_env().context("failed to parse config")?;
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move {
+            run(signal::shutdown()?, &cfg).await?.await;
+            Ok(())
+        })
 }
 
 pub async fn run(

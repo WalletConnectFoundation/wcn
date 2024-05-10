@@ -30,6 +30,16 @@ debug = 1
 path = "src/lib.rs"
 name = "lib"
 
+[features]
+default = ["testing"]
+testing = [
+    "dep:tempfile",
+    "dep:once_cell",
+    "dep:rand",
+    "irn/testing",
+    "api/client",
+]
+
 [lints]
 workspace = true
 

@@ -75,7 +75,7 @@ RUN                 apt-get update \
 
 WORKDIR             ${WORK_DIR}
 
-COPY --from=build   ${WORK_DIR}/target/out/irn /usr/local/bin/irn
+COPY --from=build   ${WORK_DIR}/target/out/irn_node /usr/local/bin/irn_node
 
 # Preset the `LOG_LEVEL` env var based on the global log level.
 ENV                 LOG_LEVEL="info,irn_node=${LOG_LEVEL}"

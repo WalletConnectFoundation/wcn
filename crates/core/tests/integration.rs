@@ -1,7 +1,5 @@
 use {
-    libp2p::Multiaddr,
-    rand::Rng,
-    relay_irn::{
+    irn_core::{
         cluster::{self, replication::Strategy},
         consensus,
         network,
@@ -11,6 +9,8 @@ use {
         PeerId,
         ShutdownReason,
     },
+    libp2p::Multiaddr,
+    rand::Rng,
     std::{collections::HashMap, time::Duration},
     storage::stub::{Get, Set},
     tracing_subscriber::EnvFilter,

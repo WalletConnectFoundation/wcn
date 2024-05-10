@@ -707,18 +707,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98cc8fbded0c607b7ba9dd60cd98df59af97e84d24e49c8557331cfc26d301ce"
 
 [[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap 4.5.4",
- "eyre",
- "irn_core",
- "tracing",
- "vergen-pretty",
-]
-
-[[package]]
 name = "clru"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2569,6 +2557,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
+name = "irn"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap 4.5.4",
+ "eyre",
+ "irn_node",
+ "tracing",
+ "vergen-pretty",
+]
+
+[[package]]
 name = "irn_api"
 version = "0.1.0"
 dependencies = [
@@ -2596,36 +2596,35 @@ dependencies = [
 name = "irn_core"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "alloc_counter",
  "async-trait",
- "atty",
- "axum",
  "backoff",
- "base64 0.20.0",
+ "better-panic",
+ "bitflags 2.5.0",
+ "bytes",
  "chrono",
- "clap 4.5.4",
+ "criterion",
+ "dashmap",
  "derivative",
  "derive_more 1.0.0-beta.6",
+ "difference",
  "env_logger 0.10.2",
- "envy",
+ "fnv",
  "futures",
- "hyper 0.14.28",
- "irn_api",
- "itertools 0.11.0",
- "network",
+ "futures-util",
+ "hex",
+ "itertools 0.12.1",
+ "libp2p",
+ "num-traits",
  "once_cell",
- "raft",
+ "pin-project",
  "rand 0.7.3",
- "relay_irn",
- "relay_rocks",
- "rmp-serde",
  "rstest",
  "serde",
- "serde_json",
+ "serde_with",
  "smallvec",
- "sysinfo",
+ "structopt",
  "tap",
- "tempfile",
  "test-log",
  "thiserror",
  "tokio",
@@ -2634,9 +2633,9 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "vergen",
- "vergen-pretty",
+ "tui",
  "wc",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -2651,7 +2650,6 @@ dependencies = [
  "base64 0.20.0",
  "chrono",
  "clap 4.5.4",
- "cli",
  "derivative",
  "derive_more 1.0.0-beta.6",
  "env_logger 0.10.2",
@@ -2665,7 +2663,6 @@ dependencies = [
  "once_cell",
  "raft",
  "rand 0.7.3",
- "relay_irn",
  "relay_rocks",
  "rmp-serde",
  "rstest",
@@ -4029,9 +4026,9 @@ dependencies = [
  "async-trait",
  "derive_more 1.0.0-beta.6",
  "futures",
+ "irn_core",
  "openraft",
  "postcard",
- "relay_irn",
  "serde",
  "thiserror",
  "tokio",
@@ -4201,52 +4198,6 @@ name = "relative-path"
 version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e898588f33fdd5b9420719948f9f2a32c922a246964576f71ba7f24f80610fbc"
-
-[[package]]
-name = "relay_irn"
-version = "0.1.0"
-dependencies = [
- "alloc_counter",
- "async-trait",
- "backoff",
- "better-panic",
- "bitflags 2.5.0",
- "bytes",
- "chrono",
- "criterion",
- "dashmap",
- "derivative",
- "derive_more 1.0.0-beta.6",
- "difference",
- "env_logger 0.10.2",
- "fnv",
- "futures",
- "futures-util",
- "hex",
- "itertools 0.12.1",
- "libp2p",
- "num-traits",
- "once_cell",
- "pin-project",
- "rand 0.7.3",
- "rstest",
- "serde",
- "serde_with",
- "smallvec",
- "structopt",
- "tap",
- "test-log",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tui",
- "wc",
- "xxhash-rust",
-]
 
 [[package]]
 name = "relay_rocks"

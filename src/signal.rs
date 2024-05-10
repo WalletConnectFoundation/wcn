@@ -6,9 +6,9 @@ use {
     tokio::signal::unix::{self, Signal, SignalKind},
 };
 
-pub(crate) fn shutdown_signal() -> anyhow::Result<impl Future<Output = ShutdownReason>> {
-    let mut sigterm = signal_listener(SignalKind::terminate())?;
-    let mut sigusr1 = signal_listener(SignalKind::user_defined1())?;
+pub(crate) fn shutdown() -> anyhow::Result<impl Future<Output = ShutdownReason>> {
+    let mut sigterm = listener(SignalKind::terminate())?;
+    let mut sigusr1 = listener(SignalKind::user_defined1())?;
 
     Ok(async move {
         let mut sigterm = pin!(sigterm.recv());
@@ -21,6 +21,6 @@ pub(crate) fn shutdown_signal() -> anyhow::Result<impl Future<Output = ShutdownR
     })
 }
 
-pub(crate) fn signal_listener(kind: SignalKind) -> anyhow::Result<Signal> {
+fn listener(kind: SignalKind) -> anyhow::Result<Signal> {
     unix::signal(kind).context("Failed to initialize {kind:?} listener")
 }

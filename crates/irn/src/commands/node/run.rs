@@ -10,5 +10,5 @@ pub struct RunCmd {
 
 #[tracing::instrument(skip(_args))]
 pub fn exec(_args: RunCmd) -> anyhow::Result<()> {
-    irn_core::exec::exec()
+    node::exec()
 }

@@ -21,5 +21,6 @@ fn main() -> anyhow::Result<()> {
     match app.commands {
         commands::SubCmd::Node(args) => commands::node::exec(args),
         commands::SubCmd::Config(args) => commands::config::exec(args),
+        commands::SubCmd::Key(args) => commands::key::exec(args),
     }
 }

@@ -100,6 +100,7 @@ pub async fn run(
         replication_concurrency_limit: cfg.request_concurrency_limit,
         replication_request_queue: cfg.request_limiter_queue,
         warmup_delay: Duration::from_millis(cfg.warmup_delay),
+        authorization: None,
     };
 
     let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);

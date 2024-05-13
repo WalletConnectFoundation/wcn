@@ -202,6 +202,7 @@ async fn test_suite() {
             replication_concurrency_limit: 1000,
             replication_request_queue: 4096,
             warmup_delay: Duration::from_secs(1),
+            authorization: None,
         },
     })
     .await;

@@ -1,11 +1,14 @@
+#![allow(async_fn_in_trait)]
+
 use {
     crate::{
         cluster::{
+            self,
             keyspace::{hashring::Positioned, KeyPosition, Keyspace},
             NodeOperationMode,
         },
         migration::StoreHinted,
-        network::{self, HandleRequest},
+        network,
         Network,
         Node,
         PeerId,
@@ -32,23 +35,15 @@ use {
     tokio::sync::OwnedSemaphorePermit,
     wc::{
         future::FutureExt,
-        metrics::{self, otel, TaskMetrics},
+        metrics::{self, otel},
     },
 };
 
 #[cfg(test)]
 mod tests;
 
-static METRICS: TaskMetrics = TaskMetrics::new("irn_replication_task");
-
 /// Maximum time a request can spend in queue awaiting the execution permit.
 const REQUEST_QUEUE_TIMEOUT: Duration = Duration::from_millis(1500);
-
-/// Wrapper to explicitly mark an operation as replicated.
-#[derive(Clone, Copy, Debug)]
-pub struct DispatchReplicated<Op> {
-    pub operation: Op,
-}
 
 pub type CoordinatorResponse<T, SE, NE> = Result<ReplicaResponse<T, SE>, CoordinatorError<NE>>;
 
@@ -61,7 +56,12 @@ pub struct ReplicatedRequest<Op> {
 
 pub type ReplicaResponse<T, E> = Result<T, ReplicaError<E>>;
 
-impl<C, N, S> Node<C, N, S> {
+pub trait Coordinator<Op>: Send + Sync + 'static {
+    type Output: Send + Sync + 'static;
+
+    type StorageError: Send + Sync + 'static;
+    type NetworkError: Send + Sync + 'static;
+
     /// Send a request to the replica set.
     ///
     /// If the coordinator node is part of the replica set, then one operation
@@ -72,34 +72,51 @@ impl<C, N, S> Node<C, N, S> {
     /// produce the same value within the timeout, an error is returned. The
     /// exact number of required replicas is defined by consistency level of the
     /// selected replication strategy.
-    pub async fn dispatch_replicated<Op>(
+    async fn replicate(
         &self,
+        client_id: &libp2p::PeerId,
+        operation: Op,
+    ) -> CoordinatorResponse<Self::Output, Self::StorageError, Self::NetworkError>;
+}
+
+impl<Op, C, N, S> Coordinator<Op> for Node<C, N, S>
+where
+    Op: ReplicatableOperation,
+    Op::Output: std::fmt::Debug,
+    Op::Key: std::fmt::Debug,
+    C: Sync + Send + 'static,
+    N: Network
+        + network::SendRequest<
+            ReplicatedRequest<Op>,
+            Response = Result<S::Ok, ReplicaError<S::Error>>,
+        >,
+    S: Storage<Positioned<Op>, Ok = Op::Output>,
+    S::Ok: Send + Sync,
+    S::Error: Send + Sync,
+    Result<N::Response, N::Error>: Clone + Eq,
+    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
+{
+    type Output = S::Ok;
+    type StorageError = S::Error;
+    type NetworkError = N::Error;
+
+    async fn replicate(
+        &self,
+        client_id: &libp2p::PeerId,
         op: Op,
-    ) -> CoordinatorResponse<S::Ok, S::Error, N::Error>
-    where
-        Op: ReplicatableOperation,
-        Op::Output: std::fmt::Debug,
-        Op::Key: std::fmt::Debug,
-        C: Sync,
-        N: Network
-            + network::SendRequest<
-                ReplicatedRequest<Op>,
-                Response = Result<S::Ok, ReplicaError<S::Error>>,
-            >,
-        S: Storage<Positioned<Op>, Ok = Op::Output>,
-        Result<N::Response, N::Error>: Clone + Eq,
-        Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
-    {
+    ) -> CoordinatorResponse<Self::Output, Self::StorageError, Self::NetworkError> {
+        if let Some(auth) = &self.authorization {
+            if !auth.allowed_coordinator_clients.contains(client_id) {
+                return Err(CoordinatorError::Unauthorized);
+            }
+        }
+
         let _permit = self
             .try_acquire_replication_permit()
             .await
             .ok_or(CoordinatorError::Throttled)?;
 
-        let cluster = self
-            .cluster
-            .read()
-            .with_metrics(METRICS.with_name("cluster_read")) // Ivan asked to add this temporarily
-            .await;
+        let cluster = self.cluster.read().await;
 
         // Ensure that coordinator can cater for the operation.
         if !cluster.node_reached_op_mode(&self.id, NodeOperationMode::Normal) {
@@ -232,24 +249,47 @@ impl<C, N, S> Node<C, N, S> {
             }
         }
     }
+}
 
-    pub async fn exec_replicated<Op>(
+pub trait Replica<Op>: Send + Sync + 'static {
+    type Output: Send + Sync + 'static;
+    type StorageError: Send + Sync + 'static;
+
+    async fn handle_replication(
         &self,
+        coordinator_id: &libp2p::PeerId,
         r: ReplicatedRequest<Op>,
-    ) -> ReplicaResponse<Op::Output, S::Error>
-    where
-        Op: ReplicatableOperation,
-        S: Storage<Positioned<Op>, Ok = Op::Output>,
-        Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
-    {
+    ) -> ReplicaResponse<Self::Output, Self::StorageError>;
+}
+
+impl<Op, C, N, S> Replica<Op> for Node<C, N, S>
+where
+    Op: ReplicatableOperation,
+    S: Storage<Positioned<Op>, Ok = Op::Output> + Send + Sync,
+    S::Ok: Send + Sync,
+    S::Error: Send + Sync,
+    N: Send + Sync + 'static,
+    C: Send + Sync + 'static,
+    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
+{
+    type Output = S::Ok;
+    type StorageError = S::Error;
+
+    async fn handle_replication(
+        &self,
+        coordinator_id: &libp2p::PeerId,
+        r: ReplicatedRequest<Op>,
+    ) -> ReplicaResponse<Self::Output, Self::StorageError> {
         let _permit = self
             .try_acquire_replication_permit()
             .await
             .ok_or(ReplicaError::Throttled)?;
 
-        if r.cluster_view_version != self.cluster.read().await.view().version() {
-            return Err(ReplicaError::ClusterViewVersionMismatch);
-        };
+        self.cluster
+            .read()
+            .await
+            .validate_version(r.cluster_view_version)?
+            .validate_member(coordinator_id)?;
 
         let operation = Positioned {
             position: r.key_position,
@@ -258,7 +298,9 @@ impl<C, N, S> Node<C, N, S> {
 
         sealed::Replication::exec_replicated(self, operation).await
     }
+}
 
+impl<C, N, S> Node<C, N, S> {
     async fn try_acquire_replication_permit(&self) -> Option<OwnedSemaphorePermit> {
         metrics::gauge!(
             "irn_network_request_permits_available",
@@ -310,48 +352,6 @@ impl<C, N, S> Node<C, N, S> {
     }
 }
 
-#[async_trait]
-impl<Op, C, N, S> HandleRequest<DispatchReplicated<Op>> for Node<C, N, S>
-where
-    Op: ReplicatableOperation,
-    Op::Output: std::fmt::Debug,
-    Op::Key: std::fmt::Debug,
-    C: Send + Sync + 'static,
-    N: Network
-        + network::SendRequest<
-            ReplicatedRequest<Op>,
-            Response = Result<S::Ok, ReplicaError<S::Error>>,
-        >,
-    S: Storage<Positioned<Op>, Ok = Op::Output>,
-    Result<N::Response, N::Error>: Clone + Eq,
-    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
-{
-    type Response = CoordinatorResponse<S::Ok, S::Error, N::Error>;
-
-    async fn handle_request(&self, req: DispatchReplicated<Op>) -> Self::Response {
-        self.dispatch_replicated(req.operation).await
-    }
-}
-
-#[async_trait]
-impl<Op, C, N, S> HandleRequest<ReplicatedRequest<Op>> for Node<C, N, S>
-where
-    Op: ReplicatableOperation,
-    C: Send + Sync + 'static,
-    N: Send + Sync + 'static,
-    S: Storage<Positioned<Op>, Ok = Op::Output>,
-    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
-{
-    type Response = ReplicaResponse<Op::Output, S::Error>;
-
-    async fn handle_request(
-        &self,
-        req: ReplicatedRequest<Op>,
-    ) -> ReplicaResponse<Op::Output, S::Error> {
-        self.exec_replicated(req).await
-    }
-}
-
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CoordinatorError<N> {
     /// Request coordinator is in a wrong mode.
@@ -376,6 +376,9 @@ pub enum CoordinatorError<N> {
     /// Network error.
     #[error("Network error: {0}")]
     Network(N),
+
+    #[error("Client is not authorized to use this coordinator")]
+    Unauthorized,
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,12 +387,21 @@ pub enum ReplicaError<S> {
     #[error("ClusterView versions of requester and responder don't match")]
     ClusterViewVersionMismatch,
 
+    #[error(transparent)]
+    NotClusterMember(#[from] cluster::NotMemberError),
+
     #[error("Too many requests")]
     Throttled,
 
     /// Error of executing the operation.
     #[error("Local storage error: {0}")]
     Storage(S),
+}
+
+impl<S> From<cluster::ViewVersionMismatch> for ReplicaError<S> {
+    fn from(_: cluster::ViewVersionMismatch) -> Self {
+        Self::ClusterViewVersionMismatch
+    }
 }
 
 impl<N> From<tokio::time::error::Elapsed> for CoordinatorError<N> {

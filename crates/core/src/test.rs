@@ -4,16 +4,13 @@ use {
     crate::{
         cluster::{self, ClusterView, NodeOperationMode},
         migration,
-        network::HandleRequest,
         replication::{
-            CoordinatorResponse,
-            DispatchReplicated,
+            Coordinator,
             Read,
+            Replica,
             ReplicaError,
-            ReplicaResponse,
             ReplicatableOperation,
             ReplicatableOperationOutput,
-            ReplicatedRequest,
             Write,
         },
         BootingMigrations,
@@ -29,7 +26,11 @@ use {
     itertools::Itertools,
     libp2p::{identity::Keypair, Multiaddr},
     rand::seq::IteratorRandom,
-    std::{collections::HashMap, fmt, time::Duration},
+    std::{
+        collections::{HashMap, HashSet},
+        fmt,
+        time::Duration,
+    },
 };
 
 pub struct Cluster<C: Context> {
@@ -41,6 +42,8 @@ pub struct Cluster<C: Context> {
     node_count: u16,
 
     expected_view: ClusterView,
+
+    authorized_client: libp2p::PeerId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,23 +53,18 @@ pub struct ClusterConfig {
     pub node_opts: NodeOpts,
 }
 
-#[allow(clippy::trait_duplication_in_bounds)] // false positive
-impl<C: Context, SE: fmt::Debug + PartialEq, NE: fmt::Debug> Cluster<C>
+// #[allow(clippy::trait_duplication_in_bounds)] // false positive
+impl<C: Context, SE: fmt::Debug + PartialEq, NE: fmt::Debug + PartialEq> Cluster<C>
 where
     migration::Manager<C::Network, C::Storage>: BootingMigrations + LeavingMigrations,
-    crate::Node<C::Consensus, C::Network, C::Storage>: HandleRequest<
-            DispatchReplicated<C::ReadOperation>,
-            Response = CoordinatorResponse<ReadOutput<C>, SE, NE>,
-        > + HandleRequest<
-            DispatchReplicated<C::WriteOperation>,
-            Response = CoordinatorResponse<WriteOutput<C>, SE, NE>,
-        > + HandleRequest<
-            ReplicatedRequest<C::ReadOperation>,
-            Response = ReplicaResponse<ReadOutput<C>, SE>,
-        > + HandleRequest<
-            ReplicatedRequest<C::WriteOperation>,
-            Response = ReplicaResponse<WriteOutput<C>, SE>,
-        >,
+    crate::Node<C::Consensus, C::Network, C::Storage>: Coordinator<C::ReadOperation, Output = ReadOutput<C>, StorageError = SE, NetworkError = NE>
+        + Coordinator<
+            C::WriteOperation,
+            Output = WriteOutput<C>,
+            StorageError = SE,
+            NetworkError = NE,
+        > + Replica<C::ReadOperation, Output = ReadOutput<C>, StorageError = SE>
+        + Replica<C::WriteOperation, Output = WriteOutput<C>, StorageError = SE>,
     ReadOutput<C>: fmt::Debug + PartialEq,
 {
     pub async fn new(ctx: C, cfg: ClusterConfig) -> Self {
@@ -77,6 +75,7 @@ where
             next_port: 42000,
             node_count: 0,
             expected_view: ClusterView::default(),
+            authorized_client: libp2p::PeerId::random(),
         };
 
         let bootnode_identities = (0..cfg.num_bootnodes)
@@ -136,7 +135,7 @@ where
         let mut req = node.new_replicated_request(C::gen_test_ops().read).await;
         req.cluster_view_version = mismatching_version;
 
-        let resp = node.handle_request(req).await;
+        let resp = node.handle_replication(self.random_peer_id(), req).await;
         assert_eq!(resp, Err(ReplicaError::ClusterViewVersionMismatch));
     }
 
@@ -157,9 +156,7 @@ where
                 let assert = C::gen_test_ops();
 
                 this.random_node()
-                    .handle_request(DispatchReplicated {
-                        operation: assert.write.clone(),
-                    })
+                    .replicate(&this.authorized_client, assert.write.clone())
                     .await
                     .expect("coordinator")
                     .expect("replica");
@@ -179,14 +176,20 @@ where
                 // find one replica and break it
                 for n in this.nodes.values() {
                     let output = n
-                        .handle_request(n.new_replicated_request(c.read.clone()).await)
+                        .handle_replication(
+                            this.random_peer_id(),
+                            n.new_replicated_request(c.read.clone()).await,
+                        )
                         .await
                         .unwrap();
 
                     if c.expected_output == output {
-                        n.handle_request(n.new_replicated_request(c.overwrite.clone()).await)
-                            .await
-                            .unwrap();
+                        n.handle_replication(
+                            this.random_peer_id(),
+                            n.new_replicated_request(c.overwrite.clone()).await,
+                        )
+                        .await
+                        .unwrap();
                         break;
                     }
                 }
@@ -195,9 +198,7 @@ where
                 let coordinators: usize = stream::iter(this.nodes.values())
                     .map(|n| async {
                         let output = n
-                            .handle_request(DispatchReplicated {
-                                operation: c.read.clone(),
-                            })
+                            .replicate(&this.authorized_client, c.read.clone())
                             .await
                             .expect("coordinator")
                             .expect("replica");
@@ -218,7 +219,10 @@ where
                 let replicas: usize = stream::iter(this.nodes.values())
                     .map(|n| async {
                         let output = n
-                            .handle_request(n.new_replicated_request(c.read.clone()).await)
+                            .handle_replication(
+                                this.random_peer_id(),
+                                n.new_replicated_request(c.read.clone()).await,
+                            )
                             .await
                             .expect("replica");
 
@@ -250,14 +254,13 @@ where
         tracing::info!("Full node rotation");
 
         let this = &self;
+        let authorized_client = self.authorized_client;
         let read_asserts: Vec<_> = stream::iter(0..RECORDS_NUM)
             .map(|_| async move {
                 let assert = C::gen_test_ops();
 
                 this.random_node()
-                    .handle_request(DispatchReplicated {
-                        operation: assert.write.clone(),
-                    })
+                    .replicate(&authorized_client, assert.write.clone())
                     .await
                     .expect("coordinator")
                     .expect("replica");
@@ -285,9 +288,7 @@ where
         let mismatches: usize = stream::iter(read_asserts)
             .map(|assert| async move {
                 let output = node
-                    .handle_request(DispatchReplicated {
-                        operation: assert.read,
-                    })
+                    .replicate(&authorized_client, assert.read)
                     .await
                     .expect("coordinator")
                     .expect("replica");
@@ -388,6 +389,10 @@ where
         self.nodes.values().choose(&mut rand::thread_rng()).unwrap()
     }
 
+    fn random_peer_id(&self) -> &libp2p::PeerId {
+        &self.random_node().id.id
+    }
+
     fn node_mut(&mut self, id: &PeerId) -> &mut NodeHandle<C> {
         self.nodes.get_mut(id).unwrap()
     }
@@ -438,9 +443,17 @@ where
             .init_deps(idt.clone(), peers, bootnodes.is_some())
             .await;
 
+        let mut opts = self.config.node_opts.clone();
+        let mut auth = opts.authorization.unwrap_or(crate::AuthorizationOpts {
+            allowed_coordinator_clients: HashSet::new(),
+        });
+        auth.allowed_coordinator_clients
+            .insert(self.authorized_client);
+        opts.authorization = Some(auth);
+
         crate::Node::new(
             idt.peer_id,
-            self.config.node_opts.clone(),
+            opts,
             deps.consensus,
             deps.network,
             deps.storage,

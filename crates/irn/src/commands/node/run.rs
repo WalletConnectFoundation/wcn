@@ -8,7 +8,6 @@ pub struct RunCmd {
     addr: SocketAddr,
 }
 
-#[tracing::instrument(skip(_args))]
 pub fn exec(_args: RunCmd) -> anyhow::Result<()> {
     node::exec()
 }

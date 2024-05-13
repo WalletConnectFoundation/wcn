@@ -12,11 +12,19 @@ enum KeySub {
 }
 
 #[derive(Debug, clap::Args)]
+/// Generate one or multiple keypairs.
+///
+/// The keys in output are encoded with base64. Additionally, a peer ID is
+/// generated for each keypair.
 struct GenerateCmd {
     #[clap(short, long)]
+    /// Seed to use for generating keypairs. Must be a hex-encoded 32 byte
+    /// string. If omitted, keypairs are generated from entropy.
     seed: Option<String>,
 
-    #[clap(short, long)]
+    #[clap(short, long, default_value = "1")]
+    /// Number of keypairs to generate. By default a single keypair is
+    /// generated.
     num_keys: Option<u32>,
 }
 
@@ -27,7 +35,7 @@ pub fn exec(cmd: KeyCmd) -> anyhow::Result<()> {
 }
 
 fn generate(args: GenerateCmd) -> anyhow::Result<()> {
-    let num_keys = args.num_keys.unwrap_or(1);
+    let num_keys = args.num_keys.unwrap();
 
     if num_keys == 0 {
         anyhow::bail!("Invalid number of keys");

@@ -6,6 +6,7 @@ use {
         migration,
         replication::{
             Coordinator,
+            CoordinatorError,
             Read,
             Replica,
             ReplicaError,
@@ -53,7 +54,7 @@ pub struct ClusterConfig {
     pub node_opts: NodeOpts,
 }
 
-// #[allow(clippy::trait_duplication_in_bounds)] // false positive
+#[allow(clippy::trait_duplication_in_bounds)] // false positive
 impl<C: Context, SE: fmt::Debug + PartialEq, NE: fmt::Debug + PartialEq> Cluster<C>
 where
     migration::Manager<C::Network, C::Storage>: BootingMigrations + LeavingMigrations,
@@ -102,7 +103,7 @@ where
 
         for idt in &bootnode_identities {
             cluster
-                .bootup_node(idt.clone(), Some(&bootnode_identities))
+                .bootstrap_node(idt.clone(), &bootnode_identities)
                 .await;
         }
 
@@ -118,6 +119,7 @@ where
 
     pub async fn run_test_suite(&mut self) {
         self.cluster_view_version_validation().await;
+        self.authorization().await;
         self.replication_and_read_repairs().await;
         self.full_node_rotation().await;
         self.restart_then_decommission().await;
@@ -137,6 +139,40 @@ where
 
         let resp = node.handle_replication(self.random_peer_id(), req).await;
         assert_eq!(resp, Err(ReplicaError::ClusterViewVersionMismatch));
+    }
+
+    async fn authorization(&mut self) {
+        tracing::info!("Authorization");
+
+        let ops = C::gen_test_ops();
+        let client = &libp2p::PeerId::random();
+
+        // by defaut client authorization is disabled
+        self.random_node()
+            .replicate(client, ops.write)
+            .await
+            .expect("auth is disabled")
+            .unwrap();
+
+        // bootup a new node with authorization enabled
+        let idt = self.next_node_identity();
+        self.bootup_node_with_auth(idt.clone()).await;
+
+        let resp = self
+            .node_mut(&idt.peer_id)
+            .replicate(client, ops.read.clone())
+            .await;
+        assert_eq!(resp, Err(CoordinatorError::Unauthorized));
+
+        self.node_mut(&idt.peer_id)
+            .clone()
+            .replicate(&self.authorized_client, ops.read.clone())
+            .await
+            .expect("should be authorized")
+            .unwrap();
+
+        self.shutdown_node(&idt.peer_id, ShutdownReason::Decommission)
+            .await;
     }
 
     async fn replication_and_read_repairs(&mut self) {
@@ -278,7 +314,7 @@ where
             let idt = self.next_node_identity();
 
             // spin up new node and wait for the cluster to become `Normal`
-            self.bootup_node(idt, None).await;
+            self.bootup_node(idt).await;
 
             // decomission a node and wait for it to become `Left`
             self.shutdown_node(&id, ShutdownReason::Decommission).await;
@@ -311,10 +347,10 @@ where
         let idt = self.next_node_identity();
         let id = idt.peer_id;
 
-        self.bootup_node(idt.clone(), None).await;
+        self.bootup_node(idt.clone()).await;
         self.shutdown_node(&id, ShutdownReason::Restart).await;
 
-        self.bootup_node(idt, None).await;
+        self.bootup_node(idt).await;
         self.shutdown_node(&id, ShutdownReason::Decommission).await;
     }
 
@@ -329,7 +365,7 @@ where
             let idt = self.next_node_identity();
             let id = idt.peer_id;
 
-            self.bootup_node(idt.clone(), None).await;
+            self.bootup_node(idt.clone()).await;
 
             new_nodes.push(id);
         }
@@ -427,6 +463,7 @@ where
         &mut self,
         idt: NodeIdentity,
         bootnodes: Option<&[NodeIdentity]>,
+        enable_auth: bool,
     ) -> Node<C> {
         let peers = match bootnodes {
             Some(nodes) => nodes.iter().map(|p| (p.peer_id, p.addr.clone())).collect(),
@@ -444,12 +481,14 @@ where
             .await;
 
         let mut opts = self.config.node_opts.clone();
-        let mut auth = opts.authorization.unwrap_or(crate::AuthorizationOpts {
-            allowed_coordinator_clients: HashSet::new(),
-        });
-        auth.allowed_coordinator_clients
-            .insert(self.authorized_client);
-        opts.authorization = Some(auth);
+        if enable_auth {
+            let mut auth = crate::AuthorizationOpts {
+                allowed_coordinator_clients: HashSet::new(),
+            };
+            auth.allowed_coordinator_clients
+                .insert(self.authorized_client);
+            opts.authorization = Some(auth);
+        }
 
         crate::Node::new(
             idt.peer_id,
@@ -460,10 +499,27 @@ where
         )
     }
 
-    async fn bootup_node(&mut self, idt: NodeIdentity, bootnodes: Option<&[NodeIdentity]>) {
+    async fn bootup_node(&mut self, idt: NodeIdentity) {
+        self.bootup_node_(idt, None, false).await
+    }
+
+    async fn bootstrap_node(&mut self, idt: NodeIdentity, bootstrap_nodes: &[NodeIdentity]) {
+        self.bootup_node_(idt, Some(bootstrap_nodes), false).await
+    }
+
+    async fn bootup_node_with_auth(&mut self, idt: NodeIdentity) {
+        self.bootup_node_(idt, None, true).await
+    }
+
+    async fn bootup_node_(
+        &mut self,
+        idt: NodeIdentity,
+        bootnodes: Option<&[NodeIdentity]>,
+        enable_auth: bool,
+    ) {
         tracing::info!(id = %idt.peer_id, addr = %idt.addr, "Booting up node");
 
-        let node = self.create_node(idt.clone(), bootnodes).await;
+        let node = self.create_node(idt.clone(), bootnodes, enable_auth).await;
 
         self.test_context.pre_bootup(&idt, &node).await;
 

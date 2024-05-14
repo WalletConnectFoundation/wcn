@@ -99,7 +99,6 @@ impl Node {
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ClusterView {
     peers: HashMap<PeerId, Node>,
-    // bootstrap_nodes: HashSet<PeerId>,
     version: u128,
 }
 

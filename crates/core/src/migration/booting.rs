@@ -40,11 +40,11 @@ pub enum PullDataError {
     #[error(transparent)]
     ClusterViewVersionMismatch(#[from] cluster::ViewVersionMismatch),
 
-    #[error(transparent)]
-    NotClusterMember(#[from] cluster::NotMemberError),
-
     #[error("Export operation failed: {0}")]
     Export(String),
+
+    #[error(transparent)]
+    NotClusterMember(#[from] cluster::NotMemberError),
 }
 
 /// Response to a [`PullDataRequest`].

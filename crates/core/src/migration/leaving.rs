@@ -41,14 +41,14 @@ pub enum PushDataError {
     #[error(transparent)]
     ClusterViewVersionMismatch(#[from] cluster::ViewVersionMismatch),
 
-    #[error(transparent)]
-    NotClusterMember(#[from] cluster::NotMemberError),
-
     #[error("Import operation failed: {0}")]
     Import(String),
 
     #[error("CommitHintedOperations failed: {0}")]
     CommitHintedOperations(String),
+
+    #[error(transparent)]
+    NotClusterMember(#[from] cluster::NotMemberError),
 }
 
 /// Response to [`PushRequest`].

@@ -387,15 +387,15 @@ pub enum ReplicaError<S> {
     #[error("ClusterView versions of requester and responder don't match")]
     ClusterViewVersionMismatch,
 
-    #[error(transparent)]
-    NotClusterMember(#[from] cluster::NotMemberError),
-
     #[error("Too many requests")]
     Throttled,
 
     /// Error of executing the operation.
     #[error("Local storage error: {0}")]
     Storage(S),
+
+    #[error(transparent)]
+    NotClusterMember(#[from] cluster::NotMemberError),
 }
 
 impl<S> From<cluster::ViewVersionMismatch> for ReplicaError<S> {

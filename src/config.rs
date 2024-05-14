@@ -2,7 +2,12 @@ use {
     irn::{cluster::replication::Strategy, PeerId},
     network::Multiaddr,
     serde::{de::Error, Deserialize, Deserializer},
-    std::{collections::HashMap, fmt::Debug, path::PathBuf, str::FromStr},
+    std::{
+        collections::{HashMap, HashSet},
+        fmt::Debug,
+        path::PathBuf,
+        str::FromStr,
+    },
 };
 
 /// Local [`Node`] config.
@@ -71,6 +76,10 @@ pub struct Config {
     /// Extra time a node should take to "warmup" before transitioning from
     /// `Restarting` to `Normal`. (in milliseconds)
     pub warmup_delay: u64,
+
+    /// List of authorized client ids.
+    /// If `None` the client authorization is going to be disabled.
+    pub authorized_clients: Option<HashSet<libp2p::PeerId>>,
 }
 
 impl Config {
@@ -97,6 +106,7 @@ impl Config {
             network_request_timeout: raw.network_request_timeout.unwrap_or(1000),
             replication_request_timeout: raw.replication_request_timeout.unwrap_or(1000),
             warmup_delay: raw.warmup_delay.unwrap_or(30_000),
+            authorized_clients: raw.authorized_clients,
         };
 
         if let Some(nodes) = raw.bootstrap_nodes {
@@ -142,6 +152,7 @@ struct RawConfig {
     network_request_timeout: Option<u64>,
     replication_request_timeout: Option<u64>,
     warmup_delay: Option<u64>,
+    authorized_clients: Option<HashSet<libp2p::PeerId>>,
 }
 
 #[derive(Debug, thiserror::Error)]

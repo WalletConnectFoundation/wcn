@@ -43,9 +43,9 @@ impl test::Context for Context {
             .iter()
             .map(|(id, addr)| (*id, [addr.clone()].into_iter().collect()))
             .collect();
-        let network = self
-            .network_registry
-            .new_network_handle(idt.addr.clone(), peers);
+        let network =
+            self.network_registry
+                .new_network_handle(idt.peer_id, idt.addr.clone(), peers);
 
         test::Dependencies {
             consensus: self.consensus.clone(),
@@ -123,6 +123,7 @@ async fn test_suite() {
             replication_concurrency_limit: 1000,
             replication_request_queue: 4096,
             warmup_delay: Duration::from_millis(10),
+            authorization: None,
         },
     })
     .await

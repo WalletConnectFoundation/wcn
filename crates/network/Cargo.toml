@@ -23,6 +23,7 @@ tokio-util = { version = "0.7", features = ["compat", "codec"] }
 tokio-serde = "0.8"
 rand = { version = "0.8", features = ["small_rng"] }
 libp2p = { version = "0.53", features = ["serde", "tokio"] }
+rustls = "0.21"
 pin-project = "1.0"
 serde = { version = "1" }
 thiserror = "1.0"

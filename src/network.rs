@@ -27,8 +27,10 @@ use {
         },
         network::SendRequest,
         replication::{
+            Coordinator,
             CoordinatorError,
             CoordinatorResponse,
+            Replica,
             ReplicaError,
             ReplicatableOperation,
             ReplicatedRequest,
@@ -210,9 +212,9 @@ impl inbound::RpcHandler for RpcHandler {
         &self,
         id: rpc::Id,
         stream: BiDirectionalStream,
-        _: &ConnectionInfo,
+        conn_info: &ConnectionInfo,
     ) -> impl Future<Output = ()> + Send {
-        Self::handle_internal_rpc(self, id, stream)
+        Self::handle_internal_rpc(self, id, stream, conn_info)
     }
 }
 
@@ -260,6 +262,7 @@ impl RpcHandler {
         conn_info: &ConnectionInfo<HandshakeData>,
     ) {
         let stream = stream.with_timeouts(self.rpc_timeouts).metered();
+        let client_id = &conn_info.peer_id;
 
         let _ = match id {
             api::rpc::Get::ID => {
@@ -268,7 +271,7 @@ impl RpcHandler {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -281,7 +284,7 @@ impl RpcHandler {
                         version: timestamp_micros(),
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -291,7 +294,7 @@ impl RpcHandler {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -301,7 +304,7 @@ impl RpcHandler {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -313,7 +316,7 @@ impl RpcHandler {
                         version: timestamp_micros(),
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -324,7 +327,7 @@ impl RpcHandler {
                         field: req.field,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -338,7 +341,7 @@ impl RpcHandler {
                         version: timestamp_micros(),
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -349,7 +352,7 @@ impl RpcHandler {
                         field: req.field,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -360,7 +363,7 @@ impl RpcHandler {
                         field: req.field,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -373,7 +376,7 @@ impl RpcHandler {
                         version: timestamp_micros(),
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -383,7 +386,7 @@ impl RpcHandler {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -393,7 +396,7 @@ impl RpcHandler {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -403,7 +406,7 @@ impl RpcHandler {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    self.node().dispatch_replicated(op).map(api_result).await
+                    self.node().replicate(client_id, op).map(api_result).await
                 })
                 .await
             }
@@ -431,7 +434,7 @@ impl RpcHandler {
                     }
 
                     self.node()
-                        .dispatch_replicated(op)
+                        .replicate(client_id, op)
                         .map_ok(|res| res.map(Page))
                         .map(api_result)
                         .await
@@ -466,8 +469,14 @@ impl RpcHandler {
         });
     }
 
-    async fn handle_internal_rpc(&self, id: rpc::Id, stream: BiDirectionalStream) {
+    async fn handle_internal_rpc(
+        &self,
+        id: rpc::Id,
+        stream: BiDirectionalStream,
+        conn_info: &ConnectionInfo,
+    ) {
         let stream = stream.with_timeouts(self.rpc_timeouts).metered();
+        let peer_id = &conn_info.peer_id;
 
         let _ = match id {
             rpc::raft::AddMember::ID => {
@@ -496,55 +505,101 @@ impl RpcHandler {
             }
 
             rpc::replica::Get::ID => {
-                rpc::replica::Get::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::Get::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::Set::ID => {
-                rpc::replica::Set::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::Set::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::Del::ID => {
-                rpc::replica::Del::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::Del::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::GetExp::ID => {
-                rpc::replica::GetExp::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::GetExp::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::SetExp::ID => {
-                rpc::replica::SetExp::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::SetExp::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HGet::ID => {
-                rpc::replica::HGet::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HGet::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HSet::ID => {
-                rpc::replica::HSet::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HSet::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HDel::ID => {
-                rpc::replica::HDel::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HDel::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HGetExp::ID => {
-                rpc::replica::HGetExp::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HGetExp::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HSetExp::ID => {
-                rpc::replica::HSetExp::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HSetExp::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HCard::ID => {
-                rpc::replica::HCard::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HCard::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HFields::ID => {
-                rpc::replica::HFields::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HFields::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HVals::ID => {
-                rpc::replica::HVals::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HVals::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
             rpc::replica::HScan::ID => {
-                rpc::replica::HScan::handle(stream, |req| self.node().exec_replicated(req)).await
+                rpc::replica::HScan::handle(stream, |req| {
+                    self.node().handle_replication(peer_id, req)
+                })
+                .await
             }
 
             rpc::migration::PullData::ID => {
-                rpc::migration::PullData::handle(stream, |rx, tx| self.handle_pull_data(rx, tx))
-                    .await
+                rpc::migration::PullData::handle(stream, |rx, tx| {
+                    self.handle_pull_data(peer_id, rx, tx)
+                })
+                .await
             }
             rpc::migration::PushData::ID => {
-                rpc::migration::PushData::handle(stream, |rx, tx| self.handle_push_data(rx, tx))
-                    .await
+                rpc::migration::PushData::handle(stream, |rx, tx| {
+                    self.handle_push_data(peer_id, rx, tx)
+                })
+                .await
             }
 
             rpc::broadcast::Pubsub::ID => {
@@ -600,6 +655,7 @@ impl RpcHandler {
 
     async fn handle_pull_data(
         &self,
+        peer_id: &libp2p::PeerId,
         mut rx: RecvStream<rpc::migration::PullDataRequest>,
         mut tx: SendStream<rpc::migration::PullDataResponse>,
     ) -> rpc::Result<()> {
@@ -611,7 +667,10 @@ impl RpcHandler {
 
         let resp = self
             .node()
-            .handle_pull_data_request(VersionedRequest::new(args, req.cluster_view_version))
+            .handle_pull_data_request(
+                peer_id,
+                VersionedRequest::new(args, req.cluster_view_version),
+            )
             .await;
 
         match resp {
@@ -624,6 +683,7 @@ impl RpcHandler {
 
     async fn handle_push_data(
         &self,
+        peer_id: &libp2p::PeerId,
         mut rx: RecvStream<rpc::migration::PushDataRequest>,
         mut tx: SendStream<rpc::migration::PushDataResponse>,
     ) -> rpc::Result<()> {
@@ -636,7 +696,10 @@ impl RpcHandler {
 
         let resp = self
             .node()
-            .handle_push_data_request(VersionedRequest::new(args, req.cluster_view_version))
+            .handle_push_data_request(
+                peer_id,
+                VersionedRequest::new(args, req.cluster_view_version),
+            )
             .await;
 
         Ok(tx.send(resp).await?)

@@ -114,19 +114,15 @@ impl<T> VersionedRequest<T> {
             cluster_view_version,
         }
     }
-
-    pub fn validate_and_unpack(self, cluster_view_version: u128) -> Result<T, ViewVersionMismatch> {
-        if self.cluster_view_version != cluster_view_version {
-            return Err(ViewVersionMismatch);
-        }
-
-        Ok(self.inner)
-    }
 }
 
 #[derive(Debug, Clone, thiserror::Error, Eq, PartialEq, Serialize, Deserialize)]
 #[error("Cluster view versions of requester and responder don't match")]
 pub struct ViewVersionMismatch;
+
+#[derive(Debug, Clone, thiserror::Error, Eq, PartialEq, Serialize, Deserialize)]
+#[error("Requester is not a member of the cluster according to the cluster view")]
+pub struct NotMemberError;
 
 /// Result of [`ClusterView::update_node_op_mode`].
 pub type UpdateNodeOpModeResult = Result<bool, UpdateNodeOpModeError>;
@@ -560,6 +556,25 @@ impl Cluster {
             )
             .map(|ranges| self.pending_ranges = ranges)
             .map_err(|err| tracing::warn!(?err, "failed to update pending ranges"));
+    }
+
+    pub fn validate_version(
+        &self,
+        cluster_view_version: u128,
+    ) -> Result<&Self, ViewVersionMismatch> {
+        if self.view.version != cluster_view_version {
+            return Err(ViewVersionMismatch);
+        }
+
+        Ok(self)
+    }
+
+    pub fn validate_member(&self, id: &libp2p::PeerId) -> Result<&Self, NotMemberError> {
+        if !self.view.peers.keys().any(|i| &i.id == id) {
+            return Err(NotMemberError);
+        }
+
+        Ok(self)
     }
 }
 

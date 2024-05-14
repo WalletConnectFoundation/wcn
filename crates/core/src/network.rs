@@ -50,7 +50,7 @@ pub mod stub {
                 booting::{PullDataRequest, PullDataRequestArgs, PullDataResponse},
                 leaving::{PushDataRequest, PushDataRequestArgs, PushDataResponse},
             },
-            replication::{ReplicaError, ReplicatedRequest},
+            replication::{Replica, ReplicaError, ReplicatedRequest},
             storage::{
                 self,
                 stub::{Data, Del, Get, Set},
@@ -72,10 +72,12 @@ pub mod stub {
     impl Registry {
         pub fn new_network_handle(
             &self,
+            local_id: PeerId,
             multiaddr: Multiaddr,
             peers: HashMap<PeerId, HashSet<Multiaddr>>,
         ) -> Network {
             Network {
+                local_id,
                 inner: Arc::new(RwLock::new(Inner {
                     multiaddr,
                     peers,
@@ -102,6 +104,7 @@ pub mod stub {
 
     #[derive(Clone, Debug)]
     pub struct Network {
+        local_id: PeerId,
         inner: Arc<RwLock<Inner>>,
     }
 
@@ -195,7 +198,10 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Get>,
         ) -> Result<Self::Response, Self::Error> {
-            Ok(self.node(peer_id)?.exec_replicated(req).await)
+            Ok(self
+                .node(peer_id)?
+                .handle_replication(&self.local_id.id, req)
+                .await)
         }
     }
 
@@ -209,7 +215,10 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Set>,
         ) -> Result<Self::Response, Self::Error> {
-            Ok(self.node(peer_id)?.exec_replicated(req).await)
+            Ok(self
+                .node(peer_id)?
+                .handle_replication(&self.local_id.id, req)
+                .await)
         }
     }
 
@@ -223,7 +232,10 @@ pub mod stub {
             peer_id: PeerId,
             req: ReplicatedRequest<Del>,
         ) -> Result<Self::Response, Self::Error> {
-            Ok(self.node(peer_id)?.exec_replicated(req).await)
+            Ok(self
+                .node(peer_id)?
+                .handle_replication(&self.local_id.id, req)
+                .await)
         }
     }
 
@@ -242,11 +254,12 @@ pub mod stub {
             };
             let req = VersionedRequest::new(args, req.cluster_view_version);
 
+            let id = &self.local_id.id;
             let addr = self.peer_addr(peer_id)?;
             Ok(if let Some(node) = self.resolve_node(&addr) {
-                node.handle_pull_data_request(req).await
+                node.handle_pull_data_request(id, req).await
             } else if let Some(mgr) = self.resolve_migration_manager(&addr) {
-                mgr.handle_pull_data_request(req).await
+                mgr.handle_pull_data_request(id, req).await
             } else {
                 panic!("Not registered");
             })
@@ -269,11 +282,12 @@ pub mod stub {
             };
             let req = VersionedRequest::new(args, req.cluster_view_version);
 
+            let id = &self.local_id.id;
             let addr = self.peer_addr(peer_id)?;
             Ok(if let Some(node) = self.resolve_node(&addr) {
-                node.handle_push_data_request(req).await
+                node.handle_push_data_request(id, req).await
             } else if let Some(mgr) = self.resolve_migration_manager(&addr) {
-                mgr.handle_push_data_request(req).await
+                mgr.handle_push_data_request(id, req).await
             } else {
                 panic!("Not registered");
             })

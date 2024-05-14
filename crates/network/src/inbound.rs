@@ -56,28 +56,28 @@ where
         self,
         connecting: quinn::Connecting,
     ) -> Result<(), ConnectionHandlerError<H::Err>> {
-        use ConnectionHandlerError as E;
+        use ConnectionHandlerError as Error;
 
         let conn = connecting.await?;
 
-        let identity = conn.peer_identity().ok_or(E::MissingPeerIdentity)?;
+        let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
         let certificate = identity
             .downcast::<Vec<rustls::Certificate>>()
-            .map_err(|_| E::DowncastPeerIdentity)?
+            .map_err(|_| Error::DowncastPeerIdentity)?
             .into_iter()
             .next()
-            .ok_or(E::MissingTlsCertificate)?;
+            .ok_or(Error::MissingTlsCertificate)?;
 
         let conn_info = ConnectionInfo {
             remote_address: conn.remote_address(),
             peer_id: libp2p_tls::certificate::parse(&certificate)
-                .map_err(E::ParseTlsCertificate)?
+                .map_err(Error::ParseTlsCertificate)?
                 .peer_id(),
             handshake_data: self
                 .handshake
                 .handle(PendingConnection(conn.clone()))
                 .await
-                .map_err(E::Handshake)?,
+                .map_err(Error::Handshake)?,
         };
 
         loop {

@@ -9,6 +9,7 @@ use {
     futures::{Future, FutureExt},
     pin_project::pin_project,
     std::{
+        collections::HashSet,
         pin::{pin, Pin},
         sync::{Arc, Mutex},
         task,
@@ -31,7 +32,7 @@ pub mod migration;
 pub mod replication;
 
 /// [`Node`] configuration options.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeOpts {
     /// Replication strategy to use.
     pub replication_strategy: Strategy,
@@ -49,6 +50,18 @@ pub struct NodeOpts {
     /// Extra time a node should take to "warmup" before transitioning from
     /// `Restarting` to `Normal`.
     pub warmup_delay: Duration,
+
+    /// Authorization options.
+    ///
+    /// When `None` client authorization is disabled.
+    pub authorization: Option<AuthorizationOpts>,
+}
+
+/// [`Node`] authorization options.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorizationOpts {
+    /// List of clients which are allowed to use a [`Node`] as a coordinator.
+    pub allowed_coordinator_clients: HashSet<libp2p::PeerId>,
 }
 
 /// Shared [`Handle`] to a [`Node`].
@@ -70,6 +83,8 @@ pub struct Node<C, N, S> {
     replication_request_limiter: Arc<Semaphore>,
     replication_request_limiter_queue: Arc<Semaphore>,
     warmup_delay: Duration,
+
+    authorization: Option<Arc<AuthorizationOpts>>,
 }
 
 impl<C, N, S> AsRef<Self> for Node<C, N, S> {
@@ -135,6 +150,7 @@ where
                 opts.replication_request_queue,
             )),
             warmup_delay: opts.warmup_delay,
+            authorization: opts.authorization.map(Arc::new),
         }
     }
 

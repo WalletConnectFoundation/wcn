@@ -1,6 +1,7 @@
 use {
     crate::{rpc, BiDirectionalStream, Handshake, PendingConnection, METRICS},
     futures::{Future, TryFutureExt},
+    libp2p::PeerId,
     std::{convert::Infallible, io, net::SocketAddr},
     tokio::io::AsyncReadExt,
     wc::future::{FutureExt as _, StaticFutureExt},
@@ -9,6 +10,7 @@ use {
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo<H = ()> {
     pub remote_address: SocketAddr,
+    pub peer_id: PeerId,
     pub handshake_data: H,
 }
 
@@ -54,15 +56,28 @@ where
         self,
         connecting: quinn::Connecting,
     ) -> Result<(), ConnectionHandlerError<H::Err>> {
+        use ConnectionHandlerError as Error;
+
         let conn = connecting.await?;
+
+        let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
+        let certificate = identity
+            .downcast::<Vec<rustls::Certificate>>()
+            .map_err(|_| Error::DowncastPeerIdentity)?
+            .into_iter()
+            .next()
+            .ok_or(Error::MissingTlsCertificate)?;
 
         let conn_info = ConnectionInfo {
             remote_address: conn.remote_address(),
+            peer_id: libp2p_tls::certificate::parse(&certificate)
+                .map_err(Error::ParseTlsCertificate)?
+                .peer_id(),
             handshake_data: self
                 .handshake
                 .handle(PendingConnection(conn.clone()))
                 .await
-                .map_err(ConnectionHandlerError::Handshake)?,
+                .map_err(Error::Handshake)?,
         };
 
         loop {
@@ -92,6 +107,18 @@ where
 pub enum ConnectionHandlerError<H = Infallible> {
     #[error("Inbound connection failed: {0}")]
     Connection(#[from] quinn::ConnectionError),
+
+    #[error("Missing peer identity")]
+    MissingPeerIdentity,
+
+    #[error("Failed to downcast peer identity")]
+    DowncastPeerIdentity,
+
+    #[error("Missing TLS certificate")]
+    MissingTlsCertificate,
+
+    #[error("Failed to parse TLS certificate: {0:?}")]
+    ParseTlsCertificate(libp2p_tls::certificate::ParseError),
 
     #[error("Handshake failed: {0:?}")]
     Handshake(H),

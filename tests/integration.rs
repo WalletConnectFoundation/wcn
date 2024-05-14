@@ -98,6 +98,7 @@ impl test::Context for Context {
                     request_limiter_queue: 1000,
                     replication_request_timeout: 5000,
                     warmup_delay: 5000,
+                    authorized_clients: None,
                 };
 
                 let storage = Storage::new(&cfg).unwrap();
@@ -202,6 +203,7 @@ async fn test_suite() {
             replication_concurrency_limit: 1000,
             replication_request_queue: 4096,
             warmup_delay: Duration::from_secs(1),
+            authorization: None,
         },
     })
     .await;

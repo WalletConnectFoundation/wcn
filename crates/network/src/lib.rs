@@ -552,7 +552,7 @@ impl PendingConnection {
 /// Application layer protocol specific handshake.
 pub trait Handshake: Clone + Send + Sync + 'static {
     type Ok: Clone + Send + Sync + 'static;
-    type Err: std::error::Error;
+    type Err: std::error::Error + Send;
 
     fn handle(
         &self,

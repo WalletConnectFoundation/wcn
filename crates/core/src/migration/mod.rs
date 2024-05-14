@@ -250,7 +250,8 @@ pub mod stub {
                     _ => {}
                 };
 
-                let network = network_registry.new_network_handle(n.addr.clone(), peers.clone());
+                let network =
+                    network_registry.new_network_handle(n.peer_id, n.addr.clone(), peers.clone());
 
                 let manager = super::Manager::new(
                     n.peer_id,

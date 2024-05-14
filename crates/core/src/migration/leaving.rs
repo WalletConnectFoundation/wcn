@@ -46,6 +46,9 @@ pub enum PushDataError {
 
     #[error("CommitHintedOperations failed: {0}")]
     CommitHintedOperations(String),
+
+    #[error(transparent)]
+    NotClusterMember(#[from] cluster::NotMemberError),
 }
 
 /// Response to [`PushRequest`].
@@ -54,30 +57,38 @@ pub type PushDataResponse = Result<(), PushDataError>;
 impl<C, N, S> Node<C, N, S> {
     pub async fn handle_push_data_request<Data>(
         &self,
+        peer_id: &libp2p::PeerId,
         req: PushDataRequest<Data>,
     ) -> PushDataResponse
     where
         S: Storage<Import<Data>> + Storage<CommitHintedOperations>,
     {
-        self.migration_manager.handle_push_data_request(req).await
+        self.migration_manager
+            .handle_push_data_request(peer_id, req)
+            .await
     }
 }
 
 impl<N, S> migration::Manager<N, S> {
     pub async fn handle_push_data_request<Data>(
         &self,
+        peer_id: &libp2p::PeerId,
         req: PushDataRequest<Data>,
     ) -> PushDataResponse
     where
         S: Storage<Import<Data>> + Storage<CommitHintedOperations>,
     {
-        let req = req.validate_and_unpack(self.cluster.read().await.view().version())?;
+        self.cluster
+            .read()
+            .await
+            .validate_version(req.cluster_view_version)?
+            .validate_member(peer_id)?;
 
-        let key_range = req.key_range;
+        let key_range = req.inner.key_range;
 
         let import = Import {
             key_range,
-            data: req.data,
+            data: req.inner.data,
         };
 
         self.storage
@@ -307,8 +318,10 @@ mod test {
         let managers = migration::stub::cluster(NodeOperationMode::Normal);
         let mgr = managers.last().unwrap();
 
+        let peer_id = &managers.first().unwrap().id.id;
+
         let resp = mgr
-            .handle_push_data_request(PushDataRequest {
+            .handle_push_data_request(peer_id, PushDataRequest {
                 inner: PushDataRequestArgs {
                     key_range: (0..42).into(),
                     data: Data::generate(),

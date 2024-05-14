@@ -42,29 +42,46 @@ pub enum PullDataError {
 
     #[error("Export operation failed: {0}")]
     Export(String),
+
+    #[error(transparent)]
+    NotClusterMember(#[from] cluster::NotMemberError),
 }
 
 /// Response to a [`PullDataRequest`].
 pub type PullDataResponse<Data> = Result<Data, PullDataError>;
 
 impl<C, N, S> Node<C, N, S> {
-    pub async fn handle_pull_data_request(&self, req: PullDataRequest) -> PullDataResponse<S::Ok>
+    pub async fn handle_pull_data_request(
+        &self,
+        peer_id: &libp2p::PeerId,
+        req: PullDataRequest,
+    ) -> PullDataResponse<S::Ok>
     where
         S: Storage<Export>,
     {
-        self.migration_manager.handle_pull_data_request(req).await
+        self.migration_manager
+            .handle_pull_data_request(peer_id, req)
+            .await
     }
 }
 
 impl<N, S> migration::Manager<N, S> {
-    pub async fn handle_pull_data_request(&self, req: PullDataRequest) -> PullDataResponse<S::Ok>
+    pub async fn handle_pull_data_request(
+        &self,
+        peer_id: &libp2p::PeerId,
+        req: PullDataRequest,
+    ) -> PullDataResponse<S::Ok>
     where
         S: Storage<Export>,
     {
-        let req = req.validate_and_unpack(self.cluster.read().await.view().version())?;
+        self.cluster
+            .read()
+            .await
+            .validate_version(req.cluster_view_version)?
+            .validate_member(peer_id)?;
 
         let export = Export {
-            key_range: req.key_range,
+            key_range: req.inner.key_range,
         };
 
         self.storage
@@ -286,8 +303,10 @@ mod test {
         let managers = migration::stub::cluster(NodeOperationMode::Normal);
         let mgr = managers.last().unwrap();
 
+        let peer_id = &managers.first().unwrap().id.id;
+
         let resp = mgr
-            .handle_pull_data_request(PullDataRequest {
+            .handle_pull_data_request(peer_id, PullDataRequest {
                 inner: PullDataRequestArgs {
                     key_range: (0..42).into(),
                 },

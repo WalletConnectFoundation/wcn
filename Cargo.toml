@@ -105,6 +105,7 @@ tracing-subscriber = { version = "0.3", features = [
 tap = "1.0"
 sysinfo = "0.29.10"
 libp2p = { version = "0.53", features = ["serde", "tokio"] }
+parking_lot = "0.12"
 
 # These are required by the tests and the `test_cluster` module.
 tempfile = { version = "3", optional = true }

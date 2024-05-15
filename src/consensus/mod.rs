@@ -10,13 +10,14 @@ use {
         PeerId,
         ShutdownReason,
     },
+    parking_lot::Mutex,
     raft::{Raft, RemoteError, State as _},
     serde::{Deserialize, Serialize},
     std::{
         collections::{HashMap, HashSet},
         fmt::Debug,
         io,
-        sync::{Arc, Mutex},
+        sync::Arc,
         time::Duration,
     },
     tap::{Pipe, TapFallible},
@@ -223,11 +224,9 @@ impl Consensus {
                         // membership is not yet updated locally we don't know what to check.
                         // So we store this "initial" membership, which we receive in the response.
 
-                        // Both unwraps are fine here:
-                        // - we don't handle panics, so we cannot observe a poisoned lock
-                        // - membership should be `Some` in the response because this node issued a
-                        //   change to to the membership
-                        *self.initial_membership.lock().unwrap() = Some(resp.membership.unwrap());
+                        // Unwrap here is fine - membership should be `Some` in the response because
+                        // this node issued a change to to the membership.
+                        *self.initial_membership.lock() = Some(resp.membership.unwrap());
 
                         return Ok(());
                     }
@@ -361,9 +360,7 @@ impl Consensus {
             }
         }
 
-        // unwrapping is fine here, we don't handle panics so the lock cannot be
-        // poisoned
-        if let Some(m) = self.initial_membership.lock().unwrap().as_ref() {
+        if let Some(m) = self.initial_membership.lock().as_ref() {
             if m.nodes().any(|(i, _)| &i.id == peer_id) {
                 return true;
             }

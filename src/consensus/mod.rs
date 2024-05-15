@@ -305,9 +305,9 @@ impl Consensus {
                 if !auth.allowed_candidates.contains(&req.node_id.id) {
                     return Err(unauthorized_error());
                 }
-            } else
+            }
             // otherwise forward the request to a voter.
-            {
+            else {
                 let Some(voter_id) = membership.voter_ids().next() else {
                     return Err(unauthorized_error());
                 };

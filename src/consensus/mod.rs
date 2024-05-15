@@ -225,8 +225,8 @@ impl Consensus {
 
                         // Both unwraps are fine here:
                         // - we don't handle panics, so we cannot observe a poisoned lock
-                        // - membership should be `Some` in the response as we issued a "change
-                        //   membership" request
+                        // - membership should be `Some` in the response because this node issued a
+                        //   change to to the membership
                         *self.initial_membership.lock().unwrap() = Some(resp.membership.unwrap());
 
                         return Ok(());

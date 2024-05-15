@@ -225,7 +225,7 @@ impl Consensus {
                         // So we store this "initial" membership, which we receive in the response.
 
                         // Unwrap here is fine - membership should be `Some` in the response because
-                        // this node issued a change to to the membership.
+                        // this node issued a change to the membership.
                         *self.initial_membership.lock() = Some(resp.membership.unwrap());
 
                         return Ok(());

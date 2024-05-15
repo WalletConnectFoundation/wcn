@@ -10,9 +10,15 @@ use {
         PeerId,
         ShutdownReason,
     },
-    raft::{Raft, RemoteError},
+    raft::{Raft, RemoteError, State as _},
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, fmt::Debug, io, time::Duration},
+    std::{
+        collections::{HashMap, HashSet},
+        fmt::Debug,
+        io,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
     tap::{Pipe, TapFallible},
 };
 
@@ -103,6 +109,17 @@ pub struct Consensus {
     raft: raft::RaftImpl<TypeConfig, Network>,
 
     network: Network,
+
+    authorization: Option<Authorization>,
+
+    initial_membership: Arc<Mutex<Option<raft::Membership<PeerId, Node>>>>,
+
+    bootstrap_nodes: Arc<Option<HashMap<PeerId, Multiaddr>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Authorization {
+    allowed_candidates: HashSet<libp2p::PeerId>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -154,6 +171,13 @@ impl Consensus {
             id: cfg.id,
             raft,
             network,
+            authorization: cfg.authorized_raft_candidates.as_ref().map(|candidates| {
+                Authorization {
+                    allowed_candidates: candidates.clone(),
+                }
+            }),
+            initial_membership: Default::default(),
+            bootstrap_nodes: Arc::new(cfg.bootstrap_nodes.clone()),
         })
         .map_err(InitializationError::Task)
     }
@@ -189,7 +213,24 @@ impl Consensus {
                 .await;
 
                 match res {
-                    Ok(_) => return Ok(()),
+                    Ok(resp) => {
+                        // After this request is succeeded the cluster already considers this node
+                        // to be a member, however the node itself doesn't yet have its membership
+                        // updated.
+                        // To update the membership the leader needs to either append entries to
+                        // this node or install a snapshot.
+                        // We want to have an authorization check on these requests, however as the
+                        // membership is not yet updated locally we don't know what to check.
+                        // So we store this "initial" membership, which we receive in the response.
+
+                        // Both unwraps are fine here:
+                        // - we don't handle panics, so we cannot observe a poisoned lock
+                        // - membership should be `Some` in the response as we issued a "change
+                        //   membership" request
+                        *self.initial_membership.lock().unwrap() = Some(resp.membership.unwrap());
+
+                        return Ok(());
+                    }
                     Err(err) => {
                         tracing::warn!(%err, %peer_id, "failed to add a member via a remote peer")
                     }
@@ -240,6 +281,107 @@ impl Consensus {
     pub fn cluster_view(&self) -> ClusterView {
         self.raft.state().cluster_view
     }
+
+    pub async fn add_member(
+        &self,
+        peer_id: &libp2p::PeerId,
+        req: AddMemberRequest,
+    ) -> AddMemberResult {
+        // Skip authorization if not configured.
+        if let Some(auth) = &self.authorization {
+            let state = self.raft.state();
+            let membership = state.stored_membership();
+
+            // if local node is a voter, do the whitelist-based authorization.
+            if membership.voter_ids().any(|i| i == self.id) {
+                // if this is a proxy request - a learner node trying to promote
+                // a candidate via this voter node - check that
+                // the requestor is a member of the cluster.
+                if peer_id != &req.node_id.id && !membership.nodes().any(|(i, _)| &i.id == peer_id)
+                {
+                    return Err(unauthorized_error());
+                }
+
+                if !auth.allowed_candidates.contains(&req.node_id.id) {
+                    return Err(unauthorized_error());
+                }
+            } else
+            // otherwise forward the request to a voter.
+            {
+                let Some(voter_id) = membership.voter_ids().next() else {
+                    return Err(unauthorized_error());
+                };
+
+                return self
+                    .network
+                    .get_peer(voter_id)
+                    .add_member(req)
+                    .await
+                    .map_err(|err| {
+                        Error::APIError(raft::ClientWriteFail::Local(
+                            raft::LocalClientWriteFail::Other(format!(
+                                "Failed to delegate authorization to a voter: {err}"
+                            )),
+                        ))
+                    });
+            }
+        }
+
+        self.raft.add_member(req).await
+    }
+
+    pub async fn remove_member(
+        &self,
+        peer_id: &libp2p::PeerId,
+        req: RemoveMemberRequest,
+    ) -> RemoveMemberResult {
+        let state = self.raft.state();
+        let membership = state.stored_membership();
+
+        // Nodes are generally only allowed to remove themselves.
+        // Voters are allowed to remove anyone.
+        if peer_id != &req.node_id.id && !membership.voter_ids().any(|i| &i.id == peer_id) {
+            return Err(unauthorized_error());
+        }
+
+        self.raft.remove_member(req).await
+    }
+
+    pub fn is_member(&self, peer_id: &libp2p::PeerId) -> bool {
+        let state = self.raft.state();
+        let membership = state.stored_membership();
+
+        if membership.nodes().any(|(i, _)| &i.id == peer_id) {
+            return true;
+        }
+
+        if let Some(nodes) = self.bootstrap_nodes.as_ref() {
+            if nodes.keys().any(|i| &i.id == peer_id) {
+                return true;
+            }
+        }
+
+        // unwrapping is fine here, we don't handle panics so the lock cannot be
+        // poisoned
+        if let Some(m) = self.initial_membership.lock().unwrap().as_ref() {
+            if m.nodes().any(|(i, _)| &i.id == peer_id) {
+                return true;
+            }
+        }
+
+        tracing::warn!(
+            %peer_id,
+            "Non-member node tried to access an internal Raft RPC"
+        );
+
+        false
+    }
+}
+
+fn unauthorized_error() -> Error<raft::ClientWriteFail<TypeConfig>> {
+    Error::APIError(raft::ClientWriteFail::Local(
+        raft::LocalClientWriteFail::Unauthorized,
+    ))
 }
 
 pub type ClusterChangesStream = stream::Map<raft::UpdatesStream<State>, fn(State) -> ClusterView>;

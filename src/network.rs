@@ -480,27 +480,50 @@ impl RpcHandler {
 
         let _ = match id {
             rpc::raft::AddMember::ID => {
-                rpc::raft::AddMember::handle(stream, |req| self.consensus().add_member(req)).await
+                rpc::raft::AddMember::handle(stream, |req| {
+                    self.consensus().add_member(peer_id, req)
+                })
+                .await
             }
             rpc::raft::RemoveMember::ID => {
-                rpc::raft::RemoveMember::handle(stream, |req| self.consensus().remove_member(req))
-                    .await
+                rpc::raft::RemoveMember::handle(stream, |req| {
+                    self.consensus().remove_member(peer_id, req)
+                })
+                .await
             }
+
+            // Adding `Unauthorized` error to responses of these RPCs is total PITA, as the types
+            // are defined in `openraft` itself.
+            // So if the requestor is not a member we just drop the request.
+            // This should generally never happen under normal circumstances, unless we are dealing
+            // with a malicious actor.
             rpc::raft::ProposeChange::ID => {
+                if !self.consensus().is_member(peer_id) {
+                    return;
+                }
                 rpc::raft::ProposeChange::handle(stream, |req| self.consensus().propose_change(req))
                     .await
             }
             rpc::raft::AppendEntries::ID => {
+                if !self.consensus().is_member(peer_id) {
+                    return;
+                }
                 rpc::raft::AppendEntries::handle(stream, |req| self.consensus().append_entries(req))
                     .await
             }
             rpc::raft::InstallSnapshot::ID => {
+                if !self.consensus().is_member(peer_id) {
+                    return;
+                }
                 rpc::raft::InstallSnapshot::handle(stream, |req| {
                     self.consensus().install_snapshot(req)
                 })
                 .await
             }
             rpc::raft::Vote::ID => {
+                if !self.consensus().is_member(peer_id) {
+                    return;
+                }
                 rpc::raft::Vote::handle(stream, |req| self.consensus().vote(req)).await
             }
 

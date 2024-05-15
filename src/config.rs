@@ -80,6 +80,10 @@ pub struct Config {
     /// List of authorized client ids.
     /// If `None` the client authorization is going to be disabled.
     pub authorized_clients: Option<HashSet<libp2p::PeerId>>,
+
+    /// List of authorized Raft candidates.
+    /// If `None` the Raft authorization is going to be disabled.
+    pub authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
 }
 
 impl Config {
@@ -107,6 +111,7 @@ impl Config {
             replication_request_timeout: raw.replication_request_timeout.unwrap_or(1000),
             warmup_delay: raw.warmup_delay.unwrap_or(30_000),
             authorized_clients: raw.authorized_clients,
+            authorized_raft_candidates: raw.authorized_raft_candidates,
         };
 
         if let Some(nodes) = raw.bootstrap_nodes {
@@ -153,6 +158,7 @@ struct RawConfig {
     replication_request_timeout: Option<u64>,
     warmup_delay: Option<u64>,
     authorized_clients: Option<HashSet<libp2p::PeerId>>,
+    authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
 }
 
 #[derive(Debug, thiserror::Error)]

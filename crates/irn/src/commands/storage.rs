@@ -170,6 +170,13 @@ impl Storage {
         }
     }
 
+    fn output(&self, data: Vec<u8>) -> Result<(), Error> {
+        let mut out = std::io::stdout();
+        out.write_all(&self.encode(data))?;
+        out.flush()?;
+        Ok(())
+    }
+
     async fn set(&self, args: SetCmd) -> Result<(), Error> {
         let key = self.decode(&args.key, "key")?;
         let value = self.decode(&args.value, "value")?;
@@ -187,7 +194,7 @@ impl Storage {
         self.client
             .get(self.key(key))
             .await?
-            .map(|data| std::io::stdout().write_all(&self.encode(data)))
+            .map(|data| self.output(data))
             .transpose()?;
 
         Ok(())

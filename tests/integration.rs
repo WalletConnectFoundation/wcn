@@ -1,5 +1,5 @@
 use {
-    api::{namespace, Key, Multiaddr},
+    api::{namespace, Key, Multiaddr, SigningKey},
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,
@@ -225,6 +225,7 @@ async fn pubsub(cluster: &test::Cluster<Context>) {
         .values()
         .map(|n| {
             api::Client::new(api::client::Config {
+                key: SigningKey::generate(&mut rand::thread_rng()),
                 nodes: [(n.identity().peer_id.id, n.identity().api_addr.clone())]
                     .into_iter()
                     .collect(),
@@ -339,6 +340,7 @@ async fn namespaces(cluster: &test::Cluster<Context>) {
     let node = &cluster.nodes().values().next().unwrap();
 
     let config = api::client::Config {
+        key: SigningKey::generate(&mut rand::thread_rng()),
         nodes: [(node.identity().peer_id.id, node.identity().api_addr.clone())]
             .into_iter()
             .collect(),

@@ -109,14 +109,14 @@ libp2p = { version = "0.53", features = ["serde", "tokio"] }
 # These are required by the tests and the `test_cluster` module.
 tempfile = { version = "3", optional = true }
 once_cell = { version = "1.17", optional = true }
-rand = { version = "0.7", optional = true }
+rand = { version = "0.8", optional = true }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 
 [dev-dependencies]
 tempfile = "3"
 test-log = "0.2"
 once_cell = "1.17"
-rand = "0.7"
+rand = "0.8"
 smallvec = { version = "1.11", features = ["serde"] }
 anyhow = "1"
 env_logger = "0.10"

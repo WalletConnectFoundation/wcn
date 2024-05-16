@@ -1,10 +1,13 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use network::{Multiaddr, PeerId as NodeId};
 use {
     derive_more::AsRef,
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, collections::HashSet, io},
+};
+pub use {
+    ed25519_dalek::SigningKey,
+    network::{Multiaddr, PeerId as NodeId},
 };
 
 #[cfg(feature = "client")]

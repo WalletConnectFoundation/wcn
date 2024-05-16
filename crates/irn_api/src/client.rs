@@ -12,6 +12,7 @@ use {
         UnixTimestampSecs,
         Value,
     },
+    ed25519_dalek::SigningKey,
     futures::{FutureExt, TryFutureExt},
     futures_util::{SinkExt, Stream},
     network::{
@@ -43,6 +44,8 @@ static METRICS: TaskMetrics = TaskMetrics::new("irn_api_client_operation");
 
 #[derive(Clone)]
 pub struct Config {
+    pub key: SigningKey,
+
     /// The list of nodes to be used for executing operations.
     pub nodes: HashMap<PeerId, Multiaddr>,
 
@@ -129,7 +132,8 @@ impl Client {
         metrics_tag: &'static str,
         shadowing: Option<Shadowing>,
     ) -> Result<Self, network::Error> {
-        let keypair = Keypair::generate_ed25519();
+        // Safe unwrap, as we know that the bytes are a valid ed25519 key.
+        let keypair = Keypair::ed25519_from_bytes(cfg.key.to_bytes()).unwrap();
 
         // 0 is not valid, let's just make it 1
         if cfg.udp_socket_count == 0 {

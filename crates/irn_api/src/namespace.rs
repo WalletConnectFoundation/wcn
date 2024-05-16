@@ -31,6 +31,12 @@ pub enum Error {
 
     #[error("Signature validation failed")]
     Signature,
+
+    #[error("Invalid secret")]
+    Secret,
+
+    #[error("Invalid namespace")]
+    Namespace,
 }
 
 impl From<ring::error::Unspecified> for Error {
@@ -47,6 +53,14 @@ pub struct Auth {
 
 impl Auth {
     pub fn from_secret(secret: &[u8], namespace: &[u8]) -> Result<Self, Error> {
+        if secret.is_empty() {
+            return Err(Error::Secret);
+        }
+
+        if namespace.is_empty() {
+            return Err(Error::Namespace);
+        }
+
         let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, KEY_SALT).extract(secret);
 
         let mut sig_key_seed = [0; KEY_LEN_SIG_SEED];

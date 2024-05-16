@@ -454,6 +454,13 @@ pub enum LocalClientWriteFail<C: TypeConfig> {
     /// Cluster doesn't have a leader.
     #[error("no leader")]
     NoLeader,
+
+    /// Requestor is not authorized to perform the operation.
+    #[error("unauthorized")]
+    Unauthorized,
+
+    #[error("{0}")]
+    Other(String),
 }
 
 /// See [`openraft::StoredMembership`].

@@ -99,6 +99,7 @@ impl test::Context for Context {
                     replication_request_timeout: 5000,
                     warmup_delay: 5000,
                     authorized_clients: None,
+                    authorized_raft_candidates: None,
                 };
 
                 let storage = Storage::new(&cfg).unwrap();

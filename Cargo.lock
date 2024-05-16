@@ -2666,6 +2666,7 @@ dependencies = [
  "libp2p",
  "network",
  "once_cell",
+ "parking_lot",
  "raft",
  "rand 0.7.3",
  "relay_rocks",

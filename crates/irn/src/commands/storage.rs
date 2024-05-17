@@ -7,8 +7,10 @@ use {
         SigningKey,
     },
     network::{Multiaddr, PeerId},
-    std::{io::Write as _, str::FromStr, time::Duration},
+    std::{str::FromStr, time::Duration},
 };
+
+const MIN_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -33,6 +35,9 @@ enum Error {
     #[error("Invalid TTL: {0}")]
     Ttl(humantime::DurationError),
 
+    #[error("Invalid TTL: Minimum TTL: {MIN_TTL:?}")]
+    TtlTooShort,
+
     #[error("Failed to decode parameter: {0}")]
     Decoding(&'static str),
 
@@ -41,11 +46,14 @@ enum Error {
 
     #[error("Failed to write data to stdout")]
     Io(#[from] std::io::Error),
+
+    #[error("Text encoding must be utf8")]
+    TextEncoding,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum Encoding {
-    Raw,
+    Text,
     Base64,
     Hex,
 }
@@ -56,18 +64,33 @@ pub struct StorageCmd {
     commands: StorageSub,
 
     #[clap(short, long, env = "IRN_STORAGE_ADDRESS")]
+    /// IRN node address to connect.
+    ///
+    /// The address is specified in format `{PEER_ID}_{MULTIADDRESS}`.
     address: NodeAddress,
 
     #[clap(long, env = "IRN_STORAGE_PRIVATE_KEY")]
+    /// Client private key used for authorization.
     private_key: PrivateKey,
 
     #[clap(long, env = "IRN_STORAGE_NAMESPACE_SECRET")]
+    /// Secret key to initialize namespaces.
+    ///
+    /// Single secret key can be used for multiple namespaces, while specific
+    /// namespace is set with the `namespace` parameter.
     namespace_secret: Option<String>,
 
     #[clap(long, env = "IRN_STORAGE_NAMESPACE", requires("namespace_secret"))]
+    /// Namespace to store and retrieve data from.
     namespace: Option<String>,
 
-    #[clap(short, long, env = "IRN_STORAGE_ENCODING", value_enum, default_value_t = Encoding::Raw)]
+    #[clap(short, long, env = "IRN_STORAGE_ENCODING", value_enum, default_value_t = Encoding::Text)]
+    /// Encoding to use when parsing input parameters (`key`, `field`, `value`)
+    /// and the output data.
+    ///
+    /// Text encoding assumes utf8 strings, and will return an error when
+    /// attempting to print any other data. To store and retrieve binary, either
+    /// hex or base64 encoding should be used.
     encoding: Encoding,
 }
 
@@ -111,17 +134,33 @@ impl FromStr for Ttl {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        humantime::parse_duration(s).map(Self).map_err(Error::Ttl)
+        humantime::parse_duration(s)
+            .map_err(Error::Ttl)
+            .and_then(|ttl| {
+                if ttl < MIN_TTL {
+                    Err(Error::TtlTooShort)
+                } else {
+                    Ok(Self(ttl))
+                }
+            })
     }
 }
 
 #[derive(Debug, clap::Subcommand)]
+#[clap(rename_all = "lowercase")]
 enum StorageSub {
     Set(SetCmd),
     Get(GetCmd),
+    Del(DelCmd),
+    Hset(HSetCmd),
+    HGet(HGetCmd),
+    HDel(HDelCmd),
+    HFields(HFieldsCmd),
+    HVals(HValsCmd),
 }
 
 #[derive(Debug, clap::Args)]
+/// Set `key` to hold the string value.
 struct SetCmd {
     key: String,
 
@@ -132,7 +171,55 @@ struct SetCmd {
 }
 
 #[derive(Debug, clap::Args)]
+/// Get the value of `key`.
 struct GetCmd {
+    key: String,
+}
+
+#[derive(Debug, clap::Args)]
+/// Removes the specified key.
+struct DelCmd {
+    key: String,
+}
+
+#[derive(Debug, clap::Args)]
+/// Sets the specified field to hold `value` in the hash stored at `key``.
+struct HSetCmd {
+    key: String,
+
+    field: String,
+
+    value: String,
+
+    #[clap(short, long)]
+    ttl: Option<Ttl>,
+}
+
+#[derive(Debug, clap::Args)]
+/// Returns the value associated with `field` in the hash stored at `key`.
+struct HGetCmd {
+    key: String,
+
+    field: String,
+}
+
+#[derive(Debug, clap::Args)]
+/// Removes the specified field from the hash stored at `key`.
+struct HDelCmd {
+    key: String,
+
+    field: String,
+}
+
+#[derive(Debug, clap::Args)]
+/// Returns all field names in the hash stored at `key`.
+struct HFieldsCmd {
+    key: String,
+}
+
+#[derive(Debug, clap::Args)]
+/// Returns all values in the hash stored at `key`.
+struct HValsCmd {
     key: String,
 }
 
@@ -143,17 +230,9 @@ struct Storage {
 }
 
 impl Storage {
-    fn encode(&self, data: Vec<u8>) -> Vec<u8> {
-        match &self.encoding {
-            Encoding::Raw => data,
-            Encoding::Base64 => data_encoding::BASE64.encode(&data).into(),
-            Encoding::Hex => data_encoding::HEXLOWER_PERMISSIVE.encode(&data).into(),
-        }
-    }
-
     fn decode(&self, data: &str, param: &'static str) -> Result<Vec<u8>, Error> {
         match &self.encoding {
-            Encoding::Raw => Ok(data.as_bytes().into()),
+            Encoding::Text => Ok(data.as_bytes().into()),
             Encoding::Base64 => data_encoding::BASE64
                 .decode(data.as_bytes())
                 .map_err(|_| Error::Decoding(param)),
@@ -171,9 +250,14 @@ impl Storage {
     }
 
     fn output(&self, data: Vec<u8>) -> Result<(), Error> {
-        let mut out = std::io::stdout();
-        out.write_all(&self.encode(data))?;
-        out.flush()?;
+        let data = match &self.encoding {
+            Encoding::Text => String::from_utf8(data).map_err(|_| Error::TextEncoding)?,
+            Encoding::Base64 => data_encoding::BASE64.encode(&data),
+            Encoding::Hex => data_encoding::HEXLOWER_PERMISSIVE.encode(&data),
+        };
+
+        println!("{data}");
+
         Ok(())
     }
 
@@ -196,6 +280,72 @@ impl Storage {
             .await?
             .map(|data| self.output(data))
             .transpose()?;
+
+        Ok(())
+    }
+
+    async fn del(&self, args: DelCmd) -> Result<(), Error> {
+        let key = self.decode(&args.key, "key")?;
+
+        self.client.del(self.key(key)).await?;
+
+        Ok(())
+    }
+
+    async fn hset(&self, args: HSetCmd) -> Result<(), Error> {
+        let key = self.decode(&args.key, "key")?;
+        let field = self.decode(&args.field, "field")?;
+        let value = self.decode(&args.value, "value")?;
+
+        self.client
+            .hset(self.key(key), field, value, ttl_to_timestamp(args.ttl))
+            .await?;
+
+        Ok(())
+    }
+
+    async fn hget(&self, args: HGetCmd) -> Result<(), Error> {
+        let key = self.decode(&args.key, "key")?;
+        let field = self.decode(&args.field, "field")?;
+
+        self.client
+            .hget(self.key(key), field)
+            .await?
+            .map(|data| self.output(data))
+            .transpose()?;
+
+        Ok(())
+    }
+
+    async fn hdel(&self, args: HDelCmd) -> Result<(), Error> {
+        let key = self.decode(&args.key, "key")?;
+        let field = self.decode(&args.field, "field")?;
+
+        self.client.hdel(self.key(key), field).await?;
+
+        Ok(())
+    }
+
+    async fn hfields(&self, args: HFieldsCmd) -> Result<(), Error> {
+        let key = self.decode(&args.key, "key")?;
+
+        let fields = self.client.hfields(self.key(key)).await?;
+
+        for field in fields {
+            self.output(field)?;
+        }
+
+        Ok(())
+    }
+
+    async fn hvals(&self, args: HValsCmd) -> Result<(), Error> {
+        let key = self.decode(&args.key, "key")?;
+
+        let fields = self.client.hvals(self.key(key)).await?;
+
+        for field in fields {
+            self.output(field)?;
+        }
 
         Ok(())
     }
@@ -226,6 +376,12 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     match cmd.commands {
         StorageSub::Set(args) => storage.set(args).await?,
         StorageSub::Get(args) => storage.get(args).await?,
+        StorageSub::Del(args) => storage.del(args).await?,
+        StorageSub::Hset(args) => storage.hset(args).await?,
+        StorageSub::HGet(args) => storage.hget(args).await?,
+        StorageSub::HDel(args) => storage.hdel(args).await?,
+        StorageSub::HFields(args) => storage.hfields(args).await?,
+        StorageSub::HVals(args) => storage.hvals(args).await?,
     }
 
     Ok(())

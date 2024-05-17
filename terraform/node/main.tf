@@ -113,7 +113,7 @@ resource "aws_ecs_cluster" "this" {
 
 locals {
   addr = var.expose_public_ip ? data.aws_eip.this[0].public_ip : var.ipv4_address
-  
+
   irn_container_definition = {
     name = local.name
     environment = concat([

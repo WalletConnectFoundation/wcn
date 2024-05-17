@@ -23,6 +23,8 @@ locals {
     Group       = "irn"
     Environment = local.environment
   }
+
+  admin_peer_id = "12D3KooWBumV8hAjhXJpV84H6KF4ei7RBxcjU1oA6J5t91Jvchuq"
 }
 
 provider "aws" {
@@ -166,6 +168,9 @@ module "node" {
   ebs_volume_size             = 10
 
   tags = local.tags
+
+  authorized_raft_candidates = [local.admin_peer_id]
+  authorized_clients         = [local.admin_peer_id]
 }
 
 data "aws_iam_policy_document" "assume_role" {

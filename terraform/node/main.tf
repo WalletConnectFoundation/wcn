@@ -76,6 +76,12 @@ resource "aws_eip_association" "this" {
   allocation_id = var.eip_id
 }
 
+data "aws_eip" "this" {
+  count = var.expose_public_ip ? 1 : 0
+
+  id = var.eip_id
+}
+
 resource "aws_volume_attachment" "this" {
   device_name = "/dev/xvdb"
   volume_id   = aws_ebs_volume.this.id
@@ -106,11 +112,13 @@ resource "aws_ecs_cluster" "this" {
 }
 
 locals {
+  addr = var.expose_public_ip ? data.aws_eip.this[0].public_ip : var.ipv4_address
+  
   irn_container_definition = {
     name = local.name
     environment = concat([
-      { name = "ADDR", value = "/ip4/${var.ipv4_address}/udp/${var.libp2p_port}/quic-v1" },
-      { name = "API_ADDR", value = "/ip4/${var.ipv4_address}/udp/${var.api_port}/quic-v1" },
+      { name = "ADDR", value = "/ip4/${local.addr}/udp/${var.libp2p_port}/quic-v1" },
+      { name = "API_ADDR", value = "/ip4/${local.addr}/udp/${var.api_port}/quic-v1" },
       { name = "METRICS_ADDR", value = "0.0.0.0:${var.metrics_port}" },
       { name = "REPLICATION_STRATEGY_FACTOR", value = "3" },
       { name = "REPLICATION_STRATEGY_LEVEL", value = "Quorum" },

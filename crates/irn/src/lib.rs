@@ -15,12 +15,13 @@ pub struct App {
     commands: commands::SubCmd,
 }
 
-pub fn exec() -> anyhow::Result<()> {
+pub async fn exec() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.commands {
         commands::SubCmd::Node(args) => commands::node::exec(args),
         commands::SubCmd::Config(args) => commands::config::exec(args),
         commands::SubCmd::Key(args) => commands::key::exec(args),
+        commands::SubCmd::Storage(args) => commands::storage::exec(args).await,
     }
 }

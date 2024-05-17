@@ -1,123 +1,88 @@
 version: "3.9"
+
 services:
-  node1:
-    container_name: irn-node-1
-    image: irn:master
-    pull_policy: build
-    build:
-      dockerfile: ./Dockerfile
-      context: ./
-      args:
-        PROFILE: debug
-    volumes:
-      - irn-node-1:/irn
-    ports:
-      - 3001:3000
-      - 3101:3001
-      - 3201:3002
-    env_file:
-      - ./irn.common.env
-    environment:
-      - SECRET_KEY=00000000000000000000000000000001
-      - PEER_12D3KooWKCjCtAy1myLoPbeUrVS6BBhzVHjLRHKvMS4gCoobyBbb=/dns4/node2/tcp/3000
-      - PEER_12D3KooWMeFudZutoDEqKAsZ51HzyUELGsUUX5rmWSRwxMq3spYL=/dns4/node3/tcp/3000
-      - PEER_12D3KooWSfyLo174Etqyr9a4VWhyfZG2wA8T6tB1MFDAZYhLanFz=/dns4/node4/tcp/3000
-      - PEER_12D3KooWBgLHcVYcyUP7eDVDzJonXVhCEhDtkNAMrWrkdjQSSLic=/dns4/node5/tcp/3000
-  node2:
-    container_name: irn-node-2
-    image: irn:master
-    pull_policy: build
-    build:
-      dockerfile: ./Dockerfile
-      context: ./
-      args:
-        PROFILE: debug
-    volumes:
-      - irn-node-2:/irn
-    ports:
-      - 3002:3000
-      - 3102:3001
-      - 3202:3002
-    env_file:
-      - ./irn.common.env
-    environment:
-      - SECRET_KEY=00000000000000000000000000000002
-      - PEER_12D3KooWBnTyEyBVeYpZJobw78rb85nNamrYQR3Tc6gJmfQ76pG4=/dns4/node1/tcp/3000
-      - PEER_12D3KooWMeFudZutoDEqKAsZ51HzyUELGsUUX5rmWSRwxMq3spYL=/dns4/node3/tcp/3000
-      - PEER_12D3KooWSfyLo174Etqyr9a4VWhyfZG2wA8T6tB1MFDAZYhLanFz=/dns4/node4/tcp/3000
-      - PEER_12D3KooWBgLHcVYcyUP7eDVDzJonXVhCEhDtkNAMrWrkdjQSSLic=/dns4/node5/tcp/3000
-  node3:
-    container_name: irn-node-3
-    image: irn:master
-    pull_policy: build
-    build:
-      dockerfile: ./Dockerfile
-      context: ./
-      args:
-        PROFILE: debug
-    volumes:
-      - irn-node-3:/irn
-    ports:
-      - 3003:3000
-      - 3103:3001
-      - 3203:3002
-    env_file:
-      - ./irn.common.env
-    environment:
-      - SECRET_KEY=00000000000000000000000000000003
-      - PEER_12D3KooWBnTyEyBVeYpZJobw78rb85nNamrYQR3Tc6gJmfQ76pG4=/dns4/node1/tcp/3000
-      - PEER_12D3KooWKCjCtAy1myLoPbeUrVS6BBhzVHjLRHKvMS4gCoobyBbb=/dns4/node2/tcp/3000
-      - PEER_12D3KooWSfyLo174Etqyr9a4VWhyfZG2wA8T6tB1MFDAZYhLanFz=/dns4/node4/tcp/3000
-      - PEER_12D3KooWBgLHcVYcyUP7eDVDzJonXVhCEhDtkNAMrWrkdjQSSLic=/dns4/node5/tcp/3000
-  node4:
-    container_name: irn-node-4
-    image: irn:master
-    pull_policy: build
-    build:
-      dockerfile: ./Dockerfile
-      context: ./
-      args:
-        PROFILE: debug
-    volumes:
-      - irn-node-4:/irn
-    ports:
-      - 3004:3000
-      - 3104:3001
-      - 3204:3002
-    env_file:
-      - ./irn.common.env
-    environment:
-      - SECRET_KEY=00000000000000000000000000000004
-      - PEER_12D3KooWBnTyEyBVeYpZJobw78rb85nNamrYQR3Tc6gJmfQ76pG4=/dns4/node1/tcp/3000
-      - PEER_12D3KooWKCjCtAy1myLoPbeUrVS6BBhzVHjLRHKvMS4gCoobyBbb=/dns4/node2/tcp/3000
-      - PEER_12D3KooWMeFudZutoDEqKAsZ51HzyUELGsUUX5rmWSRwxMq3spYL=/dns4/node3/tcp/3000
-      - PEER_12D3KooWBgLHcVYcyUP7eDVDzJonXVhCEhDtkNAMrWrkdjQSSLic=/dns4/node5/tcp/3000
-  node5:
-    container_name: irn-node-5
-    image: irn:master
-    pull_policy: build
-    build:
-      dockerfile: ./Dockerfile
-      context: ./
-      args:
-        PROFILE: debug
-    volumes:
-      - irn-node-5:/irn
-    ports:
-      - 3005:3000
-      - 3105:3001
-      - 3205:3002
-    env_file:
-      - ./irn.common.env
-    environment:
-      - SECRET_KEY=00000000000000000000000000000005
-      - PEER_12D3KooWBnTyEyBVeYpZJobw78rb85nNamrYQR3Tc6gJmfQ76pG4=/dns4/node1/tcp/3000
-      - PEER_12D3KooWKCjCtAy1myLoPbeUrVS6BBhzVHjLRHKvMS4gCoobyBbb=/dns4/node2/tcp/3000
-      - PEER_12D3KooWMeFudZutoDEqKAsZ51HzyUELGsUUX5rmWSRwxMq3spYL=/dns4/node3/tcp/3000
-      - PEER_12D3KooWSfyLo174Etqyr9a4VWhyfZG2wA8T6tB1MFDAZYhLanFz=/dns4/node4/tcp/3000
-volumes:
   irn-node-1:
+    image: irn:master
+    build:
+      dockerfile: ./Dockerfile
+      context: ./
+      args:
+        - PROFILE=debug
+    container_name: irn-node-1
+    networks:
+      relay:
+        ipv4_address: 
+    ports:
+      - "3010:3010/udp"
+      - "3011:3011/udp"
+      - 3012:3012
+    environment:
+      - ADDR=/ip4//udp/3010/quic-v1
+      - API_ADDR=/ip4//udp/3011/quic-v1
+      - METRICS_ADDR=:3012
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2
+      - RAFT_DIR=/irn/raft
+      - ROCKSDB_DIR=/irn/rocksdb
+      - REPLICATION_STRATEGY_FACTOR=3
+      - REPLICATION_STRATEGY_LEVEL=Quorum
+      - LOG_LEVEL=info,tarpc=error
+      - GROUP=1
+      - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
+      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4//udp/3020/quic-v1
+      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4//udp/3030/quic-v1
+
   irn-node-2:
+    image: irn:master
+    container_name: irn-node-2
+    networks:
+      relay:
+        ipv4_address: 
+    ports:
+      - "3020:3020/udp"
+      - "3021:3021/udp"
+      - 3022:3022
+    environment:
+      - ADDR=/ip4//udp/3020/quic-v1
+      - API_ADDR=/ip4//udp/3021/quic-v1
+      - METRICS_ADDR=:3022
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2
+      - RAFT_DIR=/irn/raft
+      - ROCKSDB_DIR=/irn/rocksdb
+      - REPLICATION_STRATEGY_FACTOR=3
+      - REPLICATION_STRATEGY_LEVEL=Quorum
+      - LOG_LEVEL=info,tarpc=error
+      - GROUP=2
+      - SECRET_KEY=aAz8/3kOkdukRmWks9/QCgiKBAm+3FnqxXE35U44t/c=
+      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1=/ip4//udp/3010/quic-v1
+      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4//udp/3030/quic-v1
+
   irn-node-3:
-  irn-node-4:
-  irn-node-5:
+    image: irn:master
+    container_name: irn-node-3
+    networks:
+      relay:
+        ipv4_address: 
+    ports:
+      - "3030:3030/udp"
+      - "3031:3031/udp"
+      - 3032:3032
+    environment:
+      - ADDR=/ip4//udp/3030/quic-v1
+      - API_ADDR=/ip4//udp/3031/quic-v1
+      - METRICS_ADDR=:3032
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2
+      - RAFT_DIR=/irn/raft
+      - ROCKSDB_DIR=/irn/rocksdb
+      - REPLICATION_STRATEGY_FACTOR=3
+      - REPLICATION_STRATEGY_LEVEL=Quorum
+      - LOG_LEVEL=info,tarpc=error
+      - GROUP=3
+      - SECRET_KEY=Fn+92TJONBeB3ji6jd083wfPiRuZF5ScPSyhfCJy8C0=
+      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1=/ip4//udp/3010/quic-v1
+      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4//udp/3020/quic-v1
+
+networks:
+  relay:
+    ipam:
+      config:
+        - subnet: /16

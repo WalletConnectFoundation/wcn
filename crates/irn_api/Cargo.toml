@@ -33,6 +33,7 @@ rand = "0.8"
 ring = "0.17"
 serde-big-array = "0.5"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+ed25519-dalek = "2.1"
 
 [dev-dependencies]
 static_assertions = "1.1"

@@ -213,8 +213,13 @@ pub fn run_server<H: Handshake>(
     server_config.transport = transport_config.clone();
     server_config.migration(false);
 
+    let socket_addr = match multiaddr_to_socketaddr(cfg.addr.clone())? {
+        SocketAddr::V4(v4) => SocketAddr::new([0, 0, 0, 0].into(), v4.port()),
+        SocketAddr::V6(v6) => SocketAddr::new([0, 0, 0, 0, 0, 0, 0, 0].into(), v6.port()),
+    };
+
     let endpoint = new_quinn_endpoint(
-        multiaddr_to_socketaddr(cfg.addr.clone())?,
+        socket_addr,
         &cfg.keypair,
         transport_config,
         Some(server_config),

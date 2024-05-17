@@ -134,7 +134,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-25"
+  image       = "${data.aws_ecr_repository.node.repository_url}:1.421.0"
   node_memory = 4096 - 512
   node_cpu    = 2048
 

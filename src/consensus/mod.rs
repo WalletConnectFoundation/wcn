@@ -231,7 +231,7 @@ impl Consensus {
                         return Ok(());
                     }
                     Err(err) => {
-                        tracing::warn!(%err, %peer_id, "failed to add a member via a remote peer")
+                        tracing::warn!(?err, %peer_id, "failed to add a member via a remote peer")
                     }
                 }
             }

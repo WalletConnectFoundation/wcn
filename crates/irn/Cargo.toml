@@ -10,18 +10,25 @@ path = "src/main.rs"
 
 [dependencies]
 network = { path = "../network" }
+irn_api = { path = "../irn_api" }
 
 clap = { version = "4", features = ["derive"] }
-eyre = "0.6.12"
+eyre = "0.6"
 tracing = "0.1"
 node = { package = "irn_node", path = "../../." }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 anyhow = "1"
+thiserror = "1.0"
+tokio = "1.37"
 
 # Key generation.
 ed25519-dalek = "2.1"
 rand_chacha = "0.3"
 data-encoding = "2.6"
+
+# Storage
+humantime = "2.1"
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 
 [lints]
 workspace = true

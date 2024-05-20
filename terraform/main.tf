@@ -23,6 +23,8 @@ locals {
     Group       = "irn"
     Environment = local.environment
   }
+
+  admin_peer_id = "12D3KooWBumV8hAjhXJpV84H6KF4ei7RBxcjU1oA6J5t91Jvchuq"
 }
 
 provider "aws" {
@@ -134,7 +136,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-32"
+  image       = "${data.aws_ecr_repository.node.repository_url}:pr-33"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -166,6 +168,9 @@ module "node" {
   ebs_volume_size             = 10
 
   tags = local.tags
+
+  authorized_raft_candidates = [local.admin_peer_id]
+  authorized_clients         = [local.admin_peer_id]
 }
 
 data "aws_iam_policy_document" "assume_role" {

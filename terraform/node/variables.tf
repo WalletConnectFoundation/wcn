@@ -132,3 +132,13 @@ variable "tags" {
   type    = any
   default = {}
 }
+
+variable "authorized_raft_candidates" {
+  type    = list(string)
+  default = null
+}
+
+variable "authorized_clients" {
+  type    = list(string)
+  default = null
+}

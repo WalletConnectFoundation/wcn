@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 5.0"
     }
+    libp2p = {
+      source  = "WalletConnect/libp2p"
+      version = "~> 0.1.0"
+    }
   }
 
   backend "remote" {
@@ -84,6 +88,29 @@ module "keypair" {
   tags = local.tags
 }
 
+# Ed25519 secret key, 32 bytes
+resource "random_bytes" "admin_secret_key" {
+  length = 32
+}
+
+resource "aws_secretsmanager_secret" "admin_secret_key" {
+  name = "testnet_admin_secret_key"
+
+  # Otherwise Terraform won't be able to delete it
+  recovery_window_in_days = 0
+
+  tags = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "admin_secret_key" {
+  secret_id     = aws_secretsmanager_secret.admin_secret_key.id
+  secret_string = random_bytes.admin_secret_key.base64
+}
+
+data "libp2p_peer_id" "admin_peer_id" {
+  ed25519_secret_key = aws_secretsmanager_secret_version.admin_secret_key.secret_string
+}
+
 resource "aws_prometheus_workspace" "this" {
   alias = "prometheus-irn-testnet"
 }
@@ -107,6 +134,14 @@ resource "aws_security_group" "node" {
     from_port   = local.api_port
     to_port     = local.api_port
     protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Prometheus
+  ingress {
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
@@ -171,6 +206,10 @@ module "node" {
 
   authorized_raft_candidates = [local.admin_peer_id]
   authorized_clients         = [local.admin_peer_id]
+
+  enable_otel_collector     = false
+  enable_prometheus         = true
+  prometheus_admin_password = aws_secretsmanager_secret_version.admin_secret_key.secret_string
 }
 
 data "aws_iam_policy_document" "assume_role" {
@@ -240,3 +279,4 @@ resource "aws_ec2_instance_connect_endpoint" "this" {
   subnet_id          = module.node["eu-central-1a-1"].subnet_id
   preserve_client_ip = false
 }
+

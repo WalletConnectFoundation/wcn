@@ -194,19 +194,24 @@ locals {
     # For now we only need it to do profiling.
     privileged = true
 
-    # We define this dependency to force otel collector not to exit prematurely, when the node waits for
+    # We define this dependency to force other containers not to exit prematurely, when the node waits for
     # its turn for restart.
     # Without having this we lose 30-45s of metrics during re-deployments.
-    dependsOn = [
-      {
-        containerName = "aws-otel-collector"
+    dependsOn = concat(
+      var.enable_otel_collector ? [{
+        containerName = local.otel_container_name
         condition     = "START"
-      }
-    ]
+      }] : [],
+      var.enable_prometheus ? [{
+        containerName = local.prometheus_container_name
+        condition     = "START"
+      }] : [],
+    )
   }
 
+  otel_container_name = "aws-otel-collector"
   otel_container_definition = {
-    name : "aws-otel-collector",
+    name : local.otel_container_name,
     image : var.aws_otel_collector_image,
     environment : [
       { name : "AWS_PROMETHEUS_SCRAPING_ENDPOINT", value : "0.0.0.0:${var.metrics_port}" },
@@ -232,11 +237,83 @@ locals {
       }
     }
   }
+
+  prometheus_container_name = "prometheus"
+  prometheus_config = yamlencode({
+    scrape_configs = [{
+      job_name        = "prometheus"
+      scrape_interval = "15s"
+      static_configs = [{
+        targets = ["localhost:${var.metrics_port}"]
+      }]
+    }]
+  })
+  prometheus_config_env  = "CONFIG"
+  prometheus_config_path = "/data/prometheus/config.yml"
+  prometheus_web_config = yamlencode({
+    basic_auth_users = {
+      admin = bcrypt(var.prometheus_admin_password)
+    }
+  })
+  prometheus_web_config_env  = "WEB_CONFIG"
+  prometheus_web_config_path = "/data/prometheus/web.config.yml"
+  prometheus_container_definition = {
+    name : local.prometheus_container_name,
+    image : var.prometheus_image,
+    environment : [
+      { name : local.prometheus_config_env, value : local.prometheus_config },
+      { name : local.prometheus_web_config_env, value : local.prometheus_web_config },
+    ],
+
+    user : "1001",
+    entryPoint : ["/bin/sh"],
+    command : [
+      "-c",
+      <<-CMD
+        mkdir -p /data/prometheus && \
+        printenv ${local.prometheus_config_env} > ${local.prometheus_config_path} && \
+        printenv ${local.prometheus_web_config_env} > ${local.prometheus_web_config_path} && \
+        exec /bin/prometheus \
+        --config.file=${local.prometheus_config_path} \
+        --web.config.file=${local.prometheus_web_config_path} \
+        --storage.tsdb.path=/data/prometheus \
+        --web.console.libraries=/usr/share/prometheus/console_libraries \
+        --web.console.templates=/usr/share/prometheus/consoles
+      CMD
+    ]
+
+    portMappings : [
+      {
+        hostPort : 9090,
+        protocol : "tcp",
+        containerPort : 9090
+      }
+    ],
+
+    mountPoints = [{
+      containerPath = "/data"
+      sourceVolume  = "data"
+    }]
+
+    logConfiguration : {
+      logDriver : "awslogs",
+      options : {
+        awslogs-create-group : "True",
+        awslogs-group : "/ecs/${local.name}-prometheus",
+        awslogs-region : "${var.region}",
+        awslogs-stream-prefix : "ecs"
+      }
+    }
+  }
 }
 
 resource "aws_ecs_task_definition" "this" {
-  family                = local.name
-  container_definitions = jsonencode([local.irn_container_definition, local.otel_container_definition])
+  family = local.name
+  container_definitions = jsonencode(concat(
+    [local.irn_container_definition],
+    var.enable_otel_collector ? [local.otel_container_definition] : [],
+    var.enable_prometheus ? [local.prometheus_container_definition] : []
+  ))
 
   volume {
     name      = "data"

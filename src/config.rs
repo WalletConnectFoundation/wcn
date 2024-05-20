@@ -96,7 +96,7 @@ impl Config {
             addr: raw.addr,
             api_addr: raw.api_addr,
             metrics_addr: raw.metrics_addr,
-            is_raft_member: raw.is_raft_member.unwrap_or(true),
+            is_raft_member: raw.is_raft_member.unwrap_or(false),
             bootstrap_nodes: None,
             known_peers: known_peers_from_env()?,
             raft_dir: raw.raft_dir,

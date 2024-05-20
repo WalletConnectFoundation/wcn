@@ -145,7 +145,13 @@ locals {
       [for peer_id, ip in local.known_peers : {
         name  = "PEER_${peer_id}",
         value = "/ip4/${ip}/udp/${var.libp2p_port}/quic-v1"
-      }]
+      }],
+      var.authorized_raft_candidates != null ? [
+        { name = "AUTHORIZED_RAFT_CANDIDATES", value = "${join(",", var.authorized_raft_candidates)}" },
+      ] : [],
+      var.authorized_clients != null ? [
+        { name = "AUTHORIZED_CLIENTS", value = "${join(",", var.authorized_clients)}" },
+      ] : [],
     )
 
     image     = var.image

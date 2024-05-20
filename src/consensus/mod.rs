@@ -288,6 +288,11 @@ impl Consensus {
     ) -> AddMemberResult {
         // Skip authorization if not configured.
         if let Some(auth) = &self.authorization {
+            // Adding new voters is forbidden for clusters with enabled authorization.
+            if !req.learner_only {
+                return Err(unauthorized_error());
+            }
+
             let state = self.raft.state();
             let membership = state.stored_membership();
 

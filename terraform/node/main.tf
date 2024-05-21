@@ -206,6 +206,10 @@ locals {
         containerName = local.prometheus_container_name
         condition     = "START"
       }] : [],
+      var.enable_grafana ? [{
+        containerName = local.grafana_container_name
+        condition     = "START"
+      }] : [],
     )
   }
 
@@ -305,6 +309,40 @@ locals {
       }
     }
   }
+
+  grafana_container_name = "grafana"
+  grafana_container_definition = {
+    name : local.grafana_container_name,
+    image : var.grafana_image,
+    environment : [
+      { name : "GF_PATHS_DATA", value : "/data/grafana" },
+      { name : "GF_SERVER_HTTP_PORT", value : tostring(var.grafana_port) },
+    ]
+    user : "1001",
+
+    portMappings : [
+      {
+        hostPort : var.grafana_port,
+        protocol : "tcp",
+        containerPort : var.grafana_port
+      }
+    ],
+
+    mountPoints = [{
+      containerPath = "/data"
+      sourceVolume  = "data"
+    }]
+
+    logConfiguration : {
+      logDriver : "awslogs",
+      options : {
+        awslogs-create-group : "True",
+        awslogs-group : "/ecs/${local.name}-grafana",
+        awslogs-region : "${var.region}",
+        awslogs-stream-prefix : "ecs"
+      }
+    }
+  }
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -312,7 +350,8 @@ resource "aws_ecs_task_definition" "this" {
   container_definitions = jsonencode(concat(
     [local.irn_container_definition],
     var.enable_otel_collector ? [local.otel_container_definition] : [],
-    var.enable_prometheus ? [local.prometheus_container_definition] : []
+    var.enable_prometheus ? [local.prometheus_container_definition] : [],
+    var.enable_grafana ? [local.grafana_container_definition] : []
   ))
 
   volume {

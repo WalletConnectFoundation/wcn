@@ -163,3 +163,19 @@ variable "prometheus_admin_password" {
   default   = null
   sensitive = true
 }
+
+variable "enable_grafana" {
+  type    = bool
+  default = false
+}
+
+variable "grafana_image" {
+  type    = string
+  default = "docker.io/grafana/grafana:10.1.10"
+}
+
+variable "grafana_port" {
+  type    = number
+  default = null
+}
+

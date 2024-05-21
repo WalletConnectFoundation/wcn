@@ -71,6 +71,8 @@ locals {
   port         = 3000
   metrics_port = 3002
   api_port     = 3003
+
+  grafana_port = 9091
 }
 
 resource "aws_eip" "this" {
@@ -145,6 +147,14 @@ resource "aws_security_group" "node" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Grafana
+  ingress {
+    from_port   = local.grafana_port
+    to_port     = local.grafana_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Allow SSH
   ingress {
     from_port   = 22
@@ -210,6 +220,8 @@ module "node" {
   enable_otel_collector     = false
   enable_prometheus         = true
   prometheus_admin_password = aws_secretsmanager_secret_version.admin_secret_key.secret_string
+  enable_grafana            = true
+  grafana_port              = local.grafana_port
 }
 
 data "aws_iam_policy_document" "assume_role" {

@@ -181,7 +181,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-33"
+  image       = "${data.aws_ecr_repository.node.repository_url}:pr-34"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -222,6 +222,7 @@ module "node" {
   prometheus_admin_password = aws_secretsmanager_secret_version.admin_secret_key.secret_string
   enable_grafana            = true
   grafana_port              = local.grafana_port
+  grafana_admin_password    = aws_secretsmanager_secret_version.admin_secret_key.secret_string
 }
 
 data "aws_iam_policy_document" "assume_role" {

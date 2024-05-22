@@ -111,6 +111,51 @@ resource "aws_ecs_cluster" "this" {
   tags = local.tags
 }
 
+resource "tls_private_key" "this" {
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P384"
+}
+
+# data "external" "tls_private_key" {
+#     # Terraform doesn't allow to operate with raw bytes, so we do it outside.
+#     program = [
+#       "python3", "-c",
+#       <<-CMD
+#         import base64, json
+#         header = bytes.fromhex("302e020100300506032b657004220420")
+#         secret = base64.b64decode("${var.secret_key}" + "==")
+#         print(json.dumps({'base64': base64.b64encode(header + secret).decode() }))
+#       CMD
+#     ]
+# }
+
+# locals {
+#   tls_private_key_pem = <<-PEM
+#     -----BEGIN PRIVATE KEY-----
+#     ${data.external.tls_private_key.result.base64}
+#     -----END PRIVATE KEY-----
+#   PEM
+# }
+
+resource "tls_self_signed_cert" "this" {
+  private_key_pem = tls_private_key.this.private_key_pem
+
+  subject {
+    organization = "WalletConnect"
+  }
+
+  ip_addresses = [local.addr]
+
+  validity_period_hours = 24 * 365 # a year
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+    "cert_signing",
+  ]
+}
+
 locals {
   addr = var.expose_public_ip ? data.aws_eip.this[0].public_ip : var.ipv4_address
 
@@ -242,31 +287,51 @@ locals {
     }
   }
 
+
+  prometheus_dir            = "/data/prometheus"
   prometheus_container_name = "prometheus"
-  prometheus_config = yamlencode({
-    scrape_configs = [{
-      job_name        = "prometheus"
-      scrape_interval = "15s"
-      static_configs = [{
-        targets = ["localhost:${var.metrics_port}"]
+  prometheus_config = {
+    env    = "CONFIG"
+    "path" = "${local.prometheus_dir}/config.yml"
+    content = yamlencode({
+      scrape_configs = [{
+        job_name        = "prometheus"
+        scrape_interval = "15s"
+        static_configs = [{
+          targets = ["localhost:${var.metrics_port}"]
+        }]
       }]
-    }]
-  })
-  prometheus_config_env  = "CONFIG"
-  prometheus_config_path = "/data/prometheus/config.yml"
-  prometheus_web_config = yamlencode({
-    basic_auth_users = {
-      admin = bcrypt(var.prometheus_admin_password)
-    }
-  })
-  prometheus_web_config_env  = "WEB_CONFIG"
-  prometheus_web_config_path = "/data/prometheus/web.config.yml"
+    })
+  }
+  prometheus_web_config = {
+    env    = "WEB_CONFIG"
+    "path" = "${local.prometheus_dir}/web.config.yml"
+    content = yamlencode({
+      tls_server_config = {
+        cert_file = local.prometheus_tls_cert.path
+        key_file  = local.prometheus_tls_key.path
+      }
+      basic_auth_users = {
+        admin = bcrypt(var.prometheus_admin_password)
+      }
+    })
+  }
+  prometheus_tls_cert = {
+    env     = "TLS_CERT"
+    "path"  = "${local.prometheus_dir}/tls.cert"
+    content = tls_self_signed_cert.this.cert_pem
+  }
+  prometheus_tls_key = {
+    env     = "TLS_KEY"
+    "path"  = "${local.prometheus_dir}/tls.key"
+    content = tls_private_key.this.private_key_pem
+  }
   prometheus_container_definition = {
     name : local.prometheus_container_name,
     image : var.prometheus_image,
     environment : [
-      { name : local.prometheus_config_env, value : local.prometheus_config },
-      { name : local.prometheus_web_config_env, value : local.prometheus_web_config },
+      for e in [local.prometheus_config, local.prometheus_web_config, local.prometheus_tls_cert, local.prometheus_tls_key] :
+      { name : e.env, value = e.content }
     ],
 
     user : "1001",
@@ -275,11 +340,13 @@ locals {
       "-c",
       <<-CMD
         mkdir -p /data/prometheus && \
-        printenv ${local.prometheus_config_env} > ${local.prometheus_config_path} && \
-        printenv ${local.prometheus_web_config_env} > ${local.prometheus_web_config_path} && \
+        printenv ${local.prometheus_config.env} > ${local.prometheus_config.path} && \
+        printenv ${local.prometheus_web_config.env} > ${local.prometheus_web_config.path} && \
+        printenv ${local.prometheus_tls_cert.env} > ${local.prometheus_tls_cert.path} && \
+        printenv ${local.prometheus_tls_key.env} > ${local.prometheus_tls_key.path} && \
         exec /bin/prometheus \
-        --config.file=${local.prometheus_config_path} \
-        --web.config.file=${local.prometheus_web_config_path} \
+        --config.file=${local.prometheus_config.path} \
+        --web.config.file=${local.prometheus_web_config.path} \
         --storage.tsdb.path=/data/prometheus \
         --web.console.libraries=/usr/share/prometheus/console_libraries \
         --web.console.templates=/usr/share/prometheus/consoles
@@ -310,15 +377,72 @@ locals {
     }
   }
 
+
+  grafana_dir            = "/data/grafana"
   grafana_container_name = "grafana"
+  grafana_tls_cert = {
+    env     = "TLS_CERT"
+    "path"  = "${local.grafana_dir}/tls.cert"
+    content = tls_self_signed_cert.this.cert_pem
+  }
+  grafana_tls_key = {
+    env     = "TLS_KEY"
+    "path"  = "${local.grafana_dir}/tls.key"
+    content = tls_private_key.this.private_key_pem
+  }
+  grafana_datasources = {
+    env    = "DATASOURCES"
+    "path" = "${local.grafana_dir}/provisioning/datasources/default.yaml"
+    content = yamlencode({
+      apiVersion = 1
+      datasources = [{
+        name          = "Prometheus"
+        type          = "prometheus"
+        access        = "proxy"
+        url           = "https://localhost:9090"
+        basicAuth     = true
+        basicAuthUser = "admin"
+        isDefault     = true
+        jsonData = {
+          httpMethod    = "POST"
+          tlsSkipVerify = true
+        }
+        secureJsonData = {
+          basicAuthPassword = var.prometheus_admin_password
+        }
+      }]
+    })
+  }
   grafana_container_definition = {
     name : local.grafana_container_name,
     image : var.grafana_image,
     environment : [
-      { name : "GF_PATHS_DATA", value : "/data/grafana" },
+      { name : local.grafana_tls_cert.env, value : local.grafana_tls_cert.content },
+      { name : local.grafana_tls_key.env, value : local.grafana_tls_key.content },
+      { name : local.grafana_datasources.env, value : local.grafana_datasources.content },
+      { name : "GF_PATHS_DATA", value : local.grafana_dir },
+      { name : "GF_PATHS_PROVISIONING", value : "${local.grafana_dir}/provisioning" },
       { name : "GF_SERVER_HTTP_PORT", value : tostring(var.grafana_port) },
+      { name : "GF_SERVER_CERT_FILE", value : local.grafana_tls_cert.path },
+      { name : "GF_SERVER_CERT_KEY", value : local.grafana_tls_key.path },
+      { name : "GF_SERVER_PROTOCOL", value : "https" },
+      { name : "GF_SECURITY_ADMIN_PASSWORD", value : var.grafana_admin_password },
     ]
+
     user : "1001",
+    entryPoint : ["/bin/sh"],
+    command : [
+      "-c",
+      <<-CMD
+        set -e && \
+        mkdir -p /data/grafana/provisioning/datasources && \
+        printenv ${local.grafana_tls_cert.env} > ${local.grafana_tls_cert.path} && \
+        printenv ${local.grafana_tls_key.env} > ${local.grafana_tls_key.path} && \
+        printenv ${local.grafana_datasources.env} > ${local.grafana_datasources.path} && \
+        exec /run.sh
+      CMD
+    ]
+
 
     portMappings : [
       {

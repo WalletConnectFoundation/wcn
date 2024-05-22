@@ -179,3 +179,8 @@ variable "grafana_port" {
   default = null
 }
 
+variable "grafana_admin_password" {
+  type      = string
+  default   = null
+  sensitive = true
+}

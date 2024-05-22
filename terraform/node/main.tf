@@ -251,10 +251,6 @@ locals {
         containerName = local.prometheus_container_name
         condition     = "START"
       }] : [],
-      var.enable_grafana ? [{
-        containerName = local.grafana_container_name
-        condition     = "START"
-      }] : [],
     )
   }
 
@@ -413,6 +409,24 @@ locals {
       }]
     })
   }
+  grafana_dashboard_provider = {
+    env    = "DASHBOARD_PROVIDER"
+    "path" = "${local.grafana_dir}/provisioning/dashboards/default.yaml"
+    content = yamlencode({
+      apiVersion = 1
+      providers = [{
+        name    = "Default"
+        folder  = "Provisioned"
+        type    = "file"
+        options = { "path" = "${local.grafana_dir}/provisioning/dashboards" }
+      }]
+    })
+  }
+  grafana_dashboard = {
+    env     = "DASHBOARD"
+    "path"  = "${local.grafana_dir}/provisioning/dashboards/irn.json"
+    content = file("${path.module}/dashboard.json")
+  }
   grafana_container_definition = {
     name : local.grafana_container_name,
     image : var.grafana_image,
@@ -420,6 +434,8 @@ locals {
       { name : local.grafana_tls_cert.env, value : local.grafana_tls_cert.content },
       { name : local.grafana_tls_key.env, value : local.grafana_tls_key.content },
       { name : local.grafana_datasources.env, value : local.grafana_datasources.content },
+      { name : local.grafana_dashboard_provider.env, value : local.grafana_dashboard_provider.content },
+      { name : local.grafana_dashboard.env, value : local.grafana_dashboard.content },
       { name : "GF_PATHS_DATA", value : local.grafana_dir },
       { name : "GF_PATHS_PROVISIONING", value : "${local.grafana_dir}/provisioning" },
       { name : "GF_SERVER_HTTP_PORT", value : tostring(var.grafana_port) },
@@ -436,9 +452,12 @@ locals {
       <<-CMD
         set -e && \
         mkdir -p /data/grafana/provisioning/datasources && \
+        mkdir -p /data/grafana/provisioning/dashboards && \
         printenv ${local.grafana_tls_cert.env} > ${local.grafana_tls_cert.path} && \
         printenv ${local.grafana_tls_key.env} > ${local.grafana_tls_key.path} && \
         printenv ${local.grafana_datasources.env} > ${local.grafana_datasources.path} && \
+        printenv ${local.grafana_dashboard_provider.env} > ${local.grafana_dashboard_provider.path} && \
+        printenv ${local.grafana_dashboard.env} > ${local.grafana_dashboard.path} && \
         exec /run.sh
       CMD
     ]

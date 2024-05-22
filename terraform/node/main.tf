@@ -116,27 +116,6 @@ resource "tls_private_key" "this" {
   ecdsa_curve = "P384"
 }
 
-# data "external" "tls_private_key" {
-#     # Terraform doesn't allow to operate with raw bytes, so we do it outside.
-#     program = [
-#       "python3", "-c",
-#       <<-CMD
-#         import base64, json
-#         header = bytes.fromhex("302e020100300506032b657004220420")
-#         secret = base64.b64decode("${var.secret_key}" + "==")
-#         print(json.dumps({'base64': base64.b64encode(header + secret).decode() }))
-#       CMD
-#     ]
-# }
-
-# locals {
-#   tls_private_key_pem = <<-PEM
-#     -----BEGIN PRIVATE KEY-----
-#     ${data.external.tls_private_key.result.base64}
-#     -----END PRIVATE KEY-----
-#   PEM
-# }
-
 resource "tls_self_signed_cert" "this" {
   private_key_pem = tls_private_key.this.private_key_pem
 

@@ -27,7 +27,7 @@ use {
     wc::metrics::{Lazy, OtelTaskMetricsRecorder},
 };
 pub use {
-    libp2p::{identity::Keypair, multihash::Multihash, Multiaddr, PeerId},
+    libp2p::{identity::Keypair, multiaddr, multihash::Multihash, Multiaddr, PeerId},
     quinn::{ConnectionError, WriteError},
     rpc::Rpc,
 };

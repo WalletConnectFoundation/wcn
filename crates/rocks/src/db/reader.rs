@@ -164,7 +164,7 @@ fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
     let thread_id = thread.id();
     let thread_name = thread.name();
 
-    tracing::info!(?thread_id, ?thread_name, "batch reader thread started");
+    tracing::trace!(?thread_id, ?thread_name, "batch reader thread started");
 
     // Use blocking `recv()` here to let the thread suspend if there's no work.
     while let Ok(req) = rx.recv() {
@@ -196,7 +196,7 @@ fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
         }
     }
 
-    tracing::info!(?thread_id, ?thread_name, "batch reader thread finished");
+    tracing::trace!(?thread_id, ?thread_name, "batch reader thread finished");
 }
 
 fn raw_cb_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<RawCallbackRequest>) {
@@ -204,13 +204,13 @@ fn raw_cb_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<RawCallbackRequest>) {
     let thread_id = thread.id();
     let thread_name = thread.name();
 
-    tracing::info!(?thread_id, ?thread_name, "raw callback thread started");
+    tracing::trace!(?thread_id, ?thread_name, "raw callback thread started");
 
     while let Ok(req) = rx.recv() {
         (req.callback)(&db);
     }
 
-    tracing::info!(?thread_id, ?thread_name, "raw callback thread finished");
+    tracing::trace!(?thread_id, ?thread_name, "raw callback thread finished");
 }
 
 fn convert_result<T>(res: Result<Option<DBPinnableSlice<'_>>, Error>) -> Result<Option<T>, Error>

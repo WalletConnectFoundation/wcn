@@ -17,15 +17,13 @@ pub struct StopCmd {
     ///
     /// By default, stopping the node would fully decommission it, removing it
     /// entirely from the cluster. Setting this flag to `true` would mean that
-    /// the node will be stopped without being removed from the cluster,
-    /// presumably with the intention of running it again later.
+    /// the node will be stopped without being removed from the cluster. The
+    /// downtime of a node should be as short as possible, as nodes in the
+    /// cluster can only be restarted one at a time.
     ///
     /// The flag should be used very carefully, since if the node configuration
     /// is lost, it would not be able to rejoin the cluster. This can
     /// potentially lead to a broken cluster state.
-    ///
-    /// The downtime of a node should be as short as possible, as nodes in the
-    /// cluster can only be restarted one at a time.
     ///
     /// Note that fully a decommissionned node can not be started again, meaning
     /// the working directory can not be reused.

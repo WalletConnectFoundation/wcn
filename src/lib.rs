@@ -12,6 +12,8 @@ use {
         pin::pin,
         time::Duration,
     },
+    sysinfo::{NetworkExt, NetworksExt},
+    tokio::sync::oneshot,
     wc::{
         future::StaticFutureExt,
         metrics::{self, otel},
@@ -157,7 +159,9 @@ pub struct TypeConfig;
 fn serve_metrics(addr: &str, node: Node) -> Result<impl Future<Output = Result<(), Error>>, Error> {
     let addr: SocketAddr = addr.parse()?;
 
-    let updater_handle = tokio::spawn(metrics_update_loop(node));
+    let (tx, rx) = oneshot::channel();
+
+    std::thread::spawn(|| metrics_update_loop(rx, node));
 
     let handler = move || async move {
         metrics::ServiceMetrics::export()
@@ -177,66 +181,72 @@ fn serve_metrics(addr: &str, node: Node) -> Result<impl Future<Output = Result<(
             .await
             .map_err(Into::into);
 
-        updater_handle.abort();
+        let _ = tx.send(());
 
         result
     })
 }
 
-async fn metrics_update_loop(node: Node) {
-    let sys_update_fut = async {
-        use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
+fn metrics_update_loop(mut cancel: oneshot::Receiver<()>, node: Node) {
+    use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
 
-        let mut sys = sysinfo::System::new_all();
+    let mut sys = sysinfo::System::new_all();
 
-        loop {
-            sys.refresh_cpu();
+    loop {
+        match cancel.try_recv() {
+            Err(oneshot::error::TryRecvError::Empty) => {}
+            _ => return,
+        };
 
-            for (n, cpu) in sys.cpus().iter().enumerate() {
-                metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", cpu.cpu_usage(), &[
-                    otel::KeyValue::new("n_core", n as i64)
-                ]);
-            }
+        sys.refresh_cpu();
 
-            sys.refresh_disks();
-
-            for disk in sys.disks() {
-                if disk.mount_point().to_str() == Some("/irn") {
-                    metrics::gauge!("irn_disk_total_space", disk.total_space());
-                    metrics::gauge!("irn_disk_available_space", disk.available_space());
-                    break;
-                }
-            }
-
-            tokio::time::sleep(Duration::from_secs(15)).await;
+        for (n, cpu) in sys.cpus().iter().enumerate() {
+            metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", cpu.cpu_usage(), &[
+                otel::KeyValue::new("n_core", n as i64)
+            ]);
         }
-    };
 
-    let mem_update_fut = async {
-        loop {
-            if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
-                tracing::warn!(?err, "failed to collect jemalloc stats");
+        sys.refresh_memory();
+
+        metrics::gauge!("irn_total_memory", sys.total_memory());
+        metrics::gauge!("irn_free_memory", sys.free_memory());
+        metrics::gauge!("irn_available_memory", sys.available_memory());
+        metrics::gauge!("irn_used_memory", sys.used_memory());
+
+        sys.refresh_disks();
+
+        for disk in sys.disks() {
+            if disk.mount_point().to_str() == Some("/irn") {
+                metrics::gauge!("irn_disk_total_space", disk.total_space());
+                metrics::gauge!("irn_disk_available_space", disk.available_space());
+                break;
             }
-
-            tokio::time::sleep(Duration::from_secs(15)).await;
         }
-    };
 
-    // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
-    // PhysicalCoreID() consumes 5-10% CPU
-    // TODO: Consider fixing this & re-enabling the stats
-    let _rocks_update_fut = async {
+        sys.refresh_networks();
+
+        for (name, net) in sys.networks().iter() {
+            metrics::gauge!("irn_network_tx_bytes_total", net.total_transmitted(), &[
+                otel::KeyValue::new("network", name.to_owned())
+            ]);
+            metrics::gauge!("irn_network_rx_bytes_total", net.total_received(), &[
+                otel::KeyValue::new("network", name.to_owned())
+            ]);
+        }
+
+        if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
+            tracing::warn!(?err, "failed to collect jemalloc stats");
+        }
+
+        // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
+        // PhysicalCoreID() consumes 5-10% CPU
+        // TODO: Consider fixing this & re-enabling the stats
         let db = node.storage().db();
         let mut metrics = RocksMetrics::default();
+        let _ = move || update_rocksdb_metrics(db, &mut metrics);
 
-        loop {
-            update_rocksdb_metrics(db, &mut metrics);
-
-            tokio::time::sleep(Duration::from_secs(15)).await;
-        }
-    };
-
-    tokio::join!(sys_update_fut, mem_update_fut);
+        std::thread::sleep(Duration::from_secs(15));
+    }
 }
 
 #[derive(Default)]

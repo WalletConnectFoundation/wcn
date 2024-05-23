@@ -142,3 +142,45 @@ variable "authorized_clients" {
   type    = list(string)
   default = null
 }
+
+variable "enable_otel_collector" {
+  type    = bool
+  default = true
+}
+
+variable "enable_prometheus" {
+  type    = bool
+  default = false
+}
+
+variable "prometheus_image" {
+  type    = string
+  default = "docker.io/prom/prometheus:v2.52.0"
+}
+
+variable "prometheus_admin_password" {
+  type      = string
+  default   = null
+  sensitive = true
+}
+
+variable "enable_grafana" {
+  type    = bool
+  default = false
+}
+
+variable "grafana_image" {
+  type    = string
+  default = "docker.io/grafana/grafana:10.1.10"
+}
+
+variable "grafana_port" {
+  type    = number
+  default = null
+}
+
+variable "grafana_admin_password" {
+  type      = string
+  default   = null
+  sensitive = true
+}

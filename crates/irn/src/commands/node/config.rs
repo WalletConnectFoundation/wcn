@@ -1,9 +1,8 @@
 use {
     irn_core::cluster::replication::ConsistencyLevel,
     network::{Keypair, PeerId},
-    node::Multiaddr,
     serde::{Deserialize, Serialize},
-    std::net::IpAddr,
+    std::net::{IpAddr, SocketAddr},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,7 +31,7 @@ impl From<Peer> for irn_core::PeerId {
 pub struct KnownPeer {
     #[serde(flatten)]
     pub peer: Peer,
-    pub address: Multiaddr,
+    pub address: SocketAddr,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -107,7 +106,7 @@ impl Config {
     }
 }
 
-pub mod keypair_as_base64 {
+mod keypair_as_base64 {
     use {
         network::Keypair,
         serde::{Deserialize, Deserializer, Serialize, Serializer},

@@ -1,17 +1,16 @@
 use {
     super::{Error, Lockfile, LogFormat},
+    crate::utils,
     irn_core::{cluster::replication::Strategy, PeerId},
-    network::multiaddr,
-    node::Multiaddr,
     std::{
         collections::{HashMap, HashSet},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         path::PathBuf,
         process::{Command, Stdio},
     },
 };
 
-const DETACH_STATE_ENV_VAR: &str = "IRN_INTERNAL_DEATCHED";
+const DETACH_STATE_ENV_VAR: &str = "IRN_INTERNAL_DETACHED";
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum LogOutput {
@@ -22,22 +21,53 @@ enum LogOutput {
 #[derive(Debug, clap::Args)]
 pub struct StartCmd {
     #[clap(short, long)]
-    config: String,
-
-    #[clap(long, default_value = "info")]
-    log_filter: String,
-
-    #[clap(long, value_enum, default_value_t = LogFormat::Text)]
-    log_format: LogFormat,
-
-    #[clap(long, value_enum, default_value_t = LogOutput::Stdout)]
-    log_output: LogOutput,
-
-    #[clap(short, long)]
+    /// Working directory for this node instance.
+    ///
+    /// Each running instance should use its own working directory, and the
+    /// directories are locked to that node's process ID.
+    ///
+    /// The following paths are considered relative to the working directory:
+    ///     - (CLI arg) `config`;
+    ///     - (config) `data_dir`;
+    ///     - (config) `consensus_dir`.
+    ///
+    /// The directory will be created if it doesn't exist.
     working_dir: Option<String>,
 
     #[clap(short, long)]
+    /// Node configuration file.
+    ///
+    /// The path is relative to the working directory.
+    config: String,
+
+    #[clap(short, long)]
+    /// Whether to start the node in a detached state.
+    ///
+    /// Detaching would spawn a background process running the node. Note that
+    /// `log-output` needs to be set to `file` if running a detached node,
+    /// otherwise the logs would be lost.
     detached: bool,
+
+    #[clap(long, default_value = "info")]
+    /// Log filtering.
+    ///
+    /// Can be used to filter per module. Example: `warn,irn_node=info` would
+    /// set the default level for all modules to `warn`, while overriding it
+    /// for `irn_node` to `info`.
+    log_filter: String,
+
+    #[clap(long, value_enum, default_value_t = LogFormat::Text)]
+    /// Log format.
+    ///
+    /// Either human readable `text`, or structured `json`.
+    log_format: LogFormat,
+
+    #[clap(long, value_enum, default_value_t = LogOutput::Stdout)]
+    /// Log output stream.
+    ///
+    /// By default all logs are being written to `stdout`. Switching to `file`
+    /// would store node logs in the working directory.
+    log_output: LogOutput,
 }
 
 pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
@@ -74,7 +104,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     let known_peers = config
         .known_peers
         .into_iter()
-        .map(|node| (PeerId::from(node.peer), node.address))
+        .map(|node| (PeerId::from(node.peer), utils::network_addr(node.address)))
         .collect::<HashMap<_, _>>();
 
     let bootstrap_nodes = if !config.bootstrap_nodes.is_empty() {
@@ -108,19 +138,32 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         (None, None)
     };
 
-    // TODO: Explain.
+    // This is a bit hacky because of the limitations imposed by `fork()`. So the
+    // idea here is to run normally up to this point, then chek if the internal env
+    // variable is set, and if not, initiate forking. The child fork would then
+    // spawn a subprocess with the internal env variable set, causing the spawned
+    // process to fully skip the fork-check part. The parent process would exit
+    // immediately after forking, and the child would wait for the spawned process
+    // to finish before exiting.
     if args.detached && std::env::var(DETACH_STATE_ENV_VAR).is_err() {
         drop(lockfile);
 
+        // Set the internal env var for the spawned process to skip the fork part.
         std::env::set_var(DETACH_STATE_ENV_VAR, "true");
+
+        // Restore the initial working directory, so that the paths are all relative to
+        // it, as it was in the parent process.
         std::env::set_current_dir(initial_wd).unwrap();
 
+        // Reconstruct the command line.
         let args = std::env::args().collect::<Vec<_>>();
         let (_, args) = args.split_first().unwrap();
         let exec = std::env::current_exe().unwrap();
 
         let mut command = Command::new(exec);
 
+        // Make sure the spawned process doesn't inherit IO handles from the original
+        // process.
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -137,8 +180,14 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public(), config.identity.group),
         keypair: config.identity.private_key,
-        addr: quic_multiaddr(config.server.bind_address, config.server.server_port),
-        api_addr: quic_multiaddr(config.server.bind_address, config.server.client_port),
+        addr: utils::network_addr(SocketAddr::new(
+            config.server.bind_address,
+            config.server.server_port,
+        )),
+        api_addr: utils::network_addr(SocketAddr::new(
+            config.server.bind_address,
+            config.server.client_port,
+        )),
         metrics_addr: SocketAddr::new(config.server.bind_address, config.server.metrics_port)
             .to_string(),
         is_raft_member: config.authorization.is_consensus_member,
@@ -167,11 +216,4 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         .await;
 
     Ok(())
-}
-
-fn quic_multiaddr(ip: IpAddr, port: u16) -> Multiaddr {
-    let mut addr = multiaddr::Multiaddr::from(ip);
-    addr.push(multiaddr::Protocol::Udp(port));
-    addr.push(multiaddr::Protocol::QuicV1);
-    addr
 }

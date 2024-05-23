@@ -6,9 +6,29 @@ use {
 #[derive(Debug, clap::Args)]
 pub struct StopCmd {
     #[clap(short, long)]
+    /// Working directory for this node instance.
+    ///
+    /// Each running instance should use its own working directory, and the
+    /// directories are locked to that node's process ID.
     working_dir: Option<String>,
 
     #[clap(short, long)]
+    /// Whether the node is being restarted or fully decommissionned.
+    ///
+    /// By default, stopping the node would fully decommission it, removing it
+    /// entirely from the cluster. Setting this flag to `true` would mean that
+    /// the node will be stopped without being removed from the cluster,
+    /// presumably with the intention of running it again later.
+    ///
+    /// This flag should be used very carefully, since if the node configuration
+    /// is lost, it would not be able to rejoin the cluster, and can potentially
+    /// lead to broken cluster state.
+    ///
+    /// The downtime of a node should be as short as possible, because nodes in
+    /// the cluster can only be restarted one at a time.
+    ///
+    /// Note that fully decommissionned nodes can not be started again, meaning
+    /// the working directory can not be reused.
     restart: bool,
 }
 

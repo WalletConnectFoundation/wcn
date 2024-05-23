@@ -10,7 +10,7 @@ use {
 
 /// The default log level for the stderr logger, which is used as a fallback if
 /// no other can be found.
-const DEFAULT_LOG_LEVEL_STDERR: tracing::Level = tracing::Level::WARN;
+const DEFAULT_LOG_LEVEL_STDERR: tracing::Level = tracing::Level::INFO;
 
 /// The environment variable used to control the stderr logger.
 const ENV_LOG_LEVEL_STDERR: &str = "LOG_LEVEL";

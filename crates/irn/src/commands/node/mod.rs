@@ -25,10 +25,17 @@ pub struct NodeCmd {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum NodeSub {
-    /// Starts a IRN Node
+    /// Starts an IRN Node.
+    ///
+    /// A node instance requires a separate working directory, where the
+    /// operational data will be stored, as well as a configuration file.
     Start(start::StartCmd),
 
-    /// Stops a running IRN Node
+    /// Stops a running IRN Node.
+    ///
+    /// The command finds a running node instance based on the working
+    /// directory, and sends it a termination signal, waiting for the node
+    /// process to terminate.
     Stop(stop::StopCmd),
 }
 

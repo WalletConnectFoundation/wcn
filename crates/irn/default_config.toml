@@ -1,0 +1,47 @@
+# TODO: Describe parameters.
+
+known_peers = []
+bootstrap_nodes = []
+
+# [identity]
+# private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
+# group = 1
+
+[server]
+bind_address = ""
+server_port = 3010
+client_port = 3011
+metrics_port = 3012
+warmup_delay = 45000
+
+# [[known_peers]]
+# id = "12D3KooWBHED7RfVicYMAkfypqcAX8rtQmirfKh91JJCUDTroPF9"
+# group = 1
+# address = ":3010"
+
+# [[bootstrap_nodes]]
+# id = "12D3KooWBHED7RfVicYMAkfypqcAX8rtQmirfKh91JJCUDTroPF9"
+# group = 1
+
+[authorization]
+disable = false
+is_consensus_member = false
+clients = []
+consensus_candidates = []
+
+[storage]
+data_dir = "./data"
+consensus_dir = "./consensus"
+# rocksdb_num_batch_threads = 8
+# rocksdb_num_callback_threads = 24
+
+[replication]
+consistency_level = "Quorum"
+factor = 3
+
+[network]
+request_concurrency_limit = 4500
+request_limiter_queue = 65536
+connection_timeout = 1000
+request_timeout = 5000
+replication_request_timeout = 2000

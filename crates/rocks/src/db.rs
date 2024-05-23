@@ -467,7 +467,7 @@ async fn consume_logs(db_path: PathBuf) -> io::Result<()> {
     lines.add_file(db_path.join(LOG_FILE_NAME)).await?;
 
     while let Some(line) = lines.next_line().await? {
-        tracing::info!(log = line.line());
+        tracing::trace!(log = line.line());
     }
 
     tracing::warn!("Log consumer task finished");

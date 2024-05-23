@@ -1,4 +1,5 @@
 use clap::Parser;
+
 mod commands;
 
 /// Control nodes and clusters in the IRN Network
@@ -20,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.commands {
-        commands::SubCmd::Node(args) => commands::node::exec(args),
+        commands::SubCmd::Node(args) => commands::node::exec(args).await,
         commands::SubCmd::Config(args) => commands::config::exec(args),
         commands::SubCmd::Key(args) => commands::key::exec(args),
         commands::SubCmd::Storage(args) => commands::storage::exec(args).await,

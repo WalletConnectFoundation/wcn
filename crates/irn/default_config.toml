@@ -1,5 +1,8 @@
 # TODO: Describe parameters.
 
+known_peers = []
+bootstrap_nodes = []
+
 # [identity]
 # private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
 # group = 1
@@ -11,13 +14,11 @@ client_port = 3011
 metrics_port = 3012
 warmup_delay = 45000
 
-known_peers = []
 # [[known_peers]]
 # id = "12D3KooWBHED7RfVicYMAkfypqcAX8rtQmirfKh91JJCUDTroPF9"
 # group = 1
-# address = "/ip4/127.0.0.1/udp/3010/quic-v1"
+# address = "127.0.0.1:3010"
 
-bootstrap_nodes = []
 # [[bootstrap_nodes]]
 # id = "12D3KooWBHED7RfVicYMAkfypqcAX8rtQmirfKh91JJCUDTroPF9"
 # group = 1

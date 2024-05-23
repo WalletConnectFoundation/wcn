@@ -111,6 +111,30 @@ resource "aws_ecs_cluster" "this" {
   tags = local.tags
 }
 
+resource "tls_private_key" "this" {
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P384"
+}
+
+resource "tls_self_signed_cert" "this" {
+  private_key_pem = tls_private_key.this.private_key_pem
+
+  subject {
+    organization = "WalletConnect"
+  }
+
+  ip_addresses = [local.addr]
+
+  validity_period_hours = 24 * 365 # a year
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+    "cert_signing",
+  ]
+}
+
 locals {
   addr = var.expose_public_ip ? data.aws_eip.this[0].public_ip : var.ipv4_address
 
@@ -194,19 +218,24 @@ locals {
     # For now we only need it to do profiling.
     privileged = true
 
-    # We define this dependency to force otel collector not to exit prematurely, when the node waits for
+    # We define this dependency to force other containers not to exit prematurely, when the node waits for
     # its turn for restart.
     # Without having this we lose 30-45s of metrics during re-deployments.
-    dependsOn = [
-      {
-        containerName = "aws-otel-collector"
+    dependsOn = concat(
+      var.enable_otel_collector ? [{
+        containerName = local.otel_container_name
         condition     = "START"
-      }
-    ]
+      }] : [],
+      var.enable_prometheus ? [{
+        containerName = local.prometheus_container_name
+        condition     = "START"
+      }] : [],
+    )
   }
 
+  otel_container_name = "aws-otel-collector"
   otel_container_definition = {
-    name : "aws-otel-collector",
+    name : local.otel_container_name,
     image : var.aws_otel_collector_image,
     environment : [
       { name : "AWS_PROMETHEUS_SCRAPING_ENDPOINT", value : "0.0.0.0:${var.metrics_port}" },
@@ -232,11 +261,220 @@ locals {
       }
     }
   }
+
+
+  prometheus_dir            = "/data/prometheus"
+  prometheus_container_name = "prometheus"
+  prometheus_config = {
+    env    = "CONFIG"
+    "path" = "${local.prometheus_dir}/config.yml"
+    content = yamlencode({
+      scrape_configs = [{
+        job_name        = "prometheus"
+        scrape_interval = "15s"
+        static_configs = [{
+          targets = ["localhost:${var.metrics_port}"]
+        }]
+      }]
+    })
+  }
+  prometheus_web_config = {
+    env    = "WEB_CONFIG"
+    "path" = "${local.prometheus_dir}/web.config.yml"
+    content = yamlencode({
+      tls_server_config = {
+        cert_file = local.prometheus_tls_cert.path
+        key_file  = local.prometheus_tls_key.path
+      }
+      basic_auth_users = {
+        admin = bcrypt(var.prometheus_admin_password)
+      }
+    })
+  }
+  prometheus_tls_cert = {
+    env     = "TLS_CERT"
+    "path"  = "${local.prometheus_dir}/tls.cert"
+    content = tls_self_signed_cert.this.cert_pem
+  }
+  prometheus_tls_key = {
+    env     = "TLS_KEY"
+    "path"  = "${local.prometheus_dir}/tls.key"
+    content = tls_private_key.this.private_key_pem
+  }
+  prometheus_container_definition = {
+    name : local.prometheus_container_name,
+    image : var.prometheus_image,
+    environment : [
+      for e in [local.prometheus_config, local.prometheus_web_config, local.prometheus_tls_cert, local.prometheus_tls_key] :
+      { name : e.env, value = e.content }
+    ],
+
+    user : "1001",
+    entryPoint : ["/bin/sh"],
+    command : [
+      "-c",
+      <<-CMD
+        mkdir -p /data/prometheus && \
+        printenv ${local.prometheus_config.env} > ${local.prometheus_config.path} && \
+        printenv ${local.prometheus_web_config.env} > ${local.prometheus_web_config.path} && \
+        printenv ${local.prometheus_tls_cert.env} > ${local.prometheus_tls_cert.path} && \
+        printenv ${local.prometheus_tls_key.env} > ${local.prometheus_tls_key.path} && \
+        exec /bin/prometheus \
+        --config.file=${local.prometheus_config.path} \
+        --web.config.file=${local.prometheus_web_config.path} \
+        --storage.tsdb.path=/data/prometheus \
+        --web.console.libraries=/usr/share/prometheus/console_libraries \
+        --web.console.templates=/usr/share/prometheus/consoles
+      CMD
+    ]
+
+    portMappings : [
+      {
+        hostPort : 9090,
+        protocol : "tcp",
+        containerPort : 9090
+      }
+    ],
+
+    mountPoints = [{
+      containerPath = "/data"
+      sourceVolume  = "data"
+    }]
+
+    logConfiguration : {
+      logDriver : "awslogs",
+      options : {
+        awslogs-create-group : "True",
+        awslogs-group : "/ecs/${local.name}-prometheus",
+        awslogs-region : "${var.region}",
+        awslogs-stream-prefix : "ecs"
+      }
+    }
+  }
+
+
+  grafana_dir            = "/data/grafana"
+  grafana_container_name = "grafana"
+  grafana_tls_cert = {
+    env     = "TLS_CERT"
+    "path"  = "${local.grafana_dir}/tls.cert"
+    content = tls_self_signed_cert.this.cert_pem
+  }
+  grafana_tls_key = {
+    env     = "TLS_KEY"
+    "path"  = "${local.grafana_dir}/tls.key"
+    content = tls_private_key.this.private_key_pem
+  }
+  grafana_datasources = {
+    env    = "DATASOURCES"
+    "path" = "${local.grafana_dir}/provisioning/datasources/default.yaml"
+    content = yamlencode({
+      apiVersion = 1
+      datasources = [{
+        name          = "Prometheus"
+        type          = "prometheus"
+        access        = "proxy"
+        url           = "https://localhost:9090"
+        basicAuth     = true
+        basicAuthUser = "admin"
+        isDefault     = true
+        jsonData = {
+          httpMethod    = "POST"
+          tlsSkipVerify = true
+        }
+        secureJsonData = {
+          basicAuthPassword = var.prometheus_admin_password
+        }
+      }]
+    })
+  }
+  grafana_dashboard_provider = {
+    env    = "DASHBOARD_PROVIDER"
+    "path" = "${local.grafana_dir}/provisioning/dashboards/default.yaml"
+    content = yamlencode({
+      apiVersion = 1
+      providers = [{
+        name    = "Default"
+        folder  = "Provisioned"
+        type    = "file"
+        options = { "path" = "${local.grafana_dir}/provisioning/dashboards" }
+      }]
+    })
+  }
+  grafana_dashboard = {
+    env     = "DASHBOARD"
+    "path"  = "${local.grafana_dir}/provisioning/dashboards/irn.json"
+    content = file("${path.module}/dashboard.json")
+  }
+  grafana_container_definition = {
+    name : local.grafana_container_name,
+    image : var.grafana_image,
+    environment : [
+      { name : local.grafana_tls_cert.env, value : local.grafana_tls_cert.content },
+      { name : local.grafana_tls_key.env, value : local.grafana_tls_key.content },
+      { name : local.grafana_datasources.env, value : local.grafana_datasources.content },
+      { name : local.grafana_dashboard_provider.env, value : local.grafana_dashboard_provider.content },
+      { name : local.grafana_dashboard.env, value : local.grafana_dashboard.content },
+      { name : "GF_PATHS_DATA", value : local.grafana_dir },
+      { name : "GF_PATHS_PROVISIONING", value : "${local.grafana_dir}/provisioning" },
+      { name : "GF_SERVER_HTTP_PORT", value : tostring(var.grafana_port) },
+      { name : "GF_SERVER_CERT_FILE", value : local.grafana_tls_cert.path },
+      { name : "GF_SERVER_CERT_KEY", value : local.grafana_tls_key.path },
+      { name : "GF_SERVER_PROTOCOL", value : "https" },
+      { name : "GF_SECURITY_ADMIN_PASSWORD", value : var.grafana_admin_password },
+    ]
+
+    user : "1001",
+    entryPoint : ["/bin/sh"],
+    command : [
+      "-c",
+      <<-CMD
+        set -e && \
+        mkdir -p /data/grafana/provisioning/datasources && \
+        mkdir -p /data/grafana/provisioning/dashboards && \
+        printenv ${local.grafana_tls_cert.env} > ${local.grafana_tls_cert.path} && \
+        printenv ${local.grafana_tls_key.env} > ${local.grafana_tls_key.path} && \
+        printenv ${local.grafana_datasources.env} > ${local.grafana_datasources.path} && \
+        printenv ${local.grafana_dashboard_provider.env} > ${local.grafana_dashboard_provider.path} && \
+        printenv ${local.grafana_dashboard.env} > ${local.grafana_dashboard.path} && \
+        exec /run.sh
+      CMD
+    ]
+
+
+    portMappings : [
+      {
+        hostPort : var.grafana_port,
+        protocol : "tcp",
+        containerPort : var.grafana_port
+      }
+    ],
+
+    mountPoints = [{
+      containerPath = "/data"
+      sourceVolume  = "data"
+    }]
+
+    logConfiguration : {
+      logDriver : "awslogs",
+      options : {
+        awslogs-create-group : "True",
+        awslogs-group : "/ecs/${local.name}-grafana",
+        awslogs-region : "${var.region}",
+        awslogs-stream-prefix : "ecs"
+      }
+    }
+  }
 }
 
 resource "aws_ecs_task_definition" "this" {
-  family                = local.name
-  container_definitions = jsonencode([local.irn_container_definition, local.otel_container_definition])
+  family = local.name
+  container_definitions = jsonencode(concat(
+    [local.irn_container_definition],
+    var.enable_otel_collector ? [local.otel_container_definition] : [],
+    var.enable_prometheus ? [local.prometheus_container_definition] : [],
+    var.enable_grafana ? [local.grafana_container_definition] : []
+  ))
 
   volume {
     name      = "data"

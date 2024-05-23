@@ -1,7 +1,6 @@
 use clap::Parser;
 
 mod commands;
-mod utils;
 
 /// Control nodes and clusters in the IRN Network
 #[derive(clap::Parser, Debug)]

@@ -1,6 +1,5 @@
 use {
     super::{Error, Lockfile, LogFormat},
-    crate::utils,
     irn_core::{cluster::replication::Strategy, PeerId},
     std::{
         collections::{HashMap, HashSet},
@@ -9,8 +8,6 @@ use {
         process::{Command, Stdio},
     },
 };
-
-const DETACH_STATE_ENV_VAR: &str = "IRN_INTERNAL_DETACHED";
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum LogOutput {
@@ -43,8 +40,7 @@ pub struct StartCmd {
     /// Whether to start the node in a detached state.
     ///
     /// Detaching would spawn a background process running the node. Note that
-    /// `log-output` needs to be set to `file` if running in a detached node,
-    /// otherwise the logs would be lost.
+    /// `log-output` is set to `file` if running in a detached node.
     detached: bool,
 
     #[clap(long, default_value = "info")]
@@ -77,7 +73,10 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         std::env::set_current_dir(working_dir).map_err(|_| Error::InaccessibleWorkingDir)?;
     }
 
-    let log_file = matches!(args.log_output, LogOutput::File).then(|| {
+    let is_detached = get_detached_state();
+    let log_to_file = is_detached || matches!(args.log_output, LogOutput::File);
+
+    let log_file = log_to_file.then(|| {
         let mut log_file = std::env::current_dir().unwrap();
         log_file.push(format!("irn.{}.log", std::process::id()));
         log_file
@@ -103,7 +102,12 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     let known_peers = config
         .known_peers
         .into_iter()
-        .map(|node| (PeerId::from(node.peer), utils::network_addr(node.address)))
+        .map(|node| {
+            (
+                PeerId::from(node.peer),
+                network::socketaddr_to_multiaddr(node.address),
+            )
+        })
         .collect::<HashMap<_, _>>();
 
     let bootstrap_nodes = if !config.bootstrap_nodes.is_empty() {
@@ -144,11 +148,11 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     // process to fully skip the fork-check part. The parent process would exit
     // immediately after forking, and the child would wait for the spawned process
     // to finish before exiting.
-    if args.detached && std::env::var(DETACH_STATE_ENV_VAR).is_err() {
+    if args.detached && !is_detached {
         drop(lockfile);
 
         // Set the internal env var for the spawned process to skip the fork part.
-        std::env::set_var(DETACH_STATE_ENV_VAR, "true");
+        set_detached_state();
 
         // Restore the initial working directory, so that the paths are all relative to
         // it, as it was in the parent process.
@@ -179,11 +183,11 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public(), config.identity.group),
         keypair: config.identity.private_key,
-        addr: utils::network_addr(SocketAddr::new(
+        addr: network::socketaddr_to_multiaddr(SocketAddr::new(
             config.server.bind_address,
             config.server.server_port,
         )),
-        api_addr: utils::network_addr(SocketAddr::new(
+        api_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
             config.server.bind_address,
             config.server.client_port,
         )),
@@ -215,4 +219,14 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         .await;
 
     Ok(())
+}
+
+const DETACH_STATE_ENV_VAR: &str = "IRN_INTERNAL_DETACHED";
+
+fn set_detached_state() {
+    std::env::set_var(DETACH_STATE_ENV_VAR, "true");
+}
+
+fn get_detached_state() -> bool {
+    std::env::var(DETACH_STATE_ENV_VAR).is_ok()
 }

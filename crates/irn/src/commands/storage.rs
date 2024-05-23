@@ -1,5 +1,4 @@
 use {
-    crate::utils,
     irn_api::{
         client,
         namespace::{Auth, PublicKey},
@@ -333,7 +332,7 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     // Currently, the client doesn't use or verify the peer ID of the provided node
     // address. So we can use any peer ID and not require it as an input parameter.
     let peer_id = network::Keypair::generate_ed25519().public().to_peer_id();
-    let address = (peer_id, utils::network_addr(cmd.address));
+    let address = (peer_id, network::socketaddr_to_multiaddr(cmd.address));
 
     let client = Client::new(client::Config {
         key: cmd.private_key.0,

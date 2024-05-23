@@ -27,7 +27,7 @@ use {
     wc::metrics::{Lazy, OtelTaskMetricsRecorder},
 };
 pub use {
-    libp2p::{identity::Keypair, multiaddr, multihash::Multihash, Multiaddr, PeerId},
+    libp2p::{identity::Keypair, multihash::Multihash, Multiaddr, PeerId},
     quinn::{ConnectionError, WriteError},
     rpc::Rpc,
 };
@@ -432,6 +432,15 @@ where
 
 fn multiaddr_to_socketaddr(addr: Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
     try_multiaddr_to_socketaddr(&addr).ok_or_else(|| InvalidMultiaddrError(addr))
+}
+
+pub fn socketaddr_to_multiaddr(addr: SocketAddr) -> Multiaddr {
+    use libp2p::multiaddr::Protocol;
+
+    let mut result = Multiaddr::from(addr.ip());
+    result.push(Protocol::Udp(addr.port()));
+    result.push(Protocol::QuicV1);
+    result
 }
 
 /// Tries to turn a QUIC multiaddress into a UDP [`SocketAddr`]. Returns None if

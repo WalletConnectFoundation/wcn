@@ -27,9 +27,8 @@ pub struct StartCmd {
     /// directories are locked to that node's process ID.
     ///
     /// The following paths are considered relative to the working directory:
-    ///     - (CLI arg) `config`;
-    ///     - (config) `data_dir`;
-    ///     - (config) `consensus_dir`.
+    /// `config` (CLI arg), `data_dir` (config param), `consensus_dir` (config
+    /// param).
     ///
     /// The directory will be created if it doesn't exist.
     working_dir: Option<String>,
@@ -44,7 +43,7 @@ pub struct StartCmd {
     /// Whether to start the node in a detached state.
     ///
     /// Detaching would spawn a background process running the node. Note that
-    /// `log-output` needs to be set to `file` if running a detached node,
+    /// `log-output` needs to be set to `file` if running in a detached node,
     /// otherwise the logs would be lost.
     detached: bool,
 

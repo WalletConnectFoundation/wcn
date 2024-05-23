@@ -2,7 +2,6 @@ use {
     anyhow::Context as _,
     futures::{future::FusedFuture, FutureExt},
     irn::ShutdownReason,
-    logger::Logger,
     serde::{Deserialize, Serialize},
     std::{
         collections::HashMap,
@@ -22,6 +21,7 @@ use {
 pub use {
     config::Config,
     consensus::Consensus,
+    logger::Logger,
     network::{Multiaddr, Multihash, Network, RemoteNode},
     storage::Storage,
 };
@@ -60,7 +60,7 @@ pub enum Error {
 static GLOBAL: wc::alloc::Jemalloc = wc::alloc::Jemalloc;
 
 pub fn exec() -> anyhow::Result<()> {
-    let _logger = Logger::init();
+    let _logger = Logger::init(logger::LogFormat::Json, None, None);
 
     for (key, value) in vergen_pretty::vergen_pretty_env!() {
         if let Some(value) = value {
@@ -75,7 +75,7 @@ pub fn exec() -> anyhow::Result<()> {
         .build()
         .unwrap()
         .block_on(async move {
-            run(signal::shutdown()?, &cfg).await?.await;
+            run(signal::shutdown_listener()?, &cfg).await?.await;
             Ok(())
         })
 }

@@ -6,8 +6,7 @@ use {
         Key,
         SigningKey,
     },
-    network::{Multiaddr, PeerId},
-    std::{str::FromStr, time::Duration},
+    std::{net::SocketAddr, str::FromStr, time::Duration},
 };
 
 const MIN_TTL: Duration = Duration::from_secs(30);
@@ -22,15 +21,6 @@ enum Error {
 
     #[error("Invalid key length: must be 32 byte ed25519 private key")]
     KeyLength,
-
-    #[error("Invalid node address format: must be `PEERID_MULTIADDRESS`")]
-    NodeAddress,
-
-    #[error("Failed to parse peer ID")]
-    PeerId,
-
-    #[error("Failed to parse multiaddress")]
-    Multiaddr,
 
     #[error("Invalid TTL: {0}")]
     Ttl(humantime::DurationError),
@@ -67,7 +57,7 @@ pub struct StorageCmd {
     /// IRN node address to connect.
     ///
     /// The address is specified in format `{PEER_ID}_{MULTIADDRESS}`.
-    address: NodeAddress,
+    address: SocketAddr,
 
     #[clap(long, env = "IRN_STORAGE_PRIVATE_KEY")]
     /// Client private key used for authorization.
@@ -108,22 +98,6 @@ impl FromStr for PrivateKey {
             .map_err(|_| Error::KeyLength)?;
 
         Ok(Self(irn_api::SigningKey::from_bytes(&bytes)))
-    }
-}
-
-#[derive(Debug, Clone)]
-struct NodeAddress((PeerId, Multiaddr));
-
-impl FromStr for NodeAddress {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (id, addr) = s.split_once('_').ok_or(Error::NodeAddress)?;
-
-        let id = PeerId::from_str(id).map_err(|_| Error::PeerId)?;
-        let addr = Multiaddr::from_str(addr).map_err(|_| Error::Multiaddr)?;
-
-        Ok(Self((id, addr)))
     }
 }
 
@@ -355,9 +329,14 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     let namespaces = initialize_namespaces(&cmd)?;
     let namespace = namespaces.first().map(|ns| ns.public_key());
 
+    // Currently, the client doesn't use or verify the peer ID of the provided node
+    // address. So we can use any peer ID and not require it as an input parameter.
+    let peer_id = network::Keypair::generate_ed25519().public().to_peer_id();
+    let address = (peer_id, network::socketaddr_to_multiaddr(cmd.address));
+
     let client = Client::new(client::Config {
         key: cmd.private_key.0,
-        nodes: [cmd.address.0].into(),
+        nodes: [address].into(),
         shadowing_nodes: Default::default(),
         shadowing_factor: 0.0,
         request_timeout: Duration::from_secs(1),

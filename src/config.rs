@@ -89,7 +89,7 @@ pub struct Config {
     pub eth_address: Option<String>,
 
     // Bootstrap node config.
-    pub smart_contract: Option<SmartContractConfig>,
+    pub config_smart_contract: Option<SmartContractConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -125,7 +125,7 @@ impl Config {
             authorized_clients: raw.authorized_clients,
             authorized_raft_candidates: raw.authorized_raft_candidates,
             eth_address: raw.eth_address,
-            smart_contract: if let Some(address) = raw.smart_contract_address {
+            config_smart_contract: if let Some(address) = raw.config_smart_contract_address {
                 Some(SmartContractConfig {
                     address,
                     eth_rpc_url: raw
@@ -185,7 +185,7 @@ struct RawConfig {
 
     eth_address: Option<String>,
 
-    smart_contract_address: Option<String>,
+    config_smart_contract_address: Option<String>,
     eth_rpc_url: Option<String>,
 }
 

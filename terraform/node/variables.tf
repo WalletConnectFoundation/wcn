@@ -185,7 +185,7 @@ variable "grafana_admin_password" {
   sensitive = true
 }
 
-variable "smart_contract_address" {
+variable "config_smart_contract_address" {
   type    = string
   default = null
 }

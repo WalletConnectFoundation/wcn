@@ -39,6 +39,11 @@ provider "aws" {
   }
 }
 
+variable "eth_rpc_url" {
+  type      = string
+  sensitive = true
+}
+
 resource "aws_vpc" "this" {
   cidr_block = "10.0.0.0/16"
 }
@@ -181,7 +186,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-34"
+  image       = "${data.aws_ecr_repository.node.repository_url}:pr-37"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -223,6 +228,9 @@ module "node" {
   enable_grafana            = true
   grafana_port              = local.grafana_port
   grafana_admin_password    = aws_secretsmanager_secret_version.admin_secret_key.secret_string
+
+  config_smart_contract_address = "0xe6eE5164fe97f7a779aea4251148E106D4bC962E"
+  eth_rpc_url                   = var.eth_rpc_url
 }
 
 data "aws_iam_policy_document" "assume_role" {

@@ -100,13 +100,15 @@ impl test::Context for Context {
                     warmup_delay: 5000,
                     authorized_clients: None,
                     authorized_raft_candidates: None,
+                    eth_address: None,
+                    smart_contract: None,
                 };
 
                 let storage = Storage::new(&cfg).unwrap();
 
                 let network = Network::new(&cfg).unwrap();
 
-                let consensus = Consensus::new(&cfg, network.clone()).await.unwrap();
+                let consensus = Consensus::new(&cfg, network.clone(), None).await.unwrap();
 
                 consensus.init(&cfg).await.unwrap();
 

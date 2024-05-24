@@ -212,8 +212,8 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         warmup_delay: config.server.warmup_delay,
         authorized_clients,
         authorized_raft_candidates,
-        eth_address: None,
-        smart_contract: None,
+        eth_address: config.identity.eth_address,
+        smart_contract: config.smart_contract.map(Into::into),
     };
 
     node::run(node::signal::shutdown_listener()?, &config)

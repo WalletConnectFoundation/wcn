@@ -6,6 +6,7 @@ bootstrap_nodes = []
 # [identity]
 # private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
 # group = 1
+# eth_address = "0xeD380b8da6012c20856CEc076C348AC44fA50f63"
 
 [server]
 bind_address = "0.0.0.0"
@@ -45,3 +46,7 @@ request_limiter_queue = 65536
 connection_timeout = 1000
 request_timeout = 5000
 replication_request_timeout = 2000
+
+# [smart_contract]
+# eth_rpc_url = ""
+# config_address = ""

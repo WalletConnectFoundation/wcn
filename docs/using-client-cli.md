@@ -93,6 +93,8 @@ Peer ID: 12D3KooWBQGYh92KEdxUW5UUdy7BvAW96hvYLBMmjzy6X2XsY2HA
 irn node start -w ./working-dir -c ./config.toml
 ```
 
+**Note:** Interrupting a running node via `ctrl+c`/`SIGINT` would put the node into the `restarting` state, which assumes a very short downtime. Having one node in the cluster in `restarting` state prevents other nodes from restarting or leaving the cluster. If the node is being shutdown for a long period of time, it should be decommissioned instead. Decommissioning can only be done externally (see below).
+
 ### Running a node in detached mode
 
 ```bash

@@ -28,6 +28,7 @@ pub use {
 
 pub mod config;
 pub mod consensus;
+mod contract;
 pub mod logger;
 pub mod network;
 pub mod signal;
@@ -54,6 +55,9 @@ pub enum Error {
 
     #[error("Failed to initialize Consensus: {0:?}")]
     Consensus(consensus::InitializationError),
+
+    #[error("Failed to interact with smart contract: {0:?}")]
+    Contract(anyhow::Error),
 }
 
 #[global_allocator]
@@ -90,7 +94,16 @@ pub async fn run(
 
     let network = Network::new(cfg)?;
 
-    let consensus = Consensus::new(cfg, network.clone())
+    let stake_validator = if let Some(c) = &cfg.smart_contract {
+        contract::StakeValidator::new(&c.eth_rpc_url, &c.config_address)
+            .await
+            .map(Some)
+            .map_err(Error::Contract)?
+    } else {
+        None
+    };
+
+    let consensus = Consensus::new(cfg, network.clone(), stake_validator)
         .await
         .map_err(Error::Consensus)?;
 

@@ -84,6 +84,14 @@ pub struct Config {
     /// List of authorized Raft candidates.
     /// If `None` the Raft authorization is going to be disabled.
     pub authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
+
+    pub smart_contract: Option<SmartContractConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SmartContractConfig {
+    pub eth_rpc_url: String,
+    pub address: String,
 }
 
 impl Config {
@@ -112,6 +120,16 @@ impl Config {
             warmup_delay: raw.warmup_delay.unwrap_or(30_000),
             authorized_clients: raw.authorized_clients,
             authorized_raft_candidates: raw.authorized_raft_candidates,
+            smart_contract: if let Some(address) = raw.smart_contract_address {
+                Some(SmartContractConfig {
+                    address,
+                    eth_rpc_url: raw
+                        .eth_rpc_url
+                        .ok_or_else(|| envy::Error::custom("missing ETH_RPC_URL"))?,
+                })
+            } else {
+                None
+            },
         };
 
         if let Some(nodes) = raw.bootstrap_nodes {
@@ -159,6 +177,9 @@ struct RawConfig {
     warmup_delay: Option<u64>,
     authorized_clients: Option<HashSet<libp2p::PeerId>>,
     authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
+
+    smart_contract_address: Option<String>,
+    eth_rpc_url: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]

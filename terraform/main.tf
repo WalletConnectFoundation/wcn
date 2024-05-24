@@ -39,6 +39,12 @@ provider "aws" {
   }
 }
 
+variable "eth_rpc_url" {
+  type      = string
+  default   = null
+  sensitive = true
+}
+
 resource "aws_vpc" "this" {
   cidr_block = "10.0.0.0/16"
 }
@@ -223,6 +229,8 @@ module "node" {
   enable_grafana            = true
   grafana_port              = local.grafana_port
   grafana_admin_password    = aws_secretsmanager_secret_version.admin_secret_key.secret_string
+
+  smart_contract_address = "0xe6eE5164fe97f7a779aea4251148E106D4bC962E"
 }
 
 data "aws_iam_policy_document" "assume_role" {

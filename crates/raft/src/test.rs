@@ -46,6 +46,7 @@ impl TypeConfig for C {
     type State = State<Self>;
     type Node = ();
     type NodeId = u64;
+    type AddMemberPayload = ();
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -208,6 +209,7 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
         node_id: nodes[5].0,
         node: nodes[5].1,
         learner_only: true,
+        payload: None,
     };
     n4.raft.add_member(req).await.unwrap();
 
@@ -236,6 +238,7 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
         node_id: nodes[5].0,
         node: nodes[5].1,
         learner_only: false,
+        payload: None,
     };
     n2.raft.add_member(req).await.unwrap();
 

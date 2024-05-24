@@ -108,6 +108,33 @@ libp2p = { version = "0.53", features = ["serde", "tokio"] }
 parking_lot = "0.12"
 nix = { version = "0.28", default-features = false, features = ["signal"] }
 
+alloy = { git = "https://github.com/alloy-rs/alloy", rev = "e22d9be", features = [
+    # "consensus",
+    # "kzg",
+    # "eips",
+    "contract",
+    # "network",
+    # "node-bindings",
+    "providers",
+    "provider-http",
+    # "provider-ipc",
+    # "provider-ws",
+    # "rpc-client",
+    # "rpc-client-ipc",
+    # "rpc-client-ws",
+    # "rpc-types-eth",
+    # "rpc-types-trace",
+    # "signers",
+    # "signer-aws",
+    # "signer-keystore",
+    # "signer-ledger",
+    # "signer-mnemonic",
+    # "signer-trezor",
+    # "signer-wallet",
+    # "signer-yubihsm",
+] }
+reqwest = { version = "0.12", default-features = false }
+
 # These are required by the tests and the `test_cluster` module.
 tempfile = { version = "3", optional = true }
 once_cell = { version = "1.17", optional = true }

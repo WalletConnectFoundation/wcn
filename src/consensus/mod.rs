@@ -1,5 +1,5 @@
 use {
-    crate::{network::rpc, Config, Multiaddr, Network, RemoteNode, TypeConfig},
+    crate::{contract, network::rpc, Config, Multiaddr, Network, RemoteNode, TypeConfig},
     anyhow::Context,
     async_trait::async_trait,
     backoff::{future::retry, ExponentialBackoff},
@@ -116,6 +116,8 @@ pub struct Consensus {
     initial_membership: Arc<Mutex<Option<raft::Membership<PeerId, Node>>>>,
 
     bootstrap_nodes: Arc<Option<HashMap<PeerId, Multiaddr>>>,
+
+    stake_validator: Option<contract::StakeValidator>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,7 +139,11 @@ pub enum InitializationError {
 
 impl Consensus {
     /// Spawns a new [`Consensus`] task and returns it's handle.
-    pub async fn new(cfg: &Config, network: Network) -> Result<Consensus, InitializationError> {
+    pub async fn new(
+        cfg: &Config,
+        network: Network,
+        stake_validator: Option<contract::StakeValidator>,
+    ) -> Result<Consensus, InitializationError> {
         tokio::fs::create_dir_all(&cfg.raft_dir)
             .await
             .map_err(InitializationError::DirectoryCreation)?;
@@ -179,6 +185,7 @@ impl Consensus {
             }),
             initial_membership: Default::default(),
             bootstrap_nodes: Arc::new(cfg.bootstrap_nodes.clone()),
+            stake_validator,
         })
         .map_err(InitializationError::Task)
     }
@@ -200,6 +207,7 @@ impl Consensus {
                 node_id: self.id,
                 node: Node(cfg.addr.clone()),
                 learner_only: !cfg.is_raft_member,
+                payload: None,
             };
 
             for peer_id in cfg.known_peers.keys() {
@@ -308,6 +316,19 @@ impl Consensus {
 
                 if !auth.allowed_candidates.contains(&req.node_id.id) {
                     return Err(unauthorized_error());
+                }
+
+                if let Some(validator) = self.stake_validator.as_ref() {
+                    let Some(operator_eth_address) =
+                        req.payload.as_ref().map(|p| &p.operator_eth_address)
+                    else {
+                        tracing::warn!(id = %req.node_id, "Operator didn't provide ETH address");
+                        return Err(unauthorized_error());
+                    };
+                    if let Err(err) = validator.validate_stake(operator_eth_address).await {
+                        tracing::warn!(id = %req.node_id, ?err, "Stake validation failed");
+                        return Err(unauthorized_error());
+                    }
                 }
             }
             // otherwise forward the request to a voter.
@@ -470,6 +491,12 @@ impl raft::TypeConfig for TypeConfig {
     type Change = Change;
     type NodeId = PeerId;
     type Node = Node;
+    type AddMemberPayload = AddMemberPayload;
+}
+
+#[derive(Clone, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+pub struct AddMemberPayload {
+    operator_eth_address: String,
 }
 
 type LogId = raft::LogId<TypeConfig>;

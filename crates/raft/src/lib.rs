@@ -28,7 +28,7 @@ use {
     futures::stream::{self, StreamExt},
     openraft::error::{RPCError, RaftError},
     serde::{Deserialize, Serialize},
-    std::{error::Error as StdError, future::Future, result::Result as StdResult, sync::Arc},
+    std::{error::Error as StdError, fmt, future::Future, result::Result as StdResult, sync::Arc},
     tokio::sync::watch,
     tokio_stream::wrappers::WatchStream,
 };
@@ -53,6 +53,14 @@ pub trait TypeConfig:
 
     /// Raft application level node data
     type Node: openraft::Node;
+
+    type AddMemberPayload: fmt::Debug
+        + Serialize
+        + for<'de> Deserialize<'de>
+        + Clone
+        + Send
+        + Sync
+        + 'static;
 }
 
 /// [`Raft`] consensus algorithm.
@@ -246,6 +254,9 @@ pub struct AddMemberRequest<C: TypeConfig> {
     /// Learner-nodes do not participate in [`Raft`] voting and just get
     /// notified about the changes.
     pub learner_only: bool,
+
+    #[serde(default)]
+    pub payload: Option<C::AddMemberPayload>,
 }
 
 /// Response type of [`Raft::add_member`] operation.

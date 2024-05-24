@@ -176,6 +176,12 @@ locals {
       var.authorized_clients != null ? [
         { name = "AUTHORIZED_CLIENTS", value = "${join(",", var.authorized_clients)}" },
       ] : [],
+      var.smart_contract_address != null ? [
+        { name = "SMART_CONTRACT_ADDRESS", value = var.smart_contract_address },
+      ] : [],
+      var.eth_rpc_url != null ? [
+        { name = "ETH_RPC_URL", value = var.eth_rpc_url },
+      ] : [],
     )
 
     image     = var.image

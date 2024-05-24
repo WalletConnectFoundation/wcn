@@ -184,3 +184,14 @@ variable "grafana_admin_password" {
   default   = null
   sensitive = true
 }
+
+variable "smart_contract_address" {
+  type      = string
+  default   = null
+}
+
+variable "eth_rpc_url" {
+  type      = string
+  default   = null
+  sensitive = true
+}

@@ -11,7 +11,7 @@ Setup:
 - Install [`just`](https://github.com/casey/just#packages);
 - Copy the env file:
   ```sh
-  $ cp .env.example .env
+  $ cp example.env .env
   ```
 - Fill `.env` file with necessary values - access keys for AWS and other services. No changes are necessary if just running locally.
 

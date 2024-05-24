@@ -213,7 +213,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         authorized_clients,
         authorized_raft_candidates,
         eth_address: None,
-        config_smart_contract: None,
+        smart_contract: None,
     };
 
     node::run(node::signal::shutdown_listener()?, &config)

@@ -101,7 +101,7 @@ impl test::Context for Context {
                     authorized_clients: None,
                     authorized_raft_candidates: None,
                     eth_address: None,
-                    config_smart_contract: None,
+                    smart_contract: None,
                 };
 
                 let storage = Storage::new(&cfg).unwrap();

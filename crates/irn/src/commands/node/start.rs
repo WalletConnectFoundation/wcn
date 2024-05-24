@@ -212,6 +212,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         warmup_delay: config.server.warmup_delay,
         authorized_clients,
         authorized_raft_candidates,
+        eth_address: None,
         smart_contract: None,
     };
 

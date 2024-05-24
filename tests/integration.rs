@@ -100,6 +100,7 @@ impl test::Context for Context {
                     warmup_delay: 5000,
                     authorized_clients: None,
                     authorized_raft_candidates: None,
+                    eth_address: None,
                     smart_contract: None,
                 };
 

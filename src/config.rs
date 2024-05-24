@@ -85,6 +85,10 @@ pub struct Config {
     /// If `None` the Raft authorization is going to be disabled.
     pub authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
 
+    // Operator config.
+    pub eth_address: Option<String>,
+
+    // Bootstrap node config.
     pub smart_contract: Option<SmartContractConfig>,
 }
 
@@ -120,6 +124,7 @@ impl Config {
             warmup_delay: raw.warmup_delay.unwrap_or(30_000),
             authorized_clients: raw.authorized_clients,
             authorized_raft_candidates: raw.authorized_raft_candidates,
+            eth_address: raw.eth_address,
             smart_contract: if let Some(address) = raw.smart_contract_address {
                 Some(SmartContractConfig {
                     address,
@@ -177,6 +182,8 @@ struct RawConfig {
     warmup_delay: Option<u64>,
     authorized_clients: Option<HashSet<libp2p::PeerId>>,
     authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
+
+    eth_address: Option<String>,
 
     smart_contract_address: Option<String>,
     eth_rpc_url: Option<String>,

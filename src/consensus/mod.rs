@@ -207,7 +207,9 @@ impl Consensus {
                 node_id: self.id,
                 node: Node(cfg.addr.clone()),
                 learner_only: !cfg.is_raft_member,
-                payload: None,
+                payload: cfg.eth_address.as_ref().map(|addr| AddMemberPayload {
+                    operator_eth_address: addr.clone(),
+                }),
             };
 
             for peer_id in cfg.known_peers.keys() {

@@ -94,8 +94,8 @@ pub async fn run(
 
     let network = Network::new(cfg)?;
 
-    let stake_validator = if let Some(c) = &cfg.config_smart_contract {
-        contract::StakeValidator::new(&c.eth_rpc_url, &c.address)
+    let stake_validator = if let Some(c) = &cfg.smart_contract {
+        contract::StakeValidator::new(&c.eth_rpc_url, &c.config_address)
             .await
             .map(Some)
             .map_err(Error::Contract)?

@@ -95,7 +95,7 @@ pub struct Config {
 #[derive(Clone, Debug)]
 pub struct SmartContractConfig {
     pub eth_rpc_url: String,
-    pub address: String,
+    pub config_address: String,
 }
 
 impl Config {
@@ -127,7 +127,7 @@ impl Config {
             eth_address: raw.eth_address,
             smart_contract: if let Some(address) = raw.config_smart_contract_address {
                 Some(SmartContractConfig {
-                    address,
+                    config_address: address,
                     eth_rpc_url: raw
                         .eth_rpc_url
                         .ok_or_else(|| envy::Error::custom("missing ETH_RPC_URL"))?,

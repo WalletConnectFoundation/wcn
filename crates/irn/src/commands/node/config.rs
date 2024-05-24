@@ -10,6 +10,7 @@ pub struct Identity {
     #[serde(with = "keypair_as_base64")]
     pub private_key: Keypair,
     pub group: u16,
+    pub eth_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,6 +76,21 @@ pub struct Network {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SmartContractConfig {
+    pub eth_rpc_url: String,
+    pub config_address: String,
+}
+
+impl From<SmartContractConfig> for node::config::SmartContractConfig {
+    fn from(value: SmartContractConfig) -> Self {
+        Self {
+            eth_rpc_url: value.eth_rpc_url,
+            config_address: value.config_address,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub identity: Identity,
     pub known_peers: Vec<KnownPeer>,
@@ -84,6 +100,7 @@ pub struct Config {
     pub storage: Storage,
     pub replication: Replication,
     pub network: Network,
+    pub smart_contract: Option<SmartContractConfig>,
 }
 
 impl Config {

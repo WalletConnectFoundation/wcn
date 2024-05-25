@@ -175,6 +175,24 @@ pub mod rpc {
 
         pub type Heartbeat = rpc::Oneshot<{ rpc::id(b"heartbeat") }, HeartbeatMessage>;
     }
+
+    pub use health::Health;
+    pub mod health {
+        use {
+            network::rpc,
+            serde::{Deserialize, Serialize},
+        };
+
+        pub type Request = ();
+
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub struct Response {
+            pub node_version: u64,
+            pub eth_address: Option<String>,
+        }
+
+        pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, Response>;
+    }
 }
 
 #[derive(AsRef, Clone)]
@@ -184,6 +202,8 @@ struct RpcHandler {
     rpc_timeouts: rpc::Timeouts,
 
     pubsub: Pubsub,
+
+    eth_address: Option<Arc<str>>,
 }
 
 impl RpcHandler {
@@ -633,6 +653,16 @@ impl RpcHandler {
                 rpc::broadcast::Heartbeat::handle(stream, |_heartbeat| async {}).await
             }
 
+            rpc::Health::ID => {
+                rpc::Health::handle(stream, |_req| async {
+                    rpc::health::Response {
+                        node_version: crate::NODE_VERSION,
+                        eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
+                    }
+                })
+                .await
+            }
+
             id => {
                 return tracing::warn!("Unexpected internal RPC: {}", rpc::Name::new(id).as_str())
             }
@@ -865,6 +895,7 @@ impl Network {
             node: Arc::new(node),
             rpc_timeouts,
             pubsub: Pubsub::new(),
+            eth_address: cfg.eth_address.clone().map(Into::into),
         };
 
         let server = ::network::run_server(server_config, NoHandshake, handler.clone())?;
@@ -880,6 +911,10 @@ impl Network {
             id: node_id,
             client: self.client.clone(),
         }
+    }
+
+    pub async fn peers(&self) -> HashSet<libp2p::PeerId> {
+        self.client.as_ref().peers().await
     }
 
     pub(crate) async fn broadcast_pubsub(&self, evt: api::PubsubEventPayload) {

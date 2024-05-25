@@ -1,6 +1,9 @@
 use {
     anyhow::Context as _,
-    futures::{future::FusedFuture, FutureExt},
+    futures::{
+        future::{FusedFuture, OptionFuture},
+        FutureExt,
+    },
     irn::ShutdownReason,
     serde::{Deserialize, Serialize},
     std::{
@@ -28,11 +31,17 @@ pub use {
 
 pub mod config;
 pub mod consensus;
-mod contract;
 pub mod logger;
 pub mod network;
 pub mod signal;
 pub mod storage;
+
+mod contract;
+mod performance;
+
+/// Version of the node in the testnet.
+/// For "performance" tracking purposes only.
+const NODE_VERSION: u64 = 1;
 
 type Node = irn::Node<Consensus, Network, Storage>;
 
@@ -58,6 +67,9 @@ pub enum Error {
 
     #[error("Failed to interact with smart contract: {0:?}")]
     Contract(anyhow::Error),
+
+    #[error("Failed to initialize performance tracker: {0:?}")]
+    PerformanceTracker(anyhow::Error),
 }
 
 #[global_allocator]
@@ -94,13 +106,32 @@ pub async fn run(
 
     let network = Network::new(cfg)?;
 
-    let stake_validator = if let Some(c) = &cfg.smart_contract {
-        contract::StakeValidator::new(&c.eth_rpc_url, &c.config_address)
+    let (stake_validator, performance_tracker) = if let Some(c) = &cfg.smart_contract {
+        let rpc_url = &c.eth_rpc_url;
+        let addr = &c.config_address;
+
+        let sv = contract::StakeValidator::new(rpc_url, addr)
             .await
             .map(Some)
-            .map_err(Error::Contract)?
+            .map_err(Error::Contract)?;
+
+        let pt = if let Some(p) = &c.performance_reporter {
+            let dir = p.tracker_dir.clone();
+
+            let reporter = contract::new_performance_reporter(rpc_url, addr, &p.signer_mnemonic)
+                .await
+                .map_err(Error::Contract)?;
+            performance::Tracker::new(network.clone(), reporter, dir, NODE_VERSION)
+                .await
+                .map(Some)
+                .map_err(Error::PerformanceTracker)?
+        } else {
+            None
+        };
+
+        (sv, pt)
     } else {
-        None
+        (None, None)
     };
 
     let consensus = Consensus::new(cfg, network.clone(), stake_validator)
@@ -137,10 +168,17 @@ pub async fn run(
         };
     };
 
+    let performance_tracker_fut: OptionFuture<_> = if let Some(pt) = performance_tracker {
+        Some(pt.run()).into()
+    } else {
+        None.into()
+    };
+
     Ok(async move {
         let mut shutdown_fut = pin!(shutdown_fut.fuse());
         let mut metrics_server_fut = pin!(metrics_srv.fuse());
         let mut node_fut = pin!(node_fut);
+        let mut performance_tracker_fut = pin!(performance_tracker_fut.fuse());
 
         loop {
             tokio::select! {
@@ -158,6 +196,10 @@ pub async fn run(
 
                 _ = &mut node_fut => {
                     break;
+                }
+
+                _ = &mut performance_tracker_fut, if !performance_tracker_fut.is_terminated() => {
+                    tracing::warn!("performance tracker unexpectedly finished");
                 }
             }
         }

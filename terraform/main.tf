@@ -44,6 +44,11 @@ variable "eth_rpc_url" {
   sensitive = true
 }
 
+variable "smart_contract_signer_mnemonic" {
+  type      = string
+  sensitive = true
+}
+
 resource "aws_vpc" "this" {
   cidr_block = "10.0.0.0/16"
 }

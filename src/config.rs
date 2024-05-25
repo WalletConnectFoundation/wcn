@@ -96,6 +96,13 @@ pub struct Config {
 pub struct SmartContractConfig {
     pub eth_rpc_url: String,
     pub config_address: String,
+    pub performance_reporter: Option<PerformanceReporterConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PerformanceReporterConfig {
+    pub signer_mnemonic: String,
+    pub tracker_dir: PathBuf,
 }
 
 impl Config {
@@ -126,11 +133,26 @@ impl Config {
             authorized_raft_candidates: raw.authorized_raft_candidates,
             eth_address: raw.eth_address,
             smart_contract: if let Some(address) = raw.config_smart_contract_address {
+                let performance_reporter = raw
+                    .performance_tracker_dir
+                    .map(|dir| {
+                        let signer_mnemonic =
+                            raw.smart_contract_signer_mnemonic.ok_or_else(|| {
+                                envy::Error::custom("missing SMART_CONTRACT_SIGNER_MNEMONIC")
+                            })?;
+                        Ok(PerformanceReporterConfig {
+                            signer_mnemonic,
+                            tracker_dir: dir,
+                        })
+                    })
+                    .transpose()?;
+
                 Some(SmartContractConfig {
                     config_address: address,
                     eth_rpc_url: raw
                         .eth_rpc_url
                         .ok_or_else(|| envy::Error::custom("missing ETH_RPC_URL"))?,
+                    performance_reporter,
                 })
             } else {
                 None
@@ -172,6 +194,7 @@ struct RawConfig {
     bootstrap_nodes: Option<Vec<PeerId>>,
     raft_dir: PathBuf,
     rocksdb_dir: PathBuf,
+    performance_tracker_dir: Option<PathBuf>,
     rocksdb_num_batch_threads: Option<usize>,
     rocksdb_num_callback_threads: Option<usize>,
     request_concurrency_limit: Option<usize>,
@@ -186,6 +209,7 @@ struct RawConfig {
     eth_address: Option<String>,
 
     config_smart_contract_address: Option<String>,
+    smart_contract_signer_mnemonic: Option<String>,
     eth_rpc_url: Option<String>,
 }
 

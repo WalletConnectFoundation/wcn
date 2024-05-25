@@ -86,6 +86,7 @@ impl From<SmartContractConfig> for node::config::SmartContractConfig {
         Self {
             eth_rpc_url: value.eth_rpc_url,
             config_address: value.config_address,
+            performance_reporter: None,
         }
     }
 }

@@ -112,8 +112,10 @@ alloy = { git = "https://github.com/alloy-rs/alloy", rev = "e22d9be", features =
     "contract",
     "providers",
     "provider-http",
+    "signer-mnemonic",
 ] }
 reqwest = { version = "0.12", default-features = false }
+chrono = { version = "0.4", default-features = false }
 
 # These are required by the tests and the `test_cluster` module.
 tempfile = { version = "3", optional = true }

@@ -1,6 +1,8 @@
 use {
     alloy::{
-        providers::{ProviderBuilder, RootProvider},
+        primitives::{Address, U256},
+        providers::{network::EthereumSigner, Provider, ProviderBuilder, RootProvider},
+        signers::wallet::{coins_bip39, MnemonicBuilder},
         sol,
         transports::http::Http,
     },
@@ -32,12 +34,21 @@ sol!(
     "src/contract/permissioned_node_registry.json"
 );
 
-type Transport = Http<Client>;
-type Provider = RootProvider<Transport>;
+sol!(
+    #[allow(clippy::empty_structs_with_brackets)]
+    #[allow(missing_docs)]
+    #[sol(rpc)]
+    reward_manager,
+    "src/contract/reward_manager.json"
+);
 
-type Staking = staking::stakingInstance<Transport, Provider>;
-type PermissionedNodeRegistry =
-    permissioned_node_registry::permissioned_node_registryInstance<Transport, Provider>;
+type Transport = Http<Client>;
+type Staking = staking::stakingInstance<Transport, RootProvider<Transport>>;
+type PermissionedNodeRegistry = permissioned_node_registry::permissioned_node_registryInstance<
+    Transport,
+    RootProvider<Transport>,
+>;
+type RewardManager<P> = reward_manager::reward_managerInstance<Transport, P>;
 
 #[derive(Clone)]
 pub struct StakeValidator {
@@ -96,4 +107,93 @@ impl StakeValidator {
 
         Ok(())
     }
+}
+
+pub trait PerformanceReporter {
+    async fn report_performance(&self, data: PerformanceData) -> Result<()>;
+}
+
+struct PerformanceReporterImpl<P> {
+    signer_address: Address,
+    reward_manager: RewardManager<P>,
+}
+
+impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceReporterImpl<P> {
+    async fn report_performance(&self, data: PerformanceData) -> Result<()> {
+        let nodes = data.nodes.iter().map(|n| n.address).collect();
+        let performance = data.nodes.iter().map(|n| n.performance).collect();
+
+        let performance_data = reward_manager::PerformanceData {
+            nodes,
+            performance,
+            reportingEpoch: U256::from(data.epoch),
+        };
+
+        let receipt = self
+            .reward_manager
+            .postPerformanceRecords(performance_data)
+            .from(self.signer_address)
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
+
+        tracing::info!(?receipt, "Performance reported");
+
+        Ok(())
+    }
+}
+
+pub struct PerformanceData {
+    pub epoch: u64,
+    pub nodes: Vec<NodePerformanceData>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NodePerformanceData {
+    address: Address,
+    performance: U256,
+}
+
+impl NodePerformanceData {
+    pub fn new(addr: &str, performance: u8) -> Result<Self> {
+        let address = addr.parse()?;
+        let performance = match performance {
+            1..=100 => U256::from(performance),
+            _ => return Err(anyhow::anyhow!("Performance should be in range 1..=100")),
+        };
+
+        Ok(Self {
+            address,
+            performance,
+        })
+    }
+}
+
+pub async fn new_performance_reporter(
+    rpc_url: &str,
+    config_contract_address: &str,
+    signer_mnemonic: &str,
+) -> Result<impl PerformanceReporter> {
+    let wallet = MnemonicBuilder::<coins_bip39::English>::default()
+        .phrase(signer_mnemonic)
+        .build()?;
+
+    let signer_address = wallet.address();
+
+    let provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .signer(EthereumSigner::from(wallet))
+        .on_http(rpc_url.parse()?);
+
+    let config = config::new(config_contract_address.parse()?, provider.clone());
+
+    let config::getRewardManagerReturn {
+        _0: reward_manager_address,
+    } = config.getRewardManager().call().await?;
+
+    Ok(PerformanceReporterImpl {
+        signer_address,
+        reward_manager: reward_manager::new(reward_manager_address, provider.clone()),
+    })
 }

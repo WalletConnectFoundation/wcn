@@ -135,7 +135,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
             .filter_map(|(addr, score)| {
                 let performance = (score / self.state.total_health_checks as f64 * 100.0).ceil();
                 contract::NodePerformanceData::new(addr, performance as u8)
-                    .map_err(|err| tracing::warn!(?err, "invalid performace data, skipping"))
+                    .map_err(|err| tracing::warn!(?err, "invalid performance data, skipping"))
                     .ok()
             })
             .collect();

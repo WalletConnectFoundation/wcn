@@ -121,6 +121,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
             .into_iter()
             .for_each(|(addr, diff)| *self.state.health_scores.entry(addr).or_default() += diff);
 
+        self.state.total_health_checks += 1;
         self.flush_state().await;
 
         tracing::info!(?self.state, "Heathcheck");

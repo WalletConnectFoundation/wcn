@@ -129,16 +129,16 @@ impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceRe
             reportingEpoch: U256::from(data.epoch),
         };
 
-        let receipt = self
+        let _ = self
             .reward_manager
             .postPerformanceRecords(performance_data)
             .from(self.signer_address)
             .send()
             .await?
-            .get_receipt()
+            .watch()
             .await?;
 
-        tracing::info!(?receipt, "Performance reported");
+        // tracing::info!(?receipt, "Performance reported");
 
         Ok(())
     }

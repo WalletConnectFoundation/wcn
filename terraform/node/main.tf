@@ -186,6 +186,9 @@ locals {
       var.eth_rpc_url != null ? [
         { name = "ETH_RPC_URL", value = var.eth_rpc_url },
       ] : [],
+      var.eth_address != null ? [
+        { name = "ETH_ADDRESS", value = var.eth_address },
+      ] : [],
     )
 
     image     = var.image

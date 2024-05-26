@@ -201,3 +201,8 @@ variable "eth_rpc_url" {
   default   = null
   sensitive = true
 }
+
+variable "eth_address" {
+  type    = string
+  default = null
+}

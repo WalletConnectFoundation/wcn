@@ -8,6 +8,7 @@ use {
     },
     anyhow::Result,
     reqwest::Client,
+    tap::Tap,
 };
 
 sol!(
@@ -135,6 +136,7 @@ impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceRe
             .from(self.signer_address)
             .send()
             .await?
+            .tap(|b| tracing::info!(hash = %b.inner().tx_hash(), "trying to send transaction"))
             .watch()
             .await?;
 

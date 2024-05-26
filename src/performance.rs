@@ -86,6 +86,10 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
     }
 
     fn epoch_end_timestamp(&self) -> i64 {
+        if self.state.current_epoch == 1 {
+            return Utc::now().timestamp();
+        }
+
         self.state.epoch_start_timestamp + Self::EPOCH_DURATION_SECS
     }
 

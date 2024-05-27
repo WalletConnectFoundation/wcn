@@ -56,7 +56,7 @@ pub struct StorageCmd {
     #[clap(short, long, env = "IRN_STORAGE_ADDRESS")]
     /// IRN node address to connect.
     ///
-    /// The address is specified in format `{PEER_ID}_{MULTIADDRESS}`.
+    /// The address is specified in format `{IP_ADDR}`.
     address: SocketAddr,
 
     #[clap(long, env = "IRN_STORAGE_PRIVATE_KEY")]

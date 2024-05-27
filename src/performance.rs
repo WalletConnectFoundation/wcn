@@ -47,7 +47,7 @@ impl State {
 }
 
 impl<R: contract::PerformanceReporter> Tracker<R> {
-    const EPOCH_DURATION_SECS: i64 = 60 * 60 * 24; // a day
+    const EPOCH_DURATION_SECS: i64 = 60 * 60; // an hour
 
     pub async fn new(
         network: Network,

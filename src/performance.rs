@@ -128,7 +128,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
         self.state.total_health_checks += 1;
         self.flush_state().await;
 
-        tracing::info!(?self.state, "Heathcheck");
+        tracing::info!(?self.state, "Healthcheck");
     }
 
     async fn publish_report(&self) {

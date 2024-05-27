@@ -8,7 +8,7 @@ use {
     },
     anyhow::Result,
     reqwest::Client,
-    tap::Tap,
+    tap::TapFallible,
 };
 
 sol!(
@@ -121,6 +121,8 @@ struct PerformanceReporterImpl<P> {
 
 impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceReporterImpl<P> {
     async fn report_performance(&self, data: PerformanceData) -> Result<()> {
+        tracing::info!(?data, "sending performance report");
+
         let nodes = data.nodes.iter().map(|n| n.address).collect();
         let performance = data.nodes.iter().map(|n| n.performance).collect();
 
@@ -130,22 +132,32 @@ impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceRe
             reportingEpoch: U256::from(data.epoch),
         };
 
-        let _ = self
+        let receipt = self
             .reward_manager
             .postPerformanceRecords(performance_data)
             .from(self.signer_address)
             .send()
-            .await?
-            .tap(|b| tracing::info!(hash = %b.inner().tx_hash(), "trying to send transaction"))
-            .watch()
+            .await
+            .tap_err(|err| {
+                match err {
+                    alloy::contract::Error::TransportError(e) => {
+                        if let Some(data) = e.as_error_resp().and_then(|resp| resp.data.as_ref()) {
+                            tracing::warn!(%data, "error response data");
+                        }
+                    }
+                    _ => {}
+                };
+            })?
+            .get_receipt()
             .await?;
 
-        // tracing::info!(?receipt, "Performance reported");
+        tracing::info!(?receipt, "Performance reported");
 
         Ok(())
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct PerformanceData {
     pub epoch: u64,
     pub nodes: Vec<NodePerformanceData>,
@@ -179,6 +191,7 @@ pub async fn new_performance_reporter(
 ) -> Result<impl PerformanceReporter> {
     let wallet = MnemonicBuilder::<coins_bip39::English>::default()
         .phrase(signer_mnemonic)
+        .index(2)?
         .build()?;
 
     let signer_address = wallet.address();

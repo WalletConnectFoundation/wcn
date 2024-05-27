@@ -6,7 +6,7 @@ use {
         sol,
         transports::http::Http,
     },
-    anyhow::Result,
+    anyhow::{Context, Result},
     reqwest::Client,
     tap::TapFallible,
 };
@@ -121,7 +121,11 @@ struct PerformanceReporterImpl<P> {
 
 impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceReporterImpl<P> {
     async fn report_performance(&self, data: PerformanceData) -> Result<()> {
-        tracing::info!(?data, "sending performance report");
+        tracing::info!(
+            ?data,
+            signer_address = %self.signer_address,
+            "sending performance report"
+        );
 
         let nodes = data.nodes.iter().map(|n| n.address).collect();
         let performance = data.nodes.iter().map(|n| n.performance).collect();
@@ -139,14 +143,19 @@ impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceRe
             .send()
             .await
             .tap_err(|err| {
+                tracing::warn!(?err, "contract error");
+
                 if let alloy::contract::Error::TransportError(e) = err {
                     if let Some(data) = e.as_error_resp().and_then(|resp| resp.data.as_ref()) {
                         tracing::warn!(%data, "error response data");
                     }
                 }
-            })?
+            })
+            .context("send")?
             .get_receipt()
-            .await?;
+            .await
+            .tap_err(|err| tracing::warn!(?err, "get_receipt error"))
+            .context("get_receipt")?;
 
         tracing::info!(?receipt, "Performance reported");
 

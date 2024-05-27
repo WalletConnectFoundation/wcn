@@ -139,14 +139,11 @@ impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceRe
             .send()
             .await
             .tap_err(|err| {
-                match err {
-                    alloy::contract::Error::TransportError(e) => {
-                        if let Some(data) = e.as_error_resp().and_then(|resp| resp.data.as_ref()) {
-                            tracing::warn!(%data, "error response data");
-                        }
+                if let alloy::contract::Error::TransportError(e) = err {
+                    if let Some(data) = e.as_error_resp().and_then(|resp| resp.data.as_ref()) {
+                        tracing::warn!(%data, "error response data");
                     }
-                    _ => {}
-                };
+                }
             })?
             .get_receipt()
             .await?;

@@ -30,7 +30,7 @@ pub struct StartCmd {
     /// The directory will be created if it doesn't exist.
     working_dir: Option<String>,
 
-    #[clap(short, long)]
+    #[clap(short, long, default_value = "config.toml")]
     /// Node configuration file.
     ///
     /// The path is relative to the working directory.
@@ -130,7 +130,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         None
     };
 
-    let (authorized_clients, authorized_raft_candidates) = if !config.authorization.disable {
+    let (authorized_clients, authorized_raft_candidates) = if config.authorization.enable {
         (
             Some(HashSet::from_iter(config.authorization.clients)),
             Some(HashSet::from_iter(

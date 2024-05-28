@@ -1,6 +1,6 @@
 use {
     crate::{
-        namespace,
+        auth,
         rpc,
         Cursor,
         Field,
@@ -67,7 +67,7 @@ pub struct Config {
 
     pub connection_timeout: Duration,
     pub udp_socket_count: usize,
-    pub namespaces: Vec<namespace::Auth>,
+    pub namespaces: Vec<auth::Auth>,
 }
 
 #[derive(Clone)]
@@ -77,7 +77,7 @@ pub struct Client {
     /// UDP buffer size configuration, so in order to be able to sustain high
     /// throughput we need to spread the load across multiple UDP sockets.
     inner: Arc<[NetworkClient]>,
-    namespaces: Arc<HashMap<namespace::PublicKey, namespace::Auth>>,
+    namespaces: Arc<HashMap<auth::PublicKey, auth::Auth>>,
 
     shadowing: Option<Shadowing>,
 
@@ -123,7 +123,7 @@ impl Client {
         Self::new_inner(cfg, "", shadowing)
     }
 
-    pub fn namespaces(&self) -> &HashMap<namespace::PublicKey, namespace::Auth> {
+    pub fn namespaces(&self) -> &HashMap<auth::PublicKey, auth::Auth> {
         &self.namespaces
     }
 
@@ -448,7 +448,7 @@ impl Client {
 /// Client part of the [`network::Handshake`].
 #[derive(Clone)]
 struct Handshake {
-    namespaces: Arc<HashMap<namespace::PublicKey, namespace::Auth>>,
+    namespaces: Arc<HashMap<auth::PublicKey, auth::Auth>>,
 }
 
 impl network::Handshake for Handshake {

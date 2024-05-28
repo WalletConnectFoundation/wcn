@@ -7,7 +7,7 @@ use {
         Error,
         Node,
     },
-    api::{namespace, server::HandshakeData},
+    api::{auth, server::HandshakeData},
     async_trait::async_trait,
     derive_more::AsRef,
     futures::{
@@ -234,7 +234,7 @@ fn prepare_key(key: api::Key, conn_info: &ConnectionInfo<HandshakeData>) -> api:
         // information with the user key etc.
         _ => {
             let prefix_len = if key.namespace.is_some() {
-                namespace::PUBLIC_KEY_LEN
+                auth::PUBLIC_KEY_LEN
             } else {
                 0
             };

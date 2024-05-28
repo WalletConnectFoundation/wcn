@@ -1,5 +1,5 @@
 use {
-    api::{namespace, Key, Multiaddr, SigningKey},
+    api::{auth, Key, Multiaddr},
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,
@@ -228,7 +228,7 @@ async fn pubsub(cluster: &test::Cluster<Context>) {
         .values()
         .map(|n| {
             api::Client::new(api::client::Config {
-                key: SigningKey::generate(&mut rand::thread_rng()),
+                key: auth::client_key_from_secret(b"test").unwrap(),
                 nodes: [(n.identity().peer_id.id, n.identity().api_addr.clone())]
                     .into_iter()
                     .collect(),
@@ -328,7 +328,7 @@ async fn pubsub(cluster: &test::Cluster<Context>) {
 async fn namespaces(cluster: &test::Cluster<Context>) {
     let namespaces = (0..2)
         .map(|i| {
-            let auth = namespace::Auth::from_secret(
+            let auth = auth::Auth::from_secret(
                 b"namespace_master_secret",
                 format!("namespace{i}").as_bytes(),
             )
@@ -343,7 +343,7 @@ async fn namespaces(cluster: &test::Cluster<Context>) {
     let node = &cluster.nodes().values().next().unwrap();
 
     let config = api::client::Config {
-        key: SigningKey::generate(&mut rand::thread_rng()),
+        key: auth::client_key_from_secret(b"test").unwrap(),
         nodes: [(node.identity().peer_id.id, node.identity().api_addr.clone())]
             .into_iter()
             .collect(),

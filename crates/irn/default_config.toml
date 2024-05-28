@@ -25,7 +25,7 @@ warmup_delay = 45000
 # group = 1
 
 [authorization]
-disable = false
+enable = true
 is_consensus_member = false
 clients = []
 consensus_candidates = []

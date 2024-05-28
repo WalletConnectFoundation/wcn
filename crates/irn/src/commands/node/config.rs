@@ -46,7 +46,7 @@ pub struct Server {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Authorization {
-    pub disable: bool,
+    pub enable: bool,
     pub clients: Vec<PeerId>,
     pub consensus_candidates: Vec<PeerId>,
     pub is_consensus_member: bool,
@@ -117,7 +117,6 @@ impl Config {
                 config::FileFormat::Toml,
             ))
             .add_source(config::File::new(path, config::FileFormat::Toml).required(true))
-            .add_source(config::Environment::with_prefix("IRN"))
             .build()?
             .try_deserialize()
     }

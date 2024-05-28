@@ -3,7 +3,7 @@ use {
     ring::{
         aead,
         hkdf,
-        signature::{self, KeyPair},
+        signature::{self, KeyPair as _},
     },
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::sync::Arc,
@@ -11,6 +11,7 @@ use {
 
 pub const PUBLIC_KEY_LEN: usize = signature::ED25519_PUBLIC_KEY_LEN;
 
+const INFO_CLIENT_KEY: &[u8] = b"client_auth_key";
 const INFO_NAMESPACE_KEY: &[u8] = b"namespace_auth_key";
 const INFO_ENCRYPTION_KEY: &[u8] = b"encryption_key";
 const KEY_SALT: &[u8] = b"irn_api_client";
@@ -211,6 +212,20 @@ impl TryFrom<&[u8]> for Signature {
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         Ok(Self(value.try_into().map_err(|_| Error::Signature)?))
     }
+}
+
+pub fn client_key_from_secret(secret: &[u8]) -> Result<ed25519_dalek::SigningKey, Error> {
+    if secret.is_empty() {
+        return Err(Error::Secret);
+    }
+
+    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, KEY_SALT).extract(secret);
+
+    let mut sig_key_seed = [0; KEY_LEN_SIG_SEED];
+    prk.expand(&[INFO_CLIENT_KEY], hkdf::HKDF_SHA256)?
+        .fill(&mut sig_key_seed)?;
+
+    Ok(ed25519_dalek::SigningKey::from_bytes(&sig_key_seed))
 }
 
 #[cfg(test)]

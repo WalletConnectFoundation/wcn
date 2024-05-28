@@ -1,6 +1,6 @@
 pub use network::{inbound::RpcHandler, ServerConfig as Config};
 use {
-    crate::{namespace, HandshakeRequest, HandshakeResponse},
+    crate::{auth, HandshakeRequest, HandshakeResponse},
     futures_util::{Future, SinkExt},
     std::{collections::HashSet, io, sync::Arc, time::Duration},
     wc::future::FutureExt,
@@ -20,7 +20,7 @@ struct Handshake;
 
 #[derive(Clone, Debug)]
 pub struct HandshakeData {
-    pub namespaces: Arc<HashSet<namespace::PublicKey>>,
+    pub namespaces: Arc<HashSet<auth::PublicKey>>,
 }
 
 impl network::Handshake for Handshake {
@@ -36,7 +36,7 @@ impl network::Handshake for Handshake {
                 .initiate_handshake::<HandshakeRequest, HandshakeResponse>()
                 .await?;
 
-            let auth_nonce = namespace::Nonce::generate();
+            let auth_nonce = auth::Nonce::generate();
 
             tx.send(HandshakeRequest { auth_nonce }).await?;
 

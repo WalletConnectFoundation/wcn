@@ -179,8 +179,15 @@ locals {
       var.config_smart_contract_address != null ? [
         { name = "CONFIG_SMART_CONTRACT_ADDRESS", value = var.config_smart_contract_address },
       ] : [],
+      var.smart_contract_signer_mnemonic != null ? [
+        { name = "SMART_CONTRACT_SIGNER_MNEMONIC", value = var.smart_contract_signer_mnemonic },
+        { name = "PERFORMANCE_TRACKER_DIR", value = "/irn/performance-tracker" },
+      ] : [],
       var.eth_rpc_url != null ? [
         { name = "ETH_RPC_URL", value = var.eth_rpc_url },
+      ] : [],
+      var.eth_address != null ? [
+        { name = "ETH_ADDRESS", value = var.eth_address },
       ] : [],
     )
 

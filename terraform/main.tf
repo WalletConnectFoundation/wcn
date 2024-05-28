@@ -81,7 +81,13 @@ locals {
   nodes = merge(local.bootstrap_nodes, local.operator_nodes)
 
   bootstrap_node_ids = [for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
-  operator_peer_ids  = [for id, node in local.operator_nodes : module.keypair[id].peer_id]
+  operator_peer_ids  = concat([for id, node in local.operator_nodes : module.keypair[id].peer_id], [
+    "12D3KooWKNoDLQWimQ3zJTmKkEeezCBrjZTw6Tgu4UZEGTjWEJ65", # consensus
+    "12D3KooWC6xCiL7WXZc4RqiLqDYAythsrjKY1i2qiqYaYoL2XHvu", # luga
+    "12D3KooWPkasjzJTX7uTcxZjgzihQ7fheYNay7bMDQvZvmKuFrWw", # 1kx
+
+    "12D3KooWPbKnCbBSp7znwgAirAyPiZd3wwzrSeeUEuTH9YEFxQP4", # wc Chris
+  ])
 
   known_peers = { for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}" => aws_eip.this[id].public_ip }
 
@@ -248,7 +254,7 @@ module "node" {
   # Only a single node has write access to the contract
   smart_contract_signer_mnemonic = each.key == "eu-central-1a-1" ? var.smart_contract_signer_mnemonic : null
 
-  cache_buster = "123"
+  cache_buster = "123aetahe"
 }
 
 data "aws_iam_policy_document" "assume_role" {

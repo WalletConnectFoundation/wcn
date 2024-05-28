@@ -186,7 +186,7 @@ fn reward_manager_error(err: &alloy::contract::Error) -> Option<RewardManagerErr
     };
 
     let resp = e.as_error_resp()?;
-    let data = resp.data.as_ref()?.get();
+    let data = resp.data.as_ref()?.get().trim_matches('"');
 
     let data = Bytes::from_str(data)
         .map_err(|err| tracing::warn!(?err, "alloy::Bytes::from_str"))

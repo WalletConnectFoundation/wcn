@@ -1,7 +1,7 @@
 use {
     irn_api::{
+        auth::{Auth, PublicKey},
         client,
-        namespace::{Auth, PublicKey},
         Client,
         Key,
         SigningKey,

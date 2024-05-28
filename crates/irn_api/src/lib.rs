@@ -14,11 +14,9 @@ pub use {
 pub mod client;
 #[cfg(feature = "client")]
 pub use client::Client;
-
+pub mod auth;
 #[cfg(feature = "server")]
 pub mod server;
-
-pub mod namespace;
 
 pub mod rpc {
     use {
@@ -53,7 +51,7 @@ pub mod rpc {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Key {
-    pub namespace: Option<namespace::PublicKey>,
+    pub namespace: Option<auth::PublicKey>,
     pub bytes: Vec<u8>,
 }
 
@@ -207,8 +205,8 @@ pub struct Subscribe {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NamespaceAuth {
-    pub namespace: namespace::PublicKey,
-    pub signature: namespace::Signature,
+    pub namespace: auth::PublicKey,
+    pub signature: auth::Signature,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -219,7 +217,7 @@ pub struct PubsubEventPayload {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HandshakeRequest {
-    pub auth_nonce: namespace::Nonce,
+    pub auth_nonce: auth::Nonce,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

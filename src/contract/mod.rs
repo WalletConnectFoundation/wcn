@@ -1,14 +1,15 @@
 use {
     alloy::{
-        primitives::{Address, U256},
+        primitives::{Address, Bytes, U256},
         providers::{network::EthereumSigner, Provider, ProviderBuilder, RootProvider},
         signers::wallet::{coins_bip39, MnemonicBuilder},
         sol,
+        sol_types::SolInterface,
         transports::http::Http,
     },
-    anyhow::{Context, Result},
+    anyhow::Result,
     reqwest::Client,
-    tap::TapFallible,
+    std::str::FromStr,
 };
 
 sol!(
@@ -50,6 +51,7 @@ type PermissionedNodeRegistry = permissioned_node_registry::permissioned_node_re
     RootProvider<Transport>,
 >;
 type RewardManager<P> = reward_manager::reward_managerInstance<Transport, P>;
+type RewardManagerError = reward_manager::reward_managerErrors;
 
 #[derive(Clone)]
 pub struct StakeValidator {
@@ -119,6 +121,15 @@ struct PerformanceReporterImpl<P> {
     reward_manager: RewardManager<P>,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum ReportPerformanceError {
+    #[error("PerformanceDataAlreadyUpdated")]
+    PerformanceDataAlreadyUpdated,
+
+    #[error("Other: {0}")]
+    Other(String),
+}
+
 impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceReporterImpl<P> {
     async fn report_performance(&self, data: PerformanceData) -> Result<()> {
         tracing::info!(
@@ -136,31 +147,54 @@ impl<P: Provider<Transport> + Send + Sync> PerformanceReporter for PerformanceRe
             reportingEpoch: U256::from(data.epoch),
         };
 
-        let receipt = self
+        let call = self
             .reward_manager
             .postPerformanceRecords(performance_data)
-            .from(self.signer_address)
-            .send()
-            .await
-            .tap_err(|err| {
-                tracing::warn!(?err, "contract error");
+            .from(self.signer_address);
 
-                if let alloy::contract::Error::TransportError(e) = err {
-                    if let Some(data) = e.as_error_resp().and_then(|resp| resp.data.as_ref()) {
-                        tracing::warn!(%data, "error response data");
+        let res = call.send().await.map_err(|err| {
+            reward_manager_error(&err)
+                .map(|e| match e {
+                    RewardManagerError::PerformanceDataAlreadyUpdated(_) => {
+                        ReportPerformanceError::PerformanceDataAlreadyUpdated
                     }
-                }
-            })
-            .context("send")?
-            .get_receipt()
-            .await
-            .tap_err(|err| tracing::warn!(?err, "get_receipt error"))
-            .context("get_receipt")?;
+                    _ => ReportPerformanceError::Other(err.to_string()),
+                })
+                .unwrap_or_else(|| ReportPerformanceError::Other(format!("{:?}", err)))
+        });
+
+        let tx = match res {
+            Ok(tx) => tx,
+            Err(ReportPerformanceError::PerformanceDataAlreadyUpdated) => {
+                tracing::warn!("epoch already reported");
+                return Ok(());
+            }
+            Err(ReportPerformanceError::Other(e)) => return Err(anyhow::anyhow!(e)),
+        };
+
+        let receipt = tx.get_receipt().await?;
 
         tracing::info!(?receipt, "Performance reported");
 
         Ok(())
     }
+}
+
+fn reward_manager_error(err: &alloy::contract::Error) -> Option<RewardManagerError> {
+    let alloy::contract::Error::TransportError(e) = err else {
+        return None;
+    };
+
+    let resp = e.as_error_resp()?;
+    let data = resp.data.as_ref()?.get();
+
+    let data = Bytes::from_str(data)
+        .map_err(|err| tracing::warn!(?err, "alloy::Bytes::from_str"))
+        .ok()?;
+
+    RewardManagerError::abi_decode(&data, true)
+        .map_err(|err| tracing::warn!(?err, "RewardManagerError::abi_decode"))
+        .ok()
 }
 
 #[derive(Clone, Debug)]

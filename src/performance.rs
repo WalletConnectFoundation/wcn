@@ -86,7 +86,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
     }
 
     fn epoch_end_timestamp(&self) -> i64 {
-        if self.state.current_epoch <= 4 {
+        if self.state.current_epoch <= 6 {
             return Utc::now().timestamp();
         }
 

@@ -44,6 +44,11 @@ variable "eth_rpc_url" {
   sensitive = true
 }
 
+variable "smart_contract_signer_mnemonic" {
+  type      = string
+  sensitive = true
+}
+
 resource "aws_vpc" "this" {
   cidr_block = "10.0.0.0/16"
 }
@@ -63,15 +68,29 @@ resource "aws_route" "internet_gateway" {
 }
 
 locals {
-  nodes = {
+  bootstrap_nodes = {
     "eu-central-1a-1" = { ip = "10.0.111.10", group_id = 1 },
     "eu-central-1b-1" = { ip = "10.0.121.10", group_id = 2 },
     "eu-central-1c-1" = { ip = "10.0.131.10", group_id = 3 },
   }
 
-  node_peer_ids = [for id, node in local.nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
+  operator_nodes = {
+    "eu-central-1a-2" = { ip = "10.0.112.10", group_id = 1 },
+  }
 
-  known_peers = { for id, node in local.nodes : "${module.keypair[id].peer_id}_${node.group_id}" => aws_eip.this[id].public_ip }
+  nodes = merge(local.bootstrap_nodes, local.operator_nodes)
+
+  bootstrap_node_ids = [for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
+  operator_peer_ids = concat([for id, node in local.operator_nodes : module.keypair[id].peer_id], [
+    "12D3KooWKNoDLQWimQ3zJTmKkEeezCBrjZTw6Tgu4UZEGTjWEJ65", # consensus
+    "12D3KooWC6xCiL7WXZc4RqiLqDYAythsrjKY1i2qiqYaYoL2XHvu", # luga
+    "12D3KooWPkasjzJTX7uTcxZjgzihQ7fheYNay7bMDQvZvmKuFrWw", # 1kx
+    "12D3KooWHHdsq8TMRkb22seAWDTpQMDPNAx7a4yyUhrt3WHzwqM2", # ledger
+
+    "12D3KooWPbKnCbBSp7znwgAirAyPiZd3wwzrSeeUEuTH9YEFxQP4", # wc Chris
+  ])
+
+  known_peers = { for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}" => aws_eip.this[id].public_ip }
 
   port         = 3000
   metrics_port = 3002
@@ -186,7 +205,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-37"
+  image       = "${data.aws_ecr_repository.node.repository_url}:pr-40"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -195,7 +214,7 @@ module "node" {
   group_id   = each.value.group_id
 
   known_peers     = local.known_peers
-  bootstrap_nodes = local.node_peer_ids
+  bootstrap_nodes = contains(keys(local.bootstrap_nodes), each.key) ? local.bootstrap_node_ids : []
   libp2p_port     = local.port
   api_port        = local.api_port
   metrics_port    = local.metrics_port
@@ -219,7 +238,7 @@ module "node" {
 
   tags = local.tags
 
-  authorized_raft_candidates = [local.admin_peer_id]
+  authorized_raft_candidates = concat([local.admin_peer_id], local.operator_peer_ids)
   authorized_clients         = [local.admin_peer_id]
 
   enable_otel_collector     = false
@@ -231,6 +250,10 @@ module "node" {
 
   config_smart_contract_address = "0xe6eE5164fe97f7a779aea4251148E106D4bC962E"
   eth_rpc_url                   = var.eth_rpc_url
+  eth_address                   = contains(keys(local.operator_nodes), each.key) ? "0xE8A15C006D14Cf8d70391933F524ceaade185b3f" : null
+
+  # Only a single node has write access to the contract
+  smart_contract_signer_mnemonic = each.key == "eu-central-1a-1" ? var.smart_contract_signer_mnemonic : null
 }
 
 data "aws_iam_policy_document" "assume_role" {

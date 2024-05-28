@@ -190,8 +190,19 @@ variable "config_smart_contract_address" {
   default = null
 }
 
+variable "smart_contract_signer_mnemonic" {
+  type      = string
+  default   = null
+  sensitive = true
+}
+
 variable "eth_rpc_url" {
   type      = string
   default   = null
   sensitive = true
+}
+
+variable "eth_address" {
+  type    = string
+  default = null
 }

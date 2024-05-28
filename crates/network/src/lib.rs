@@ -10,7 +10,7 @@ use {
     quinn::VarInt,
     serde::{Deserialize, Serialize},
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         convert::Infallible,
         io,
         net::{SocketAddr, UdpSocket},
@@ -159,6 +159,16 @@ impl<H: Handshake> Client<H> {
     pub async fn unregister_peer(&self, id: PeerId) {
         self.connection_handlers_mut(|handlers| drop(handlers.shift_remove(&id)))
             .await;
+    }
+
+    /// Returns a list of connected peers.
+    pub async fn peers(&self) -> HashSet<PeerId> {
+        self.connection_handlers
+            .read()
+            .await
+            .keys()
+            .copied()
+            .collect()
     }
 
     // ad-hoc "copy-on-write" behaviour, the map changes infrequently and we don't

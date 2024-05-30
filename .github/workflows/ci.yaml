@@ -1,17 +1,14 @@
 name: ci
-
 on:
   release:
     types: ["published"]
-
   pull_request:
     paths:
-      - 'src/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Dockerfile'
-      - 'build.rs'
-      
+      - "src/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Dockerfile"
+      - "build.rs"
   workflow_dispatch:
     inputs:
       push:
@@ -22,7 +19,6 @@ on:
         options:
           - "false"
           - "true"
-
 concurrency:
   # Support push/pr as event types with different behaviors each:
   # 1. push: queue up builds
@@ -30,10 +26,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}${{ github.event.pull_request.number }}
   # If there is already a workflow running for the same pull request, cancel it
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 env:
   AWS_REGION: "eu-central-1"
-
 jobs:
   tests:
     name: "${{ matrix.cargo.name }}"
@@ -61,23 +55,18 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
-
       - name: "Install Rust ${{ matrix.cargo.rust }}"
         uses: actions-rs/toolchain@v1
         with:
           toolchain: ${{ matrix.cargo.rust }}
           profile: default
           override: true
-
       - uses: Swatinem/rust-cache@v2
-
       - uses: taiki-e/install-action@v1
         with:
           tool: nextest
-
       - name: "Validate ${{ matrix.cargo.name }}"
         run: ${{ matrix.cargo.cmd }}
-
   cargo-deny:
     runs-on: ubuntu-latest
     steps:
@@ -85,7 +74,6 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v1
         with:
           command: check license
-
   build:
     name: "Build image"
     runs-on:
@@ -97,10 +85,8 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-
       - name: Build, tag and cache the image
         uses: docker/build-push-action@v3
         with:
@@ -110,13 +96,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/image-irn.tar
-
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: image-irn
           path: /tmp/image-irn.tar
-
   publish:
     needs: [tests, build, cargo-deny]
     name: "Publish image"
@@ -138,17 +122,16 @@ jobs:
           aws-access-key-id: ${{ secrets[matrix.images.aws-access-key-id] }}
           aws-secret-access-key: ${{ secrets[matrix.images.aws-secret-access-key] }}
           aws-region: eu-central-1
-
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
-
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: |
             ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+            ghcr.io/${{ github.repository }}
           flavor: |
             latest=auto
           tags: |
@@ -156,20 +139,10 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha
-
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
           name: image-irn
           path: /tmp
-
       - name: Push the image to ECR
-        run: |
-          docker load --input /tmp/image-irn.tar
-
-          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
-          for tag in "${tags[@]}"; do
-              docker tag irn:tmp $tag
-          done          
-
-          docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+        run: "docker load --input /tmp/image-irn.tar\n\nreadarray -t tags <<< \"${{ steps.meta.outputs.tags }}\"\nfor tag in \"${tags[@]}\"; do\n    docker tag irn:tmp $tag\ndone          \n\ndocker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}\n"

@@ -34,13 +34,13 @@ fn metrics_update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Confi
 
         sys.refresh_disks();
 
-        let rocksdb_parent = cfg
+        let _rocksdb_parent = cfg
             .rocksdb_dir
             .parent()
             .unwrap_or(&cfg.rocksdb_dir)
             .to_str();
 
-        let raft_parent = cfg.raft_dir.parent().unwrap_or(&cfg.raft_dir).to_str();
+        let _raft_parent = cfg.raft_dir.parent().unwrap_or(&cfg.raft_dir).to_str();
 
         for disk in sys.disks() {
             if disk.mount_point().to_str() == Some("/irn") {

@@ -6,12 +6,12 @@ on:
 
   pull_request:
     paths:
-      - 'src/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Dockerfile'
-      - 'build.rs'
-      
+      - "src/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Dockerfile"
+      - "build.rs"
+
   workflow_dispatch:
     inputs:
       push:
@@ -177,6 +177,27 @@ jobs:
           readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
           for tag in "${tags[@]}"; do
               docker tag irn:tmp $tag
-          done          
+          done
 
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+
+      - name: Set Docker tag
+        id: set-tag
+        run: echo "::set-output name=tag::${{ github.event.inputs.tag_version }}"
+
+      - name: Docker meta for ghcr.io
+        id: docker-metadata
+        uses: docker/metadata-action@v4
+        with:
+          images: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - name: Publish to ghcr.io
+        uses: docker/build-push-action@v3
+        with:
+          push: true
+          tags: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}:${{ steps.set-tag.outputs.tag }}
+          file: ${{ env.DOCKERFILE_PATH }}

@@ -82,10 +82,12 @@ locals {
 
   bootstrap_node_ids = [for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
   operator_peer_ids = concat([for id, node in local.operator_nodes : module.keypair[id].peer_id], [
-    "12D3KooWKNoDLQWimQ3zJTmKkEeezCBrjZTw6Tgu4UZEGTjWEJ65", # consensus
+    "12D3KooWKNoDLQWimQ3zJTmKkEeezCBrjZTw6Tgu4UZEGTjWEJ65", # consensys
     "12D3KooWC6xCiL7WXZc4RqiLqDYAythsrjKY1i2qiqYaYoL2XHvu", # luga
     "12D3KooWPkasjzJTX7uTcxZjgzihQ7fheYNay7bMDQvZvmKuFrWw", # 1kx
-    "12D3KooWHHdsq8TMRkb22seAWDTpQMDPNAx7a4yyUhrt3WHzwqM2", # ledger
+    "12D3KooWHHdsq8TMRkb22seAWDTpQMDPNAx7a4yyUhrt3WHzwqM2", # ledger old
+    "12D3KooWE5giMrZBa2jag1MCkNb8KXxQwcnzALZDNeiXSeHePVWP", # ledger new
+    "12D3KooWF4jm2nrMaoJwyaNd3y8dvvVayXSHZdwpww6LvJr4ekC9", # kiln
 
     "12D3KooWPbKnCbBSp7znwgAirAyPiZd3wwzrSeeUEuTH9YEFxQP4", # wc Chris
   ])
@@ -205,7 +207,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-40"
+  image       = "${data.aws_ecr_repository.node.repository_url}:1.429.0"
   node_memory = 4096 - 512
   node_cpu    = 2048
 

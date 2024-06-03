@@ -185,7 +185,7 @@ jobs:
         id: docker-metadata
         uses: docker/metadata-action@v4
         with:
-          images: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}
+          images: ghcr.io/walletconnect/${{ matrix.images.repo_name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -195,5 +195,5 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           push: true
-          tags: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}
+          tags: ghcr.io/walletconnect/${{ matrix.images.repo_name }}
           file: ${{ env.DOCKERFILE_PATH }}

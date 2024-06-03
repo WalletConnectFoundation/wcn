@@ -114,7 +114,6 @@ jobs:
           context: .
           file: ./Dockerfile
           tags: irn:tmp
-          push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=docker,dest=/tmp/image-irn.tar

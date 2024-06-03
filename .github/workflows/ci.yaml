@@ -181,10 +181,6 @@ jobs:
 
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
 
-      - name: Set Docker tag
-        id: set-tag
-        run: echo "::set-output name=tag::${{ github.event.inputs.tag_version }}"
-
       - name: Docker meta for ghcr.io
         id: docker-metadata
         uses: docker/metadata-action@v4
@@ -199,5 +195,5 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           push: true
-          tags: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}:${{ steps.set-tag.outputs.tag }}
+          tags: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}
           file: ${{ env.DOCKERFILE_PATH }}

@@ -98,31 +98,27 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      # TODO: reorg later
+      #
+      #
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v2
 
-      - name: Login to ghcr.io
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.RELEASE_PAT }}
-
-      - name: Build, tag and cache the image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          file: ./Dockerfile
-          tags: irn:tmp
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/image-irn.tar
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: image-irn
-          path: /tmp/image-irn.tar
+      # - name: Build, tag and cache the image
+      #   uses: docker/build-push-action@v3
+      #   with:
+      #     context: .
+      #     file: ./Dockerfile
+      #     tags: irn:tmp
+      #     cache-from: type=gha
+      #     cache-to: type=gha,mode=max
+      #     outputs: type=docker,dest=/tmp/image-irn.tar
+      #
+      # - name: Upload artifact
+      #   uses: actions/upload-artifact@v3
+      #   with:
+      #     name: image-irn
+      #     path: /tmp/image-irn.tar
 
   publish:
     needs: [tests, build, cargo-deny]
@@ -139,6 +135,13 @@ jobs:
             aws-access-key-id: TESTNET_AWS_ACCESS_KEY_ID
             aws-secret-access-key: TESTNET_AWS_SECRET_ACCESS_KEY
     steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.RELEASE_PAT }}
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -156,6 +159,7 @@ jobs:
         with:
           images: |
             ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+            ghcr.io/${{ github.repository }}
           flavor: |
             latest=auto
           tags: |
@@ -164,36 +168,50 @@ jobs:
             type=semver,pattern={{version}}
             type=sha
 
-      - name: Download artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: image-irn
-          path: /tmp
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-      - name: Push the image to ECR
-        run: |
-          docker load --input /tmp/image-irn.tar
-
-          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
-          for tag in "${tags[@]}"; do
-              docker tag irn:tmp $tag
-          done
-
-          docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-
-      - name: Docker meta for ghcr.io
-        id: docker-metadata
-        uses: docker/metadata-action@v4
-        with:
-          images: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=sha,format=short
-
-      - name: Publish to ghcr.io
+      - name: Build, tag, and push image
         uses: docker/build-push-action@v3
         with:
+          context: .
+          file: ${{ matrix.file }}
           push: true
-          tags: ghcr.io/WalletConnect/${{ matrix.images.repo_name }}
-          file: ${{ env.DOCKERFILE_PATH }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # - name: Download artifact
+      #   uses: actions/download-artifact@v3
+      #   with:
+      #     name: image-irn
+      #     path: /tmp
+      #
+      # - name: Push the image to ECR
+      #   run: |
+      #     docker load --input /tmp/image-irn.tar
+      #
+      #     readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
+      #     for tag in "${tags[@]}"; do
+      #         docker tag irn:tmp $tag
+      #     done
+      #
+      #     docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+      #
+      # - name: Docker meta for ghcr.io
+      #   id: docker-metadata
+      #   uses: docker/metadata-action@v4
+      #   with:
+      #     images: ghcr.io/${{ matrix.images.repo_name }}
+      #     tags: |
+      #       type=ref,event=branch
+      #       type=semver,pattern={{version}}
+      #       type=sha,format=short
+      #
+      # - name: Publish to ghcr.io
+      #   uses: docker/build-push-action@v3
+      #   with:
+      #     push: true
+      #     tags: ghcr.io/${{ matrix.images.repo_name }}
+      #     file: ${{ env.DOCKERFILE_PATH }}

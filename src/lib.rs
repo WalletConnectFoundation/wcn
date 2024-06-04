@@ -5,12 +5,11 @@ use {
         FutureExt,
     },
     irn::ShutdownReason,
-    metrics_helpers::serve_metrics,
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
     wc::{
         future::StaticFutureExt,
-        metrics::{self},
+        metrics::{self as wc_metrics},
     },
 };
 pub use {
@@ -24,7 +23,7 @@ pub use {
 pub mod config;
 pub mod consensus;
 pub mod logger;
-pub mod metrics_helpers;
+pub mod metrics;
 pub mod network;
 pub mod signal;
 pub mod storage;
@@ -93,7 +92,7 @@ pub async fn run(
     shutdown_fut: impl Future<Output = ShutdownReason>,
     cfg: &Config,
 ) -> Result<impl Future<Output = ()>, Error> {
-    metrics::ServiceMetrics::init_with_name("irn_node");
+    wc_metrics::ServiceMetrics::init_with_name("irn_node");
 
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
@@ -113,6 +112,7 @@ pub async fn run(
             let reporter = contract::new_performance_reporter(rpc_url, addr, &p.signer_mnemonic)
                 .await
                 .map_err(Error::Contract)?;
+
             performance::Tracker::new(network.clone(), reporter, dir, NODE_VERSION)
                 .await
                 .map(Some)
@@ -150,7 +150,7 @@ pub async fn run(
 
     Network::spawn_servers(cfg, node.clone())?;
 
-    let metrics_srv = serve_metrics(cfg.clone(), node.clone())?.spawn("metrics_server");
+    let metrics_srv = metrics::serve(cfg.clone(), node.clone())?.spawn("metrics_server");
 
     let node_clone = node.clone();
     let node_fut = async move {

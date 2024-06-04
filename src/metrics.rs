@@ -6,7 +6,7 @@ use {
     wc::metrics::{self, otel},
 };
 
-fn metrics_update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
+fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
     use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
 
     let mut sys = sysinfo::System::new_all();
@@ -34,16 +34,21 @@ fn metrics_update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Confi
 
         sys.refresh_disks();
 
-        let _rocksdb_parent = cfg
+        // TODO: parent dir might not be the mount point
+        // so this needs to be tested on different systems
+        //
+        let rocksdb_parent = cfg
             .rocksdb_dir
             .parent()
             .unwrap_or(&cfg.rocksdb_dir)
             .to_str();
 
-        let _raft_parent = cfg.raft_dir.parent().unwrap_or(&cfg.raft_dir).to_str();
+        let raft_parent = cfg.raft_dir.parent().unwrap_or(&cfg.raft_dir).to_str();
 
         for disk in sys.disks() {
-            if disk.mount_point().to_str() == Some("/irn") {
+            if disk.mount_point().to_str() == rocksdb_parent
+                || disk.mount_point().to_str() == raft_parent
+            {
                 metrics::gauge!("irn_disk_total_space", disk.total_space());
                 metrics::gauge!("irn_disk_available_space", disk.available_space());
                 break;
@@ -158,7 +163,7 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
     }
 }
 
-pub(crate) fn serve_metrics(
+pub(crate) fn serve(
     cfg: Config,
     node: Node,
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
@@ -166,7 +171,7 @@ pub(crate) fn serve_metrics(
 
     let (tx, rx) = oneshot::channel();
 
-    std::thread::spawn(|| metrics_update_loop(rx, node, cfg));
+    std::thread::spawn(|| update_loop(rx, node, cfg));
 
     let handler = move || async move {
         metrics::ServiceMetrics::export()

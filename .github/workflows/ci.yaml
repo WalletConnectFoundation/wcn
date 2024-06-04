@@ -24,7 +24,7 @@ on:
           - "true"
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 concurrency:
@@ -150,6 +150,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.RELEASE_PAT }}
+          logout: false
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1

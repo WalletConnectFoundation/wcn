@@ -23,6 +23,10 @@ on:
           - "false"
           - "true"
 
+permissions:
+  contents: read
+  packages: write
+
 concurrency:
   # Support push/pr as event types with different behaviors each:
   # 1. push: queue up builds
@@ -124,10 +128,6 @@ jobs:
     needs: [tests, cargo-deny]
     name: "Build and publish image"
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +150,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.RELEASE_PAT }}
-          logout: false
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -169,7 +168,7 @@ jobs:
         with:
           images: |
             ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-            ghcr.io/${{ github.repository }}
+            ghcr.io/walletconnect/${{ matrix.images.repo_name }}
           flavor: |
             latest=auto
           tags: |

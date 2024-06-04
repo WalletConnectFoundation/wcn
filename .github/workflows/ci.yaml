@@ -23,10 +23,6 @@ on:
           - "false"
           - "true"
 
-permissions:
-  contents: read
-  packages: write
-
 concurrency:
   # Support push/pr as event types with different behaviors each:
   # 1. push: queue up builds
@@ -128,6 +124,10 @@ jobs:
     needs: [tests, cargo-deny]
     name: "Build and publish image"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     strategy:
       fail-fast: false
       matrix:

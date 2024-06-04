@@ -29,4 +29,4 @@ jobs:
         with:
           submodules: recursive
       - id: fmt
-        uses: WalletConnect/actions/actions/fmt-check-terraform@master
+        uses: WalletConnect/actions/actions/fmt-check-terraform@2.4.3

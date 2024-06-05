@@ -157,9 +157,12 @@ jobs:
         run: |
           docker load --input /tmp/image-irn.tar
 
-          docker tag irn:tmp ghcr.io/walletconnect/irn-node
+          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
+          for tag in "${tags[@]}"; do
+              docker tag irn:tmp $tag
+          done
 
-          docker image push --all-tags ghcr.io/walletconnect/irn-node
+          docker image push --all-tags ghcr.io/walletconnect/${{ github.repository }}
 
   publish_to_ecr:
     needs: [tests, build, cargo-deny]

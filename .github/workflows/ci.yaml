@@ -90,41 +90,38 @@ jobs:
         with:
           command: check license
 
-  # build:
-  #   name: "Build image"
-  #   runs-on:
-  #     group: ubuntu-runners
-  #   strategy:
-  #     fail-fast: false
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #       with:
-  #         submodules: recursive
-  #         fetch-depth: 0
+  build:
+    name: "Build image"
+    runs-on:
+      group: ubuntu-runners
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-  # TODO: reorg later
-  #
-  #
-  # - name: Set up Docker Buildx
-  #   uses: docker/setup-buildx-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-  # - name: Build, tag and cache the image
-  #   uses: docker/build-push-action@v3
-  #   with:
-  #     context: .
-  #     file: ./Dockerfile
-  #     tags: irn:tmp
-  #     cache-from: type=gha
-  #     cache-to: type=gha,mode=max
-  #     outputs: type=docker,dest=/tmp/image-irn.tar
-  #
-  # - name: Upload artifact
-  #   uses: actions/upload-artifact@v3
-  #   with:
-  #     name: image-irn
-  #     path: /tmp/image-irn.tar
+      - name: Build, tag and cache the image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: irn:tmp
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/image-irn.tar
 
-  build_and_publish:
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-irn
+          path: /tmp/image-irn.tar
+
+  publish:
     needs: [tests, cargo-deny]
     name: "Build and publish image"
     runs-on: ubuntu-latest
@@ -138,6 +135,7 @@ jobs:
           - repo_name: irn
             aws-access-key-id: TESTNET_AWS_ACCESS_KEY_ID
             aws-secret-access-key: TESTNET_AWS_SECRET_ACCESS_KEY
+
     steps:
       - uses: actions/checkout@v3
         with:
@@ -177,37 +175,38 @@ jobs:
             type=semver,pattern={{version}}
             type=sha
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build, tag, and push image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          file: ${{ matrix.file }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # - name: Download artifact
-      #   uses: actions/download-artifact@v3
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v2
+      #
+      # - name: Build, tag, and push image
+      #   uses: docker/build-push-action@v3
       #   with:
-      #     name: image-irn
-      #     path: /tmp
-      #
-      # - name: Push the image to ECR
-      #   run: |
-      #     docker load --input /tmp/image-irn.tar
-      #
-      #     readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
-      #     for tag in "${tags[@]}"; do
-      #         docker tag irn:tmp $tag
-      #     done
-      #
-      #     docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-      #
+      #     context: .
+      #     file: ${{ matrix.file }}
+      #     push: true
+      #     tags: ${{ steps.meta.outputs.tags }}
+      #     labels: ${{ steps.meta.outputs.labels }}
+      #     cache-from: type=gha
+      #     cache-to: type=gha,mode=max
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: image-irn
+          path: /tmp
+
+      - name: Push the image to ECR
+        run: |
+          docker load --input /tmp/image-irn.tar
+
+          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
+          for tag in "${tags[@]}"; do
+              docker tag irn:tmp $tag
+          done
+
+          docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+          docker image push --all-tags ghcr.io/walletconnect/irn-node
+
       # - name: Docker meta for ghcr.io
       #   id: docker-metadata
       #   uses: docker/metadata-action@v4

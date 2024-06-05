@@ -131,7 +131,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PUSH_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta_ghcr
@@ -146,6 +146,12 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: image-irn
+          path: /tmp
 
       - name: Push image
         run: |

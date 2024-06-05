@@ -122,8 +122,8 @@ jobs:
           path: /tmp/image-irn.tar
 
   publish:
-    needs: [tests, cargo-deny]
-    name: "Build and publish image"
+    needs: [tests, build, cargo-deny]
+    name: "Publish image"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -135,13 +135,7 @@ jobs:
           - repo_name: irn
             aws-access-key-id: TESTNET_AWS_ACCESS_KEY_ID
             aws-secret-access-key: TESTNET_AWS_SECRET_ACCESS_KEY
-
     steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
       - name: Login to ghcr.io
         uses: docker/login-action@v2
         with:
@@ -166,7 +160,6 @@ jobs:
         with:
           images: |
             ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-            ghcr.io/walletconnect/${{ matrix.images.repo_name }}
           flavor: |
             latest=auto
           tags: |
@@ -174,20 +167,6 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha
-
-      # - name: Set up Docker Buildx
-      #   uses: docker/setup-buildx-action@v2
-      #
-      # - name: Build, tag, and push image
-      #   uses: docker/build-push-action@v3
-      #   with:
-      #     context: .
-      #     file: ${{ matrix.file }}
-      #     push: true
-      #     tags: ${{ steps.meta.outputs.tags }}
-      #     labels: ${{ steps.meta.outputs.labels }}
-      #     cache-from: type=gha
-      #     cache-to: type=gha,mode=max
 
       - name: Download artifact
         uses: actions/download-artifact@v3
@@ -206,20 +185,3 @@ jobs:
 
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
           docker image push --all-tags ghcr.io/walletconnect/irn-node
-
-      # - name: Docker meta for ghcr.io
-      #   id: docker-metadata
-      #   uses: docker/metadata-action@v4
-      #   with:
-      #     images: ghcr.io/${{ matrix.images.repo_name }}
-      #     tags: |
-      #       type=ref,event=branch
-      #       type=semver,pattern={{version}}
-      #       type=sha,format=short
-      #
-      # - name: Publish to ghcr.io
-      #   uses: docker/build-push-action@v3
-      #   with:
-      #     push: true
-      #     tags: ghcr.io/${{ matrix.images.repo_name }}
-      #     file: ${{ env.DOCKERFILE_PATH }}

@@ -184,4 +184,25 @@ jobs:
           done
 
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+
+      - name: Docker meta for GHCR
+        id: meta_ghcr
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ghcr.io/walletconnect/${{ matrix.images.repo_name }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha
+
+      - name: Push to GHCR
+        run: |
+          docker load --input /tmp/image-irn.tar
+
+          docker tag irn:tmp ghcr.io/walletconnect/irn-node
+
           docker image push --all-tags ghcr.io/walletconnect/irn-node

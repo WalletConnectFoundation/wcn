@@ -138,7 +138,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ghcr.io/walletconnect/${{ github.repository }}
+            ghcr.io/walletconnect/irn-node
           flavor: |
             latest=auto
           tags: |
@@ -162,7 +162,7 @@ jobs:
               docker tag irn:tmp $tag
           done
 
-          docker image push --all-tags ghcr.io/walletconnect/${{ github.repository }}
+          docker image push --all-tags ghcr.io/walletconnect/irn-node
 
   publish_to_ecr:
     needs: [tests, build, cargo-deny]

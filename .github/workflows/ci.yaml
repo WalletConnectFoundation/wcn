@@ -157,7 +157,7 @@ jobs:
         run: |
           docker load --input /tmp/image-irn.tar
 
-          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
+          readarray -t tags <<< "${{ steps.meta_ghcr.outputs.tags }}"
           for tag in "${tags[@]}"; do
               docker tag irn:tmp $tag
           done

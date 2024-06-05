@@ -138,7 +138,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ghcr.io/walletconnect/${{ matrix.images.repo_name }}
+            ghcr.io/walletconnect/${{ github.repository }}
           flavor: |
             latest=auto
           tags: |

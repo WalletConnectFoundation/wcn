@@ -9,6 +9,7 @@ pub struct KeyCmd {
 #[derive(Debug, clap::Subcommand)]
 enum KeySub {
     Generate(GenerateCmd),
+    Validate(ValidateCmd),
 }
 
 #[derive(Debug, clap::Args)]
@@ -28,9 +29,18 @@ struct GenerateCmd {
     num_keys: Option<u32>,
 }
 
+#[derive(Debug, clap::Args)]
+/// Validates the provided private key and prints the corresponding public key
+/// (encoded with base64) and peer ID.
+struct ValidateCmd {
+    /// Private key to validate. Must be encoded as base64.
+    key: String,
+}
+
 pub fn exec(cmd: KeyCmd) -> anyhow::Result<()> {
     match cmd.commands {
         KeySub::Generate(args) => generate(args),
+        KeySub::Validate(args) => validate(args),
     }
 }
 
@@ -77,6 +87,23 @@ fn generate(args: GenerateCmd) -> anyhow::Result<()> {
         println!("Public key: {}", data_encoding::BASE64.encode(&public_key));
         println!("Peer ID: {}\n", peer_id);
     }
+
+    Ok(())
+}
+
+fn validate(args: ValidateCmd) -> anyhow::Result<()> {
+    let private_key =
+        irn_api::auth::client_key_from_bytes(args.key.as_bytes(), irn_api::auth::Encoding::Base64)
+            .context("Failed to decode key")?;
+
+    let public_key = private_key.verifying_key();
+    let peer_id = irn_api::auth::peer_id(&public_key);
+
+    println!(
+        "Public key: {}",
+        data_encoding::BASE64.encode(public_key.as_bytes())
+    );
+    println!("Peer ID: {}\n", peer_id);
 
     Ok(())
 }

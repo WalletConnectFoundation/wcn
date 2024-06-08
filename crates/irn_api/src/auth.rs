@@ -24,6 +24,9 @@ pub enum Error {
     #[error("Invalid key length")]
     KeyLength,
 
+    #[error("Invalid key encoding")]
+    KeyEncoding,
+
     #[error("Failed to serialize data")]
     Serialize,
 
@@ -214,6 +217,7 @@ impl TryFrom<&[u8]> for Signature {
     }
 }
 
+/// Creates an ed25519 private key from the provided secret.
 pub fn client_key_from_secret(secret: &[u8]) -> Result<ed25519_dalek::SigningKey, Error> {
     if secret.is_empty() {
         return Err(Error::Secret);
@@ -226,6 +230,45 @@ pub fn client_key_from_secret(secret: &[u8]) -> Result<ed25519_dalek::SigningKey
         .fill(&mut sig_key_seed)?;
 
     Ok(ed25519_dalek::SigningKey::from_bytes(&sig_key_seed))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    Raw,
+    Base64,
+    Hex,
+}
+
+/// Decodes an ed25519 private key bytes into [`ed25519_dalek::SigningKey`].
+pub fn client_key_from_bytes(
+    bytes: &[u8],
+    encoding: Encoding,
+) -> Result<ed25519_dalek::SigningKey, Error> {
+    let decoded = match encoding {
+        Encoding::Raw => bytes.try_into().map_err(|_| Error::KeyLength)?,
+
+        Encoding::Base64 => data_encoding::BASE64
+            .decode(bytes)
+            .map_err(|_| Error::KeyEncoding)?
+            .try_into()
+            .map_err(|_| Error::KeyLength)?,
+
+        Encoding::Hex => data_encoding::HEXLOWER_PERMISSIVE
+            .decode(bytes)
+            .map_err(|_| Error::KeyEncoding)?
+            .try_into()
+            .map_err(|_| Error::KeyLength)?,
+    };
+
+    Ok(ed25519_dalek::SigningKey::from_bytes(&decoded))
+}
+
+/// Converts an ed25519 public key into [`network::PeerId`].
+pub fn peer_id(public_key: &ed25519_dalek::VerifyingKey) -> network::PeerId {
+    // Safe, as the key is guaranteed to be valid.
+    let public_key = network::ed25519::PublicKey::try_from_bytes(public_key.as_bytes()).unwrap();
+
+    network::PublicKey::from(public_key).to_peer_id()
 }
 
 #[cfg(test)]

@@ -50,7 +50,7 @@ impl<C: cf::Column> ExpiredDataCompactionFilter<C> {
         }
     }
 
-    fn filter_internal(&mut self, _level: u32, _key: &[u8], value: &[u8]) -> Decision {
+    fn filter_internal(&self, _level: u32, _key: &[u8], value: &[u8]) -> Decision {
         if let Ok(value) = deserialize::<DataContext<C::ValueType>>(value) {
             // Data context may not have a payload if it was initialized from the merge
             // operator with defaults.

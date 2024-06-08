@@ -158,13 +158,13 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
 
     let ch_req = |change| ProposeChangeRequest { change };
 
-    let mut n1 = run_node(0).await.unwrap();
-    let mut n2 = run_node(1).await.unwrap();
+    let n1 = run_node(0).await.unwrap();
+    let n2 = run_node(1).await.unwrap();
 
     // quorum isn't formed yet (2/5)
     assert!(n1.raft.propose_change(ch_req(Change::Incr)).await.is_err());
 
-    let mut n3 = run_node(2).await.unwrap();
+    let n3 = run_node(2).await.unwrap();
 
     // wait for leader to be elected.
     sleep(Duration::from_millis(200)).await;
@@ -187,7 +187,7 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
     n2.assert_state(1).await;
     n3.assert_state(1).await;
 
-    let mut n4 = run_node(3).await.unwrap();
+    let n4 = run_node(3).await.unwrap();
     n4.assert_state(1).await;
 
     n4.raft.propose_change(ch_req(Change::Incr)).await.unwrap();
@@ -201,7 +201,7 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
 
     // We can run a new learner node without errors, but it won't receive any state
     // updates until we explicitly add it to the cluster.
-    let mut n6 = run_node(5).await.unwrap();
+    let n6 = run_node(5).await.unwrap();
 
     // add learner
 
@@ -272,7 +272,7 @@ struct TestNode {
 }
 
 impl TestNode {
-    async fn assert_state(&mut self, counter: u64) {
+    async fn assert_state(&self, counter: u64) {
         tokio::time::timeout(Duration::from_secs(10), async {
             let mut updates = self.raft.updates();
             loop {

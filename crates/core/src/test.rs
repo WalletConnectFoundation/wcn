@@ -128,7 +128,7 @@ where
 
     // TODO: convert into a unit test once replication machinery is properly
     // isolated
-    async fn cluster_view_version_validation(&mut self) {
+    async fn cluster_view_version_validation(&self) {
         tracing::info!("Cluster view version validation");
 
         let mismatching_version = u128::MAX;
@@ -175,7 +175,7 @@ where
             .await;
     }
 
-    async fn replication_and_read_repairs(&mut self) {
+    async fn replication_and_read_repairs(&self) {
         const RECORDS_NUM: usize = 10000;
         const REQUEST_CONCURRENCY: usize = 100;
 

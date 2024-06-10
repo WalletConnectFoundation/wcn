@@ -193,6 +193,17 @@ pub mod rpc {
 
         pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, Response>;
     }
+
+    pub use metrics::Metrics;
+    pub mod metrics {
+        use network::rpc;
+
+        pub type Request = ();
+
+        pub type Response = String;
+
+        pub type Metrics = rpc::Unary<{ rpc::id(b"metrics") }, Request, Response>;
+    }
 }
 
 #[derive(AsRef, Clone)]
@@ -661,6 +672,11 @@ impl RpcHandler {
                     }
                 })
                 .await
+            }
+
+            rpc::Metrics::ID => {
+                rpc::Metrics::handle(stream, |_req| async { crate::metrics::export_prometheus() })
+                    .await
             }
 
             id => {

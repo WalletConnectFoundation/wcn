@@ -275,15 +275,15 @@ locals {
     }
   }
 
-
   prometheus_dir            = "/data/prometheus"
   prometheus_container_name = "prometheus"
   prometheus_config = {
     env    = "CONFIG"
     "path" = "${local.prometheus_dir}/config.yml"
     content = yamlencode({
-      scrape_configs = [{
-        job_name        = "prometheus"
+      scrape_configs = [for peer_id in var.prometheus_peer_ids : {
+        job_name        = "node-${peer_id}"
+        metrics_path  = "/metrics/${peer_id}"
         scrape_interval = "15s"
         static_configs = [{
           targets = ["localhost:${var.metrics_port}"]

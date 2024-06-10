@@ -1,5 +1,6 @@
 use {
-    crate::{config::Config, Error, Node},
+    crate::{config::Config, network::rpc, Error, Node},
+    axum::extract::Path,
     std::{collections::HashMap, future::Future, net::SocketAddr, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
     tokio::sync::oneshot,
@@ -171,16 +172,18 @@ pub(crate) fn serve(
 
     let (tx, rx) = oneshot::channel();
 
-    std::thread::spawn(|| update_loop(rx, node, cfg));
-
-    let handler = move || async move {
-        metrics::ServiceMetrics::export()
-            .map_err(|err| tracing::warn!(?err, "failed to export prometheus metrics"))
-            .unwrap_or_default()
-    };
+    let node_ = node.clone();
+    std::thread::spawn(move || update_loop(rx, node_, cfg));
 
     let svc = axum::Router::new()
-        .route("/metrics", axum::routing::get(handler))
+        .route(
+            "/metrics",
+            axum::routing::get(move || async move { export_prometheus() }),
+        )
+        .route(
+            "/metrics/:peer_id",
+            axum::routing::get(move |Path(peer_id)| scrap_prometheus(node.clone(), peer_id)),
+        )
         .into_make_service();
 
     Ok(async move {
@@ -195,4 +198,21 @@ pub(crate) fn serve(
 
         result
     })
+}
+
+pub fn export_prometheus() -> String {
+    metrics::ServiceMetrics::export()
+        .map_err(|err| tracing::warn!(?err, "failed to export prometheus metrics"))
+        .unwrap_or_default()
+}
+
+async fn scrap_prometheus(node: Node, peer_id: libp2p::PeerId) -> String {
+    if node.id().id == peer_id {
+        return export_prometheus();
+    }
+
+    rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, peer_id, ())
+        .await
+        .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrap prometheus metrics"))
+        .unwrap_or_default()
 }

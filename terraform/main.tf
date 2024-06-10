@@ -79,6 +79,7 @@ locals {
   }
 
   nodes = merge(local.bootstrap_nodes, local.operator_nodes)
+  node_peer_ids = [for id in local.nodes : module.keypair[id].peer_id]
 
   bootstrap_node_ids = [for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
   operator_peer_ids = concat([for id, node in local.operator_nodes : module.keypair[id].peer_id], [
@@ -223,6 +224,8 @@ module "node" {
   log_level       = "INFO"
 
   prometheus_endpoint = aws_prometheus_workspace.this.prometheus_endpoint
+  # One of our nodes monitors the whole cluster
+  prometheus_target_peer_ids = each.key == "eu-central-1a-1" ? merge(local.node_peer_ids, local.operator_peer_ids) : [module.keypair[each.key].peer_id]
 
   vpc_id             = aws_vpc.this.id
   route_table_id     = aws_route_table.public.id

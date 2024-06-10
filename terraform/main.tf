@@ -78,7 +78,7 @@ locals {
     "eu-central-1a-2" = { ip = "10.0.112.10", group_id = 1 },
   }
 
-  nodes = merge(local.bootstrap_nodes, local.operator_nodes)
+  nodes         = merge(local.bootstrap_nodes, local.operator_nodes)
   node_peer_ids = [for id in local.nodes : module.keypair[id].peer_id]
 
   bootstrap_node_ids = [for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}"]

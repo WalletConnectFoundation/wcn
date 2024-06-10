@@ -283,7 +283,7 @@ locals {
     content = yamlencode({
       scrape_configs = [for peer_id in var.prometheus_peer_ids : {
         job_name        = "node-${peer_id}"
-        metrics_path  = "/metrics/${peer_id}"
+        metrics_path    = "/metrics/${peer_id}"
         scrape_interval = "15s"
         static_configs = [{
           targets = ["localhost:${var.metrics_port}"]

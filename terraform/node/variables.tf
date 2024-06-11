@@ -166,7 +166,7 @@ variable "prometheus_admin_password" {
 
 variable "prometheus_target_peer_ids" {
   type    = list(string)
-  default = [var.peer_id]
+  default = []
 }
 
 variable "enable_grafana" {

@@ -18,6 +18,7 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             _ => return,
         };
 
+        tracing::info!("refreshing CPU");
         sys.refresh_cpu();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
@@ -26,6 +27,7 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             ]);
         }
 
+        tracing::info!("refreshing memory");
         sys.refresh_memory();
 
         metrics::gauge!("irn_total_memory", sys.total_memory());
@@ -33,6 +35,7 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         metrics::gauge!("irn_available_memory", sys.available_memory());
         metrics::gauge!("irn_used_memory", sys.used_memory());
 
+        tracing::info!("refreshing disks");
         sys.refresh_disks();
 
         // TODO: parent dir might not be the mount point
@@ -56,6 +59,7 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             }
         }
 
+        tracing::info!("refreshing networks");
         sys.refresh_networks();
 
         for (name, net) in sys.networks().iter() {

@@ -78,10 +78,11 @@ locals {
     "eu-central-1a-2" = { ip = "10.0.112.10", group_id = 1 },
   }
 
-  nodes         = merge(local.bootstrap_nodes, local.operator_nodes)
-  node_peer_ids = [for id in local.nodes : module.keypair[id].peer_id]
+  nodes = merge(local.bootstrap_nodes, local.operator_nodes)
 
   bootstrap_node_ids = [for id, node in local.bootstrap_nodes : "${module.keypair[id].peer_id}_${node.group_id}"]
+  bootstrap_peer_ids = [for id, node in local.bootstrap_nodes : module.keypair[id].peer_id]
+
   operator_peer_ids = concat([for id, node in local.operator_nodes : module.keypair[id].peer_id], [
     "12D3KooWKNoDLQWimQ3zJTmKkEeezCBrjZTw6Tgu4UZEGTjWEJ65", # consensys
     "12D3KooWC6xCiL7WXZc4RqiLqDYAythsrjKY1i2qiqYaYoL2XHvu", # luga
@@ -208,7 +209,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:1.429.0"
+  image       = "${data.aws_ecr_repository.node.repository_url}:pr-52"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -225,7 +226,7 @@ module "node" {
 
   prometheus_endpoint = aws_prometheus_workspace.this.prometheus_endpoint
   # One of our nodes monitors the whole cluster
-  prometheus_target_peer_ids = each.key == "eu-central-1a-1" ? merge(local.node_peer_ids, local.operator_peer_ids) : [module.keypair[each.key].peer_id]
+  prometheus_target_peer_ids = each.key == "eu-central-1a-1" ? concat(local.bootstrap_peer_ids, local.operator_peer_ids) : [module.keypair[each.key].peer_id]
 
   vpc_id             = aws_vpc.this.id
   route_table_id     = aws_route_table.public.id

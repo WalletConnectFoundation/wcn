@@ -177,7 +177,7 @@ pub(crate) fn serve(
     let (tx, rx) = oneshot::channel();
 
     let node_ = node.clone();
-    std::thread::spawn(move || update_loop(rx, node_, cfg));
+    tokio::task::spawn_blocking(move || update_loop(rx, node_, cfg));
 
     let svc = axum::Router::new()
         .route(

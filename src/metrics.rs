@@ -1,24 +1,18 @@
 use {
     crate::{config::Config, network::rpc, Error, Node},
     axum::extract::Path,
+    futures::FutureExt,
     std::{collections::HashMap, future::Future, net::SocketAddr, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
-    tokio::sync::oneshot,
     wc::metrics::{self, otel},
 };
 
-fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
+async fn update_loop(node: Node, cfg: Config) {
     use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
 
     let mut sys = sysinfo::System::new_all();
 
     loop {
-        match cancel.try_recv() {
-            Err(oneshot::error::TryRecvError::Empty) => {}
-            _ => return,
-        };
-
-        tracing::info!("refreshing CPU");
         sys.refresh_cpu();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
@@ -27,7 +21,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             ]);
         }
 
-        tracing::info!("refreshing memory");
+        tokio::task::yield_now().await;
+
         sys.refresh_memory();
 
         metrics::gauge!("irn_total_memory", sys.total_memory());
@@ -35,7 +30,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         metrics::gauge!("irn_available_memory", sys.available_memory());
         metrics::gauge!("irn_used_memory", sys.used_memory());
 
-        tracing::info!("refreshing disks");
+        tokio::task::yield_now().await;
+
         sys.refresh_disks();
 
         // TODO: parent dir might not be the mount point
@@ -59,7 +55,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             }
         }
 
-        tracing::info!("refreshing networks");
+        tokio::task::yield_now().await;
+
         sys.refresh_networks();
 
         for (name, net) in sys.networks().iter() {
@@ -70,6 +67,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
                 otel::KeyValue::new("network", name.to_owned())
             ]);
         }
+
+        tokio::task::yield_now().await;
 
         if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
             tracing::warn!(?err, "failed to collect jemalloc stats");
@@ -82,7 +81,7 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         let mut metrics = RocksMetrics::default();
         let _ = move || update_rocksdb_metrics(db, &mut metrics);
 
-        std::thread::sleep(Duration::from_secs(15));
+        tokio::time::sleep(Duration::from_secs(15)).await;
     }
 }
 
@@ -174,10 +173,8 @@ pub(crate) fn serve(
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
     let addr: SocketAddr = cfg.metrics_addr.parse()?;
 
-    let (tx, rx) = oneshot::channel();
-
     let node_ = node.clone();
-    tokio::task::spawn_blocking(move || update_loop(rx, node_, cfg));
+    let update_fut = update_loop(node_, cfg);
 
     let svc = axum::Router::new()
         .route(
@@ -190,18 +187,16 @@ pub(crate) fn serve(
         )
         .into_make_service();
 
-    Ok(async move {
+    let server_fut = async move {
         tracing::info!(?addr, "starting metrics server");
 
-        let result = axum::Server::bind(&addr)
+        axum::Server::bind(&addr)
             .serve(svc)
             .await
-            .map_err(Into::into);
+            .map_err(Into::into)
+    };
 
-        let _ = tx.send(());
-
-        result
-    })
+    Ok(futures::future::join(update_fut, server_fut).map(|(_, res)| res))
 }
 
 pub fn export_prometheus() -> String {

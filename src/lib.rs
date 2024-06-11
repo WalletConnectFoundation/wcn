@@ -5,12 +5,10 @@ use {
         FutureExt,
     },
     irn::ShutdownReason,
+    metrics_exporter_prometheus::PrometheusBuilder,
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
-    wc::{
-        future::StaticFutureExt,
-        metrics::{self as wc_metrics},
-    },
+    wc::{future::StaticFutureExt, metrics as wc_metrics},
 };
 pub use {
     config::Config,
@@ -148,9 +146,14 @@ pub async fn run(
 
     let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
 
-    Network::spawn_servers(cfg, node.clone())?;
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .expect("install prometheus recorder");
 
-    let metrics_srv = metrics::serve(cfg.clone(), node.clone())?.spawn("metrics_server");
+    Network::spawn_servers(cfg, node.clone(), Some(prometheus.clone()))?;
+
+    let metrics_srv =
+        metrics::serve(cfg.clone(), node.clone(), prometheus)?.spawn("metrics_server");
 
     let node_clone = node.clone();
     let node_fut = async move {

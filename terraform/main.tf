@@ -260,6 +260,8 @@ module "node" {
 
   # Only a single node has write access to the contract
   smart_contract_signer_mnemonic = each.key == "eu-central-1a-1" ? var.smart_contract_signer_mnemonic : null
+
+  cache_buster = "atehatse"
 }
 
 data "aws_iam_policy_document" "assume_role" {

@@ -37,6 +37,7 @@ use {
         },
         PeerId,
     },
+    metrics_exporter_prometheus::PrometheusHandle,
     network::{
         inbound::{self, ConnectionInfo},
         outbound,
@@ -215,6 +216,8 @@ struct RpcHandler {
     pubsub: Pubsub,
 
     eth_address: Option<Arc<str>>,
+
+    prometheus: Option<PrometheusHandle>,
 }
 
 impl RpcHandler {
@@ -675,8 +678,13 @@ impl RpcHandler {
             }
 
             rpc::Metrics::ID => {
-                rpc::Metrics::handle(stream, |_req| async { crate::metrics::export_prometheus() })
-                    .await
+                rpc::Metrics::handle(stream, |_req| async {
+                    self.prometheus
+                        .as_ref()
+                        .map(|p| p.render())
+                        .unwrap_or_default()
+                })
+                .await
             }
 
             id => {
@@ -889,7 +897,11 @@ impl Network {
         })
     }
 
-    pub fn spawn_servers(cfg: &Config, node: Node) -> Result<tokio::task::JoinHandle<()>, Error> {
+    pub fn spawn_servers(
+        cfg: &Config,
+        node: Node,
+        prometheus: Option<PrometheusHandle>,
+    ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let server_config = ::network::ServerConfig {
             addr: cfg.addr.clone(),
             keypair: cfg.keypair.clone(),
@@ -912,6 +924,7 @@ impl Network {
             rpc_timeouts,
             pubsub: Pubsub::new(),
             eth_address: cfg.eth_address.clone().map(Into::into),
+            prometheus,
         };
 
         let server = ::network::run_server(server_config, NoHandshake, handler.clone())?;

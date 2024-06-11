@@ -1,10 +1,11 @@
 use {
     crate::{config::Config, network::rpc, Error, Node},
     axum::extract::Path,
+    metrics_exporter_prometheus::PrometheusHandle,
     std::{collections::HashMap, future::Future, net::SocketAddr, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
     tokio::sync::oneshot,
-    wc::metrics::{self, otel},
+    wc::metrics::otel,
 };
 
 fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
@@ -22,18 +23,17 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         sys.refresh_cpu();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
-            metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", cpu.cpu_usage(), &[
-                otel::KeyValue::new("n_core", n as i64)
-            ]);
+            metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", "n_core" => n.to_string())
+                .set(cpu.cpu_usage())
         }
 
         tracing::info!("refreshing memory");
         sys.refresh_memory();
 
-        metrics::gauge!("irn_total_memory", sys.total_memory());
-        metrics::gauge!("irn_free_memory", sys.free_memory());
-        metrics::gauge!("irn_available_memory", sys.available_memory());
-        metrics::gauge!("irn_used_memory", sys.used_memory());
+        metrics::gauge!("irn_total_memory").set(sys.total_memory() as f64);
+        metrics::gauge!("irn_free_memory").set(sys.free_memory() as f64);
+        metrics::gauge!("irn_available_memory").set(sys.available_memory() as f64);
+        metrics::gauge!("irn_used_memory").set(sys.used_memory() as f64);
 
         tracing::info!("refreshing disks");
         sys.refresh_disks();
@@ -53,8 +53,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             if disk.mount_point().to_str() == rocksdb_parent
                 || disk.mount_point().to_str() == raft_parent
             {
-                metrics::gauge!("irn_disk_total_space", disk.total_space());
-                metrics::gauge!("irn_disk_available_space", disk.available_space());
+                metrics::gauge!("irn_disk_total_space").set(disk.total_space() as f64);
+                metrics::gauge!("irn_disk_available_space").set(disk.available_space() as f64);
                 break;
             }
         }
@@ -63,12 +63,10 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         sys.refresh_networks();
 
         for (name, net) in sys.networks().iter() {
-            metrics::gauge!("irn_network_tx_bytes_total", net.total_transmitted(), &[
-                otel::KeyValue::new("network", name.to_owned())
-            ]);
-            metrics::gauge!("irn_network_rx_bytes_total", net.total_received(), &[
-                otel::KeyValue::new("network", name.to_owned())
-            ]);
+            metrics::gauge!("irn_network_tx_bytes_total", "network" => name.to_owned())
+                .set(net.total_transmitted() as f64);
+            metrics::gauge!("irn_network_rx_bytes_total", "network" => name.to_owned())
+                .set(net.total_received() as f64);
         }
 
         if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
@@ -96,7 +94,11 @@ impl RocksMetrics {
     pub fn counter(&mut self, name: String) -> otel::metrics::Counter<u64> {
         self.counters
             .entry(name.clone())
-            .or_insert_with(|| metrics::ServiceMetrics::meter().u64_counter(name).init())
+            .or_insert_with(|| {
+                wc::metrics::ServiceMetrics::meter()
+                    .u64_counter(name)
+                    .init()
+            })
             .clone()
     }
 
@@ -104,7 +106,7 @@ impl RocksMetrics {
         self.gauges
             .entry(name.clone())
             .or_insert_with(|| {
-                metrics::ServiceMetrics::meter()
+                wc::metrics::ServiceMetrics::meter()
                     .f64_observable_gauge(name)
                     .init()
             })
@@ -115,16 +117,16 @@ impl RocksMetrics {
 fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMetrics) {
     match db.memory_usage() {
         Ok(s) => {
-            metrics::gauge!("irn_rocksdb_mem_table_total", s.mem_table_total as f64);
-            metrics::gauge!(
+            wc::metrics::gauge!("irn_rocksdb_mem_table_total", s.mem_table_total as f64);
+            wc::metrics::gauge!(
                 "irn_rocksdb_mem_table_unflushed",
                 s.mem_table_unflushed as f64
             );
-            metrics::gauge!(
+            wc::metrics::gauge!(
                 "irn_rocksdb_mem_table_readers_total",
                 s.mem_table_readers_total as f64
             );
-            metrics::gauge!("irn_rocksdb_cache_total", s.cache_total as f64);
+            wc::metrics::gauge!("irn_rocksdb_cache_total", s.cache_total as f64);
         }
 
         Err(err) => tracing::warn!(?err, "failed to get rocksdb memory usage stats"),
@@ -171,7 +173,10 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
 pub(crate) fn serve(
     cfg: Config,
     node: Node,
+    prometheus: PrometheusHandle,
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
+    let prometheus_ = prometheus.clone();
+
     let addr: SocketAddr = cfg.metrics_addr.parse()?;
 
     let (tx, rx) = oneshot::channel();
@@ -182,11 +187,13 @@ pub(crate) fn serve(
     let svc = axum::Router::new()
         .route(
             "/metrics",
-            axum::routing::get(move || async move { export_prometheus() }),
+            axum::routing::get(move || async move { prometheus.render() }),
         )
         .route(
             "/metrics/:peer_id",
-            axum::routing::get(move |Path(peer_id)| scrap_prometheus(node.clone(), peer_id)),
+            axum::routing::get(move |Path(peer_id)| {
+                scrap_prometheus(prometheus_.clone(), node.clone(), peer_id)
+            }),
         )
         .into_make_service();
 
@@ -204,15 +211,9 @@ pub(crate) fn serve(
     })
 }
 
-pub fn export_prometheus() -> String {
-    metrics::ServiceMetrics::export()
-        .map_err(|err| tracing::warn!(?err, "failed to export prometheus metrics"))
-        .unwrap_or_default()
-}
-
-async fn scrap_prometheus(node: Node, peer_id: libp2p::PeerId) -> String {
+async fn scrap_prometheus(handle: PrometheusHandle, node: Node, peer_id: libp2p::PeerId) -> String {
     if node.id().id == peer_id {
-        return export_prometheus();
+        return handle.render();
     }
 
     rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, peer_id, ())

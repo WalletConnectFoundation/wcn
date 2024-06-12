@@ -235,37 +235,66 @@ impl RocksBackend {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RocksdbDatabaseConfig {
+    pub num_batch_threads: usize,
+    pub num_callback_threads: usize,
+    pub max_subcompactions: usize,
+    pub max_background_jobs: usize,
+    pub ratelimiter: usize,
+    pub increase_parallelism: usize,
+    pub write_buffer_size: usize,
+    pub max_write_buffer_number: usize,
+    pub min_write_buffer_number_to_merge: usize,
+    pub block_cache_size: usize,
+    pub block_size: usize,
+    pub row_cache_size: usize,
+}
+
+impl Default for RocksdbDatabaseConfig {
+    fn default() -> Self {
+        let num_cores = num_cpus::get();
+
+        Self {
+            num_batch_threads: num_cores,
+            num_callback_threads: num_cores,
+            max_subcompactions: 8,
+            max_background_jobs: 32,
+            ratelimiter: 64 * 1024 * 1024,
+            increase_parallelism: num_cores * 2,
+            write_buffer_size: 128 * 1024 * 1024,
+            max_write_buffer_number: 8,
+            min_write_buffer_number_to_merge: 2,
+            block_cache_size: 4 * 1024 * 1024 * 1024,
+            block_size: 4 * 1024,
+            row_cache_size: 1024 * 1024 * 1024,
+        }
+    }
+}
+
 /// Provides a way for flexible database configuration.
 pub struct RocksDatabaseBuilder {
     path: PathBuf,
     cfs: Vec<rocksdb::ColumnFamilyDescriptor>,
-    num_batch_threads: usize,
-    num_callback_threads: usize,
+    cfg: RocksdbDatabaseConfig,
 }
 
 impl RocksDatabaseBuilder {
-    /// Constructor.
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
             cfs: vec![],
-            num_batch_threads: 8,
-            num_callback_threads: 8,
+            cfg: Default::default(),
         }
     }
 
-    pub fn reader_batch_threads(mut self, num_threads: usize) -> Self {
-        self.num_batch_threads = num_threads;
-        self
-    }
-
-    pub fn reader_callback_threads(mut self, num_threads: usize) -> Self {
-        self.num_callback_threads = num_threads;
+    pub fn with_config(mut self, cfg: RocksdbDatabaseConfig) -> Self {
+        self.cfg = cfg;
         self
     }
 
     /// Allows specifying which columns are supported by created database.
-    pub fn with_column_family<C: cf::Column>(mut self, _cf: C) -> Self {
+    pub fn with_column_family<C: cf::Column>(mut self, _: C) -> Self {
         let cf = rocksdb::ColumnFamilyDescriptor::new(C::NAME, create_cf_opts::<C>());
         self.cfs.push(cf);
         self
@@ -278,7 +307,7 @@ impl RocksDatabaseBuilder {
         // logs ouside anyway.
         let _ = std::fs::remove_file(self.path.join(LOG_FILE_NAME));
 
-        let opts = create_db_opts();
+        let opts = create_db_opts(&self.cfg);
         let db = Arc::new(rocksdb::DB::open_cf_descriptors(
             &opts,
             &*self.path,
@@ -293,8 +322,8 @@ impl RocksDatabaseBuilder {
         );
 
         let reader = reader::Reader::new(db.clone(), reader::Config {
-            num_batch_threads: self.num_batch_threads,
-            num_callback_threads: self.num_callback_threads,
+            num_batch_threads: self.cfg.num_batch_threads,
+            num_callback_threads: self.cfg.num_callback_threads,
         })?;
 
         let inner = Arc::new(RocksBackendInner {
@@ -308,7 +337,7 @@ impl RocksDatabaseBuilder {
     }
 }
 
-fn create_db_opts() -> rocksdb::Options {
+fn create_db_opts(cfg: &RocksdbDatabaseConfig) -> rocksdb::Options {
     let mut opts = rocksdb::Options::default();
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);
@@ -318,10 +347,10 @@ fn create_db_opts() -> rocksdb::Options {
     opts.set_level_compaction_dynamic_level_bytes(true);
 
     // Parallelize compactions to make them faster.
-    opts.set_max_subcompactions(8);
+    opts.set_max_subcompactions(cfg.max_subcompactions as u32);
 
     // Cap the number of background compaction and flush jobs.
-    opts.set_max_background_jobs(32);
+    opts.set_max_background_jobs(cfg.max_background_jobs as i32);
 
     // Unconstrained writes can result in compaction proceeding at hundreds of
     // MiB/s, on flash disks. This can result in stalls for other jobs. So, setting
@@ -340,11 +369,11 @@ fn create_db_opts() -> rocksdb::Options {
     // 1MiB.
     //
     // See [docs](https://github.com/facebook/rocksdb/wiki/Rate-Limiter) for more details.
-    opts.set_ratelimiter(64 * 1024 * 1024, 100 * 1000, 10);
+    opts.set_ratelimiter(cfg.ratelimiter as i64, 100 * 1000, 10);
 
     // By default a single background thread is used for flushing and compaction.
     // The good value for this is the number of cores.
-    opts.increase_parallelism(num_cpus::get() as i32 * 2);
+    opts.increase_parallelism(cfg.increase_parallelism as i32);
 
     // Set write buffer size of a single MemTable (how much to write into memory
     // before flushing). Each column family has its own MemTable.
@@ -356,9 +385,9 @@ fn create_db_opts() -> rocksdb::Options {
     // If you want to specify how many MemTables to keep in memory, use
     // `set_max_write_buffer_number`. The default value of 2 allows to have 1
     // MemTable in memory and 1 MemTable being flushed.
-    opts.set_write_buffer_size(128 * 1024 * 1024);
-    opts.set_max_write_buffer_number(8);
-    opts.set_min_write_buffer_number_to_merge(2);
+    opts.set_write_buffer_size(cfg.write_buffer_size);
+    opts.set_max_write_buffer_number(cfg.max_write_buffer_number as i32);
+    opts.set_min_write_buffer_number_to_merge(cfg.min_write_buffer_number_to_merge as i32);
 
     // Block cache (https://github.com/facebook/rocksdb/wiki/Block-Cache).
     //
@@ -384,10 +413,10 @@ fn create_db_opts() -> rocksdb::Options {
     // access. 15 bits per key are 99% as effective as 100 bits per key, and `false`
     // means we are using the new filter format (the previous format is block based
     // and memory non-aligned see: https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter).
-    let cache = rocksdb::Cache::new_lru_cache(4 * 1024 * 1024 * 1024);
+    let cache = rocksdb::Cache::new_lru_cache(cfg.block_cache_size);
     let mut block_opts = rocksdb::BlockBasedOptions::default();
     block_opts.set_block_cache(&cache);
-    block_opts.set_block_size(4 * 1024);
+    block_opts.set_block_size(cfg.block_size);
     block_opts.set_cache_index_and_filter_blocks(true);
     block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
     block_opts.set_format_version(5);
@@ -400,7 +429,7 @@ fn create_db_opts() -> rocksdb::Options {
     // record is read from the block cache. RocksDB allows to cache records
     // themselves, so that before querying the block cache, the record cache is
     // checked. This speeds up point lookups, but increases memory usage.
-    let cache = rocksdb::Cache::new_lru_cache(1024 * 1024 * 1024);
+    let cache = rocksdb::Cache::new_lru_cache(cfg.row_cache_size);
     opts.set_row_cache(&cache);
 
     opts

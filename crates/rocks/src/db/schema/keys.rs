@@ -12,14 +12,6 @@ use {
 /// Length of the `u64` prefix used as the keyring position.
 pub const KEYRING_POSITION_PREFIX_LENGTH: usize = 8;
 
-/// Raw key for the partitioner.
-///
-/// Used to calculate the position of the key in the keyspace.
-#[derive(Hash)]
-pub struct RawGenericKey<'a> {
-    data: &'a [u8],
-}
-
 /// Primary key for the column family.
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct GenericKey {

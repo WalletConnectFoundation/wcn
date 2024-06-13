@@ -2,10 +2,9 @@ use {
     crate::{config::Config, network::rpc, Error, Node},
     axum::extract::Path,
     metrics_exporter_prometheus::PrometheusHandle,
-    std::{collections::HashMap, future::Future, net::SocketAddr, time::Duration},
+    std::{future::Future, net::SocketAddr, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
     tokio::sync::oneshot,
-    wc::metrics::otel,
 };
 
 fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
@@ -69,64 +68,24 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
                 .set(net.total_received() as f64);
         }
 
-        if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
-            tracing::warn!(?err, "failed to collect jemalloc stats");
-        }
-
         // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
         // PhysicalCoreID() consumes 5-10% CPU
         // TODO: Consider fixing this & re-enabling the stats
         let db = node.storage().db();
-        let mut metrics = RocksMetrics::default();
-        let _ = move || update_rocksdb_metrics(db, &mut metrics);
+        let _ = move || update_rocksdb_metrics(db);
 
         std::thread::sleep(Duration::from_secs(15));
     }
 }
 
-#[derive(Default)]
-struct RocksMetrics {
-    gauges: HashMap<String, otel::metrics::ObservableGauge<f64>>,
-    counters: HashMap<String, otel::metrics::Counter<u64>>,
-}
-
-impl RocksMetrics {
-    pub fn counter(&mut self, name: String) -> otel::metrics::Counter<u64> {
-        self.counters
-            .entry(name.clone())
-            .or_insert_with(|| {
-                wc::metrics::ServiceMetrics::meter()
-                    .u64_counter(name)
-                    .init()
-            })
-            .clone()
-    }
-
-    pub fn gauge(&mut self, name: String) -> otel::metrics::ObservableGauge<f64> {
-        self.gauges
-            .entry(name.clone())
-            .or_insert_with(|| {
-                wc::metrics::ServiceMetrics::meter()
-                    .f64_observable_gauge(name)
-                    .init()
-            })
-            .clone()
-    }
-}
-
-fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMetrics) {
+fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend) {
     match db.memory_usage() {
         Ok(s) => {
-            wc::metrics::gauge!("irn_rocksdb_mem_table_total", s.mem_table_total as f64);
-            wc::metrics::gauge!(
-                "irn_rocksdb_mem_table_unflushed",
-                s.mem_table_unflushed as f64
-            );
-            wc::metrics::gauge!(
-                "irn_rocksdb_mem_table_readers_total",
-                s.mem_table_readers_total as f64
-            );
-            wc::metrics::gauge!("irn_rocksdb_cache_total", s.cache_total as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_total").set(s.mem_table_total as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_unflushed").set(s.mem_table_unflushed as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_readers_total",)
+                .set(s.mem_table_readers_total as f64);
+            metrics::gauge!("irn_rocksdb_cache_total").set(s.cache_total as f64);
         }
 
         Err(err) => tracing::warn!(?err, "failed to get rocksdb memory usage stats"),
@@ -149,22 +108,20 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
 
         match stat {
             relay_rocks::db::Statistic::Ticker(count) => {
-                metrics.counter(name).add(count, &[]);
+                metrics::counter!(name).increment(count);
             }
 
             relay_rocks::db::Statistic::Histogram(h) => {
                 // The distribution is already calculated for us by RocksDB, so we use
                 // `gauge`/`counter` here instead of `histogram`.
 
-                metrics.counter(format!("{name}_count")).add(h.count, &[]);
-                metrics.counter(format!("{name}_sum")).add(h.sum, &[]);
+                metrics::counter!(format!("{name}_count")).increment(h.count);
+                metrics::counter!(format!("{name}_sum")).increment(h.sum);
 
-                let meter = metrics.gauge(name);
-
-                meter.observe(h.p50, &[otel::KeyValue::new("p", "50")]);
-                meter.observe(h.p95, &[otel::KeyValue::new("p", "95")]);
-                meter.observe(h.p99, &[otel::KeyValue::new("p", "99")]);
-                meter.observe(h.p100, &[otel::KeyValue::new("p", "100")]);
+                metrics::gauge!(name.clone(), "p" => "50").set(h.p50);
+                metrics::gauge!(name.clone(), "p" => "95").set(h.p95);
+                metrics::gauge!(name.clone(), "p" => "99").set(h.p99);
+                metrics::gauge!(name, "p" => "100").set(h.p100);
             }
         }
     }

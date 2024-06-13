@@ -8,7 +8,7 @@ use {
     metrics_exporter_prometheus::PrometheusBuilder,
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
-    wc::{future::StaticFutureExt, metrics as wc_metrics},
+    tap::Pipe,
 };
 pub use {
     config::Config,
@@ -90,8 +90,6 @@ pub async fn run(
     shutdown_fut: impl Future<Output = ShutdownReason>,
     cfg: &Config,
 ) -> Result<impl Future<Output = ()>, Error> {
-    wc_metrics::ServiceMetrics::init_with_name("irn_node");
-
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
@@ -152,8 +150,7 @@ pub async fn run(
 
     Network::spawn_servers(cfg, node.clone(), Some(prometheus.clone()))?;
 
-    let metrics_srv =
-        metrics::serve(cfg.clone(), node.clone(), prometheus)?.spawn("metrics_server");
+    let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 
     let node_clone = node.clone();
     let node_fut = async move {

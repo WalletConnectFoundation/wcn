@@ -64,8 +64,8 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
+    tap::Pipe,
     tokio::sync::mpsc,
-    wc::{future::StaticFutureExt, metrics},
 };
 
 pub mod rpc {
@@ -932,7 +932,7 @@ impl Network {
 
         Ok(async move { tokio::join!(server, api_server) }
             .map(drop)
-            .spawn("servers"))
+            .pipe(tokio::spawn))
     }
 
     pub(crate) fn get_peer(&self, node_id: PeerId) -> RemoteNode {
@@ -1151,10 +1151,10 @@ impl Pubsub {
                 match sub.tx.try_send(evt.clone()) {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        metrics::counter!("irn_pubsub_channel_full", 1)
+                        metrics::counter!("irn_pubsub_channel_full").increment(1)
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        metrics::counter!("irn_pubsub_channel_closed", 1)
+                        metrics::counter!("irn_pubsub_channel_closed").increment(1)
                     }
                 };
             }

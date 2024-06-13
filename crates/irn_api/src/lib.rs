@@ -95,10 +95,18 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type UnixTimestampSecs = u64;
 
+trait Operation {
+    const NAME: &'static str;
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct Get {
     #[as_ref]
     pub key: Key,
+}
+
+impl Operation for Get {
+    const NAME: &'static str = "get";
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -109,16 +117,28 @@ pub struct Set {
     pub expiration: Option<UnixTimestampSecs>,
 }
 
+impl Operation for Set {
+    const NAME: &'static str = "set";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct Del {
     #[as_ref]
     pub key: Key,
 }
 
+impl Operation for Del {
+    const NAME: &'static str = "del";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct GetExp {
     #[as_ref]
     pub key: Key,
+}
+
+impl Operation for GetExp {
+    const NAME: &'static str = "get_exp";
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -128,11 +148,19 @@ pub struct SetExp {
     pub expiration: Option<UnixTimestampSecs>,
 }
 
+impl Operation for SetExp {
+    const NAME: &'static str = "set_exp";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct HGet {
     #[as_ref]
     pub key: Key,
     pub field: Field,
+}
+
+impl Operation for HGet {
+    const NAME: &'static str = "hget";
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -144,11 +172,19 @@ pub struct HSet {
     pub expiration: Option<UnixTimestampSecs>,
 }
 
+impl Operation for HSet {
+    const NAME: &'static str = "hset";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct HDel {
     #[as_ref]
     pub key: Key,
     pub field: Field,
+}
+
+impl Operation for HDel {
+    const NAME: &'static str = "hdel";
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -157,11 +193,19 @@ pub struct HCard {
     pub key: Key,
 }
 
+impl Operation for HCard {
+    const NAME: &'static str = "hcard";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct HGetExp {
     #[as_ref]
     pub key: Key,
     pub field: Field,
+}
+
+impl Operation for HGetExp {
+    const NAME: &'static str = "hget_exp";
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -172,16 +216,28 @@ pub struct HSetExp {
     pub expiration: Option<UnixTimestampSecs>,
 }
 
+impl Operation for HSetExp {
+    const NAME: &'static str = "hset_exp";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct HFields {
     #[as_ref]
     pub key: Key,
 }
 
+impl Operation for HFields {
+    const NAME: &'static str = "hfields";
+}
+
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct HVals {
     #[as_ref]
     pub key: Key,
+}
+
+impl Operation for HVals {
+    const NAME: &'static str = "hvals";
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -192,15 +248,27 @@ pub struct HScan {
     pub cursor: Option<Cursor>,
 }
 
+impl Operation for HScan {
+    const NAME: &'static str = "hscan";
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Publish {
     pub channel: Vec<u8>,
     pub message: Vec<u8>,
 }
 
+impl Operation for Publish {
+    const NAME: &'static str = "publish";
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Subscribe {
     pub channels: HashSet<Vec<u8>>,
+}
+
+impl Operation for Subscribe {
+    const NAME: &'static str = "subscribe";
 }
 
 #[derive(Debug, Serialize, Deserialize)]

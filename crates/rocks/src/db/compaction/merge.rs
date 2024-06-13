@@ -177,13 +177,8 @@ where
 // TODO: Metrics counters incur some CPU cost due to mutex usage under the hood,
 // so we should remove these once we've collected the data.
 fn merge_metrics<C: Column>(elapsed: Duration, kind: &'static str) {
-    use wc::metrics::otel::KeyValue;
-
-    let elapsed = elapsed.as_micros() as f64;
-    let kind_kv = KeyValue::new("kind", kind);
-    let cf_name_kv = KeyValue::new("cf_name", C::NAME.as_str());
-
-    wc::metrics::histogram!("rocksdb_merge_time", elapsed, &[kind_kv, cf_name_kv]);
+    metrics::histogram!("rocksdb_merge_time", "kind" => kind, "cf_name" => C::NAME.as_str())
+        .record(elapsed.as_micros() as f64);
 }
 
 fn op_iter<'a, T>(input: &'a MergeOperands) -> impl Iterator<Item = T> + 'a

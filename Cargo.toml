@@ -48,7 +48,7 @@ testing = [
 workspace = true
 
 [workspace.dependencies]
-wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.11.0", default-features = false }
+wc = { git = "https://github.com/WalletConnect/utils-rs.git", rev = "0a429e32490c9fb1ebf2597d2952198b76429a4e", default-features = false }
 derive_more = { version = "=1.0.0-beta.6", features = [
     "display",
     "from",
@@ -63,6 +63,7 @@ api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 raft = { path = "crates/raft" }
 network = { path = "crates/network" }
 relay_rocks = { path = "crates/rocks" }
+metrics = "0.23"
 
 [dependencies]
 irn = { package = "irn_core", path = "crates/core" }
@@ -70,7 +71,8 @@ api = { workspace = true }
 raft = { workspace = true }
 network = { workspace = true }
 relay_rocks = { workspace = true }
-wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+wc = { workspace = true, features = ["alloc", "future", "future_metrics"] }
+metrics = { workspace = true }
 
 anyhow = "1"
 atty = "0.2"
@@ -95,7 +97,6 @@ tokio-stream = "0.1"
 serde = "1"
 serde_json = "1"
 thiserror = "1"
-metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 tracing = "0.1"
 tracing-appender = "0.2"

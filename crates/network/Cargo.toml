@@ -27,7 +27,8 @@ rustls = "0.21"
 pin-project = "1.0"
 serde = { version = "1" }
 thiserror = "1.0"
-wc = { workspace = true, features = ["collections", "future", "metrics"] }
+wc = { workspace = true, features = ["collections", "future", "future_metrics"] }
+metrics = { workspace = true }
 
 quinn = "0.10"
 quinn-proto = "0.10"

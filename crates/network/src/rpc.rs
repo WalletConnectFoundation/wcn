@@ -18,13 +18,8 @@ use {
         marker::{self, PhantomData},
         time::Duration,
     },
-    wc::{
-        future::FutureExt,
-        metrics::{otel, TaskMetrics},
-    },
+    wc::{future::FutureExt, future_metrics::FutureExt as _},
 };
-
-static METRICS: TaskMetrics = TaskMetrics::new("irn_rpc");
 
 pub mod kind {
     /// RPC kind.
@@ -363,18 +358,24 @@ impl From<io::Error> for Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+const fn metric_labels<RPC: Rpc>(future_name: &'static str) -> [metrics::Label; 3] {
+    [
+        wc::future_metrics::future_name(future_name),
+        metrics::Label::from_static_parts("rpc_kind", RPC::Kind::NAME),
+        metrics::Label::from_static_parts("rpc_name", RPC::NAME),
+    ]
+}
+
 impl<S, RPC, Args> Handle<RPC, Args> for Metered<S>
 where
     RPC: Rpc,
     S: Handle<RPC, Args>,
 {
     async fn handle(self, args: Args) -> Result<()> {
-        let metrics = METRICS.with_name("inbound").with_attributes([
-            otel::KeyValue::new("kind", RPC::Kind::NAME),
-            otel::KeyValue::new("name", RPC::NAME),
-        ]);
-
-        self.inner.handle(args).with_metrics(metrics).await
+        self.inner
+            .handle(args)
+            .with_labeled_metrics(const { &metric_labels::<RPC>("inbound_rpc") })
+            .await
     }
 }
 
@@ -388,12 +389,10 @@ where
     type Ok = C::Ok;
 
     async fn send(&self, to: To, args: Args) -> Result<Self::Ok, outbound::Error> {
-        let metrics = METRICS.with_name("outbound").with_attributes([
-            otel::KeyValue::new("kind", RPC::Kind::NAME),
-            otel::KeyValue::new("name", RPC::NAME),
-        ]);
-
-        self.inner.send(to, args).with_metrics(metrics).await
+        self.inner
+            .send(to, args)
+            .with_labeled_metrics(const { &metric_labels::<RPC>("outbound_rpc") })
+            .await
     }
 }
 

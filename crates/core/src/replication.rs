@@ -681,39 +681,12 @@ where
         .filter_map(move |(item, count)| (count >= required_replicas).then_some(item))
         .collect();
 
-    reconciliation_metrics(min, max, items.len());
-
     // TODO: Optimize / don't try to preserve order when not necessary
 
     // Lexicographic sort to find the last key to use as the cursor.
     items.sort_unstable();
 
     U::from_iter(items)
-}
-
-fn reconciliation_metrics(min: Option<usize>, max: Option<usize>, result: usize) {
-    #[inline]
-    fn value_bucket<const NUM_BUCKETS: usize>(
-        size: usize,
-        buckets: &'static [usize; NUM_BUCKETS],
-    ) -> usize {
-        *buckets
-            .iter()
-            .find(|&bucket| size <= *bucket)
-            .or_else(|| buckets.last())
-            .unwrap_or(&0)
-    }
-
-    const BUCKETS: [usize; 17] = [
-        1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
-    ];
-
-    metrics::counter!("irn_collection_reconciliation",
-        "min" => value_bucket(min.unwrap_or(0), &BUCKETS).to_string(),
-        "max" => value_bucket(max.unwrap_or(0), &BUCKETS).to_string(),
-        "resuld" => value_bucket(result, &BUCKETS).to_string()
-    )
-    .increment(1);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

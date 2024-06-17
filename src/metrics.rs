@@ -145,7 +145,7 @@ pub(crate) fn serve(
         .route(
             "/metrics/:peer_id",
             axum::routing::get(move |Path(peer_id)| {
-                scrap_prometheus(prometheus_.clone(), node.clone(), peer_id)
+                scrape_prometheus(prometheus_.clone(), node.clone(), peer_id)
             }),
         )
         .into_make_service();
@@ -164,13 +164,17 @@ pub(crate) fn serve(
     })
 }
 
-async fn scrap_prometheus(handle: PrometheusHandle, node: Node, peer_id: libp2p::PeerId) -> String {
+async fn scrape_prometheus(
+    handle: PrometheusHandle,
+    node: Node,
+    peer_id: libp2p::PeerId,
+) -> String {
     if node.id().id == peer_id {
         return handle.render();
     }
 
     rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, peer_id, ())
         .await
-        .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrap prometheus metrics"))
+        .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrape prometheus metrics"))
         .unwrap_or_default()
 }

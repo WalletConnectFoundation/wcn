@@ -235,31 +235,71 @@ impl RocksBackend {
     }
 }
 
+/// Performance-related RocksDB parameters.
+///
+/// Most of these are directly translated into RocksDB initialization params.
+/// See [`rocksdb::Options`] for details of each parameter.
+///
+/// `num_batch_threads` and `num_callback_threads` configure the custom thread
+/// pools used for batching of read requests and iterators.
 #[derive(Debug, Clone)]
 pub struct RocksdbDatabaseConfig {
+    /// Number of batch threads.
     pub num_batch_threads: usize,
+
+    /// Number of callback threads.
     pub num_callback_threads: usize,
+
+    /// Sets maximum number of threads that will concurrently perform a
+    /// compaction job by breaking it into multiple, smaller ones that are
+    /// run simultaneously.
     pub max_subcompactions: usize,
+
+    /// Sets maximum number of concurrent background jobs (compactions and
+    /// flushes).
     pub max_background_jobs: usize,
+
+    /// Use to control write rate of flush and compaction. Flush has higher
+    /// priority than compaction.
     pub ratelimiter: usize,
+
+    /// Sets the number of background threads used for flush and compaction.
     pub increase_parallelism: usize,
+
+    /// Sets the amount of data to build up in memory before converting to a
+    /// sorted on-disk file.
     pub write_buffer_size: usize,
+
+    // Set write buffer size of a single MemTable (how much to write into memory
+    // before flushing). Each column family has its own MemTable.
     pub max_write_buffer_number: usize,
+
+    /// Sets the minimum number of write buffers that will be merged together
+    /// before writing to storage.
     pub min_write_buffer_number_to_merge: usize,
+
+    /// Sets global cache for blocks (user data is stored in a set of blocks,
+    /// and a block is the unit of reading from disk).
     pub block_cache_size: usize,
+
+    /// Approximate size of user data packed per block.
     pub block_size: usize,
+
+    /// Sets global cache for table-level rows.
     pub row_cache_size: usize,
 }
 
 impl Default for RocksdbDatabaseConfig {
     fn default() -> Self {
-        let num_cores = num_cpus::get();
+        let num_cores = std::thread::available_parallelism()
+            .map(|num| num.get())
+            .unwrap_or(1);
 
         Self {
             num_batch_threads: num_cores,
             num_callback_threads: num_cores,
-            max_subcompactions: 8,
-            max_background_jobs: 32,
+            max_subcompactions: num_cores,
+            max_background_jobs: num_cores * 4,
             ratelimiter: 64 * 1024 * 1024,
             increase_parallelism: num_cores * 2,
             write_buffer_size: 128 * 1024 * 1024,

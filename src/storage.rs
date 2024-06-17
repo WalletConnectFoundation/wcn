@@ -39,7 +39,6 @@ use {
                 MapStorage,
                 StringStorage,
             },
-            RocksdbDatabaseConfig,
         },
         util::timestamp_micros,
         RocksBackend,
@@ -393,11 +392,7 @@ impl Storage {
     /// The `path` is a path to the database directory.
     pub fn new(config: &Config) -> StorageResult<Self> {
         let db = RocksDatabaseBuilder::new(config.rocksdb_dir.clone())
-            .with_config(RocksdbDatabaseConfig {
-                num_batch_threads: config.rocksdb_num_batch_threads,
-                num_callback_threads: config.rocksdb_num_callback_threads,
-                ..Default::default()
-            })
+            .with_config(config.rocksdb.clone())
             .with_column_family(schema::StringColumn)
             .with_column_family(schema::InternalStringColumn)
             .with_column_family(schema::MapColumn)

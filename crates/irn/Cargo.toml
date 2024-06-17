@@ -23,6 +23,7 @@ thiserror = "1.0"
 tokio = "1.37"
 serde = { version = "1.0", features = ["derive"] }
 config = { version = "0.14", default-features = false, features = ["toml"] }
+tap = "1.0"
 
 # Key generation.
 ed25519-dalek = "2.1"

@@ -6,10 +6,7 @@ use {
     },
     rocksdb::MergeOperands,
     serde::{de::DeserializeOwned, Serialize},
-    std::{
-        marker::PhantomData,
-        time::{Duration, Instant},
-    },
+    std::marker::PhantomData,
     tap::TapFallible,
 };
 
@@ -121,26 +118,19 @@ where
     }
 
     fn partial_merge(_: &[u8], _: Option<&[u8]>, input: &MergeOperands) -> Result<Vec<u8>, Error> {
-        let time = Instant::now();
-        let result = {
-            let mut input = op_iter::<<Self as MergeOperator>::Input>(input);
+        let mut input = op_iter::<<Self as MergeOperator>::Input>(input);
 
-            // Use the first merge operand as the output, and merge subsequent operands into
-            // it.
-            let mut output = input.next().ok_or(Error::Deserialize).tap_err(|_| {
-                tracing::warn!("merge: insufficient number of merge operands");
-            })?;
+        // Use the first merge operand as the output, and merge subsequent operands into
+        // it.
+        let mut output = input.next().ok_or(Error::Deserialize).tap_err(|_| {
+            tracing::warn!("merge: insufficient number of merge operands");
+        })?;
 
-            for input in input {
-                output.merge(input);
-            }
+        for input in input {
+            output.merge(input);
+        }
 
-            serialize(&output)
-        };
-
-        merge_metrics::<C>(time.elapsed(), "partial");
-
-        result
+        serialize(&output)
     }
 
     fn full_merge(
@@ -148,12 +138,10 @@ where
         output: Option<&[u8]>,
         input: &MergeOperands,
     ) -> Result<Vec<u8>, Error> {
-        let time = Instant::now();
-        let result = {
-            let cf_name = C::NAME;
-            let operator_name = std::any::type_name::<Self>();
+        let cf_name = C::NAME;
+        let operator_name = std::any::type_name::<Self>();
 
-            let mut output = output
+        let mut output = output
                 .map(deserialize::<Self::Output>)
                 .transpose()
                 .tap_err(|err| {
@@ -161,24 +149,12 @@ where
                 })?
                 .unwrap_or_default();
 
-            for input in op_iter(input) {
-                output.merge(input);
-            }
+        for input in op_iter(input) {
+            output.merge(input);
+        }
 
-            serialize(&output)
-        };
-
-        merge_metrics::<C>(time.elapsed(), "full");
-
-        result
+        serialize(&output)
     }
-}
-
-// TODO: Metrics counters incur some CPU cost due to mutex usage under the hood,
-// so we should remove these once we've collected the data.
-fn merge_metrics<C: Column>(elapsed: Duration, kind: &'static str) {
-    metrics::histogram!("rocksdb_merge_time", "kind" => kind, "cf_name" => C::NAME.as_str())
-        .record(elapsed.as_micros() as f64);
 }
 
 fn op_iter<'a, T>(input: &'a MergeOperands) -> impl Iterator<Item = T> + 'a

@@ -415,8 +415,8 @@ locals {
     })
   }
   grafana_dashboard = {
-    env     = "DASHBOARD"
-    "path"  = "${local.grafana_dir}/provisioning/dashboards/irn.json"
+    env    = "DASHBOARD"
+    "path" = "${local.grafana_dir}/provisioning/dashboards/irn.json"
     # minify json by running it through `jsonencode`
     content = jsonencode(jsondecode(file("${path.module}/dashboard.json")))
   }

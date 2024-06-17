@@ -53,11 +53,26 @@ pub struct Authorization {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Rocksdb {
+    pub num_batch_threads: Option<usize>,
+    pub num_callback_threads: Option<usize>,
+    pub max_subcompactions: Option<usize>,
+    pub max_background_jobs: Option<usize>,
+    pub ratelimiter: Option<usize>,
+    pub increase_parallelism: Option<usize>,
+    pub write_buffer_size: Option<usize>,
+    pub max_write_buffer_number: Option<usize>,
+    pub min_write_buffer_number_to_merge: Option<usize>,
+    pub block_cache_size: Option<usize>,
+    pub block_size: Option<usize>,
+    pub row_cache_size: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Storage {
     pub data_dir: String,
     pub consensus_dir: String,
-    pub rocksdb_num_batch_threads: usize,
-    pub rocksdb_num_callback_threads: usize,
+    pub rocksdb: Rocksdb,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -106,13 +121,7 @@ pub struct Config {
 
 impl Config {
     pub fn load_from_file(path: &str) -> Result<Self, config::ConfigError> {
-        let num_cores = std::thread::available_parallelism()
-            .map(|num| num.get())
-            .unwrap_or(8) as u64;
-
         config::Config::builder()
-            .set_default("storage.rocksdb_num_batch_threads", num_cores)?
-            .set_default("storage.rocksdb_num_callback_threads", num_cores * 3)?
             .add_source(config::File::from_str(
                 include_str!("../../../default_config.toml"),
                 config::FileFormat::Toml,

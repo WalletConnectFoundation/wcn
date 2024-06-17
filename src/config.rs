@@ -1,3 +1,4 @@
+pub use relay_rocks::RocksdbDatabaseConfig;
 use {
     irn::{cluster::replication::Strategy, PeerId},
     network::Multiaddr,
@@ -8,6 +9,7 @@ use {
         path::PathBuf,
         str::FromStr,
     },
+    tap::TapOptional,
 };
 
 /// Local [`Node`] config.
@@ -46,11 +48,8 @@ pub struct Config {
     /// Path to the rocksdb directory.
     pub rocksdb_dir: PathBuf,
 
-    /// Number of rocksdb batch threads.
-    pub rocksdb_num_batch_threads: usize,
-
-    /// Number of rocksdb callback threads.
-    pub rocksdb_num_callback_threads: usize,
+    /// Performance-related RocksDB configuration.
+    pub rocksdb: RocksdbDatabaseConfig,
 
     /// Replication strategy.
     pub replication_strategy: Strategy,
@@ -108,6 +107,7 @@ pub struct PerformanceReporterConfig {
 impl Config {
     pub fn from_env() -> envy::Result<Self> {
         let raw: RawConfig = envy::from_env()?;
+        let rocksdb = create_rocksdb_config(&raw);
 
         let mut cfg = Config {
             id: PeerId::from_public_key(&raw.keypair.public(), raw.group),
@@ -120,8 +120,7 @@ impl Config {
             known_peers: known_peers_from_env()?,
             raft_dir: raw.raft_dir,
             rocksdb_dir: raw.rocksdb_dir,
-            rocksdb_num_batch_threads: raw.rocksdb_num_batch_threads.unwrap_or(8),
-            rocksdb_num_callback_threads: raw.rocksdb_num_callback_threads.unwrap_or(8),
+            rocksdb,
             replication_strategy: envy::prefixed("REPLICATION_STRATEGY_").from_env()?,
             request_concurrency_limit: raw.request_concurrency_limit.unwrap_or(10000),
             request_limiter_queue: raw.request_limiter_queue.unwrap_or(32768),
@@ -195,8 +194,7 @@ struct RawConfig {
     raft_dir: PathBuf,
     rocksdb_dir: PathBuf,
     performance_tracker_dir: Option<PathBuf>,
-    rocksdb_num_batch_threads: Option<usize>,
-    rocksdb_num_callback_threads: Option<usize>,
+
     request_concurrency_limit: Option<usize>,
     request_limiter_queue: Option<usize>,
     network_connection_timeout: Option<u64>,
@@ -211,6 +209,19 @@ struct RawConfig {
     config_smart_contract_address: Option<String>,
     smart_contract_signer_mnemonic: Option<String>,
     eth_rpc_url: Option<String>,
+
+    rocksdb_num_batch_threads: Option<usize>,
+    rocksdb_num_callback_threads: Option<usize>,
+    rocksdb_max_subcompactions: Option<usize>,
+    rocksdb_max_background_jobs: Option<usize>,
+    rocksdb_ratelimiter: Option<usize>,
+    rocksdb_increase_parallelism: Option<usize>,
+    rocksdb_write_buffer_size: Option<usize>,
+    rocksdb_max_write_buffer_number: Option<usize>,
+    rocksdb_min_write_buffer_number_to_merge: Option<usize>,
+    rocksdb_block_cache_size: Option<usize>,
+    rocksdb_block_size: Option<usize>,
+    rocksdb_row_cache_size: Option<usize>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -250,4 +261,83 @@ where
     String::deserialize(deserializer)
         .and_then(|s| base64::decode(s).map_err(D::Error::custom))
         .and_then(|bytes| network::Keypair::ed25519_from_bytes(bytes).map_err(D::Error::custom))
+}
+
+fn create_rocksdb_config(raw: &RawConfig) -> RocksdbDatabaseConfig {
+    let defaults = RocksdbDatabaseConfig::default();
+
+    RocksdbDatabaseConfig {
+        num_batch_threads: raw
+            .rocksdb_num_batch_threads
+            .unwrap_or(defaults.num_batch_threads),
+        num_callback_threads: raw
+            .rocksdb_num_callback_threads
+            .unwrap_or(defaults.num_callback_threads),
+        max_subcompactions: raw
+            .rocksdb_max_subcompactions
+            .unwrap_or(defaults.max_subcompactions),
+        max_background_jobs: raw
+            .rocksdb_max_background_jobs
+            .unwrap_or(defaults.max_background_jobs),
+
+        ratelimiter: raw
+            .rocksdb_ratelimiter
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.ratelimiter,
+                    "rocksdb `ratelimiter` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.ratelimiter),
+
+        increase_parallelism: raw
+            .rocksdb_increase_parallelism
+            .unwrap_or(defaults.increase_parallelism),
+
+        write_buffer_size: raw
+            .rocksdb_write_buffer_size
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.write_buffer_size,
+                    "rocksdb `write_buffer_size` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.write_buffer_size),
+
+        max_write_buffer_number: raw
+            .rocksdb_max_write_buffer_number
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.max_write_buffer_number,
+                    "rocksdb `max_write_buffer_number` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.max_write_buffer_number),
+
+        min_write_buffer_number_to_merge: raw
+            .rocksdb_min_write_buffer_number_to_merge
+            .unwrap_or(defaults.min_write_buffer_number_to_merge),
+
+        block_cache_size: raw
+            .rocksdb_block_cache_size
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.block_cache_size,
+                    "rocksdb `block_cache_size` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.block_cache_size),
+
+        block_size: raw.rocksdb_block_size.unwrap_or(defaults.block_size),
+
+        row_cache_size: raw
+            .rocksdb_row_cache_size
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.row_cache_size,
+                    "rocksdb `row_cache_size` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.row_cache_size),
+    }
 }

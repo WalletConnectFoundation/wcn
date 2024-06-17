@@ -2,6 +2,7 @@ pub use db::{
     context::{DataContext, UnixTimestampSecs},
     RocksBackend,
     RocksDatabaseBuilder,
+    RocksdbDatabaseConfig,
 };
 use serde::{Deserialize, Serialize};
 

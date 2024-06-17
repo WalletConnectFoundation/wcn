@@ -1,12 +1,14 @@
 use {
     super::{Error, Lockfile, LogFormat},
     irn_core::{cluster::replication::Strategy, PeerId},
+    node::RocksdbDatabaseConfig,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
         path::PathBuf,
         process::{Command, Stdio},
     },
+    tap::TapOptional as _,
 };
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -180,6 +182,8 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         std::process::exit(0);
     };
 
+    let rocksdb = create_rocksdb_config(&config.storage.rocksdb);
+
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public(), config.identity.group),
         keypair: config.identity.private_key,
@@ -198,8 +202,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         known_peers,
         raft_dir: consensus_dir,
         rocksdb_dir: data_dir,
-        rocksdb_num_batch_threads: config.storage.rocksdb_num_batch_threads,
-        rocksdb_num_callback_threads: config.storage.rocksdb_num_callback_threads,
+        rocksdb,
         replication_strategy: Strategy::new(
             config.replication.factor,
             config.replication.consistency_level,
@@ -231,4 +234,81 @@ fn set_detached_state() {
 
 fn get_detached_state() -> bool {
     std::env::var(DETACH_STATE_ENV_VAR).is_ok()
+}
+
+fn create_rocksdb_config(raw: &super::config::Rocksdb) -> RocksdbDatabaseConfig {
+    let defaults = RocksdbDatabaseConfig::default();
+
+    RocksdbDatabaseConfig {
+        num_batch_threads: raw.num_batch_threads.unwrap_or(defaults.num_batch_threads),
+        num_callback_threads: raw
+            .num_callback_threads
+            .unwrap_or(defaults.num_callback_threads),
+        max_subcompactions: raw
+            .max_subcompactions
+            .unwrap_or(defaults.max_subcompactions),
+        max_background_jobs: raw
+            .max_background_jobs
+            .unwrap_or(defaults.max_background_jobs),
+
+        ratelimiter: raw
+            .ratelimiter
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.ratelimiter,
+                    "rocksdb `ratelimiter` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.ratelimiter),
+
+        increase_parallelism: raw
+            .increase_parallelism
+            .unwrap_or(defaults.increase_parallelism),
+
+        write_buffer_size: raw
+            .write_buffer_size
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.write_buffer_size,
+                    "rocksdb `write_buffer_size` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.write_buffer_size),
+
+        max_write_buffer_number: raw
+            .max_write_buffer_number
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.max_write_buffer_number,
+                    "rocksdb `max_write_buffer_number` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.max_write_buffer_number),
+
+        min_write_buffer_number_to_merge: raw
+            .min_write_buffer_number_to_merge
+            .unwrap_or(defaults.min_write_buffer_number_to_merge),
+
+        block_cache_size: raw
+            .block_cache_size
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.block_cache_size,
+                    "rocksdb `block_cache_size` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.block_cache_size),
+
+        block_size: raw.block_size.unwrap_or(defaults.block_size),
+
+        row_cache_size: raw
+            .row_cache_size
+            .tap_none(|| {
+                tracing::warn!(
+                    default = defaults.row_cache_size,
+                    "rocksdb `row_cache_size` param not set, using default value"
+                );
+            })
+            .unwrap_or(defaults.row_cache_size),
+    }
 }

@@ -11,7 +11,7 @@ use {
     tap::Pipe,
 };
 pub use {
-    config::Config,
+    config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
     logger::Logger,
     network::{Multiaddr, Multihash, Network, RemoteNode},

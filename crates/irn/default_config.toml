@@ -33,8 +33,24 @@ consensus_candidates = []
 [storage]
 data_dir = "./data"
 consensus_dir = "./consensus"
-# rocksdb_num_batch_threads = 8
-# rocksdb_num_callback_threads = 24
+
+# [storage.rocksdb]
+# ratelimiter = 67108864
+
+# The following values are configured for a machine with 16GB of RAM.
+# write_buffer_size = 134217728
+# max_write_buffer_number = 8
+# min_write_buffer_number_to_merge = 2
+# block_cache_size = 4294967296
+# block_size = 4096
+# row_cache_size = 1073741824
+
+# The following values are automatically configured based on the number of cores.
+# num_batch_threads = 8
+# num_callback_threads = 24
+# max_subcompactions = 8
+# max_background_jobs = 32
+# increase_parallelism = 16
 
 [replication]
 consistency_level = "Quorum"

@@ -17,6 +17,7 @@ use {
         Config,
         Consensus,
         Network,
+        RocksdbDatabaseConfig,
     },
     itertools::Itertools,
     rand::Rng,
@@ -87,8 +88,11 @@ impl test::Context for Context {
                     api_addr: idt.api_addr.clone(),
                     metrics_addr: String::new(),
                     rocksdb_dir: dir.join("rocksdb"),
-                    rocksdb_num_batch_threads: 1,
-                    rocksdb_num_callback_threads: 1,
+                    rocksdb: RocksdbDatabaseConfig {
+                        num_batch_threads: 1,
+                        num_callback_threads: 1,
+                        ..Default::default()
+                    },
                     network_connection_timeout: 5000,
                     network_request_timeout: 5000,
 

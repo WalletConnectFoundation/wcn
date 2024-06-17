@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "alloc"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?rev=0a429e32490c9fb1ebf2597d2952198b76429a4e#0a429e32490c9fb1ebf2597d2952198b76429a4e"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.12.0#5d76e0cac9d4c74d60fb71a05ced2e7e7a1bd8d6"
 dependencies = [
  "serde",
  "serde_json",
@@ -1442,7 +1442,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?rev=0a429e32490c9fb1ebf2597d2952198b76429a4e#0a429e32490c9fb1ebf2597d2952198b76429a4e"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.12.0#5d76e0cac9d4c74d60fb71a05ced2e7e7a1bd8d6"
 
 [[package]]
 name = "colorchoice"
@@ -2278,7 +2278,7 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 [[package]]
 name = "future"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?rev=0a429e32490c9fb1ebf2597d2952198b76429a4e#0a429e32490c9fb1ebf2597d2952198b76429a4e"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.12.0#5d76e0cac9d4c74d60fb71a05ced2e7e7a1bd8d6"
 dependencies = [
  "pin-project",
  "thiserror",
@@ -2289,7 +2289,7 @@ dependencies = [
 [[package]]
 name = "future_metrics"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?rev=0a429e32490c9fb1ebf2597d2952198b76429a4e#0a429e32490c9fb1ebf2597d2952198b76429a4e"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.12.0#5d76e0cac9d4c74d60fb71a05ced2e7e7a1bd8d6"
 dependencies = [
  "metrics",
  "pin-project",
@@ -7160,7 +7160,7 @@ checksum = "af190c94f2773fdb3729c55b007a722abb5384da03bc0986df4c289bf5567e96"
 [[package]]
 name = "wc"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?rev=0a429e32490c9fb1ebf2597d2952198b76429a4e#0a429e32490c9fb1ebf2597d2952198b76429a4e"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.12.0#5d76e0cac9d4c74d60fb71a05ced2e7e7a1bd8d6"
 dependencies = [
  "alloc",
  "collections",

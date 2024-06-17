@@ -417,7 +417,8 @@ locals {
   grafana_dashboard = {
     env     = "DASHBOARD"
     "path"  = "${local.grafana_dir}/provisioning/dashboards/irn.json"
-    content = file("${path.module}/dashboard.json")
+    # minify json by running it through `jsonencode`
+    content = jsonencode(jsondecode(file("${path.module}/dashboard.json")))
   }
   grafana_container_definition = {
     name : local.grafana_container_name,
@@ -435,6 +436,7 @@ locals {
       { name : "GF_SERVER_CERT_KEY", value : local.grafana_tls_key.path },
       { name : "GF_SERVER_PROTOCOL", value : "https" },
       { name : "GF_SECURITY_ADMIN_PASSWORD", value : var.grafana_admin_password },
+      { name : "GF_FEATURE_TOGGLES_ENABLE", value : "dashboardScene" },
     ]
 
     user : "1001",

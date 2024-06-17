@@ -48,7 +48,7 @@ testing = [
 workspace = true
 
 [workspace.dependencies]
-wc = { git = "https://github.com/WalletConnect/utils-rs.git", rev = "0a429e32490c9fb1ebf2597d2952198b76429a4e", default-features = false }
+wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.12.0", default-features = false }
 derive_more = { version = "=1.0.0-beta.6", features = [
     "display",
     "from",

@@ -6,6 +6,7 @@ use {
     futures::{stream, FutureExt, StreamExt, TryFutureExt},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, io, path::PathBuf, time::Duration},
+    time::OffsetDateTime,
 };
 
 pub struct Tracker<R> {
@@ -14,6 +15,7 @@ pub struct Tracker<R> {
     storage: Storage,
     state: State,
     expected_node_version: u64,
+    node_update_deadline: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -54,6 +56,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
         reporter: R,
         storage_dir: PathBuf,
         expected_node_version: u64,
+        node_update_deadline: OffsetDateTime,
     ) -> Result<Self> {
         let storage = Storage::new(storage_dir).await?;
         let state = storage.read_state().await?.unwrap_or_default();
@@ -64,6 +67,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
             storage,
             state,
             expected_node_version,
+            node_update_deadline,
         })
     }
 
@@ -96,6 +100,8 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
     async fn healthcheck(&mut self) {
         let expected_node_version = self.expected_node_version;
 
+        let node_update_deadline_reached = OffsetDateTime::now_utc() >= self.node_update_deadline;
+
         stream::iter(self.network.peers().await)
             .map(|id| {
                 rpc::Send::<rpc::Health, _, _>::send(&self.network.client, id, ())
@@ -107,7 +113,9 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
                     .map_err(|err| tracing::warn!(%id, ?err, "healthcheck failed"))
                     .ok()?;
 
-                let score_diff = if resp.node_version == expected_node_version {
+                let score_diff = if resp.node_version >= expected_node_version
+                    || !node_update_deadline_reached
+                {
                     1.0
                 } else {
                     tracing::warn!(

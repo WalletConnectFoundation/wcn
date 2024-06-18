@@ -209,7 +209,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:pr-52"
+  image       = "${data.aws_ecr_repository.node.repository_url}:1.431.0"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -260,8 +260,6 @@ module "node" {
 
   # Only a single node has write access to the contract
   smart_contract_signer_mnemonic = each.key == "eu-central-1a-1" ? var.smart_contract_signer_mnemonic : null
-
-  cache_buster = "2454"
 }
 
 data "aws_iam_policy_document" "assume_role" {

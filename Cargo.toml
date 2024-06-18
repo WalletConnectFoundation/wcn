@@ -64,6 +64,7 @@ raft = { path = "crates/raft" }
 network = { path = "crates/network" }
 relay_rocks = { path = "crates/rocks" }
 metrics = "0.23"
+time = "0.3"
 
 [dependencies]
 irn = { package = "irn_core", path = "crates/core" }
@@ -73,6 +74,7 @@ network = { workspace = true }
 relay_rocks = { workspace = true }
 wc = { workspace = true, features = ["alloc", "future", "future_metrics"] }
 metrics = { workspace = true }
+time = { workspace = true }
 
 anyhow = "1"
 atty = "0.2"

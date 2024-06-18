@@ -1,8 +1,7 @@
 use {
     super::{identity::Keypair, Multiaddr, PeerId},
     crate::{
-        inbound,
-        inbound::ConnectionInfo,
+        inbound::{self, ConnectionInfo},
         rpc::{self, AnyPeer},
         BiDirectionalStream,
         Client,
@@ -13,7 +12,7 @@ use {
     },
     futures::{lock::Mutex, Future, SinkExt, StreamExt},
     std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration},
-    wc::future::StaticFutureExt,
+    tap::Pipe,
 };
 
 type UnaryRpc = rpc::Unary<{ rpc::id(b"test_unary") }, String, String>;
@@ -130,7 +129,7 @@ async fn suite() {
 
         crate::run_server(server_config, NoHandshake, node)
             .expect("run_server")
-            .spawn("server");
+            .pipe(tokio::spawn);
     }
 
     // wait a bit for sockets opening

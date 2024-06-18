@@ -5,7 +5,6 @@ use {
         rolling::{RollingFileAppender, Rotation},
     },
     tracing_subscriber::{prelude::*, EnvFilter},
-    wc::metrics::otel,
 };
 
 /// The default log level for the stderr logger, which is used as a fallback if
@@ -93,12 +92,6 @@ impl Logger {
 
     pub fn stop(self) {
         // Consume self to trigger drop.
-    }
-}
-
-impl Drop for Logger {
-    fn drop(&mut self) {
-        otel::global::shutdown_tracer_provider();
     }
 }
 

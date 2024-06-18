@@ -8,7 +8,8 @@ publish = false
 workspace = true
 
 [dependencies]
-wc = { workspace = true, features = ["metrics"] }
+wc = { workspace = true, features = ["future_metrics"] }
+metrics = { workspace = true }
 
 thiserror = "1.0"
 tokio = { version = "1", default-features = false, features = [

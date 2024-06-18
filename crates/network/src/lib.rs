@@ -24,7 +24,6 @@ use {
     tokio_serde_postcard::SymmetricalPostcard,
     tokio_stream::Stream,
     tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
-    wc::metrics::{Lazy, OtelTaskMetricsRecorder},
 };
 pub use {
     libp2p::{
@@ -45,9 +44,6 @@ pub mod rpc;
 
 #[cfg(test)]
 mod test;
-
-static METRICS: Lazy<OtelTaskMetricsRecorder> =
-    Lazy::new(|| OtelTaskMetricsRecorder::new("irn_network"));
 
 /// Message transimitted over the network.
 pub trait Message: Serialize + for<'de> Deserialize<'de> + Unpin + Send {}

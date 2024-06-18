@@ -1,9 +1,10 @@
 use {
-    crate::{config::Config, Error, Node},
-    std::{collections::HashMap, future::Future, net::SocketAddr, time::Duration},
+    crate::{config::Config, network::rpc, Error, Node},
+    axum::extract::Path,
+    metrics_exporter_prometheus::PrometheusHandle,
+    std::{future::Future, net::SocketAddr, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
     tokio::sync::oneshot,
-    wc::metrics::{self, otel},
 };
 
 fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
@@ -20,17 +21,16 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         sys.refresh_cpu();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
-            metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", cpu.cpu_usage(), &[
-                otel::KeyValue::new("n_core", n as i64)
-            ]);
+            metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", "n_core" => n.to_string())
+                .set(cpu.cpu_usage())
         }
 
         sys.refresh_memory();
 
-        metrics::gauge!("irn_total_memory", sys.total_memory());
-        metrics::gauge!("irn_free_memory", sys.free_memory());
-        metrics::gauge!("irn_available_memory", sys.available_memory());
-        metrics::gauge!("irn_used_memory", sys.used_memory());
+        metrics::gauge!("irn_total_memory").set(sys.total_memory() as f64);
+        metrics::gauge!("irn_free_memory").set(sys.free_memory() as f64);
+        metrics::gauge!("irn_available_memory").set(sys.available_memory() as f64);
+        metrics::gauge!("irn_used_memory").set(sys.used_memory() as f64);
 
         sys.refresh_disks();
 
@@ -49,8 +49,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             if disk.mount_point().to_str() == rocksdb_parent
                 || disk.mount_point().to_str() == raft_parent
             {
-                metrics::gauge!("irn_disk_total_space", disk.total_space());
-                metrics::gauge!("irn_disk_available_space", disk.available_space());
+                metrics::gauge!("irn_disk_total_space").set(disk.total_space() as f64);
+                metrics::gauge!("irn_disk_available_space").set(disk.available_space() as f64);
                 break;
             }
         }
@@ -58,68 +58,30 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         sys.refresh_networks();
 
         for (name, net) in sys.networks().iter() {
-            metrics::gauge!("irn_network_tx_bytes_total", net.total_transmitted(), &[
-                otel::KeyValue::new("network", name.to_owned())
-            ]);
-            metrics::gauge!("irn_network_rx_bytes_total", net.total_received(), &[
-                otel::KeyValue::new("network", name.to_owned())
-            ]);
-        }
-
-        if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
-            tracing::warn!(?err, "failed to collect jemalloc stats");
+            metrics::gauge!("irn_network_tx_bytes_total", "network" => name.to_owned())
+                .set(net.total_transmitted() as f64);
+            metrics::gauge!("irn_network_rx_bytes_total", "network" => name.to_owned())
+                .set(net.total_received() as f64);
         }
 
         // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
         // PhysicalCoreID() consumes 5-10% CPU
         // TODO: Consider fixing this & re-enabling the stats
         let db = node.storage().db();
-        let mut metrics = RocksMetrics::default();
-        let _ = move || update_rocksdb_metrics(db, &mut metrics);
+        let _ = move || update_rocksdb_metrics(db);
 
         std::thread::sleep(Duration::from_secs(15));
     }
 }
 
-#[derive(Default)]
-struct RocksMetrics {
-    gauges: HashMap<String, otel::metrics::ObservableGauge<f64>>,
-    counters: HashMap<String, otel::metrics::Counter<u64>>,
-}
-
-impl RocksMetrics {
-    pub fn counter(&mut self, name: String) -> otel::metrics::Counter<u64> {
-        self.counters
-            .entry(name.clone())
-            .or_insert_with(|| metrics::ServiceMetrics::meter().u64_counter(name).init())
-            .clone()
-    }
-
-    pub fn gauge(&mut self, name: String) -> otel::metrics::ObservableGauge<f64> {
-        self.gauges
-            .entry(name.clone())
-            .or_insert_with(|| {
-                metrics::ServiceMetrics::meter()
-                    .f64_observable_gauge(name)
-                    .init()
-            })
-            .clone()
-    }
-}
-
-fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMetrics) {
+fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend) {
     match db.memory_usage() {
         Ok(s) => {
-            metrics::gauge!("irn_rocksdb_mem_table_total", s.mem_table_total as f64);
-            metrics::gauge!(
-                "irn_rocksdb_mem_table_unflushed",
-                s.mem_table_unflushed as f64
-            );
-            metrics::gauge!(
-                "irn_rocksdb_mem_table_readers_total",
-                s.mem_table_readers_total as f64
-            );
-            metrics::gauge!("irn_rocksdb_cache_total", s.cache_total as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_total").set(s.mem_table_total as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_unflushed").set(s.mem_table_unflushed as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_readers_total",)
+                .set(s.mem_table_readers_total as f64);
+            metrics::gauge!("irn_rocksdb_cache_total").set(s.cache_total as f64);
         }
 
         Err(err) => tracing::warn!(?err, "failed to get rocksdb memory usage stats"),
@@ -142,22 +104,20 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
 
         match stat {
             relay_rocks::db::Statistic::Ticker(count) => {
-                metrics.counter(name).add(count, &[]);
+                metrics::counter!(name).increment(count);
             }
 
             relay_rocks::db::Statistic::Histogram(h) => {
                 // The distribution is already calculated for us by RocksDB, so we use
                 // `gauge`/`counter` here instead of `histogram`.
 
-                metrics.counter(format!("{name}_count")).add(h.count, &[]);
-                metrics.counter(format!("{name}_sum")).add(h.sum, &[]);
+                metrics::counter!(format!("{name}_count")).increment(h.count);
+                metrics::counter!(format!("{name}_sum")).increment(h.sum);
 
-                let meter = metrics.gauge(name);
-
-                meter.observe(h.p50, &[otel::KeyValue::new("p", "50")]);
-                meter.observe(h.p95, &[otel::KeyValue::new("p", "95")]);
-                meter.observe(h.p99, &[otel::KeyValue::new("p", "99")]);
-                meter.observe(h.p100, &[otel::KeyValue::new("p", "100")]);
+                metrics::gauge!(name.clone(), "p" => "50").set(h.p50);
+                metrics::gauge!(name.clone(), "p" => "95").set(h.p95);
+                metrics::gauge!(name.clone(), "p" => "99").set(h.p99);
+                metrics::gauge!(name, "p" => "100").set(h.p100);
             }
         }
     }
@@ -166,21 +126,28 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend, metrics: &mut RocksMet
 pub(crate) fn serve(
     cfg: Config,
     node: Node,
+    prometheus: PrometheusHandle,
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
+    let prometheus_ = prometheus.clone();
+
     let addr: SocketAddr = cfg.metrics_addr.parse()?;
 
     let (tx, rx) = oneshot::channel();
 
-    std::thread::spawn(|| update_loop(rx, node, cfg));
-
-    let handler = move || async move {
-        metrics::ServiceMetrics::export()
-            .map_err(|err| tracing::warn!(?err, "failed to export prometheus metrics"))
-            .unwrap_or_default()
-    };
+    let node_ = node.clone();
+    tokio::task::spawn_blocking(move || update_loop(rx, node_, cfg));
 
     let svc = axum::Router::new()
-        .route("/metrics", axum::routing::get(handler))
+        .route(
+            "/metrics",
+            axum::routing::get(move || async move { prometheus.render() }),
+        )
+        .route(
+            "/metrics/:peer_id",
+            axum::routing::get(move |Path(peer_id)| {
+                scrape_prometheus(prometheus_.clone(), node.clone(), peer_id)
+            }),
+        )
         .into_make_service();
 
     Ok(async move {
@@ -195,4 +162,19 @@ pub(crate) fn serve(
 
         result
     })
+}
+
+async fn scrape_prometheus(
+    handle: PrometheusHandle,
+    node: Node,
+    peer_id: libp2p::PeerId,
+) -> String {
+    if node.id().id == peer_id {
+        return handle.render();
+    }
+
+    rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, peer_id, ())
+        .await
+        .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrape prometheus metrics"))
+        .unwrap_or_default()
 }

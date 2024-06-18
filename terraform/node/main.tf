@@ -275,15 +275,15 @@ locals {
     }
   }
 
-
   prometheus_dir            = "/data/prometheus"
   prometheus_container_name = "prometheus"
   prometheus_config = {
     env    = "CONFIG"
     "path" = "${local.prometheus_dir}/config.yml"
     content = yamlencode({
-      scrape_configs = [{
-        job_name        = "prometheus"
+      scrape_configs = [for peer_id in var.prometheus_target_peer_ids : {
+        job_name        = "node-${peer_id}"
+        metrics_path    = "/metrics/${peer_id}"
         scrape_interval = "15s"
         static_configs = [{
           targets = ["localhost:${var.metrics_port}"]
@@ -415,9 +415,10 @@ locals {
     })
   }
   grafana_dashboard = {
-    env     = "DASHBOARD"
-    "path"  = "${local.grafana_dir}/provisioning/dashboards/irn.json"
-    content = file("${path.module}/dashboard.json")
+    env    = "DASHBOARD"
+    "path" = "${local.grafana_dir}/provisioning/dashboards/irn.json"
+    # minify json by running it through `jsonencode`
+    content = jsonencode(jsondecode(file("${path.module}/dashboard.json")))
   }
   grafana_container_definition = {
     name : local.grafana_container_name,
@@ -435,6 +436,7 @@ locals {
       { name : "GF_SERVER_CERT_KEY", value : local.grafana_tls_key.path },
       { name : "GF_SERVER_PROTOCOL", value : "https" },
       { name : "GF_SECURITY_ADMIN_PASSWORD", value : var.grafana_admin_password },
+      { name : "GF_FEATURE_TOGGLES_ENABLE", value : "dashboardScene" },
     ]
 
     user : "1001",

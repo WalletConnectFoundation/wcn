@@ -8,6 +8,7 @@ use {
         HandshakeResponse,
         Key,
         NamespaceAuth,
+        Operation,
         PubsubEventPayload,
         UnixTimestampSecs,
         Value,
@@ -33,14 +34,9 @@ use {
         sync::Arc,
         time::Duration,
     },
-    tap::Tap,
-    wc::{
-        future::{FutureExt as _, StaticFutureExt},
-        metrics::{self, otel, TaskMetrics},
-    },
+    tap::{Pipe, Tap},
+    wc::future_metrics::{future_name, FutureExt as _},
 };
-
-static METRICS: TaskMetrics = TaskMetrics::new("irn_api_client_operation");
 
 #[derive(Clone)]
 pub struct Config {
@@ -71,7 +67,7 @@ pub struct Config {
 }
 
 #[derive(Clone)]
-pub struct Client {
+pub struct Client<Kind = kind::Basic> {
     /// Each [`network::Client`] is build around a single UDP socket. We need
     /// multiple of them because our current infrastructure doesn't support
     /// UDP buffer size configuration, so in order to be able to sustain high
@@ -79,18 +75,34 @@ pub struct Client {
     inner: Arc<[NetworkClient]>,
     namespaces: Arc<HashMap<auth::PublicKey, auth::Auth>>,
 
-    shadowing: Option<Shadowing>,
-
     request_timeout: Duration,
     max_operation_time: Duration,
 
-    metrics_tag: otel::KeyValue,
+    kind: Kind,
 }
 
-#[derive(Clone)]
-struct Shadowing {
-    client: Box<Client>,
-    max_hash: u64,
+type ShadowingClient = Client<kind::Shadowing>;
+
+mod kind {
+    #[derive(Clone)]
+    pub struct Basic {
+        pub(super) shadowing: Option<super::ShadowingClient>,
+    }
+
+    #[derive(Clone)]
+    pub struct Shadowing {
+        pub(super) max_hash: u64,
+    }
+}
+
+pub trait Kind: Sized + Clone + 'static {
+    const METRICS_TAG: &'static str;
+
+    /// Checks whether the provided key requires shadowing, if so returns the
+    /// shadowing client.
+    fn requires_shadowing(_client: &Client<Self>, _key: &Key) -> Option<ShadowingClient> {
+        None
+    }
 }
 
 type NetworkClient = Metered<WithTimeouts<network::Client<Handshake>>>;
@@ -112,26 +124,40 @@ impl Client {
             let mut cfg = cfg.clone();
             cfg.nodes = std::mem::take(&mut cfg.shadowing_nodes);
 
-            Some(Shadowing {
-                max_hash: (u64::MAX as f64 * cfg.shadowing_factor) as u64,
-                client: Box::new(Self::new_inner(cfg, "shadowing", None)?),
-            })
+            let max_hash = (u64::MAX as f64 * cfg.shadowing_factor) as u64;
+            Some(Client::new_inner(cfg, kind::Shadowing { max_hash })?)
         } else {
             None
         };
 
-        Self::new_inner(cfg, "", shadowing)
+        Self::new_inner(cfg, kind::Basic { shadowing })
     }
+}
 
-    pub fn namespaces(&self) -> &HashMap<auth::PublicKey, auth::Auth> {
-        &self.namespaces
+impl Kind for kind::Basic {
+    const METRICS_TAG: &'static str = "";
+
+    fn requires_shadowing(client: &Client<Self>, key: &Key) -> Option<ShadowingClient> {
+        use {std::hash::BuildHasher, xxhash_rust::xxh3::Xxh3Builder};
+
+        static HASHER: Xxh3Builder = Xxh3Builder::new();
+
+        let shadowing = client.kind.shadowing.as_ref()?;
+
+        if HASHER.hash_one(&key.bytes) > shadowing.kind.max_hash {
+            return None;
+        }
+
+        Some((*shadowing).clone())
     }
+}
 
-    fn new_inner(
-        mut cfg: Config,
-        metrics_tag: &'static str,
-        shadowing: Option<Shadowing>,
-    ) -> Result<Self, network::Error> {
+impl Kind for kind::Shadowing {
+    const METRICS_TAG: &'static str = "shadowing";
+}
+
+impl<K: Kind> Client<K> {
+    fn new_inner(mut cfg: Config, kind: K) -> Result<Self, network::Error> {
         // Safe unwrap, as we know that the bytes are a valid ed25519 key.
         let keypair = Keypair::ed25519_from_bytes(cfg.key.to_bytes()).unwrap();
 
@@ -171,9 +197,12 @@ impl Client {
             namespaces,
             request_timeout: cfg.request_timeout,
             max_operation_time: cfg.max_operation_time,
-            metrics_tag: otel::KeyValue::new("client_tag", metrics_tag),
-            shadowing,
+            kind,
         })
+    }
+
+    pub fn namespaces(&self) -> &HashMap<auth::PublicKey, auth::Auth> {
+        &self.namespaces
     }
 
     fn random_client(&self) -> &NetworkClient {
@@ -181,50 +210,34 @@ impl Client {
         self.inner.choose(&mut rand::thread_rng()).unwrap()
     }
 
-    /// Checks whether the provided key requires shadowing, if so returnes the
-    /// shadowing client.
-    fn requires_shadowing(&self, key: &Key) -> Option<Client> {
-        use {std::hash::BuildHasher, xxhash_rust::xxh3::Xxh3Builder};
-
-        static HASHER: Xxh3Builder = Xxh3Builder::new();
-
-        let shadowing = self.shadowing.as_ref()?;
-
-        if HASHER.hash_one(&key.bytes) > shadowing.max_hash {
-            return None;
-        }
-
-        Some((*shadowing.client).clone())
-    }
-
-    async fn exec<'a, Op, Fut, T>(
-        &'a self,
-        op_name: &'static str,
+    async fn exec<Op, Fut, T>(
+        &self,
         rpc: impl Fn(NetworkClient, AnyPeer, Op) -> Fut + Clone + Send + Sync + 'static,
         op: Op,
     ) -> Result<T>
     where
-        Op: AsRef<Key> + Clone + Send + Sync + 'static,
-        T: Send,
+        Op: Operation + AsRef<Key> + Clone + Send + Sync + 'static,
+        T: Send + 'static,
         Fut: Future<Output = Result<super::Result<T>, outbound::Error>> + Send + 'static,
     {
-        if let Some(s) = self.requires_shadowing(op.as_ref()) {
+        if let Some(s) = Kind::requires_shadowing(self, op.as_ref()) {
             let rpc = rpc.clone();
             let op = op.clone();
-            async move { s.retry(op_name, rpc, op).await }.spawn("irn_api_shadowing");
+            async move { s.retry(rpc, op).await }
+                .with_metrics(const { &future_name("irn_api_shadowing") })
+                .pipe(tokio::spawn);
         }
 
-        self.retry(op_name, rpc, op).await
+        self.retry(rpc, op).await
     }
 
     async fn retry<'a, Op, Fut, T>(
         &'a self,
-        op_name: &'static str,
         rpc: impl Fn(NetworkClient, AnyPeer, Op) -> Fut,
         op: Op,
     ) -> Result<T>
     where
-        Op: Clone,
+        Op: Operation + Clone,
         Fut: Future<Output = Result<super::Result<T>, outbound::Error>> + 'a,
     {
         use {super::Error as ApiError, tryhard::RetryPolicy};
@@ -264,19 +277,22 @@ impl Client {
                 RetryPolicy::Delay(delay)
             }
         })
-        .with_metrics(
-            METRICS
-                .with_name(op_name)
-                .with_attributes([self.metrics_tag.clone()]),
+        .with_labeled_metrics(
+            const {
+                &[
+                    future_name("irn_client_operation"),
+                    metrics::Label::from_static_parts("op_name", Op::NAME),
+                ]
+            },
         )
         .await
-        .tap(|res| meter_operation_result(&self.metrics_tag, op_name, res))
+        .tap(|res| Self::meter_operation_result::<Op, _>(res))
     }
 
     pub async fn get(&self, key: Key) -> Result<Option<Value>> {
         let op = super::Get { key };
 
-        self.exec("get", rpc::Get::send_owned, op).await
+        self.exec(rpc::Get::send_owned, op).await
     }
 
     pub async fn set(
@@ -291,31 +307,31 @@ impl Client {
             expiration,
         };
 
-        self.exec("set", rpc::Set::send_owned, op).await
+        self.exec(rpc::Set::send_owned, op).await
     }
 
     pub async fn del(&self, key: Key) -> Result<()> {
         let op = super::Del { key };
 
-        self.exec("del", rpc::Del::send_owned, op).await
+        self.exec(rpc::Del::send_owned, op).await
     }
 
     pub async fn get_exp(&self, key: Key) -> Result<Option<UnixTimestampSecs>> {
         let op = super::GetExp { key };
 
-        self.exec("get_exp", rpc::GetExp::send_owned, op).await
+        self.exec(rpc::GetExp::send_owned, op).await
     }
 
     pub async fn set_exp(&self, key: Key, expiration: Option<UnixTimestampSecs>) -> Result<()> {
         let op = super::SetExp { key, expiration };
 
-        self.exec("set_exp", rpc::SetExp::send_owned, op).await
+        self.exec(rpc::SetExp::send_owned, op).await
     }
 
     pub async fn hget(&self, key: Key, field: Field) -> Result<Option<Value>> {
         let op = super::HGet { key, field };
 
-        self.exec("hget", rpc::HGet::send_owned, op).await
+        self.exec(rpc::HGet::send_owned, op).await
     }
 
     pub async fn hset(
@@ -332,19 +348,19 @@ impl Client {
             expiration,
         };
 
-        self.exec("hset", rpc::HSet::send_owned, op).await
+        self.exec(rpc::HSet::send_owned, op).await
     }
 
     pub async fn hdel(&self, key: Key, field: Field) -> Result<()> {
         let op = super::HDel { key, field };
 
-        self.exec("hdel", rpc::HDel::send_owned, op).await
+        self.exec(rpc::HDel::send_owned, op).await
     }
 
     pub async fn hget_exp(&self, key: Key, field: Field) -> Result<Option<UnixTimestampSecs>> {
         let op = super::HGetExp { key, field };
 
-        self.exec("hget_exp", rpc::HGetExp::send_owned, op).await
+        self.exec(rpc::HGetExp::send_owned, op).await
     }
 
     pub async fn hset_exp(
@@ -359,25 +375,25 @@ impl Client {
             expiration,
         };
 
-        self.exec("hset_exp", rpc::HSetExp::send_owned, op).await
+        self.exec(rpc::HSetExp::send_owned, op).await
     }
 
     pub async fn hcard(&self, key: Key) -> Result<u64> {
         let op = super::HCard { key };
 
-        self.exec("hcard", rpc::HCard::send_owned, op).await
+        self.exec(rpc::HCard::send_owned, op).await
     }
 
     pub async fn hfields(&self, key: Key) -> Result<Vec<Field>> {
         let op = super::HFields { key };
 
-        self.exec("hfields", rpc::HFields::send_owned, op).await
+        self.exec(rpc::HFields::send_owned, op).await
     }
 
     pub async fn hvals(&self, key: Key) -> Result<Vec<Value>> {
         let op = super::HVals { key };
 
-        self.exec("hvals", rpc::HVals::send_owned, op).await
+        self.exec(rpc::HVals::send_owned, op).await
     }
 
     pub async fn hscan(
@@ -388,14 +404,13 @@ impl Client {
     ) -> Result<(Vec<Value>, Option<Cursor>)> {
         let op = super::HScan { key, count, cursor };
 
-        self.exec("hscan", rpc::HScan::send_owned, op).await
+        self.exec(rpc::HScan::send_owned, op).await
     }
 
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
         let op = super::Publish { channel, message };
 
         self.retry(
-            "publish",
             |client, to, op| rpc::Publish::send_owned(client, to, op).map_ok(Ok),
             op,
         )
@@ -408,7 +423,7 @@ impl Client {
     ) -> impl Stream<Item = PubsubEventPayload> + 'static {
         let this = self.clone();
 
-        meter_operation_result(&self.metrics_tag, "subscribe", &Ok(()));
+        Self::meter_operation_result::<super::Subscribe, _>(&Ok(()));
 
         async_stream::stream! {
             let op = &super::Subscribe { channels };
@@ -424,7 +439,7 @@ impl Client {
                     Ok(rx) => rx,
                     Err(err) => {
                         tracing::error!(?err, "Failed to subscribe to any peer");
-                        metrics::counter!("irn_api_client_subscribe_failures", 1, &[this.metrics_tag.clone()]);
+                        metrics::counter!("irn_api_client_subscribe_failures", "client_tag" => K::METRICS_TAG).increment(1);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
@@ -435,7 +450,7 @@ impl Client {
                         Ok(msg) => yield msg,
                         Err(err) => {
                             tracing::warn!(?err, "Failed to receive pubsub message, resubscribing...");
-                            metrics::counter!("irn_api_client_subscription_failures", 1, &[this.metrics_tag.clone()]);
+                            metrics::counter!("irn_api_client_subscription_failures", "client_tag" => K::METRICS_TAG).increment(1);
                             break;
                         }
                     }
@@ -482,29 +497,30 @@ impl network::Handshake for Handshake {
     }
 }
 
-fn meter_operation_result<T>(
-    client_tag: &otel::KeyValue,
-    operation: &'static str,
-    res: &Result<T>,
-) {
-    use network::{outbound::Error as NetworkError, rpc::Error as RpcError};
+impl<K: Kind> Client<K> {
+    fn meter_operation_result<Op: Operation, T>(res: &Result<T>) {
+        use network::{outbound::Error as NetworkError, rpc::Error as RpcError};
 
-    let err = res.as_ref().err().and_then(|e| {
-        Some(match e {
-            Error::Network(NetworkError::ConnectionHandler(_)) => "connection_handler".into(),
-            Error::Network(NetworkError::Rpc(RpcError::IO(e))) => e.to_string().into(),
-            Error::Network(NetworkError::Rpc(RpcError::StreamFinished)) => "stream_finished".into(),
-            Error::Network(NetworkError::Rpc(RpcError::Timeout)) => "timeout".into(),
-            Error::Api(super::Error::Unauthorized) => "unauthorized".into(),
-            Error::Api(super::Error::NotFound) => return None,
-            Error::Api(super::Error::Throttled) => "throttled".into(),
-            Error::Api(super::Error::Internal(e)) => e.code.clone(),
-        })
-    });
+        let err = res.as_ref().err().and_then(|e| {
+            Some(match e {
+                Error::Network(NetworkError::ConnectionHandler(_)) => "connection_handler".into(),
+                Error::Network(NetworkError::Rpc(RpcError::IO(e))) => e.to_string().into(),
+                Error::Network(NetworkError::Rpc(RpcError::StreamFinished)) => {
+                    "stream_finished".into()
+                }
+                Error::Network(NetworkError::Rpc(RpcError::Timeout)) => "timeout".into(),
+                Error::Api(super::Error::Unauthorized) => "unauthorized".into(),
+                Error::Api(super::Error::NotFound) => return None,
+                Error::Api(super::Error::Throttled) => "throttled".into(),
+                Error::Api(super::Error::Internal(e)) => e.code.clone(),
+            })
+        });
 
-    metrics::counter!("irn_api_client_operation_results", 1, &[
-        client_tag.clone(),
-        otel::KeyValue::new("operation", operation),
-        otel::KeyValue::new("err", err.unwrap_or_default())
-    ]);
+        metrics::counter!("irn_api_client_operation_results",
+            "client_tag" => K::METRICS_TAG,
+            "operation" => Op::NAME,
+            "err" => err.unwrap_or_default()
+        )
+        .increment(1);
+    }
 }

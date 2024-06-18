@@ -49,16 +49,16 @@ jobs:
         cargo:
           - name: "clippy"
             cmd: cargo clippy --workspace --all-targets --all-features --tests -- -D warnings
-            rust: nightly-2024-02-18
+            rust: nightly-2024-06-13
           - name: "formatting"
             cmd: cargo fmt --all --check
-            rust: nightly-2024-02-18
+            rust: nightly-2024-06-13
           - name: "tests"
             cmd: |
               cargo test --workspace --doc --all-features \
               && RUST_LOG=info cargo test --all-features --workspace --exclude irn_node \
               && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features
-            rust: 1.76.0
+            rust: 1.79.0
     env:
       RUST_BACKTRACE: full
     steps:

@@ -3,7 +3,7 @@
 # Build args
 #
 ################################################################################
-ARG                 BASE="rust:1.77-buster"
+ARG                 BASE="rust:1.79-buster"
 ARG                 RUNTIME="debian:buster-slim"
 ARG                 VERSION="unknown"
 ARG                 SHA="unknown"

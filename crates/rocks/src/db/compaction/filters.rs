@@ -57,8 +57,6 @@ impl<C: cf::Column> ExpiredDataCompactionFilter<C> {
             if value.expired() || value.payload().is_none() {
                 Decision::Remove
             } else {
-                use wc::metrics::otel::KeyValue;
-
                 if let Some(expiration) = value.expiration_timestamp() {
                     let expires_in = expiration.saturating_sub(crate::util::timestamp_secs());
 
@@ -66,18 +64,14 @@ impl<C: cf::Column> ExpiredDataCompactionFilter<C> {
                     const MAX_TTL_SECS: u64 = 86400 * 30 + 120;
 
                     if expires_in > MAX_TTL_SECS {
-                        wc::metrics::counter!("rocksdb_invalid_ttl_entries", 1, &[KeyValue::new(
-                            "cf",
-                            C::NAME.as_str()
-                        )]);
+                        metrics::counter!("rocksdb_invalid_ttl_entries", "cf" => C::NAME.as_str())
+                            .increment(1);
 
                         return Decision::Remove;
                     }
                 } else {
-                    wc::metrics::counter!("rocksdb_persistent_entries", 1, &[KeyValue::new(
-                        "cf",
-                        C::NAME.as_str()
-                    )]);
+                    metrics::counter!("rocksdb_persistent_entries", "cf" => C::NAME.as_str())
+                        .increment(1);
                 }
 
                 let last_modified = value
@@ -88,9 +82,8 @@ impl<C: cf::Column> ExpiredDataCompactionFilter<C> {
                 const UPDATE_TIMESTAMP_LEEWAY: u64 = 120 * 1000 * 1000;
 
                 if last_modified > crate::util::timestamp_micros() + UPDATE_TIMESTAMP_LEEWAY {
-                    wc::metrics::counter!("rocksdb_invalid_update_timestamp_entries", 1, &[
-                        KeyValue::new("cf", C::NAME.as_str())
-                    ]);
+                    metrics::counter!("rocksdb_invalid_update_timestamp_entries", "cf" => C::NAME.as_str())
+                        .increment(1);
 
                     return Decision::Remove;
                 }
@@ -129,37 +122,27 @@ impl<C: cf::Column> CompactionFilter for ExpiredDataCompactionFilter<C> {
 
 impl<C: cf::Column> Drop for ExpiredDataCompactionFilter<C> {
     fn drop(&mut self) {
-        use wc::metrics::otel::KeyValue;
+        let cf_name = C::NAME.as_str();
 
-        #[inline]
-        fn decision_kv(decision: &'static str) -> KeyValue {
-            KeyValue::new("decision", decision)
-        }
+        let compaction_keys_processed = |decision, value| {
+            metrics::counter!("rocksdb_compaction_keys_processed", "cf_name" => cf_name, "decision" => decision)
+                .increment(value);
+        };
 
-        let cf_name_kv = KeyValue::new("cf_name", C::NAME.as_str());
-        let counter = wc::metrics::counter!("rocksdb_compaction_keys_processed");
-
-        counter.add(self.num_remove, &[
-            cf_name_kv.clone(),
-            decision_kv("remove"),
-        ]);
-        counter.add(self.num_change, &[
-            cf_name_kv.clone(),
-            decision_kv("change"),
-        ]);
-        counter.add(self.num_keep, &[cf_name_kv.clone(), decision_kv("keep")]);
+        compaction_keys_processed("remove", self.num_remove);
+        compaction_keys_processed("change", self.num_change);
+        compaction_keys_processed("keep", self.num_keep);
 
         let elapsed = self.started.elapsed();
+        let elapsed_ms = elapsed.as_millis() as f64;
 
-        wc::metrics::histogram!("rocksdb_compaction_time", elapsed.as_millis() as f64, &[
-            cf_name_kv
-        ]);
+        metrics::histogram!("rocksdb_compaction_time", "cf_name" => cf_name).record(elapsed_ms);
 
         let keys_processed = self.num_remove + self.num_change + self.num_keep;
 
         tracing::info!(
-            elapsed = elapsed.as_millis() as u64,
-            cf_name = C::NAME.as_str(),
+            elapsed_ms,
+            cf_name,
             keys_processed,
             "rocksdb compaction finished"
         );

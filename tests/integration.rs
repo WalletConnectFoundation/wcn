@@ -165,7 +165,7 @@ impl test::Context for Context {
     async fn pre_bootup(&mut self, idt: &test::NodeIdentity, node: &test::Node<Self>) {
         let node_ctx = self.nodes.get_mut(&idt.peer_id).unwrap();
         let _guard = node_ctx.runtime.enter();
-        Network::spawn_servers(&node_ctx.config, node.clone()).unwrap();
+        Network::spawn_servers(&node_ctx.config, node.clone(), None).unwrap();
     }
 
     async fn post_shutdown(&mut self, node: &test::NodeHandle<Self>, reason: ShutdownReason) {

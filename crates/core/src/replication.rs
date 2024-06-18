@@ -33,10 +33,7 @@ use {
         time::Duration,
     },
     tokio::sync::OwnedSemaphorePermit,
-    wc::{
-        future::FutureExt,
-        metrics::{self, otel},
-    },
+    wc::future::FutureExt,
 };
 
 #[cfg(test)]
@@ -302,15 +299,11 @@ where
 
 impl<C, N, S> Node<C, N, S> {
     async fn try_acquire_replication_permit(&self) -> Option<OwnedSemaphorePermit> {
-        metrics::gauge!(
-            "irn_network_request_permits_available",
-            self.replication_request_limiter.available_permits() as u64
-        );
+        metrics::gauge!("irn_network_request_permits_available")
+            .set(self.replication_request_limiter.available_permits() as f64);
 
-        metrics::gauge!(
-            "irn_network_request_queue_permits_available",
-            self.replication_request_limiter_queue.available_permits() as u64
-        );
+        metrics::gauge!("irn_network_request_queue_permits_available")
+            .set(self.replication_request_limiter_queue.available_permits() as f64);
 
         if let Ok(permit) = self.replication_request_limiter.clone().try_acquire_owned() {
             // If we're below the concurrency limit, return the permit immediately.
@@ -329,7 +322,7 @@ impl<C, N, S> Node<C, N, S> {
                 .with_timeout(REQUEST_QUEUE_TIMEOUT)
                 .await
                 .map_err(|_| {
-                    metrics::counter!("irn_network_request_queue_timeout", 1);
+                    metrics::counter!("irn_network_request_queue_timeout").increment(1);
                 })
                 .ok()?
                 .ok()
@@ -688,40 +681,12 @@ where
         .filter_map(move |(item, count)| (count >= required_replicas).then_some(item))
         .collect();
 
-    reconciliation_metrics(
-        metrics::counter!("irn_collection_reconciliation"),
-        min,
-        max,
-        items.len(),
-    );
-
     // TODO: Optimize / don't try to preserve order when not necessary
 
     // Lexicographic sort to find the last key to use as the cursor.
     items.sort_unstable();
 
     U::from_iter(items)
-}
-
-fn reconciliation_metrics(
-    counter: &otel::metrics::Counter<u64>,
-    min: Option<usize>,
-    max: Option<usize>,
-    result: usize,
-) {
-    const BUCKETS: [usize; 17] = [
-        1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
-    ];
-
-    let items_kv = |name: &'static str, num_items: usize| {
-        otel::KeyValue::new(name, metrics::value_bucket(num_items, &BUCKETS) as i64)
-    };
-
-    counter.add(1, &[
-        items_kv("min", min.unwrap_or(0)),
-        items_kv("max", max.unwrap_or(0)),
-        items_kv("result", result),
-    ]);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

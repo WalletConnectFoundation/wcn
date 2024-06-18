@@ -164,6 +164,11 @@ variable "prometheus_admin_password" {
   sensitive = true
 }
 
+variable "prometheus_target_peer_ids" {
+  type    = list(string)
+  default = []
+}
+
 variable "enable_grafana" {
   type    = bool
   default = false

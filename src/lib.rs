@@ -5,12 +5,11 @@ use {
         FutureExt,
     },
     irn::ShutdownReason,
+    metrics_exporter_prometheus::PrometheusBuilder,
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
-    wc::{
-        future::StaticFutureExt,
-        metrics::{self as wc_metrics},
-    },
+    tap::Pipe,
+    time::{macros::datetime, OffsetDateTime},
 };
 pub use {
     config::{Config, RocksdbDatabaseConfig},
@@ -33,7 +32,11 @@ mod performance;
 
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
-const NODE_VERSION: u64 = 1;
+const NODE_VERSION: u64 = 2;
+
+/// Deadline after which operator nodes that haven't switched to the updated
+/// [`NODE_VERSION`] are going to receive reduced rewards.
+const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-06-19 12:00:00 -0);
 
 pub type Node = irn::Node<Consensus, Network, Storage>;
 
@@ -92,8 +95,6 @@ pub async fn run(
     shutdown_fut: impl Future<Output = ShutdownReason>,
     cfg: &Config,
 ) -> Result<impl Future<Output = ()>, Error> {
-    wc_metrics::ServiceMetrics::init_with_name("irn_node");
-
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
@@ -113,10 +114,16 @@ pub async fn run(
                 .await
                 .map_err(Error::Contract)?;
 
-            performance::Tracker::new(network.clone(), reporter, dir, NODE_VERSION)
-                .await
-                .map(Some)
-                .map_err(Error::PerformanceTracker)?
+            performance::Tracker::new(
+                network.clone(),
+                reporter,
+                dir,
+                NODE_VERSION,
+                NODE_VERSION_UPDATE_DEADLINE,
+            )
+            .await
+            .map(Some)
+            .map_err(Error::PerformanceTracker)?
         } else {
             None
         };
@@ -148,9 +155,13 @@ pub async fn run(
 
     let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
 
-    Network::spawn_servers(cfg, node.clone())?;
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .expect("install prometheus recorder");
 
-    let metrics_srv = metrics::serve(cfg.clone(), node.clone())?.spawn("metrics_server");
+    Network::spawn_servers(cfg, node.clone(), Some(prometheus.clone()))?;
+
+    let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 
     let node_clone = node.clone();
     let node_fut = async move {

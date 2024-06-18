@@ -37,6 +37,7 @@ use {
         },
         PeerId,
     },
+    metrics_exporter_prometheus::PrometheusHandle,
     network::{
         inbound::{self, ConnectionInfo},
         outbound,
@@ -63,8 +64,8 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
+    tap::Pipe,
     tokio::sync::mpsc,
-    wc::{future::StaticFutureExt, metrics},
 };
 
 pub mod rpc {
@@ -193,6 +194,17 @@ pub mod rpc {
 
         pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, Response>;
     }
+
+    pub use metrics::Metrics;
+    pub mod metrics {
+        use network::rpc;
+
+        pub type Request = ();
+
+        pub type Response = String;
+
+        pub type Metrics = rpc::Unary<{ rpc::id(b"metrics") }, Request, Response>;
+    }
 }
 
 #[derive(AsRef, Clone)]
@@ -204,6 +216,8 @@ struct RpcHandler {
     pubsub: Pubsub,
 
     eth_address: Option<Arc<str>>,
+
+    prometheus: Option<PrometheusHandle>,
 }
 
 impl RpcHandler {
@@ -663,6 +677,16 @@ impl RpcHandler {
                 .await
             }
 
+            rpc::Metrics::ID => {
+                rpc::Metrics::handle(stream, |_req| async {
+                    self.prometheus
+                        .as_ref()
+                        .map(|p| p.render())
+                        .unwrap_or_default()
+                })
+                .await
+            }
+
             id => {
                 return tracing::warn!("Unexpected internal RPC: {}", rpc::Name::new(id).as_str())
             }
@@ -873,7 +897,11 @@ impl Network {
         })
     }
 
-    pub fn spawn_servers(cfg: &Config, node: Node) -> Result<tokio::task::JoinHandle<()>, Error> {
+    pub fn spawn_servers(
+        cfg: &Config,
+        node: Node,
+        prometheus: Option<PrometheusHandle>,
+    ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let server_config = ::network::ServerConfig {
             addr: cfg.addr.clone(),
             keypair: cfg.keypair.clone(),
@@ -896,6 +924,7 @@ impl Network {
             rpc_timeouts,
             pubsub: Pubsub::new(),
             eth_address: cfg.eth_address.clone().map(Into::into),
+            prometheus,
         };
 
         let server = ::network::run_server(server_config, NoHandshake, handler.clone())?;
@@ -903,7 +932,7 @@ impl Network {
 
         Ok(async move { tokio::join!(server, api_server) }
             .map(drop)
-            .spawn("servers"))
+            .pipe(tokio::spawn))
     }
 
     pub(crate) fn get_peer(&self, node_id: PeerId) -> RemoteNode {
@@ -1122,10 +1151,10 @@ impl Pubsub {
                 match sub.tx.try_send(evt.clone()) {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        metrics::counter!("irn_pubsub_channel_full", 1)
+                        metrics::counter!("irn_pubsub_channel_full").increment(1)
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        metrics::counter!("irn_pubsub_channel_closed", 1)
+                        metrics::counter!("irn_pubsub_channel_closed").increment(1)
                     }
                 };
             }

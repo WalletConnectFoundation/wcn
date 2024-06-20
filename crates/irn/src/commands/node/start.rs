@@ -1,6 +1,7 @@
 use {
     super::{Error, Lockfile, LogFormat},
     irn_core::{cluster::replication::Strategy, PeerId},
+    metrics_exporter_prometheus::PrometheusBuilder,
     node::RocksdbDatabaseConfig,
     std::{
         collections::{HashMap, HashSet},
@@ -183,6 +184,10 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
 
     let rocksdb = create_rocksdb_config(&config.storage.rocksdb);
 
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(Error::Prometheus)?;
+
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public(), config.identity.group),
         keypair: config.identity.private_key,
@@ -218,9 +223,13 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         smart_contract: config.smart_contract.map(Into::into),
     };
 
-    node::run(node::signal::shutdown_listener()?, &config)
-        .await?
-        .await;
+    node::run(
+        node::signal::shutdown_listener()?,
+        &config,
+        Some(prometheus),
+    )
+    .await?
+    .await;
 
     Ok(())
 }

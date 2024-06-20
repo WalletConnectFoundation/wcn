@@ -1,10 +1,10 @@
 use {
+    irn::PrivateKey,
     irn_api::{
         auth::{Auth, PublicKey},
         client,
         Client,
         Key,
-        SigningKey,
     },
     std::{net::SocketAddr, str::FromStr, time::Duration},
 };
@@ -15,12 +15,6 @@ const MIN_TTL: Duration = Duration::from_secs(30);
 enum Error {
     #[error("Failed to initialize storage namespace")]
     Namespace,
-
-    #[error("Invalid key encoding: must be base64")]
-    KeyEncoding,
-
-    #[error("Invalid key length: must be 32 byte ed25519 private key")]
-    KeyLength,
 
     #[error("Invalid TTL: {0}")]
     Ttl(humantime::DurationError),
@@ -82,23 +76,6 @@ pub struct StorageCmd {
     /// attempting to print any other data. To store and retrieve binary, either
     /// hex or base64 encoding should be used.
     encoding: Encoding,
-}
-
-#[derive(Debug, Clone)]
-struct PrivateKey(SigningKey);
-
-impl FromStr for PrivateKey {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE64
-            .decode(s.as_bytes())
-            .map_err(|_| Error::KeyEncoding)?[..]
-            .try_into()
-            .map_err(|_| Error::KeyLength)?;
-
-        Ok(Self(irn_api::SigningKey::from_bytes(&bytes)))
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

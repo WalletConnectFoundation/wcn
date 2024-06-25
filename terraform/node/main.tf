@@ -149,9 +149,6 @@ locals {
       { name = "LOG_LEVEL", value = "${var.log_level}" },
       { name = "SECRET_KEY", value = "${var.secret_key}" },
       { name = "GROUP", value = var.group_id },
-      { name = "ROCKSDB_DIR", value = "/irn/rocksdb" },
-      { name = "ROCKSDB_NUM_BATCH_THREADS", value = "8" },
-      { name = "ROCKSDB_NUM_CALLBACK_THREADS", value = "32" },
       { name = "REQUEST_CONCURRENCY_LIMIT", value = "4500" },
       { name = "REQUEST_LIMITER_QUEUE", value = "65536" },
       { name = "NETWORK_CONNECTION_TIMEOUT", value = "1000" },
@@ -161,7 +158,20 @@ locals {
       { name = "RAFT_DIR", value = "/irn/raft" },
       { name = "IS_RAFT_MEMBER", value = "false" }, # Bootstrap nodes are members regardless of this setting
       { name = "MIGRATION_TEST", value = var.id == "c" ? "true" : "false" },
-      { name = "CACHE_BUSTER", value = var.cache_buster }
+      { name = "CACHE_BUSTER", value = var.cache_buster },
+      { name = "ROCKSDB_DIR", value = "/irn/rocksdb" },
+      { name = "ROCKSDB_NUM_BATCH_THREADS", value = tostring(var.rocksdb_num_batch_threads) },
+      { name = "ROCKSDB_NUM_CALLBACK_THREADS", value = tostring(var.rocksdb_num_callback_threads) },
+      { name = "ROCKSDB_MAX_SUBCOMPACTIONS", value = tostring(var.rocksdb_max_subcompactions) },
+      { name = "ROCKSDB_MAX_BACKGROUND_JOBS", value = tostring(var.rocksdb_max_background_jobs) },
+      { name = "ROCKSDB_RATELIMITER", value = tostring(var.rocksdb_ratelimiter) },
+      { name = "ROCKSDB_INCREASE_PARALLELISM", value = tostring(var.rocksdb_increase_parallelism) },
+      { name = "ROCKSDB_WRITE_BUFFER_SIZE", value = tostring(var.rocksdb_write_buffer_size) },
+      { name = "ROCKSDB_MAX_WRITE_BUFFER_NUMBER", value = tostring(var.rocksdb_max_write_buffer_number) },
+      { name = "ROCKSDB_MIN_WRITE_BUFFER_NUMBER_TO_MERGE", value = tostring(var.rocksdb_min_write_buffer_number_to_merge) },
+      { name = "ROCKSDB_BLOCK_CACHE_SIZE", value = tostring(var.rocksdb_block_cache_size) },
+      { name = "ROCKSDB_BLOCK_SIZE", value = tostring(var.rocksdb_block_size) },
+      { name = "ROCKSDB_ROW_CACHE_SIZE", value = tostring(var.rocksdb_row_cache_size) }
       ],
       length(var.bootstrap_nodes) != 0 ? [
         { name = "BOOTSTRAP_NODES", value = "${join(",", var.bootstrap_nodes)}" },

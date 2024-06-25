@@ -160,7 +160,7 @@ variable "prometheus_image" {
 
 variable "prometheus_admin_password" {
   type      = string
-  default   = null
+  default   = ""
   sensitive = true
 }
 

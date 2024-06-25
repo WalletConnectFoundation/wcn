@@ -211,3 +211,63 @@ variable "eth_address" {
   type    = string
   default = null
 }
+
+variable "rocksdb_num_batch_threads" {
+  type    = number
+  default = 8
+}
+
+variable "rocksdb_num_callback_threads" {
+  type    = number
+  default = 32
+}
+
+variable "rocksdb_max_subcompactions" {
+  type    = number
+  default = 8
+}
+
+variable "rocksdb_max_background_jobs" {
+  type    = number
+  default = 32
+}
+
+variable "rocksdb_ratelimiter" {
+  type    = number
+  default = 67108864
+}
+
+variable "rocksdb_increase_parallelism" {
+  type    = number
+  default = 16
+}
+
+variable "rocksdb_write_buffer_size" {
+  type    = number
+  default = 134217728
+}
+
+variable "rocksdb_max_write_buffer_number" {
+  type    = number
+  default = 8
+}
+
+variable "rocksdb_min_write_buffer_number_to_merge" {
+  type    = number
+  default = 2
+}
+
+variable "rocksdb_block_cache_size" {
+  type    = number
+  default = 4294967296
+}
+
+variable "rocksdb_block_size" {
+  type    = number
+  default = 4096
+}
+
+variable "rocksdb_row_cache_size" {
+  type    = number
+  default = 1073741824
+}

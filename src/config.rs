@@ -109,6 +109,8 @@ impl Config {
         let raw: RawConfig = envy::from_env()?;
         let rocksdb = create_rocksdb_config(&raw);
 
+        tracing::info!(config = ?rocksdb, "rocksdb configuration");
+
         let mut cfg = Config {
             id: PeerId::from_public_key(&raw.keypair.public(), raw.group),
             keypair: raw.keypair,

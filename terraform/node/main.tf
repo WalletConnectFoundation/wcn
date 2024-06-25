@@ -497,7 +497,7 @@ resource "aws_ecs_task_definition" "this" {
   container_definitions = jsonencode(concat(
     [local.irn_container_definition],
     # var.enable_otel_collector ? [local.otel_container_definition] : [],
-    var.enable_prometheus ? [local.prometheus_container_definition] : [],
+    # var.enable_prometheus ? [local.prometheus_container_definition] : [],
     var.enable_grafana ? [local.grafana_container_definition] : []
   ))
 

@@ -297,7 +297,7 @@ impl Default for RocksdbDatabaseConfig {
 
         Self {
             num_batch_threads: num_cores,
-            num_callback_threads: num_cores,
+            num_callback_threads: num_cores * 4,
             max_subcompactions: num_cores,
             max_background_jobs: num_cores * 4,
             ratelimiter: 64 * 1024 * 1024,

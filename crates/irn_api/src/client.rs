@@ -282,6 +282,7 @@ impl<K: Kind> Client<K> {
                 &[
                     future_name("irn_client_operation"),
                     metrics::Label::from_static_parts("op_name", Op::NAME),
+                    metrics::Label::from_static_parts("client_tag", K::METRICS_TAG),
                 ]
             },
         )

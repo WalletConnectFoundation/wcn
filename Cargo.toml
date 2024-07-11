@@ -72,7 +72,7 @@ api = { workspace = true }
 raft = { workspace = true }
 network = { workspace = true }
 relay_rocks = { workspace = true }
-wc = { workspace = true, features = ["alloc", "future", "future_metrics"] }
+wc = { workspace = true, features = ["alloc", "future", "future_metrics", "metrics"] }
 metrics = { workspace = true }
 time = { workspace = true }
 

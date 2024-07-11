@@ -88,6 +88,7 @@ impl test::Context for Context {
                     api_addr: idt.api_addr.clone(),
                     metrics_addr: String::new(),
                     rocksdb_dir: dir.join("rocksdb"),
+                    rocksdb_metrics: false,
                     rocksdb: RocksdbDatabaseConfig {
                         num_batch_threads: 1,
                         num_callback_threads: 1,

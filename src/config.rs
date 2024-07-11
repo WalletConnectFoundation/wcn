@@ -48,6 +48,9 @@ pub struct Config {
     /// Path to the rocksdb directory.
     pub rocksdb_dir: PathBuf,
 
+    /// Whether to enable rocksdb metrics.
+    pub rocksdb_metrics: bool,
+
     /// Performance-related RocksDB configuration.
     pub rocksdb: RocksdbDatabaseConfig,
 
@@ -122,6 +125,7 @@ impl Config {
             known_peers: known_peers_from_env()?,
             raft_dir: raw.raft_dir,
             rocksdb_dir: raw.rocksdb_dir,
+            rocksdb_metrics: raw.rocksdb_metrics.unwrap_or(false),
             rocksdb,
             replication_strategy: envy::prefixed("REPLICATION_STRATEGY_").from_env()?,
             request_concurrency_limit: raw.request_concurrency_limit.unwrap_or(10000),
@@ -195,6 +199,7 @@ struct RawConfig {
     bootstrap_nodes: Option<Vec<PeerId>>,
     raft_dir: PathBuf,
     rocksdb_dir: PathBuf,
+    rocksdb_metrics: Option<bool>,
     performance_tracker_dir: Option<PathBuf>,
 
     request_concurrency_limit: Option<usize>,

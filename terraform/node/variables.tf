@@ -212,7 +212,7 @@ variable "eth_address" {
   default = null
 }
 
-variable "rocksdb_metrics" {
+variable "rocksdb_enable_metrics" {
   type    = bool
   default = false
 }

@@ -71,7 +71,7 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
         // PhysicalCoreID() consumes 5-10% CPU, so for now rocksdb metrics are behind a
         // flag.
-        if cfg.rocksdb_metrics {
+        if cfg.rocksdb.enable_metrics {
             update_rocksdb_metrics(node.storage().db());
         }
 

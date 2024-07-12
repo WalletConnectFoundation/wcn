@@ -201,7 +201,6 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         known_peers,
         raft_dir: consensus_dir,
         rocksdb_dir: data_dir,
-        rocksdb_metrics: false,
         rocksdb,
         replication_strategy: Strategy::new(
             config.replication.factor,
@@ -310,5 +309,7 @@ fn create_rocksdb_config(raw: &super::config::Rocksdb) -> RocksdbDatabaseConfig 
                 );
             })
             .unwrap_or(defaults.row_cache_size),
+
+        ..Default::default()
     }
 }

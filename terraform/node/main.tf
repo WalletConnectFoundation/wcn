@@ -160,6 +160,7 @@ locals {
       { name = "MIGRATION_TEST", value = var.id == "c" ? "true" : "false" },
       { name = "CACHE_BUSTER", value = var.cache_buster },
       { name = "ROCKSDB_DIR", value = "/irn/rocksdb" },
+      { name = "ROCKSDB_ENABLE_METRICS", value = tostring(var.rocksdb_enable_metrics) },
       { name = "ROCKSDB_NUM_BATCH_THREADS", value = tostring(var.rocksdb_num_batch_threads) },
       { name = "ROCKSDB_NUM_CALLBACK_THREADS", value = tostring(var.rocksdb_num_callback_threads) },
       { name = "ROCKSDB_MAX_SUBCOMPACTIONS", value = tostring(var.rocksdb_max_subcompactions) },

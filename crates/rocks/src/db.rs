@@ -287,6 +287,10 @@ pub struct RocksdbDatabaseConfig {
 
     /// Sets global cache for table-level rows.
     pub row_cache_size: usize,
+
+    /// Whether to enable metrics. Note that this currently has some CPU
+    /// cost, so it's disabled by default.
+    pub enable_metrics: bool,
 }
 
 impl Default for RocksdbDatabaseConfig {
@@ -308,6 +312,7 @@ impl Default for RocksdbDatabaseConfig {
             block_cache_size: 4 * 1024 * 1024 * 1024,
             block_size: 4 * 1024,
             row_cache_size: 1024 * 1024 * 1024,
+            enable_metrics: false,
         }
     }
 }
@@ -381,6 +386,10 @@ fn create_db_opts(cfg: &RocksdbDatabaseConfig) -> rocksdb::Options {
     let mut opts = rocksdb::Options::default();
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);
+
+    if cfg.enable_metrics {
+        opts.enable_statistics();
+    }
 
     // Let RocksDB automatically adjust max bytes for each level. The goal is to
     // have a lower bound on size amplification.

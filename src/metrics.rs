@@ -18,6 +18,10 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
             _ => return,
         };
 
+        if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
+            tracing::warn!(?err, "failed to get jemalloc allocation stats");
+        }
+
         sys.refresh_cpu();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
@@ -65,10 +69,11 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         }
 
         // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
-        // PhysicalCoreID() consumes 5-10% CPU
-        // TODO: Consider fixing this & re-enabling the stats
-        let db = node.storage().db();
-        let _ = move || update_rocksdb_metrics(db);
+        // PhysicalCoreID() consumes 5-10% CPU, so for now rocksdb metrics are behind a
+        // flag.
+        if cfg.rocksdb.enable_metrics {
+            update_rocksdb_metrics(node.storage().db());
+        }
 
         std::thread::sleep(Duration::from_secs(15));
     }

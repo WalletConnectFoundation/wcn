@@ -90,9 +90,8 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
 
     let mut lockfile = Lockfile::new();
 
-    lockfile.acquire().map_err(|err| {
+    lockfile.acquire().inspect_err(|_| {
         tracing::error!(pid = ?lockfile.owner(), "working directory is locked by another instance");
-        err
     })?;
 
     let data_dir = PathBuf::from(&config.storage.data_dir);
@@ -310,5 +309,7 @@ fn create_rocksdb_config(raw: &super::config::Rocksdb) -> RocksdbDatabaseConfig 
                 );
             })
             .unwrap_or(defaults.row_cache_size),
+
+        ..Default::default()
     }
 }

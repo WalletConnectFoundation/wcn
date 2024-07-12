@@ -212,6 +212,11 @@ variable "eth_address" {
   default = null
 }
 
+variable "rocksdb_enable_metrics" {
+  type    = bool
+  default = false
+}
+
 variable "rocksdb_num_batch_threads" {
   type    = number
   default = 8

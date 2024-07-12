@@ -98,21 +98,22 @@ pub async fn run(
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
-    let (stake_validator, performance_tracker) = if let Some(c) = &cfg.smart_contract {
-        let rpc_url = &c.eth_rpc_url;
-        let addr = &c.config_address;
+    let (stake_validator, performance_tracker) = if let Some(cfg) = &cfg.smart_contract {
+        let rpc_url = &cfg.eth_rpc_url;
+        let addr = &cfg.config_address;
 
         let sv = contract::StakeValidator::new(rpc_url, addr)
             .await
             .map(Some)
             .map_err(Error::Contract)?;
 
-        let pt = if let Some(p) = &c.performance_reporter {
-            let dir = p.tracker_dir.clone();
+        let pt = if let Some(reporter) = &cfg.performance_reporter {
+            let dir = reporter.tracker_dir.clone();
 
-            let reporter = contract::new_performance_reporter(rpc_url, addr, &p.signer_mnemonic)
-                .await
-                .map_err(Error::Contract)?;
+            let reporter =
+                contract::new_performance_reporter(rpc_url, addr, &reporter.signer_mnemonic)
+                    .await
+                    .map_err(Error::Contract)?;
 
             performance::Tracker::new(
                 network.clone(),

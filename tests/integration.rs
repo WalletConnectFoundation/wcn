@@ -18,6 +18,7 @@ use {
         Consensus,
         Network,
         RocksdbDatabaseConfig,
+        TestStatusReporter,
     },
     itertools::Itertools,
     rand::Rng,
@@ -165,7 +166,10 @@ impl test::Context for Context {
     async fn pre_bootup(&mut self, idt: &test::NodeIdentity, node: &test::Node<Self>) {
         let node_ctx = self.nodes.get_mut(&idt.peer_id).unwrap();
         let _guard = node_ctx.runtime.enter();
-        Network::spawn_servers(&node_ctx.config, node.clone(), None).unwrap();
+
+        // TODO: remove the need for TestStatusReporter to be specified here
+        Network::spawn_servers::<TestStatusReporter>(&node_ctx.config, node.clone(), None, None)
+            .unwrap();
     }
 
     async fn post_shutdown(&mut self, node: &test::NodeHandle<Self>, reason: ShutdownReason) {

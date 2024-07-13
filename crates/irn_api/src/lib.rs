@@ -23,7 +23,15 @@ pub mod rpc {
         super::{Cardinality, Field, PubsubEventPayload, UnixTimestampSecs, Value},
         crate::Cursor,
         network::rpc,
+        serde::{Deserialize, Serialize},
     };
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct StatusResponse {
+        pub node_version: u64,
+        pub eth_address: Option<String>,
+        pub stake_amount: f64,
+    }
 
     type Rpc<const ID: rpc::Id, Op, Out> = rpc::Unary<ID, Op, super::Result<Out>>;
 
@@ -47,6 +55,7 @@ pub mod rpc {
     pub type Publish = rpc::Oneshot<{ rpc::id(b"publish") }, super::Publish>;
     pub type Subscribe =
         rpc::Streaming<{ rpc::id(b"subscribe") }, super::Subscribe, PubsubEventPayload>;
+    pub type Status = Rpc<{ rpc::id(b"status") }, super::Status, StatusResponse>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -250,6 +259,13 @@ pub struct HScan {
 
 impl Operation for HScan {
     const NAME: &'static str = "hscan";
+}
+
+#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
+pub struct Status;
+
+impl Operation for Status {
+    const NAME: &'static str = "status";
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,6 +1,29 @@
 version: "3.9"
 
 services:
+  anvil-node-1:
+    image: ghcr.io/foundry-rs/foundry
+    platform: linux/x86_64
+    profiles:
+      - oracle
+    command: anvil
+    container_name: anvil-node-1
+    environment:
+      - ANVIL_IP_ADDR=
+      - CHAIN_ID=31337
+      - MNEMONIC="test test test test test test test test test test test junk"
+      - API_KEY_OPTIMISTIC_ETHERSCAN="PLACEHOLDER"
+      - API_KEY_ETHERSCAN="PLACEHOLDER"
+      - REWARDS_PER_EPOCH=1000000000000000000000
+      - INITIAL_TREASURY_BALANCE=365000000000000000000000
+      - MAX_NODES=50
+      - MIN_STAKE_AMOUNT=100000000000000000000000
+    networks:
+      relay:
+        ipv4_address: 
+    ports:
+      - 8545:8545
+
   irn-node-1:
     image: irn:master
     build:
@@ -30,6 +53,11 @@ services:
       - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
       - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4//udp/3020/quic-v1
       - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4//udp/3030/quic-v1
+      - ETH_ADDRESS=0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+      - CONFIG_SMART_CONTRACT_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+      - SMART_CONTRACT_SIGNER_MNEMONIC="test test test test test test test test test test test junk"
+      - PERFORMANCE_TRACKER_DIR=/irn/performance-tracker
+      - ETH_RPC_URL=http://:8545
 
   irn-node-2:
     image: irn:master
@@ -55,6 +83,7 @@ services:
       - SECRET_KEY=aAz8/3kOkdukRmWks9/QCgiKBAm+3FnqxXE35U44t/c=
       - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1=/ip4//udp/3010/quic-v1
       - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4//udp/3030/quic-v1
+      - ETH_ADDRESS=0x70997970c51812dc3a010c7d01b50e0d17dc79c8
 
   irn-node-3:
     image: irn:master
@@ -80,6 +109,7 @@ services:
       - SECRET_KEY=Fn+92TJONBeB3ji6jd083wfPiRuZF5ScPSyhfCJy8C0=
       - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1=/ip4//udp/3010/quic-v1
       - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4//udp/3020/quic-v1
+      - ETH_ADDRESS=0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc
 
 networks:
   relay:

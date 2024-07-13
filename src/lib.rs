@@ -1,11 +1,16 @@
 use {
-    anyhow::Context as _,
+    anyhow::Context,
+    contract::{StatusData, StatusReporter},
     futures::{
         future::{FusedFuture, OptionFuture},
         FutureExt,
     },
     irn::ShutdownReason,
-    metrics_exporter_prometheus::PrometheusBuilder,
+    metrics_exporter_prometheus::{
+        BuildError as PrometheusBuildError,
+        PrometheusBuilder,
+        PrometheusHandle,
+    },
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
     tap::Pipe,
@@ -65,6 +70,12 @@ pub enum Error {
 
     #[error("Failed to initialize performance tracker: {0:?}")]
     PerformanceTracker(anyhow::Error),
+
+    #[error("Status reporter error: {0:?}")]
+    StatusReporter(anyhow::Error),
+
+    #[error("Failed to initialize prometheus: {0:?}")]
+    Prometheus(PrometheusBuildError),
 }
 
 #[global_allocator]
@@ -79,6 +90,10 @@ pub fn exec() -> anyhow::Result<()> {
         }
     }
 
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(Error::Prometheus)?;
+
     let cfg = Config::from_env().context("failed to parse config")?;
 
     tokio::runtime::Builder::new_multi_thread()
@@ -86,7 +101,9 @@ pub fn exec() -> anyhow::Result<()> {
         .build()
         .unwrap()
         .block_on(async move {
-            run(signal::shutdown_listener()?, &cfg).await?.await;
+            run(signal::shutdown_listener()?, &cfg, Some(prometheus))
+                .await?
+                .await;
             Ok(())
         })
 }
@@ -94,45 +111,57 @@ pub fn exec() -> anyhow::Result<()> {
 pub async fn run(
     shutdown_fut: impl Future<Output = ShutdownReason>,
     cfg: &Config,
+    prometheus: Option<PrometheusHandle>,
 ) -> Result<impl Future<Output = ()>, Error> {
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
-    let (stake_validator, performance_tracker) = if let Some(cfg) = &cfg.smart_contract {
-        let rpc_url = &cfg.eth_rpc_url;
-        let addr = &cfg.config_address;
+    let (stake_validator, performance_tracker, status_reporter) =
+        if let Some(c) = &cfg.smart_contract {
+            let rpc_url = &c.eth_rpc_url;
+            let addr = &c.config_address;
 
-        let sv = contract::StakeValidator::new(rpc_url, addr)
-            .await
-            .map(Some)
-            .map_err(Error::Contract)?;
+            let sv = contract::StakeValidator::new(rpc_url, addr)
+                .await
+                .map(Some)
+                .map_err(Error::Contract)?;
 
-        let pt = if let Some(reporter) = &cfg.performance_reporter {
-            let dir = reporter.tracker_dir.clone();
+            let pt = if let Some(reporter) = &c.performance_reporter {
+                let dir = reporter.tracker_dir.clone();
 
-            let reporter =
-                contract::new_performance_reporter(rpc_url, addr, &reporter.signer_mnemonic)
-                    .await
-                    .map_err(Error::Contract)?;
+                let reporter =
+                    contract::new_performance_reporter(rpc_url, addr, &reporter.signer_mnemonic)
+                        .await
+                        .map_err(Error::Contract)?;
 
-            performance::Tracker::new(
-                network.clone(),
-                reporter,
-                dir,
-                NODE_VERSION,
-                NODE_VERSION_UPDATE_DEADLINE,
-            )
-            .await
-            .map(Some)
-            .map_err(Error::PerformanceTracker)?
+                performance::Tracker::new(
+                    network.clone(),
+                    reporter,
+                    dir,
+                    NODE_VERSION,
+                    NODE_VERSION_UPDATE_DEADLINE,
+                )
+                .await
+                .map(Some)
+                .map_err(Error::PerformanceTracker)?
+            } else {
+                None
+            };
+
+            let sr = if let Some(eth_address) = &cfg.eth_address {
+                Some(
+                    contract::new_status_reporter(rpc_url, addr, eth_address)
+                        .await
+                        .map_err(Error::Contract)?,
+                )
+            } else {
+                None
+            };
+
+            (sv, pt, sr)
         } else {
-            None
+            (None, None, None)
         };
-
-        (sv, pt)
-    } else {
-        (None, None)
-    };
 
     let consensus = Consensus::new(cfg, network.clone(), stake_validator)
         .await
@@ -156,13 +185,14 @@ pub async fn run(
 
     let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
 
-    let prometheus = PrometheusBuilder::new()
-        .install_recorder()
-        .expect("install prometheus recorder");
+    Network::spawn_servers(cfg, node.clone(), prometheus.clone(), status_reporter)?;
 
-    Network::spawn_servers(cfg, node.clone(), Some(prometheus.clone()))?;
-
-    let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
+    // TODO: figure out a cleaner way to do this toggle
+    let metrics_srv = if let Some(prometheus) = prometheus {
+        metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn)
+    } else {
+        tokio::spawn(async { Ok(()) })
+    };
 
     let node_clone = node.clone();
     let node_fut = async move {
@@ -214,3 +244,17 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
+
+// TODO: consider moving to a test_utils module or exporting the trait once src
+// is within crates/
+// or removing this althogether if its only used to please the compiler
+#[derive(Debug, Clone)]
+pub struct TestStatusReporter;
+
+impl StatusReporter for TestStatusReporter {
+    async fn report_status(&self) -> anyhow::Result<StatusData> {
+        Ok(StatusData {
+            stake: Default::default(),
+        })
+    }
+}

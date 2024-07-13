@@ -329,4 +329,3 @@ resource "aws_ec2_instance_connect_endpoint" "this" {
   subnet_id          = module.node["eu-central-1a-1"].subnet_id
   preserve_client_ip = false
 }
-

@@ -1,7 +1,7 @@
 use {
     crate::{
         auth,
-        rpc,
+        rpc::{self, StatusResponse},
         Cursor,
         Field,
         HandshakeRequest,
@@ -406,6 +406,11 @@ impl<K: Kind> Client<K> {
         let op = super::HScan { key, count, cursor };
 
         self.exec(rpc::HScan::send_owned, op).await
+    }
+
+    pub async fn status(&self) -> Result<StatusResponse> {
+        let op = super::Status;
+        self.retry(rpc::Status::send_owned, op).await
     }
 
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {

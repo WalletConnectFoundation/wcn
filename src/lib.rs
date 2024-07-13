@@ -126,7 +126,7 @@ pub async fn run(
                 .map(Some)
                 .map_err(Error::Contract)?;
 
-            let pt = if let Some(reporter) = &cfg.performance_reporter {
+            let pt = if let Some(reporter) = &c.performance_reporter {
                 let dir = reporter.tracker_dir.clone();
 
                 let reporter =

@@ -8,7 +8,7 @@ publish = false
 workspace = true
 
 [dependencies]
-wc = { workspace = true, features = ["future_metrics"] }
+wc = { workspace = true, features = ["metrics"] }
 metrics = { workspace = true }
 
 thiserror = "1.0"

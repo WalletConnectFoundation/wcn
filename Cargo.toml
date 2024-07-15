@@ -48,7 +48,7 @@ testing = [
 workspace = true
 
 [workspace.dependencies]
-wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.12.0", default-features = false }
+wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.14.0", default-features = false }
 derive_more = { version = "=1.0.0-beta.6", features = [
     "display",
     "from",
@@ -72,7 +72,7 @@ api = { workspace = true }
 raft = { workspace = true }
 network = { workspace = true }
 relay_rocks = { workspace = true }
-wc = { workspace = true, features = ["alloc", "future", "future_metrics", "metrics"] }
+wc = { workspace = true, features = ["alloc", "future", "metrics"] }
 metrics = { workspace = true }
 time = { workspace = true }
 

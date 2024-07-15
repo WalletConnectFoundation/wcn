@@ -13,7 +13,7 @@ server = []
 
 [dependencies]
 network = { workspace = true }
-wc = { workspace = true, features = ["future_metrics", "future"] }
+wc = { workspace = true, features = ["metrics", "future"] }
 metrics = { workspace = true }
 
 async-stream = "0.3"

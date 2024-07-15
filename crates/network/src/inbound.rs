@@ -5,7 +5,7 @@ use {
     std::{convert::Infallible, io, net::SocketAddr},
     tap::Pipe,
     tokio::io::AsyncReadExt,
-    wc::future_metrics::{future_name, FutureExt},
+    wc::metrics::{future_metrics, FutureExt},
 };
 
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ pub(super) async fn handle_connections<H: Handshake>(
         }
         .handle(connecting)
         .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
-        .with_metrics(const { &future_name("quic_inbound_connection_handler") })
+        .with_metrics(future_metrics!("quic_inbound_connection_handler"))
         .pipe(tokio::spawn);
     }
 }
@@ -85,7 +85,7 @@ where
         loop {
             let (tx, mut rx) = conn
                 .accept_bi()
-                .with_metrics(const { &future_name("quic_accept_bi") })
+                .with_metrics(future_metrics!("quic_accept_bi"))
                 .await?;
 
             let local_peer = self.rpc_handler.clone();
@@ -99,7 +99,7 @@ where
                 let stream = BiDirectionalStream::new(tx, rx);
                 local_peer.handle_rpc(rpc_id, stream, &conn_info).await
             }
-            .with_metrics(const { &future_name("irn_network_inbound_stream_handler") })
+            .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
             .pipe(tokio::spawn);
         }
     }

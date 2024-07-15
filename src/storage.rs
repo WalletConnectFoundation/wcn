@@ -49,7 +49,7 @@ use {
     },
     serde::{Deserialize, Serialize},
     std::{fmt, fmt::Debug},
-    wc::future_metrics::FutureExt,
+    wc::metrics::{future_metrics, FutureExt},
 };
 
 pub type Key = Vec<u8>;
@@ -363,13 +363,6 @@ impl Storage {
     }
 }
 
-const fn metric_labels(op_name: &'static str) -> [metrics::Label; 2] {
-    [
-        wc::future_metrics::future_name("storage_operation"),
-        metrics::Label::from_static_parts("op_name", op_name),
-    ]
-}
-
 #[async_trait]
 impl irn::Storage<Positioned<()>> for Storage {
     type Ok = ();
@@ -389,7 +382,7 @@ impl irn::Storage<Positioned<Get>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.string
             .get(&key)
-            .with_labeled_metrics(const { &metric_labels("get") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
             .await
             .map_err(map_err)
     }
@@ -404,7 +397,7 @@ impl irn::Storage<Positioned<Set>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.string
             .set(&key, &op.inner.value, op.inner.expiration, op.inner.version)
-            .with_labeled_metrics(const { &metric_labels("set") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
             .await
             .map_err(map_err)
     }
@@ -426,7 +419,7 @@ impl irn::Storage<StoreHinted<Positioned<Set>>> for Storage {
 
         self.string
             .add_hinted_op(HintedOp::String(op), s.operation.position)
-            .with_labeled_metrics(const { &metric_labels("store_hinted_set") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_set"))
             .await
             .map_err(map_err)
     }
@@ -441,7 +434,7 @@ impl irn::Storage<Positioned<Del>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.string
             .del(&key)
-            .with_labeled_metrics(const { &metric_labels("del") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
             .await
             .map_err(map_err)
     }
@@ -459,7 +452,7 @@ impl irn::Storage<StoreHinted<Positioned<Del>>> for Storage {
 
         self.string
             .add_hinted_op(HintedOp::String(op), s.operation.position)
-            .with_labeled_metrics(const { &metric_labels("store_hinted_del") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_del"))
             .await
             .map_err(map_err)
     }
@@ -474,7 +467,7 @@ impl irn::Storage<Positioned<GetExp>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.string
             .exp(&key)
-            .with_labeled_metrics(const { &metric_labels("get_exp") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
             .await
             .map_err(map_err)
     }
@@ -489,7 +482,7 @@ impl irn::Storage<Positioned<SetExp>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.string
             .setexp(&key, op.inner.expiration, op.inner.version)
-            .with_labeled_metrics(const { &metric_labels("set_exp") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
             .await
             .map_err(map_err)
     }
@@ -510,7 +503,7 @@ impl irn::Storage<StoreHinted<Positioned<SetExp>>> for Storage {
 
         self.string
             .add_hinted_op(HintedOp::String(op), s.operation.position)
-            .with_labeled_metrics(const { &metric_labels("store_hinted_set_exp") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_set_exp"))
             .await
             .map_err(map_err)
     }
@@ -525,7 +518,7 @@ impl irn::Storage<Positioned<HGet>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hget(&key, &op.inner.field)
-            .with_labeled_metrics(const { &metric_labels("hget") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
             .await
             .map_err(map_err)
     }
@@ -541,7 +534,7 @@ impl irn::Storage<Positioned<HSet>> for Storage {
         let pair = Pair::new(op.inner.field, op.inner.value);
         self.map
             .hset(&key, &pair, op.inner.expiration, op.inner.version)
-            .with_labeled_metrics(const { &metric_labels("hset") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
             .await
             .map_err(map_err)
     }
@@ -564,7 +557,7 @@ impl irn::Storage<StoreHinted<Positioned<HSet>>> for Storage {
 
         self.map
             .add_hinted_op(HintedOp::Map(op), s.operation.position)
-            .with_labeled_metrics(const { &metric_labels("store_hinted_hset") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_hset"))
             .await
             .map_err(map_err)
     }
@@ -579,7 +572,7 @@ impl irn::Storage<Positioned<HDel>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hdel(&key, &op.inner.field)
-            .with_labeled_metrics(const { &metric_labels("hdel") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
             .await
             .map_err(map_err)
     }
@@ -599,7 +592,7 @@ impl irn::Storage<StoreHinted<Positioned<HDel>>> for Storage {
 
         self.map
             .add_hinted_op(HintedOp::Map(op), s.operation.position)
-            .with_labeled_metrics(const { &metric_labels("store_hinted_hdel") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_hdel"))
             .await
             .map_err(map_err)
     }
@@ -614,7 +607,7 @@ impl irn::Storage<Positioned<HCard>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hcard(&key)
-            .with_labeled_metrics(const { &metric_labels("hcard") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
             .await
             .map(|card| Cardinality(card as u64))
             .map_err(map_err)
@@ -630,7 +623,7 @@ impl irn::Storage<Positioned<HGetExp>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hexp(&key, &op.inner.field)
-            .with_labeled_metrics(const { &metric_labels("hget_exp") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
             .await
             .map_err(map_err)
     }
@@ -645,7 +638,7 @@ impl irn::Storage<Positioned<HSetExp>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hsetexp(&key, &op.inner.field, op.inner.expiration, op.inner.version)
-            .with_labeled_metrics(const { &metric_labels("hset_exp") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
             .await
             .map_err(map_err)
     }
@@ -667,7 +660,9 @@ impl irn::Storage<StoreHinted<Positioned<HSetExp>>> for Storage {
 
         self.map
             .add_hinted_op(HintedOp::Map(op), s.operation.position)
-            .with_labeled_metrics(const { &metric_labels("store_hinted_hset_exp") })
+            .with_metrics(
+                future_metrics!("storage_operation", "op_name" => "store_hinted_hset_exp"),
+            )
             .await
             .map_err(map_err)
     }
@@ -682,7 +677,7 @@ impl irn::Storage<Positioned<HFields>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hfields(&key)
-            .with_labeled_metrics(const { &metric_labels("hfields") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hfields"))
             .await
             .map_err(map_err)
     }
@@ -697,7 +692,7 @@ impl irn::Storage<Positioned<HVals>> for Storage {
         let key = GenericKey::new(op.position, op.inner.key);
         self.map
             .hvals(&key)
-            .with_labeled_metrics(const { &metric_labels("hvals") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hvals"))
             .await
             .map_err(map_err)
     }
@@ -713,7 +708,7 @@ impl irn::Storage<Positioned<HScan>> for Storage {
         let opts = ScanOptions::new(op.inner.count as usize).with_cursor(op.inner.cursor);
         self.map
             .hscan(&key, opts)
-            .with_labeled_metrics(const { &metric_labels("hscan") })
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
             .await
             .map(|res| Page {
                 items: res.items,
@@ -768,7 +763,9 @@ impl irn::Storage<CommitHintedOperations> for Storage {
                     tokio::task::spawn_blocking(move || {
                         db.commit_hinted_ops(r.start, r.end).map_err(map_err)
                     })
-                    .with_labeled_metrics(const { &metric_labels("commit_hinted_ops") })
+                    .with_metrics(
+                        future_metrics!("storage_operation", "op_name" => "commit_hinted_ops"),
+                    )
                     .await
                     .map_err(|e| StorageError::Other(format!("Join spawn_blocking: {e:?}")))?
                 }

@@ -35,7 +35,7 @@ use {
         time::Duration,
     },
     tap::{Pipe, Tap},
-    wc::future_metrics::{future_name, FutureExt as _},
+    wc::metrics::{future_metrics, FutureExt as _, StringLabel},
 };
 
 #[derive(Clone)]
@@ -224,7 +224,7 @@ impl<K: Kind> Client<K> {
             let rpc = rpc.clone();
             let op = op.clone();
             async move { s.retry(rpc, op).await }
-                .with_metrics(const { &future_name("irn_api_shadowing") })
+                .with_metrics(future_metrics!("irn_api_shadowing"))
                 .pipe(tokio::spawn);
         }
 
@@ -277,15 +277,11 @@ impl<K: Kind> Client<K> {
                 RetryPolicy::Delay(delay)
             }
         })
-        .with_labeled_metrics(
-            const {
-                &[
-                    future_name("irn_client_operation"),
-                    metrics::Label::from_static_parts("op_name", Op::NAME),
-                    metrics::Label::from_static_parts("client_tag", K::METRICS_TAG),
-                ]
-            },
-        )
+        .with_metrics(future_metrics!(
+            "irn_client_operation",
+            StringLabel<"op_name"> => Op::NAME,
+            StringLabel<"client_tag"> => K::METRICS_TAG
+        ))
         .await
         .tap(|res| Self::meter_operation_result::<Op, _>(res))
     }

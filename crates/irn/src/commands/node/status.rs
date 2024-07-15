@@ -14,15 +14,6 @@ pub struct StatusCmd {
     private_key: PrivateKey,
 }
 
-#[derive(Debug, thiserror::Error)]
-enum Error {
-    #[error("Failed to run health check: {0}")]
-    Client(#[from] client::Error),
-
-    #[error("Failed to write data to stdout")]
-    Io(#[from] std::io::Error),
-}
-
 struct StatusClient {
     client: Client,
 }

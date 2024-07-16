@@ -140,7 +140,7 @@ fn update_cgroup_stats() {
     for line in data.lines() {
         let mut parts = line.split(' ');
 
-        let (Some(name), Some(val), None) = (parts.next(), parts.next(), parts.next()) else {
+        let (Some(stat), Some(val), None) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
 
@@ -148,7 +148,7 @@ fn update_cgroup_stats() {
             continue;
         };
 
-        metrics::gauge!(format!("irn_memory_stat_{name}")).set(val);
+        metrics::gauge!("irn_memory_stat", "stat" => stat.to_owned()).set(val);
     }
 }
 

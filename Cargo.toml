@@ -108,7 +108,8 @@ tracing-subscriber = { version = "0.3", features = [
     "json",
 ] }
 tap = "1.0"
-sysinfo = "0.29.10"
+sysinfo = "0.29"
+proc-mounts = "0.3"
 libp2p = { version = "0.53", features = ["serde", "tokio"] }
 parking_lot = "0.12"
 nix = { version = "0.28", default-features = false, features = ["signal"] }

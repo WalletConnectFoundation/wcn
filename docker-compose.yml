@@ -53,11 +53,6 @@ services:
       - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
       - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4//udp/3020/quic-v1
       - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4//udp/3030/quic-v1
-      - ETH_ADDRESS=0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
-      - CONFIG_SMART_CONTRACT_ADDRESS="0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
-      - SMART_CONTRACT_SIGNER_MNEMONIC="test test test test test test test test test test test junk"
-      - PERFORMANCE_TRACKER_DIR=/irn/performance-tracker
-      - ETH_RPC_URL=http://:8545
 
   irn-node-2:
     image: irn:master

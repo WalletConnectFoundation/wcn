@@ -3691,6 +3691,7 @@ dependencies = [
  "nix 0.28.0",
  "once_cell",
  "parking_lot",
+ "proc-mounts",
  "raft",
  "rand 0.8.5",
  "relay_rocks",
@@ -4863,6 +4864,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "partition-identity"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fa925f9becb532d758b0014b472c576869910929cf4c3f8054b386f19ab9e21"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5115,6 +5125,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e835ff2298f5721608eb1a980ecaee1aef2c132bf95ecc026a11b7bf3c01c02e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-mounts"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d652f8435d0ab70bf4f3590a6a851d59604831a458086541b95238cc51ffcf2"
+dependencies = [
+ "partition-identity",
 ]
 
 [[package]]

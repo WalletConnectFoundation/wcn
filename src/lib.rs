@@ -37,11 +37,11 @@ mod performance;
 
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
-const NODE_VERSION: u64 = 2;
+const NODE_VERSION: u64 = 3;
 
 /// Deadline after which operator nodes that haven't switched to the updated
 /// [`NODE_VERSION`] are going to receive reduced rewards.
-const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-06-19 12:00:00 -0);
+const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-07-25 12:00:00 -0);
 
 pub type Node = irn::Node<Consensus, Network, Storage>;
 

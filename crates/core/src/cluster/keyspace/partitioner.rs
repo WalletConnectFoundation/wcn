@@ -2,7 +2,7 @@ use {
     super::KeyPosition,
     std::{
         fmt::Debug,
-        hash::{BuildHasher, Hash},
+        hash::{BuildHasher, Hash, Hasher},
     },
     xxhash_rust::xxh3::Xxh3Builder,
 };
@@ -43,6 +43,7 @@ pub trait Partitioner {
 #[derive(Clone)]
 pub struct Xxh3Partitioner {
     hash_builder: Xxh3Builder,
+    // hash_builder: std::hash::DefaultHasher,
 }
 
 impl Default for Xxh3Partitioner {
@@ -61,11 +62,15 @@ impl Xxh3Partitioner {
     pub const fn new() -> Self {
         Self {
             hash_builder: Xxh3Builder::new(),
+            // hash_builder: std::hash::DefaultHasher::new(),
         }
     }
 
     pub fn hash<K: PartitionerKey>(&self, key: &K, seed: u64) -> KeyPosition {
         self.hash_builder.with_seed(seed).hash_one(key)
+        // let mut hasher = self.hash_builder.clone();
+        // key.hash(&mut hasher);
+        // hasher.finish()
     }
 }
 

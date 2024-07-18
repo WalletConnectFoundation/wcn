@@ -1,4 +1,9 @@
-use crate::cluster::replication::Strategy;
+use {
+    crate::cluster::replication::Strategy,
+    itertools::Itertools,
+    rand::Rng,
+    std::collections::HashSet,
+};
 
 #[cfg(test)]
 mod tests;
@@ -280,6 +285,19 @@ impl<N: RingNode> HashRing<N> {
         self.primary_token(key).map(|token| *token.1)
     }
 
+    pub fn natural_replicas(&self, pos: RingPosition) -> Vec<N> {
+        let mut nodes: Vec<N> = Vec::with_capacity(3);
+
+        for (_, &node) in self.tokens(pos.wrapping_add(1), Clockwise) {
+            nodes.push(node);
+            if nodes.len() >= 3 {
+                break;
+            }
+        }
+
+        nodes
+    }
+
     /// Returns the token of a node that owns a range for the given key.
     ///
     /// Double hashing of multiple virtual nodes (per node) is used to avoid
@@ -437,4 +455,53 @@ impl keyspace::Keyspace for Keyspace {
             .with_leaving_peers(leaving_peers)
             .ranges()
     }
+}
+
+#[test]
+fn test_variance() {
+    use {core::panic, rand::random, std::ops::Add};
+
+    fn case(nodes: usize, tokens_per_node: usize) {
+        let mut ring = HashRing::new(64);
+        for _ in 0..nodes {
+            ring.add_node(PeerId::random()).unwrap();
+        }
+
+        let mut hits_per_node = HashMap::<PeerId, u64>::new();
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..10_000_000 {
+            let peer_id = ring.primary_node(&rng.gen::<u64>()).unwrap();
+
+            *hits_per_node.entry(peer_id).or_default() += 1;
+        }
+
+        let distr = hits_per_node.values().collect_vec();
+
+        let mut keys_per_node = HashMap::<u16, u64>::new();
+
+        let mut prev_key = 0;
+        for (key, node_id) in &ring.tokens {
+            assert!(prev_key < *key);
+
+            *keys_per_node.entry(*node_id).or_default() += key - prev_key;
+            prev_key = *key;
+        }
+
+        let key_distr = keys_per_node
+            .values()
+            .map(|&n| n as f64 / u64::MAX as f64)
+            .collect_vec();
+
+        println!(
+            "nodes: {nodes}, tokens: {tokens_per_node}, distribution: {distr:?}, \
+             key_distribution: {key_distr:?}"
+        );
+    }
+
+    for _ in 0..10 {
+        case(12, 1024);
+    }
+
+    panic!();
 }

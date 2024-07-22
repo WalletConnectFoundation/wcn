@@ -6114,10 +6114,12 @@ dependencies = [
 name = "sharding"
 version = "0.1.0"
 dependencies = [
+ "itertools 0.11.0",
  "rand 0.8.5",
  "stacker",
  "tracing",
  "tracing-subscriber",
+ "xxhash-rust",
 ]
 
 [[package]]

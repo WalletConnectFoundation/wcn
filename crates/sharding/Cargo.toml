@@ -16,6 +16,9 @@ tracing-subscriber = "0.3"
 
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 
+indexmap = "2"
+thiserror = "1"
+
 [lints]
 workspace = true
 

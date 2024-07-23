@@ -3,10 +3,12 @@ use {
     indexmap::IndexSet,
     itertools::Itertools,
     std::{
+        array,
         char::MAX,
         collections::{BTreeSet, HashMap, HashSet},
         default,
         hash::{DefaultHasher, Hash, Hasher, SipHasher},
+        iter,
         marker::PhantomData,
         ops::{Range, RangeInclusive},
     },
@@ -57,10 +59,14 @@ struct Shard<const RF: usize> {
 
 impl<const RF: usize, N> Keyspace<RF, N> {
     /// Creates a new [`Keyspace`] with the required amount of nodes.
-    pub fn new(nodes: [N; RF]) -> Self
+    pub fn new(nodes: [N; RF]) -> Result<Self, KeyspaceCreationError>
     where
         N: Hash + Eq,
     {
+        if RF == 0 || RF > MAX_NODES {
+            return Err(KeyspaceCreationError::InvalidReplicationFactor { max: MAX_NODES });
+        }
+
         let mut replicas = [0; RF];
         for idx in 0..nodes.len() {
             replicas[idx] = idx;
@@ -68,10 +74,10 @@ impl<const RF: usize, N> Keyspace<RF, N> {
 
         let n_shards = u16::MAX as usize + 1;
 
-        Self {
+        Ok(Self {
             nodes: nodes.into_iter().collect(),
             shards: (0..n_shards).map(|_| Shard { replicas }).collect(),
-        }
+        })
     }
 
     /// Returns an [`Iterator`] of replicas responsible for the given
@@ -84,7 +90,7 @@ impl<const RF: usize, N> Keyspace<RF, N> {
     }
 
     /// Starts a [`Resharding`] process.
-    pub fn reshard<H>(self, hasher_factory: H) -> Resharding<RF, N, H, DefaultStrategy>
+    pub fn reshard<H>(&mut self, hasher_factory: H) -> Resharding<'_, RF, N, H>
     where
         H: HasherFactory,
     {
@@ -92,6 +98,8 @@ impl<const RF: usize, N> Keyspace<RF, N> {
             keyspace: self,
             hasher_factory,
             strategy: DefaultStrategy,
+            add_nodes: iter::empty(),
+            remove_nodes: iter::empty(),
         }
     }
 
@@ -145,19 +153,22 @@ where
 
 /// Sharding strategy.
 pub trait Strategy<N> {
-    /// Indicates whether the specified node is suitable to be used as a replica
-    /// for the specified shard.
+    /// Indicates whether the specified node is preferred to be used as a
+    /// replica for the specified shard.
+    ///
+    /// The sharding algorithm tries to use only preferred ones, unless the
+    /// [`Strategy`] specifies unsufficient amount of them.
     ///
     /// This function can only be called once per every combination of
     /// `shard_idx` and `node_id`.
-    fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool;
+    fn is_preferred_replica(&mut self, shard_idx: usize, node_id: &N) -> bool;
 }
 
 impl<F, N> Strategy<N> for F
 where
     F: FnMut(usize, &N) -> bool,
 {
-    fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool {
+    fn is_preferred_replica(&mut self, shard_idx: usize, node_id: &N) -> bool {
         (self)(shard_idx, node_id)
     }
 }
@@ -167,25 +178,36 @@ where
 pub struct DefaultStrategy;
 
 impl<N> Strategy<N> for DefaultStrategy {
-    fn is_suitable_replica(&mut self, _shard_idx: usize, _node_id: &N) -> bool {
+    fn is_preferred_replica(&mut self, _shard_idx: usize, _node_id: &N) -> bool {
         true
     }
 }
 
 /// [`Keyspace`] resharding process.
 #[must_use]
-pub struct Resharding<const RF: usize, N, H, S> {
-    keyspace: Keyspace<RF, N>,
+pub struct Resharding<
+    'a,
+    const RF: usize,
+    N,
+    H,
+    S = DefaultStrategy,
+    A = iter::Empty<N>,
+    R = iter::Empty<&'a N>,
+> {
+    keyspace: &'a mut Keyspace<RF, N>,
     hasher_factory: H,
     strategy: S,
+
+    add_nodes: A,
+    remove_nodes: R,
 }
 
-impl<const RF: usize, N, H, S> Resharding<RF, N, H, S>
+impl<'a, const RF: usize, N, H, S, A, R> Resharding<'a, RF, N, H, S, A, R>
 where
     N: Eq + Hash,
 {
     /// Specifies a sharding [`Strategy`] to use.
-    pub fn with_strategy<NewS>(self, strategy: NewS) -> Resharding<RF, N, H, NewS>
+    pub fn with_strategy<NewS>(self, strategy: NewS) -> Resharding<'a, RF, N, H, NewS, A, R>
     where
         NewS: Strategy<N>,
     {
@@ -193,45 +215,64 @@ where
             keyspace: self.keyspace,
             hasher_factory: self.hasher_factory,
             strategy,
+            add_nodes: self.add_nodes,
+            remove_nodes: self.remove_nodes,
         }
     }
 
-    /// Adds a node to the [`Keyspace`].
-    pub fn add_node(&mut self, id: N) -> Result<&mut Self, AddNodeError> {
+    /// Adds a node to the  [`Iterator`] of nodes to be added to the
+    /// [`Keyspace`].
+    pub fn add_node(self, id: N) -> Resharding<'a, RF, N, H, S, impl Iterator<Item = N>, R>
+    where
+        A: Iterator<Item = N>,
+    {
         self.add_nodes([id])
     }
 
-    /// Adds multiple nodes to the [`Keyspace`].
-    ///
-    /// This function won't try to add any nodes if the resulting number of
-    /// nodes is going to get over the allowed limit.
+    /// Adds multiple nodes to the  [`Iterator`] of nodes to be added to the
+    /// [`Keyspace`].
     pub fn add_nodes(
-        &mut self,
+        self,
         ids: impl IntoIterator<Item = N>,
-    ) -> Result<&mut Self, AddNodeError> {
-        // if self.keyspace.nodes.len() == MAX_NODES {
-        //     return Err(AddNodeError::TooManyNodes(MAX_NODES));
-        // }
+    ) -> Resharding<'a, RF, N, H, S, impl Iterator<Item = N>, R>
+    where
+        A: Iterator<Item = N>,
+    {
+        Resharding {
+            keyspace: self.keyspace,
+            hasher_factory: self.hasher_factory,
+            strategy: self.strategy,
+            add_nodes: self.add_nodes.chain(ids),
+            remove_nodes: self.remove_nodes,
+        }
+    }
 
+    /// Adds a node to the  [`Iterator`] of nodes to be removed from the
+    /// [`Keyspace`].
+    pub fn remove_node(self, id: &N) -> Resharding<'a, RF, N, H, S, impl Iterator<Item = &'a N>>
+    where
+        A: Iterator<Item = N>,
+    {
+        self.remove_nodes([id])
+    }
+
+    /// Adds multiple nodes to the [`Keyspace`].
+    pub fn remove_nodes(
+        &mut self,
+        ids: impl IntoIterator<Item = impl AsRef<N>>,
+    ) -> Result<&mut Self, RemoveNodeError> {
         for id in ids {
-            self.keyspace.nodes.insert(id);
+            if self.keyspace.nodes.len() == RF {
+                return Err(RemoveNodeError::NotEnoughNodes(RF));
+            }
+            self.keyspace.nodes.shift_remove(id.as_ref());
         }
 
         Ok(self)
     }
 
-    pub fn remove_node(&mut self, id: impl AsRef<N>) -> &mut Self {
-        self.remove_nodes([id])
-    }
-
-    pub fn remove_nodes(&mut self, ids: impl IntoIterator<Item = impl AsRef<N>>) -> &mut Self {
-        for id in ids {
-            self.keyspace.nodes.shift_remove(id.as_ref());
-        }
-        self
-    }
-
-    pub fn finish(&mut self) -> Result<(), ReshardingError>
+    /// Finishes resharding by reassigning shard replicas.
+    pub fn finish(mut self) -> Result<Keyspace<RF, N>, ReshardingError>
     where
         N: Ord,
         H: HasherFactory,
@@ -257,7 +298,7 @@ where
 
                     let (_, node_id, node_idx) = node_ranking[cursor];
 
-                    if self.strategy.is_suitable_replica(shard_idx, node_id) {
+                    if self.strategy.is_preferred_replica(shard_idx, node_id) {
                         *replica_idx = node_idx;
                         cursor += 1;
                         break;
@@ -266,7 +307,7 @@ where
             }
         }
 
-        Ok(())
+        Ok(self.keyspace)
     }
 }
 
@@ -323,23 +364,28 @@ fn test_suite() {}
 #[test]
 fn t() {
     let nodes = [1, 2, 3];
-    let mut keyspace = Keyspace::new(nodes);
+    let mut keyspace = Some(Keyspace::new(nodes).unwrap());
 
     for id in 4..=16 {
         // let snapshot = keyspace.clone();
 
-        keyspace
+        let new_keyspace = keyspace
+            .take()
+            .unwrap()
             .reshard(|| DefaultHasher::new())
             .add_node(id)
+            .unwrap()
             .finish()
             .unwrap();
 
-        keyspace.assert_variance(0.03);
+        new_keyspace.assert_variance(0.03);
+        keyspace = Some(new_keyspace);
     }
 
     keyspace
         .reshard(|| DefaultHasher::new())
         .add_nodes(17..256)
+        .unwrap()
         .finish()
         .unwrap();
     keyspace.assert_variance(0.13);

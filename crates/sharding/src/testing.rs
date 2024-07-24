@@ -33,7 +33,7 @@ where
         let max_deviation = shards_per_node
             .values()
             .copied()
-            .map(|n| (mean as isize - n as isize).abs() as usize)
+            .map(|n| (mean as isize - n as isize).unsigned_abs())
             .max()
             .unwrap();
         let coefficient = max_deviation as f64 / mean as f64;
@@ -104,7 +104,7 @@ where
 /// Not every cluster size needs to be specified, one may specify
 /// the expected variance as a range:
 /// ```
-/// sharding::ExpectedDistributionVariance(vec![(4, 0.01), (8, 0.02), (256, 0.1)]);
+/// sharding::testing::ExpectedDistributionVariance(vec![(4, 0.01), (8, 0.02), (256, 0.1)]);
 /// ```
 /// This would mean that for a cluster size of up to 4 nodes the coefficient is
 /// `0.01`, for a cluster size in the range of `5..8` the coefficient is `0.02`
@@ -265,6 +265,4 @@ pub fn keyspace_test_suite<const RF: usize, NodeId, S>(
         new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
         keyspace = new_keyspace;
     }
-
-    panic!()
 }

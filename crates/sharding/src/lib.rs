@@ -201,9 +201,9 @@ pub enum Error {
 #[test]
 fn test_keyspace() {
     testing::keyspace_test_suite::<3, _, _>(
-        || std::hash::DefaultHasher::new(),
+        std::hash::DefaultHasher::new,
         || DefaultStrategy,
-        || rand::random::<usize>(),
+        rand::random::<usize>,
         testing::ExpectedDistributionVariance(vec![
             (16, 0.03),
             (32, 0.05),

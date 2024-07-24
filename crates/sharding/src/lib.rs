@@ -58,77 +58,83 @@ struct Shard<const RF: usize> {
 }
 
 impl<const RF: usize, N> Keyspace<RF, N> {
-    /// Creates a new [`Keyspace`] with the required amount of nodes.
-    pub fn new(nodes: [N; RF]) -> Result<Self, KeyspaceCreationError>
+    /// Creates a new [`Keyspace`].
+    pub fn new(
+        nodes: impl IntoIterator<Item = N>,
+        hasher_factory: impl HasherFactory,
+        mut sharding_strategy: impl Strategy<N>,
+    ) -> Result<Self, Error>
     where
-        N: Hash + Eq,
+        N: Hash + Eq + Ord,
     {
         if RF == 0 || RF > MAX_NODES {
-            return Err(KeyspaceCreationError::InvalidReplicationFactor { max: MAX_NODES });
+            return Err(Error::InvalidReplicationFactor {
+                min: 1,
+                max: MAX_NODES,
+            });
         }
 
-        let mut replicas = [0; RF];
-        for idx in 0..nodes.len() {
-            replicas[idx] = idx;
+        let nodes: IndexSet<_> = nodes.into_iter().collect();
+        let nodes_count = nodes.len();
+        if nodes_count < RF || nodes_count > MAX_NODES {
+            return Err(Error::InvalidNodesCount {
+                min: RF,
+                max: MAX_NODES,
+            });
         }
 
+        let replicas = [0; RF];
         let n_shards = u16::MAX as usize + 1;
+        let mut shards: Vec<_> = (0..n_shards).map(|_| Shard { replicas }).collect();
 
-        Ok(Self {
-            nodes: nodes.into_iter().collect(),
-            shards: (0..n_shards).map(|_| Shard { replicas }).collect(),
-        })
+        let mut node_ranking: Vec<_> = nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, id)| (0, id, idx))
+            .collect();
+
+        for (shard_idx, shard) in shards.iter_mut().enumerate() {
+            for (score, node_id, _) in &mut node_ranking {
+                let mut hasher = hasher_factory.new_hasher();
+                (node_id, shard_idx).hash(&mut hasher);
+                *score = hasher.finish();
+            }
+            node_ranking.sort_unstable();
+
+            let mut cursor = 0;
+            for replica_idx in &mut shard.replicas {
+                loop {
+                    if cursor == node_ranking.len() {
+                        return Err(Error::IncompleteReplicaSet);
+                    }
+
+                    let (_, node_id, node_idx) = node_ranking[cursor];
+
+                    if sharding_strategy.is_suitable_replica(shard_idx, node_id) {
+                        *replica_idx = node_idx;
+                        cursor += 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(Self { nodes, shards })
     }
 
-    /// Returns an [`Iterator`] of replicas responsible for the given
-    /// [`ShardId`].
-    pub fn replicas(&self, shard_id: ShardId) -> impl Iterator<Item = &N> {
+    /// Returns an [`Iterator`] of replicas responsible for the shard with the
+    /// given [`ShardId`].
+    pub fn shard_replicas(&self, shard_id: ShardId) -> impl Iterator<Item = &N> {
         self.shards[shard_id.0 as usize]
             .replicas
             .iter()
             .map(|idx| &self.nodes[*idx])
     }
 
-    /// Starts a [`Resharding`] process.
-    pub fn reshard<H>(&mut self, hasher_factory: H) -> Resharding<'_, RF, N, H>
-    where
-        H: HasherFactory,
-    {
-        Resharding {
-            keyspace: self,
-            hasher_factory,
-            strategy: DefaultStrategy,
-            add_nodes: iter::empty(),
-            remove_nodes: iter::empty(),
-        }
+    /// Returns an [`Iterator`] of nodes in the [`Keyspace`].
+    pub fn nodes(&self) -> impl Iterator<Item = &N> {
+        self.nodes.iter()
     }
-
-    fn assert_variance(&self, max_deviasion_coefficient: f64) {
-        let mut shards_per_node = HashMap::<usize, usize>::new();
-
-        for shard in &self.shards {
-            for node_idx in shard.replicas.iter() {
-                *shards_per_node.entry(*node_idx).or_default() += 1;
-            }
-        }
-
-        let mean = self.shards.len() * RF / self.nodes.len();
-        let max_deviation = shards_per_node
-            .values()
-            .copied()
-            .map(|n| (mean as isize - n as isize).abs() as usize)
-            .max()
-            .unwrap();
-        let coefficient = max_deviation as f64 / mean as f64;
-
-        dbg!(mean, max_deviation, coefficient);
-        assert!(coefficient <= max_deviasion_coefficient);
-    }
-
-    // fn assert_data_movement(&self, old: &Self) {
-    //     let to_move = shards_to_migrate(old, self);
-    //     dbg!(to_move);
-    // }
 }
 
 /// [`Hasher`] factory.
@@ -153,242 +159,118 @@ where
 
 /// Sharding strategy.
 pub trait Strategy<N> {
-    /// Indicates whether the specified node is preferred to be used as a
+    /// Indicates whether the specified node is suitable to be used as a
     /// replica for the specified shard.
-    ///
-    /// The sharding algorithm tries to use only preferred ones, unless the
-    /// [`Strategy`] specifies unsufficient amount of them.
     ///
     /// This function can only be called once per every combination of
     /// `shard_idx` and `node_id`.
-    fn is_preferred_replica(&mut self, shard_idx: usize, node_id: &N) -> bool;
+    fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool;
 }
 
 impl<F, N> Strategy<N> for F
 where
     F: FnMut(usize, &N) -> bool,
 {
-    fn is_preferred_replica(&mut self, shard_idx: usize, node_id: &N) -> bool {
+    fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool {
         (self)(shard_idx, node_id)
     }
 }
 
 /// Default sharding [`Strategy`] that considers every node to be equally
 /// suitable to be a replica for any shard.
+#[derive(Clone, Copy, Debug)]
 pub struct DefaultStrategy;
 
 impl<N> Strategy<N> for DefaultStrategy {
-    fn is_preferred_replica(&mut self, _shard_idx: usize, _node_id: &N) -> bool {
+    fn is_suitable_replica(&mut self, _shard_idx: usize, _node_id: &N) -> bool {
         true
-    }
-}
-
-/// [`Keyspace`] resharding process.
-#[must_use]
-pub struct Resharding<
-    'a,
-    const RF: usize,
-    N,
-    H,
-    S = DefaultStrategy,
-    A = iter::Empty<N>,
-    R = iter::Empty<&'a N>,
-> {
-    keyspace: &'a mut Keyspace<RF, N>,
-    hasher_factory: H,
-    strategy: S,
-
-    add_nodes: A,
-    remove_nodes: R,
-}
-
-impl<'a, const RF: usize, N, H, S, A, R> Resharding<'a, RF, N, H, S, A, R>
-where
-    N: Eq + Hash,
-{
-    /// Specifies a sharding [`Strategy`] to use.
-    pub fn with_strategy<NewS>(self, strategy: NewS) -> Resharding<'a, RF, N, H, NewS, A, R>
-    where
-        NewS: Strategy<N>,
-    {
-        Resharding {
-            keyspace: self.keyspace,
-            hasher_factory: self.hasher_factory,
-            strategy,
-            add_nodes: self.add_nodes,
-            remove_nodes: self.remove_nodes,
-        }
-    }
-
-    /// Adds a node to the  [`Iterator`] of nodes to be added to the
-    /// [`Keyspace`].
-    pub fn add_node(self, id: N) -> Resharding<'a, RF, N, H, S, impl Iterator<Item = N>, R>
-    where
-        A: Iterator<Item = N>,
-    {
-        self.add_nodes([id])
-    }
-
-    /// Adds multiple nodes to the  [`Iterator`] of nodes to be added to the
-    /// [`Keyspace`].
-    pub fn add_nodes(
-        self,
-        ids: impl IntoIterator<Item = N>,
-    ) -> Resharding<'a, RF, N, H, S, impl Iterator<Item = N>, R>
-    where
-        A: Iterator<Item = N>,
-    {
-        Resharding {
-            keyspace: self.keyspace,
-            hasher_factory: self.hasher_factory,
-            strategy: self.strategy,
-            add_nodes: self.add_nodes.chain(ids),
-            remove_nodes: self.remove_nodes,
-        }
-    }
-
-    /// Adds a node to the  [`Iterator`] of nodes to be removed from the
-    /// [`Keyspace`].
-    pub fn remove_node(self, id: &N) -> Resharding<'a, RF, N, H, S, impl Iterator<Item = &'a N>>
-    where
-        A: Iterator<Item = N>,
-    {
-        self.remove_nodes([id])
-    }
-
-    /// Adds multiple nodes to the [`Keyspace`].
-    pub fn remove_nodes(
-        &mut self,
-        ids: impl IntoIterator<Item = impl AsRef<N>>,
-    ) -> Result<&mut Self, RemoveNodeError> {
-        for id in ids {
-            if self.keyspace.nodes.len() == RF {
-                return Err(RemoveNodeError::NotEnoughNodes(RF));
-            }
-            self.keyspace.nodes.shift_remove(id.as_ref());
-        }
-
-        Ok(self)
-    }
-
-    /// Finishes resharding by reassigning shard replicas.
-    pub fn finish(mut self) -> Result<Keyspace<RF, N>, ReshardingError>
-    where
-        N: Ord,
-        H: HasherFactory,
-        S: Strategy<N>,
-    {
-        let nodes = self.keyspace.nodes.iter();
-        let mut node_ranking: Vec<_> = nodes.enumerate().map(|(idx, id)| (0, id, idx)).collect();
-
-        for (shard_idx, shard) in self.keyspace.shards.iter_mut().enumerate() {
-            for (score, node_id, _) in &mut node_ranking {
-                let mut hasher = self.hasher_factory.new_hasher();
-                (node_id, shard_idx).hash(&mut hasher);
-                *score = hasher.finish();
-            }
-            node_ranking.sort_unstable();
-
-            let mut cursor = 0;
-            for replica_idx in &mut shard.replicas {
-                loop {
-                    if cursor == node_ranking.len() {
-                        return Err(ReshardingError::IncompleteReplicaSet);
-                    }
-
-                    let (_, node_id, node_idx) = node_ranking[cursor];
-
-                    if self.strategy.is_preferred_replica(shard_idx, node_id) {
-                        *replica_idx = node_idx;
-                        cursor += 1;
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(self.keyspace)
     }
 }
 
 /// Error of [`Keyspace::new`].
 #[derive(Debug, thiserror::Error)]
-pub enum KeyspaceCreationError {
-    #[error("Replication factor should be in range [1, {}]", max)]
-    InvalidReplicationFactor { max: usize },
-}
+pub enum Error {
+    #[error("Replication factor should be in range [{}, {}]", min, max)]
+    InvalidReplicationFactor { min: usize, max: usize },
 
-/// Error of [`Resharding::add_node`] and [`Resharding::add_nodes`].
-#[derive(Debug, thiserror::Error)]
-pub enum AddNodeError {
-    #[error("Limit of {} nodes reached", _0)]
-    TooManyNodes(usize),
-}
+    #[error("Replication factor should be in range [{}, {}]", min, max)]
+    InvalidNodesCount { min: usize, max: usize },
 
-/// Error of [`Resharding::remove_node`] and [`Resharding::remove_node`].
-#[derive(Debug, thiserror::Error)]
-pub enum RemoveNodeError {
-    #[error("Cluster size can not be smaller than the replication factor ({})", _0)]
-    NotEnoughNodes(usize),
-}
-
-/// Error of [`Resharding`].
-#[derive(Debug, thiserror::Error)]
-pub enum ReshardingError {
     #[error("Sharding strategy didn't select enough nodes to fill a replica set")]
     IncompleteReplicaSet,
 }
 
-// fn shards_to_migrate<const RF: usize, N>(a: &Keyspace<RF, N>, b:
-// &Keyspace<RF, N>) -> usize {     let mut n = 0;
+#[cfg(any(test, feature = "testing"))]
+impl<const RF: usize, N> Keyspace<RF, N>
+where
+    N: Hash,
+{
+    fn assert_variance(&self, max_deviasion_coefficient: f64) {
+        let mut shards_per_node = HashMap::<usize, usize>::new();
 
-//     for (shard_idx, shard) in a.hashring.iter().enumerate() {
-//         let new_replicas = b.hashring[shard_idx].replicas;
+        for shard in &self.shards {
+            for node_idx in shard.replicas.iter() {
+                *shards_per_node.entry(*node_idx).or_default() += 1;
+            }
+        }
 
-//         for replica_idx in shard.replicas {
-//             if !new_replicas.iter().any(|idx| idx == &replica_idx) {
-//                 n += 1;
-//             }
-//         }
+        let mean = self.shards.len() * RF / self.nodes.len();
+        let max_deviation = shards_per_node
+            .values()
+            .copied()
+            .map(|n| (mean as isize - n as isize).abs() as usize)
+            .max()
+            .unwrap();
+        let coefficient = max_deviation as f64 / mean as f64;
 
-//         // if shard.replicas[0] != new_replicas[0] {
-//         //     n += 1;
-//         // }
-//     }
+        dbg!(mean, max_deviation, coefficient);
+        assert!(coefficient <= max_deviasion_coefficient);
+    }
 
-//     n
-// }
+    // fn assert_stability(&self, old: &Self) {
+    // let mut n = 0;
+
+    // for (shard_idx, shard) in a.hashring.iter().enumerate() {
+    //     let new_replicas = b.hashring[shard_idx].replicas;
+
+    //     for replica_idx in shard.replicas {
+    //         if !new_replicas.iter().any(|idx| idx == &replica_idx) {
+    //             n += 1;
+    //         }
+    //     }
+
+    //     // if shard.replicas[0] != new_replicas[0] {
+    //     //     n += 1;
+    //     // }
+    // }
+
+    // n
+
+    //     let to_move = shards_to_migrate(old, self);
+    //     dbg!(to_move);
+    // }
+}
 
 fn test_suite() {}
 
 #[test]
 fn t() {
-    let nodes = [1, 2, 3];
-    let mut keyspace = Some(Keyspace::new(nodes).unwrap());
+    let hasher = || DefaultHasher::new();
+    let strategy = DefaultStrategy;
+
+    let mut keyspace: Keyspace<3, _> = Keyspace::new([1, 2, 3], hasher, strategy).unwrap();
 
     for id in 4..=16 {
-        // let snapshot = keyspace.clone();
-
-        let new_keyspace = keyspace
-            .take()
-            .unwrap()
-            .reshard(|| DefaultHasher::new())
-            .add_node(id)
-            .unwrap()
-            .finish()
-            .unwrap();
-
+        let nodes = keyspace.nodes().cloned().chain([id]);
+        let new_keyspace = Keyspace::new(nodes, hasher, strategy).unwrap();
         new_keyspace.assert_variance(0.03);
-        keyspace = Some(new_keyspace);
+        keyspace = new_keyspace;
     }
 
-    keyspace
-        .reshard(|| DefaultHasher::new())
-        .add_nodes(17..256)
-        .unwrap()
-        .finish()
-        .unwrap();
-    keyspace.assert_variance(0.13);
+    let nodes = keyspace.nodes().cloned().chain(17..256);
+    let new_keyspace = Keyspace::new(nodes, hasher, strategy).unwrap();
+    new_keyspace.assert_variance(0.13);
+    keyspace = new_keyspace;
 
     // for id in 4..=100 {
     //     let snapshot = ring.clone();

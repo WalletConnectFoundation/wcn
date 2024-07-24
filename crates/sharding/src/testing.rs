@@ -8,7 +8,6 @@ use {
     },
 };
 
-#[cfg(any(test, feature = "testing"))]
 impl<const RF: usize, N> Keyspace<RF, N>
 where
     N: Eq + Hash + fmt::Debug,
@@ -123,7 +122,6 @@ impl ExpectedDistributionVariance {
     }
 }
 
-#[cfg(any(test, feature = "testing"))]
 pub fn keyspace_test_suite<const RF: usize, NodeId, S>(
     hasher_factory: impl HasherFactory,
     sharding_strategy_factory: impl FnMut() -> S,

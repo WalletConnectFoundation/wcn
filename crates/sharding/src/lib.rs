@@ -102,10 +102,10 @@ impl<const RF: usize, N> Keyspace<RF, N> {
                     }
 
                     let (_, node_id, node_idx) = node_ranking[cursor];
+                    cursor += 1;
 
                     if sharding_strategy.is_suitable_replica(shard_idx, node_id) {
                         *replica_idx = node_idx;
-                        cursor += 1;
                         break;
                     }
                 }

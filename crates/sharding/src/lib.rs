@@ -1,7 +1,7 @@
 use {
     indexmap::IndexSet,
     std::{
-        hash::{Hash, Hasher},
+        hash::{BuildHasher, Hash},
         ops::RangeInclusive,
     },
 };
@@ -52,7 +52,7 @@ impl<const RF: usize, N> Keyspace<RF, N> {
     /// Creates a new [`Keyspace`].
     pub fn new(
         nodes: impl IntoIterator<Item = N>,
-        hasher_factory: &impl HasherFactory,
+        build_hasher: &impl BuildHasher,
         mut sharding_strategy: impl Strategy<N>,
     ) -> Result<Self, Error>
     where
@@ -88,9 +88,7 @@ impl<const RF: usize, N> Keyspace<RF, N> {
 
         for (shard_idx, shard) in shards.iter_mut().enumerate() {
             for (score, node_id, _) in &mut node_ranking {
-                let mut hasher = hasher_factory.new_hasher();
-                (node_id, shard_idx).hash(&mut hasher);
-                *score = hasher.finish();
+                *score = build_hasher.hash_one((node_id, shard_idx));
             }
             node_ranking.sort_unstable();
 
@@ -132,26 +130,6 @@ impl<const RF: usize, N> Keyspace<RF, N> {
     /// Returns the number of nodes in the [`Keyspace`].
     pub fn nodes_count(&self) -> usize {
         self.nodes.len()
-    }
-}
-
-/// [`Hasher`] factory.
-pub trait HasherFactory {
-    type Hasher: Hasher;
-
-    /// Creates a new [`Hasher`].
-    fn new_hasher(&self) -> Self::Hasher;
-}
-
-impl<F, H> HasherFactory for F
-where
-    F: Fn() -> H,
-    H: Hasher,
-{
-    type Hasher = H;
-
-    fn new_hasher(&self) -> Self::Hasher {
-        (self)()
     }
 }
 
@@ -200,8 +178,10 @@ pub enum Error {
 
 #[test]
 fn test_keyspace() {
+    use std::hash::{BuildHasherDefault, DefaultHasher};
+
     testing::keyspace_test_suite::<3, _, _>(
-        std::hash::DefaultHasher::new,
+        BuildHasherDefault::<DefaultHasher>::default(),
         || DefaultStrategy,
         rand::random::<usize>,
         testing::ExpectedDistributionVariance(vec![

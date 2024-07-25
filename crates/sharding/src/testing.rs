@@ -1,10 +1,10 @@
 use {
-    crate::{HasherFactory, Keyspace, ShardId, Strategy},
+    crate::{Keyspace, ShardId, Strategy},
     rand::random,
     std::{
         collections::{HashMap, HashSet},
         fmt,
-        hash::Hash,
+        hash::{BuildHasher, Hash},
     },
 };
 
@@ -123,7 +123,7 @@ impl ExpectedDistributionVariance {
 }
 
 pub fn keyspace_test_suite<const RF: usize, NodeId, S>(
-    hasher_factory: impl HasherFactory,
+    hasher_factory: impl BuildHasher,
     sharding_strategy_factory: impl FnMut() -> S,
     node_id_factory: impl FnMut() -> NodeId,
     expected_variance: ExpectedDistributionVariance,

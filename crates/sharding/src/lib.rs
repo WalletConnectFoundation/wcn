@@ -88,20 +88,18 @@ impl<const RF: usize, N> Keyspace<RF, N> {
             node_ranking.sort_unstable();
 
             let mut cursor = 0;
-            for replica_idx in &mut shard.replicas {
-                loop {
-                    if cursor == node_ranking.len() {
-                        return Err(Error::IncompleteReplicaSet);
-                    }
-
+            'replicas: for replica_idx in &mut shard.replicas {
+                while cursor < node_ranking.len() {
                     let (_, node_id, node_idx) = node_ranking[cursor];
                     cursor += 1;
 
                     if sharding_strategy.is_suitable_replica(shard_idx, node_id) {
                         *replica_idx = node_idx;
-                        break;
+                        continue 'replicas;
                     }
                 }
+
+                return Err(Error::IncompleteReplicaSet);
             }
         }
 

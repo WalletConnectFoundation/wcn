@@ -138,8 +138,10 @@ pub trait Strategy<N> {
     /// Indicates whether the specified node is suitable to be used as a
     /// replica for the specified shard.
     ///
-    /// This function can only be called once per every combination of
-    /// `shard_idx` and `node_id`.
+    /// In consecutive calls to this function `shard_idx` is going to either
+    /// stay the same or increase, but never decrease. Also, this function will
+    /// never be called for the same combination of `shard_idx` and
+    /// `node_id` again.
     fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool;
 }
 

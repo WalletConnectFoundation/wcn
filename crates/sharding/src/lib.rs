@@ -58,12 +58,7 @@ impl<const RF: usize, N> Keyspace<RF, N> {
     where
         N: Hash + Eq + Ord,
     {
-        if RF == 0 || RF > MAX_NODES {
-            return Err(Error::InvalidReplicationFactor {
-                min: 1,
-                max: MAX_NODES,
-            });
-        }
+        const { assert!(RF > 0 && RF <= MAX_NODES) };
 
         let nodes: IndexSet<_> = nodes.into_iter().collect();
         let nodes_count = nodes.len();
@@ -168,9 +163,6 @@ impl<N> Strategy<N> for DefaultStrategy {
 /// Error of [`Keyspace::new`].
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Replication factor should be in range [{}, {}]", min, max)]
-    InvalidReplicationFactor { min: usize, max: usize },
-
     #[error("Nodes count should be in range [{}, {}]", min, max)]
     InvalidNodesCount { min: usize, max: usize },
 

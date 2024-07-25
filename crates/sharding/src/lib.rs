@@ -178,6 +178,7 @@ pub enum Error {
     IncompleteReplicaSet,
 }
 
+#[cfg(test)]
 #[test]
 fn test_keyspace() {
     use std::hash::{BuildHasherDefault, DefaultHasher};
@@ -197,6 +198,7 @@ fn test_keyspace() {
     )
 }
 
+#[cfg(test)]
 #[test]
 fn test_shard_id() {
     fn assert_from_key(u: [u8; 8], shard_id: u16) {

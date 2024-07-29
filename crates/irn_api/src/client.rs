@@ -289,35 +289,48 @@ impl<K: Kind> Client<K> {
         .tap(|res| Self::meter_operation_result::<Op, _>(res))
     }
 
-    fn try_seal(&self, ns: &auth::PublicKey, value: Value) -> Result<Value> {
-        Ok(self
-            .namespaces
-            .get(ns)
-            .ok_or(Error::Api(super::Error::Unauthorized))?
-            .seal(value)?)
+    #[inline]
+    fn try_seal(&self, ns: &Option<auth::PublicKey>, value: Value) -> Result<Value> {
+        if let Some(ns) = ns {
+            Ok(self
+                .namespaces
+                .get(ns)
+                .ok_or(Error::Api(super::Error::Unauthorized))?
+                .seal(value)?)
+        } else {
+            Ok(value)
+        }
     }
 
-    fn try_open(&self, ns: &auth::PublicKey, mut value: Value) -> Result<Value> {
-        Ok(self
-            .namespaces
-            .get(ns)
-            .ok_or(Error::Api(super::Error::Unauthorized))?
-            .open_in_place(&mut value)?
-            .into())
+    #[inline]
+    fn try_open(&self, ns: &Option<auth::PublicKey>, mut value: Value) -> Result<Value> {
+        if let Some(ns) = ns {
+            Ok(self
+                .namespaces
+                .get(ns)
+                .ok_or(Error::Api(super::Error::Unauthorized))?
+                .open_in_place(&mut value)?
+                .into())
+        } else {
+            Ok(value)
+        }
     }
 
+    #[inline]
     fn try_open_collection(
         &self,
-        ns: &auth::PublicKey,
+        ns: &Option<auth::PublicKey>,
         mut values: Vec<Value>,
     ) -> Result<Vec<Value>> {
-        let auth = self
-            .namespaces
-            .get(ns)
-            .ok_or(Error::Api(super::Error::Unauthorized))?;
+        if let Some(ns) = ns {
+            let auth = self
+                .namespaces
+                .get(ns)
+                .ok_or(Error::Api(super::Error::Unauthorized))?;
 
-        for value in &mut values {
-            *value = auth.open_in_place(value)?.into();
+            for value in &mut values {
+                *value = auth.open_in_place(value)?.into();
+            }
         }
 
         Ok(values)
@@ -326,24 +339,20 @@ impl<K: Kind> Client<K> {
     pub async fn get(&self, key: Key) -> Result<Option<Value>> {
         let ns = key.namespace;
         let op = super::Get { key };
-        let value = self.exec(rpc::Get::send_owned, op).await?;
 
-        if let Some(ns) = &ns {
-            value.map(|value| self.try_open(ns, value)).transpose()
-        } else {
-            Ok(value)
-        }
+        self.exec(rpc::Get::send_owned, op)
+            .await?
+            .map(|value| self.try_open(&ns, value))
+            .transpose()
     }
 
     pub async fn set(
         &self,
         key: Key,
-        mut value: Value,
+        value: Value,
         expiration: Option<UnixTimestampSecs>,
     ) -> Result<()> {
-        if let Some(ns) = &key.namespace {
-            value = self.try_seal(ns, value)?;
-        }
+        let value = self.try_seal(&key.namespace, value)?;
 
         let op = super::Set {
             key,
@@ -375,25 +384,21 @@ impl<K: Kind> Client<K> {
     pub async fn hget(&self, key: Key, field: Field) -> Result<Option<Value>> {
         let ns = key.namespace;
         let op = super::HGet { key, field };
-        let value = self.exec(rpc::HGet::send_owned, op).await?;
 
-        if let Some(ns) = &ns {
-            value.map(|value| self.try_open(ns, value)).transpose()
-        } else {
-            Ok(value)
-        }
+        self.exec(rpc::HGet::send_owned, op)
+            .await?
+            .map(|value| self.try_open(&ns, value))
+            .transpose()
     }
 
     pub async fn hset(
         &self,
         key: Key,
         field: Field,
-        mut value: Value,
+        value: Value,
         expiration: Option<UnixTimestampSecs>,
     ) -> Result<()> {
-        if let Some(ns) = &key.namespace {
-            value = self.try_seal(ns, value)?;
-        }
+        let value = self.try_seal(&key.namespace, value)?;
 
         let op = super::HSet {
             key,
@@ -449,11 +454,7 @@ impl<K: Kind> Client<K> {
         let op = super::HVals { key };
         let values = self.exec(rpc::HVals::send_owned, op).await?;
 
-        if let Some(ns) = &ns {
-            self.try_open_collection(ns, values)
-        } else {
-            Ok(values)
-        }
+        self.try_open_collection(&ns, values)
     }
 
     pub async fn hscan(
@@ -464,13 +465,10 @@ impl<K: Kind> Client<K> {
     ) -> Result<(Vec<Value>, Option<Cursor>)> {
         let ns = key.namespace;
         let op = super::HScan { key, count, cursor };
-        let data = self.exec(rpc::HScan::send_owned, op).await?;
+        let (values, cursor) = self.exec(rpc::HScan::send_owned, op).await?;
 
-        if let Some(ns) = &ns {
-            Ok((self.try_open_collection(ns, data.0)?, data.1))
-        } else {
-            Ok(data)
-        }
+        self.try_open_collection(&ns, values)
+            .map(|values| (values, cursor))
     }
 
     pub async fn status(&self) -> Result<StatusResponse> {

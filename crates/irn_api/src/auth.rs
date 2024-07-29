@@ -97,9 +97,9 @@ impl Auth {
         PublicKey::try_from(self.sig_keypair.public_key().as_ref()).unwrap()
     }
 
-    pub fn seal(&self, data: Vec<u8>) -> Result<Vec<u8>, Error> {
+    pub(crate) fn seal(&self, data: Vec<u8>) -> Result<Vec<u8>, Error> {
         if data.is_empty() {
-            return Err(Error::Data);
+            return Ok(data);
         }
 
         // Generate a unique nonce.
@@ -127,8 +127,13 @@ impl Auth {
         Ok(out)
     }
 
-    pub fn open_in_place<'in_out>(&self, data: &'in_out mut [u8]) -> Result<&'in_out [u8], Error> {
-        if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
+    pub(crate) fn open_in_place<'in_out>(
+        &self,
+        data: &'in_out mut [u8],
+    ) -> Result<&'in_out [u8], Error> {
+        if data.is_empty() {
+            Ok(data)
+        } else if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
             Err(Error::Data)
         } else {
             Ok(self.encryption_key.open_in_place(

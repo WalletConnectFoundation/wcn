@@ -5,7 +5,7 @@ use {
         hkdf,
         signature::{self, KeyPair as _},
     },
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    serde::{Deserialize, Serialize},
     std::sync::Arc,
 };
 
@@ -19,7 +19,7 @@ const KEY_LEN_SIG_SEED: usize = 32;
 const KEY_LEN_ENCRYPTION: usize = 32;
 const SIG_LEN_ED25519: usize = 64;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum Error {
     #[error("Invalid key length")]
     KeyLength,
@@ -27,11 +27,8 @@ pub enum Error {
     #[error("Invalid key encoding")]
     KeyEncoding,
 
-    #[error("Failed to serialize data")]
-    Serialize,
-
-    #[error("Failed to deserialize data")]
-    Deserialize,
+    #[error("Invalid data")]
+    Data,
 
     #[error("Signature validation failed")]
     Signature,
@@ -100,60 +97,51 @@ impl Auth {
         PublicKey::try_from(self.sig_keypair.public_key().as_ref()).unwrap()
     }
 
-    pub fn serialize<T>(&self, value: &T) -> Result<Vec<u8>, Error>
-    where
-        T: Serialize,
-    {
+    pub(crate) fn seal(&self, data: Vec<u8>) -> Result<Vec<u8>, Error> {
+        if data.is_empty() {
+            return Ok(data);
+        }
+
         // Generate a unique nonce.
         let nonce = Nonce::generate().into_inner();
 
-        let data_len =
-            postcard::experimental::serialized_size(value).map_err(|_| Error::Serialize)?;
-
         // Compute the total data length for `nonce + serialized data + tag`.
-        let mut data = Vec::with_capacity(aead::NONCE_LEN + data_len + aead::MAX_TAG_LEN);
+        let mut out = Vec::with_capacity(aead::NONCE_LEN + data.len() + aead::MAX_TAG_LEN);
 
         // Write nonce bytes.
-        data.extend_from_slice(&nonce);
+        out.extend_from_slice(&nonce);
 
-        // Write serialized data.
-        let mut data = postcard::to_io(value, data).map_err(|_| Error::Serialize)?;
+        // Write data.
+        out.extend_from_slice(&data);
 
         // Encrypt the data.
         let tag = self.encryption_key.seal_in_place_separate_tag(
             aead::Nonce::assume_unique_for_key(nonce),
             aead::Aad::empty(),
-            &mut data[aead::NONCE_LEN..],
+            &mut out[aead::NONCE_LEN..],
         )?;
 
-        data.extend_from_slice(tag.as_ref());
+        // Write tag.
+        out.extend_from_slice(tag.as_ref());
 
-        Ok(data)
+        Ok(out)
     }
 
-    #[inline]
-    pub fn deserialize<T>(&self, data: &[u8]) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
-        self.deserialize_in_place(data.into())
-    }
-
-    pub fn deserialize_in_place<T>(&self, mut data: Vec<u8>) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
-        if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
-            return Err(Error::Deserialize);
+    pub(crate) fn open_in_place<'in_out>(
+        &self,
+        data: &'in_out mut [u8],
+    ) -> Result<&'in_out [u8], Error> {
+        if data.is_empty() {
+            Ok(data)
+        } else if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
+            Err(Error::Data)
+        } else {
+            Ok(self.encryption_key.open_in_place(
+                aead::Nonce::try_assume_unique_for_key(&data[..aead::NONCE_LEN])?,
+                aead::Aad::empty(),
+                &mut data[aead::NONCE_LEN..],
+            )?)
         }
-
-        self.encryption_key.open_in_place(
-            aead::Nonce::try_assume_unique_for_key(&data[..aead::NONCE_LEN])?,
-            aead::Aad::empty(),
-            &mut data[aead::NONCE_LEN..],
-        )?;
-
-        postcard::from_bytes(&data[aead::NONCE_LEN..]).map_err(|_| Error::Deserialize)
     }
 }
 
@@ -283,15 +271,15 @@ mod tests {
             let auth2 = Auth::from_secret(b"secret", b"namespace2").unwrap();
 
             let data = vec![1u8, 2, 3, 4, 5];
+            let encrypted = auth1.seal(data.clone()).unwrap();
 
-            let encrypted = auth1.serialize(&data).unwrap();
-            let decrypted = auth1
-                .deserialize_in_place::<Vec<u8>>(encrypted.clone())
-                .unwrap();
+            let mut encrypted1 = encrypted.clone();
+            let decrypted = auth1.open_in_place(&mut encrypted1).unwrap();
 
             assert_eq!(data, decrypted);
 
-            let decrypted = auth2.deserialize_in_place::<Vec<u8>>(encrypted);
+            let mut encrypted2 = encrypted;
+            let decrypted = auth2.open_in_place(&mut encrypted2);
 
             assert!(decrypted.is_err());
         }
@@ -302,15 +290,15 @@ mod tests {
             let auth2 = Auth::from_secret(b"secret2", b"namespace").unwrap();
 
             let data = vec![1u8, 2, 3, 4, 5];
+            let encrypted = auth1.seal(data.clone()).unwrap();
 
-            let encrypted = auth1.serialize(&data).unwrap();
-            let decrypted = auth1
-                .deserialize_in_place::<Vec<u8>>(encrypted.clone())
-                .unwrap();
+            let mut encrypted1 = encrypted.clone();
+            let decrypted = auth1.open_in_place(&mut encrypted1).unwrap();
 
             assert_eq!(data, decrypted);
 
-            let decrypted = auth2.deserialize_in_place::<Vec<u8>>(encrypted);
+            let mut encrypted2 = encrypted;
+            let decrypted = auth2.open_in_place(&mut encrypted2);
 
             assert!(decrypted.is_err());
         }

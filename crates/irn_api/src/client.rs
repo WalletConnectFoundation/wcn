@@ -114,6 +114,9 @@ pub enum Error {
 
     #[error("API: {0:?}")]
     Api(super::Error),
+
+    #[error("Encryption: {0:?}")]
+    Encryption(#[from] super::auth::Error),
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -259,7 +262,7 @@ impl<K: Kind> Client<K> {
         .retries(retries)
         .custom_backoff(|attempt, err: &_| {
             let delay = match err {
-                Error::Api(ApiError::NotFound | ApiError::Unauthorized) => {
+                Error::Api(ApiError::NotFound | ApiError::Unauthorized) | Error::Encryption(_) => {
                     return RetryPolicy::Break;
                 }
                 Error::Api(ApiError::Throttled) => Duration::from_millis(200),
@@ -286,10 +289,61 @@ impl<K: Kind> Client<K> {
         .tap(|res| Self::meter_operation_result::<Op, _>(res))
     }
 
+    #[inline]
+    fn try_seal(&self, ns: &Option<auth::PublicKey>, value: Value) -> Result<Value> {
+        if let Some(ns) = ns {
+            Ok(self
+                .namespaces
+                .get(ns)
+                .ok_or(Error::Api(super::Error::Unauthorized))?
+                .seal(value)?)
+        } else {
+            Ok(value)
+        }
+    }
+
+    #[inline]
+    fn try_open(&self, ns: &Option<auth::PublicKey>, mut value: Value) -> Result<Value> {
+        if let Some(ns) = ns {
+            Ok(self
+                .namespaces
+                .get(ns)
+                .ok_or(Error::Api(super::Error::Unauthorized))?
+                .open_in_place(&mut value)?
+                .into())
+        } else {
+            Ok(value)
+        }
+    }
+
+    #[inline]
+    fn try_open_collection(
+        &self,
+        ns: &Option<auth::PublicKey>,
+        mut values: Vec<Value>,
+    ) -> Result<Vec<Value>> {
+        if let Some(ns) = ns {
+            let auth = self
+                .namespaces
+                .get(ns)
+                .ok_or(Error::Api(super::Error::Unauthorized))?;
+
+            for value in &mut values {
+                *value = auth.open_in_place(value)?.into();
+            }
+        }
+
+        Ok(values)
+    }
+
     pub async fn get(&self, key: Key) -> Result<Option<Value>> {
+        let ns = key.namespace;
         let op = super::Get { key };
 
-        self.exec(rpc::Get::send_owned, op).await
+        self.exec(rpc::Get::send_owned, op)
+            .await?
+            .map(|value| self.try_open(&ns, value))
+            .transpose()
     }
 
     pub async fn set(
@@ -298,6 +352,8 @@ impl<K: Kind> Client<K> {
         value: Value,
         expiration: Option<UnixTimestampSecs>,
     ) -> Result<()> {
+        let value = self.try_seal(&key.namespace, value)?;
+
         let op = super::Set {
             key,
             value,
@@ -326,9 +382,13 @@ impl<K: Kind> Client<K> {
     }
 
     pub async fn hget(&self, key: Key, field: Field) -> Result<Option<Value>> {
+        let ns = key.namespace;
         let op = super::HGet { key, field };
 
-        self.exec(rpc::HGet::send_owned, op).await
+        self.exec(rpc::HGet::send_owned, op)
+            .await?
+            .map(|value| self.try_open(&ns, value))
+            .transpose()
     }
 
     pub async fn hset(
@@ -338,6 +398,8 @@ impl<K: Kind> Client<K> {
         value: Value,
         expiration: Option<UnixTimestampSecs>,
     ) -> Result<()> {
+        let value = self.try_seal(&key.namespace, value)?;
+
         let op = super::HSet {
             key,
             field,
@@ -388,9 +450,11 @@ impl<K: Kind> Client<K> {
     }
 
     pub async fn hvals(&self, key: Key) -> Result<Vec<Value>> {
+        let ns = key.namespace;
         let op = super::HVals { key };
+        let values = self.exec(rpc::HVals::send_owned, op).await?;
 
-        self.exec(rpc::HVals::send_owned, op).await
+        self.try_open_collection(&ns, values)
     }
 
     pub async fn hscan(
@@ -399,9 +463,12 @@ impl<K: Kind> Client<K> {
         count: u32,
         cursor: Option<Cursor>,
     ) -> Result<(Vec<Value>, Option<Cursor>)> {
+        let ns = key.namespace;
         let op = super::HScan { key, count, cursor };
+        let (values, cursor) = self.exec(rpc::HScan::send_owned, op).await?;
 
-        self.exec(rpc::HScan::send_owned, op).await
+        self.try_open_collection(&ns, values)
+            .map(|values| (values, cursor))
     }
 
     pub async fn status(&self) -> Result<StatusResponse> {
@@ -515,6 +582,7 @@ impl<K: Kind> Client<K> {
                 Error::Api(super::Error::NotFound) => return None,
                 Error::Api(super::Error::Throttled) => "throttled".into(),
                 Error::Api(super::Error::Internal(e)) => e.code.clone(),
+                Error::Encryption(_) => "encryption".into(),
             })
         });
 

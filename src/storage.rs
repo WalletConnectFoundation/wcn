@@ -36,7 +36,7 @@ use {
         future::Future,
         ops::RangeInclusive,
     },
-    wc::future_metrics::FutureExt,
+    wc::metrics::{future_metrics, FutureExt},
 };
 
 pub type Key = Vec<u8>;
@@ -359,13 +359,6 @@ impl Storage {
     }
 }
 
-const fn metric_labels(op_name: &'static str) -> [metrics::Label; 2] {
-    [
-        wc::future_metrics::future_name("storage_operation"),
-        metrics::Label::from_static_parts("op_name", op_name),
-    ]
-}
-
 impl replication::Storage<Get> for Storage {
     type Error = StorageError;
 
@@ -377,7 +370,7 @@ impl replication::Storage<Get> for Storage {
         async move {
             self.string
                 .get(&GenericKey::new(key_hash, op.key))
-                .with_labeled_metrics(const { &metric_labels("get") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
                 .await
                 .map_err(map_err)
         }
@@ -392,7 +385,7 @@ impl replication::Storage<Set> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.string
                 .set(&key, &op.value, op.expiration, op.version)
-                .with_labeled_metrics(const { &metric_labels("set") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
                 .await
                 .map_err(map_err)
         }
@@ -429,7 +422,7 @@ impl replication::Storage<Del> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.string
                 .del(&key)
-                .with_labeled_metrics(const { &metric_labels("del") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
                 .await
                 .map_err(map_err)
         }
@@ -466,7 +459,7 @@ impl replication::Storage<GetExp> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.string
                 .exp(&key)
-                .with_labeled_metrics(const { &metric_labels("get_exp") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
                 .await
                 .map_err(map_err)
         }
@@ -485,7 +478,7 @@ impl replication::Storage<SetExp> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.string
                 .setexp(&key, op.expiration, op.version)
-                .with_labeled_metrics(const { &metric_labels("set_exp") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
                 .await
                 .map_err(map_err)
         }
@@ -525,7 +518,7 @@ impl replication::Storage<HGet> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hget(&key, &op.field)
-                .with_labeled_metrics(const { &metric_labels("hget") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
                 .await
                 .map_err(map_err)
         }
@@ -545,7 +538,7 @@ impl replication::Storage<HSet> for Storage {
             let pair = Pair::new(op.field, op.value);
             self.map
                 .hset(&key, &pair, op.expiration, op.version)
-                .with_labeled_metrics(const { &metric_labels("hset") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
                 .await
                 .map_err(map_err)
         }
@@ -589,7 +582,7 @@ impl replication::Storage<HDel> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hdel(&key, &op.field)
-                .with_labeled_metrics(const { &metric_labels("hdel") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
                 .await
                 .map_err(map_err)
         }
@@ -628,7 +621,7 @@ impl replication::Storage<HCard> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hcard(&key)
-                .with_labeled_metrics(const { &metric_labels("hcard") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
                 .await
                 .map(|card| Cardinality(card as u64))
                 .map_err(map_err)
@@ -648,7 +641,7 @@ impl replication::Storage<HGetExp> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hexp(&key, &op.field)
-                .with_labeled_metrics(const { &metric_labels("hget_exp") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
                 .await
                 .map_err(map_err)
         }
@@ -667,7 +660,7 @@ impl replication::Storage<HSetExp> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hsetexp(&key, &op.field, op.expiration, op.version)
-                .with_labeled_metrics(const { &metric_labels("hset_exp") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
                 .await
                 .map_err(map_err)
         }
@@ -708,7 +701,7 @@ impl replication::Storage<HFields> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hfields(&key)
-                .with_labeled_metrics(const { &metric_labels("hfields") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hfields"))
                 .await
                 .map_err(map_err)
         }
@@ -727,7 +720,7 @@ impl replication::Storage<HVals> for Storage {
             let key = GenericKey::new(key_hash, op.key);
             self.map
                 .hvals(&key)
-                .with_labeled_metrics(const { &metric_labels("hvals") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hvals"))
                 .await
                 .map_err(map_err)
         }
@@ -747,7 +740,7 @@ impl replication::Storage<HScan> for Storage {
             let opts = ScanOptions::new(op.count as usize).with_cursor(op.cursor);
             self.map
                 .hscan(&key, opts)
-                .with_labeled_metrics(const { &metric_labels("hscan") })
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
                 .await
                 .map(|res| Page {
                     items: res.items,
@@ -781,13 +774,6 @@ impl migration::StorageExport for Storage {
             .boxed();
 
         future::ok::<_, Infallible>(stream)
-    }
-}
-
-impl Storage {
-    pub async fn export(&self, keyrange: RangeInclusive<u64>) -> impl Stream<Item = ExportItem> {
-        self.db
-            .export((self.string.clone(), self.map.clone()), keyrange)
     }
 }
 

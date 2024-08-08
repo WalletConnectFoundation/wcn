@@ -1,10 +1,10 @@
 use {
     crate::{config::Config, network::rpc, Error, Node},
-    axum::extract::Path,
     irn::cluster::Consensus,
     metrics_exporter_prometheus::PrometheusHandle,
-    std::{future::Future, net::SocketAddr, time::Duration},
+    std::{future::Future, net::SocketAddr, path::Path, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
+    tap::{TapFallible, TapOptional},
     tokio::sync::oneshot,
 };
 
@@ -13,11 +13,28 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
 
     let mut sys = sysinfo::System::new_all();
 
+    // Try to detect the closest mount point. Fallback to the parent directory.
+    let storage_mount_point = find_storage_mount_point(cfg.rocksdb_dir.as_path())
+        .tap_none(|| {
+            tracing::warn!(
+                path = ?cfg.rocksdb_dir,
+                "failed to find mount point of rocksdb directory"
+            )
+        })
+        .or_else(|| cfg.rocksdb_dir.parent())
+        .unwrap_or(&cfg.rocksdb_dir);
+
     loop {
         match cancel.try_recv() {
             Err(oneshot::error::TryRecvError::Empty) => {}
             _ => return,
         };
+
+        if let Err(err) = wc::alloc::stats::update_jemalloc_metrics() {
+            tracing::warn!(?err, "failed to get jemalloc allocation stats");
+        }
+
+        update_cgroup_stats();
 
         sys.refresh_cpu();
 
@@ -35,21 +52,8 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
 
         sys.refresh_disks();
 
-        // TODO: parent dir might not be the mount point
-        // so this needs to be tested on different systems
-        //
-        let rocksdb_parent = cfg
-            .rocksdb_dir
-            .parent()
-            .unwrap_or(&cfg.rocksdb_dir)
-            .to_str();
-
-        let raft_parent = cfg.raft_dir.parent().unwrap_or(&cfg.raft_dir).to_str();
-
         for disk in sys.disks() {
-            if disk.mount_point().to_str() == rocksdb_parent
-                || disk.mount_point().to_str() == raft_parent
-            {
+            if disk.mount_point() == storage_mount_point {
                 metrics::gauge!("irn_disk_total_space").set(disk.total_space() as f64);
                 metrics::gauge!("irn_disk_available_space").set(disk.available_space() as f64);
                 break;
@@ -66,10 +70,11 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         }
 
         // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
-        // PhysicalCoreID() consumes 5-10% CPU
-        // TODO: Consider fixing this & re-enabling the stats
-        let db = node.storage().db();
-        let _ = move || update_rocksdb_metrics(db);
+        // PhysicalCoreID() consumes 5-10% CPU, so for now rocksdb metrics are behind a
+        // flag.
+        if cfg.rocksdb.enable_metrics {
+            update_rocksdb_metrics(node.storage().db());
+        }
 
         std::thread::sleep(Duration::from_secs(15));
     }
@@ -124,6 +129,48 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend) {
     }
 }
 
+fn update_cgroup_stats() {
+    // For details on the values see:
+    //      https://www.kernel.org/doc/Documentation/cgroup-v2.txt
+    const MEMORY_STAT_PATH: &str = "/sys/fs/cgroup/memory.stat";
+
+    let Ok(data) = std::fs::read_to_string(MEMORY_STAT_PATH) else {
+        return;
+    };
+
+    for line in data.lines() {
+        let mut parts = line.split(' ');
+
+        let (Some(stat), Some(val), None) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+
+        let Ok(val) = val.parse::<f64>() else {
+            continue;
+        };
+
+        metrics::gauge!("irn_memory_stat", "stat" => stat.to_owned()).set(val);
+    }
+}
+
+fn find_storage_mount_point(mut path: &Path) -> Option<&Path> {
+    let mounts = proc_mounts::MountList::new()
+        .tap_err(|err| tracing::warn!(?err, "failed to read list of mounted file systems"))
+        .ok()?;
+
+    loop {
+        if mounts.get_mount_by_dest(path).is_some() {
+            return Some(path);
+        }
+
+        if let Some(parent) = path.parent() {
+            path = parent;
+        } else {
+            return None;
+        }
+    }
+}
+
 pub(crate) fn serve(
     cfg: Config,
     node: Node,
@@ -145,7 +192,7 @@ pub(crate) fn serve(
         )
         .route(
             "/metrics/:peer_id",
-            axum::routing::get(move |Path(peer_id)| {
+            axum::routing::get(move |axum::extract::Path(peer_id)| {
                 scrape_prometheus(prometheus_.clone(), node.clone(), peer_id)
             }),
         )

@@ -18,7 +18,10 @@ use {
         marker::{self, PhantomData},
         time::Duration,
     },
-    wc::{future::FutureExt, future_metrics::FutureExt as _},
+    wc::{
+        future::FutureExt,
+        metrics::{future_metrics, FutureExt as _, StringLabel},
+    },
 };
 
 pub mod kind {
@@ -358,14 +361,6 @@ impl From<io::Error> for Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-const fn metric_labels<RPC: Rpc>(future_name: &'static str) -> [metrics::Label; 3] {
-    [
-        wc::future_metrics::future_name(future_name),
-        metrics::Label::from_static_parts("rpc_kind", RPC::Kind::NAME),
-        metrics::Label::from_static_parts("rpc_name", RPC::NAME),
-    ]
-}
-
 impl<S, RPC, Args> Handle<RPC, Args> for Metered<S>
 where
     RPC: Rpc,
@@ -374,7 +369,11 @@ where
     async fn handle(self, args: Args) -> Result<()> {
         self.inner
             .handle(args)
-            .with_labeled_metrics(const { &metric_labels::<RPC>("inbound_rpc") })
+            .with_metrics(future_metrics!(
+                "inbound_rpc",
+                StringLabel<"rpc_kind"> => RPC::Kind::NAME,
+                StringLabel<"rpc_name"> => RPC::NAME
+            ))
             .await
     }
 }
@@ -391,7 +390,11 @@ where
     async fn send(&self, to: To, args: Args) -> Result<Self::Ok, outbound::Error> {
         self.inner
             .send(to, args)
-            .with_labeled_metrics(const { &metric_labels::<RPC>("outbound_rpc") })
+            .with_metrics(future_metrics!(
+                "outbound_rpc",
+                StringLabel<"rpc_kind"> => RPC::Kind::NAME,
+                StringLabel<"rpc_name"> => RPC::NAME
+            ))
             .await
     }
 }

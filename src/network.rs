@@ -3,13 +3,14 @@ use {
     crate::{
         cluster,
         consensus,
+        contract::StatusReporter,
         storage::{self, Cursor, Storage, Value},
         Config,
         Error,
         Node,
     },
     anyerror::AnyError,
-    api::{auth, server::HandshakeData},
+    api::{auth, rpc::StatusResponse, server::HandshakeData},
     derive_more::AsRef,
     futures::{
         future,
@@ -179,12 +180,21 @@ pub mod rpc {
         pub type Request = ();
 
         #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct Response {
+        pub struct HealthResponse {
             pub node_version: u64,
             pub eth_address: Option<String>,
         }
 
-        pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, Response>;
+        pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, HealthResponse>;
+    }
+
+    pub use status::Status;
+    pub mod status {
+        use {api::rpc::StatusResponse, network::rpc};
+
+        pub type Request = ();
+
+        pub type Status = rpc::Unary<{ rpc::id(b"status") }, Request, StatusResponse>;
     }
 
     pub use metrics::Metrics;
@@ -241,7 +251,7 @@ pub mod rpc {
 }
 
 #[derive(AsRef, Clone)]
-struct RpcHandler {
+struct RpcHandler<S> {
     #[as_ref]
     node: Arc<Node>,
     rpc_timeouts: rpc::Timeouts,
@@ -249,17 +259,17 @@ struct RpcHandler {
     pubsub: Pubsub,
 
     eth_address: Option<Arc<str>>,
-
-    prometheus: Option<PrometheusHandle>,
+    prometheus: PrometheusHandle,
+    status_reporter: Option<S>,
 }
 
-impl RpcHandler {
-    fn node(&self) -> &Node {
-        &self.node
+impl<S: StatusReporter> RpcHandler<S> {
+    fn status_reporter(&self) -> Option<&S> {
+        self.status_reporter.as_ref()
     }
 }
 
-impl inbound::RpcHandler<HandshakeData> for RpcHandler {
+impl<S: StatusReporter> inbound::RpcHandler<HandshakeData> for RpcHandler<S> {
     fn handle_rpc(
         &self,
         id: rpc::Id,
@@ -270,7 +280,7 @@ impl inbound::RpcHandler<HandshakeData> for RpcHandler {
     }
 }
 
-impl inbound::RpcHandler for RpcHandler {
+impl<S: StatusReporter> inbound::RpcHandler for RpcHandler<S> {
     fn handle_rpc(
         &self,
         id: rpc::Id,
@@ -319,7 +329,7 @@ pub fn namespaced_key(key: api::Key) -> storage::Key {
     data
 }
 
-impl RpcHandler {
+impl<S: StatusReporter> RpcHandler<S> {
     async fn handle_coordinator_rpc(
         &self,
         id: rpc::Id,
@@ -328,7 +338,7 @@ impl RpcHandler {
     ) {
         let stream = stream.with_timeouts(self.rpc_timeouts).metered();
         let client_id = &conn_info.peer_id;
-        let coordinator = self.node().coordinator();
+        let coordinator = self.node.coordinator();
 
         let _ = match id {
             api::rpc::Get::ID => {
@@ -519,6 +529,10 @@ impl RpcHandler {
                 .await
             }
 
+            api::rpc::Status::ID => {
+                api::rpc::Status::handle(stream, |_req| self.handle_status()).await
+            }
+
             id => {
                 return tracing::warn!(
                     name = rpc::Name::new(id).as_str(),
@@ -535,6 +549,25 @@ impl RpcHandler {
         });
     }
 
+    async fn handle_status(&self) -> api::Result<StatusResponse> {
+        let reporter = self.status_reporter().ok_or_else(|| {
+            api::Error::Internal(api::InternalError::new(
+                "other",
+                "status reporter not available".to_string(),
+            ))
+        })?;
+
+        let report = reporter.report_status().await.map_err(|err| {
+            api::Error::Internal(api::InternalError::new("other", format!("{err:?}")))
+        })?;
+
+        Ok(StatusResponse {
+            node_version: crate::NODE_VERSION,
+            eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
+            stake_amount: report.stake,
+        })
+    }
+
     async fn handle_internal_rpc(
         &self,
         id: rpc::Id,
@@ -543,7 +576,7 @@ impl RpcHandler {
     ) {
         let stream = stream.with_timeouts(self.rpc_timeouts).metered();
         let peer_id = &conn_info.peer_id;
-        let replica = self.node().replica();
+        let replica = self.node.replica();
 
         let _ = match id {
             rpc::replica::Get::ID => {
@@ -642,13 +675,14 @@ impl RpcHandler {
                 rpc::broadcast::Pubsub::handle(stream, |evt| async { self.pubsub.publish(evt) })
                     .await
             }
+
             rpc::broadcast::Heartbeat::ID => {
                 rpc::broadcast::Heartbeat::handle(stream, |_heartbeat| async {}).await
             }
 
             rpc::Health::ID => {
                 rpc::Health::handle(stream, |_req| async {
-                    rpc::health::Response {
+                    rpc::health::HealthResponse {
                         node_version: crate::NODE_VERSION,
                         eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
                     }
@@ -657,13 +691,7 @@ impl RpcHandler {
             }
 
             rpc::Metrics::ID => {
-                rpc::Metrics::handle(stream, |_req| async {
-                    self.prometheus
-                        .as_ref()
-                        .map(|p| p.render())
-                        .unwrap_or_default()
-                })
-                .await
+                rpc::Metrics::handle(stream, |_req| async { self.prometheus.render() }).await
             }
 
             id => {
@@ -687,7 +715,7 @@ impl RpcHandler {
 
         self.pubsub.publish(evt.clone());
 
-        self.node().network().broadcast_pubsub(evt).await;
+        self.node.network().broadcast_pubsub(evt).await;
     }
 
     async fn handle_pubsub_subscribe(
@@ -718,7 +746,7 @@ impl RpcHandler {
         let req = rx.recv_message().await?;
 
         let resp = self
-            .node()
+            .node
             .migration_manager()
             .handle_pull_request(peer_id, req.keyrange, req.keyspace_version)
             .await;
@@ -1002,10 +1030,11 @@ impl Network {
         ::network::run_server(server_config, NoHandshake, handler.clone()).map(tokio::spawn)
     }
 
-    pub fn spawn_servers(
+    pub fn spawn_servers<S: StatusReporter>(
         cfg: &Config,
         node: Node,
-        prometheus: Option<PrometheusHandle>,
+        prometheus: PrometheusHandle,
+        status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let server_config = ::network::ServerConfig {
             addr: cfg.replica_api_server_addr.clone(),
@@ -1035,6 +1064,7 @@ impl Network {
             pubsub: Pubsub::new(),
             eth_address: cfg.eth_address.clone().map(Into::into),
             prometheus,
+            status_reporter,
         };
 
         let admin_api_handler = AdminRpcHandler {

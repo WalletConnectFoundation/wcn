@@ -1,5 +1,8 @@
+use metrics_exporter_prometheus::BuildError;
+
 mod config;
 mod start;
+mod status;
 mod stop;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -30,6 +33,13 @@ pub enum NodeSub {
     /// A node instance requires a separate working directory, where the
     /// operational data will be stored, as well as a configuration file.
     Start(start::StartCmd),
+
+    /// Retrieves the status of an IRN Node.
+    ///
+    /// The command connects to a running node instance and triggers its
+    /// satatus RPC which retrieves the rewards address configured, the
+    /// current stake amount, and the network version it's running on.
+    Status(status::StatusCmd),
 
     /// Stops a running IRN Node.
     ///
@@ -70,12 +80,16 @@ enum Error {
 
     #[error("Failed to fork process: error code {0}")]
     Fork(i32),
+
+    #[error("Failed to initialize prometheus: {0:?}")]
+    Prometheus(BuildError),
 }
 
 pub async fn exec(cmd: NodeCmd) -> anyhow::Result<()> {
     match cmd.commands {
         NodeSub::Start(args) => start::exec(args).await,
         NodeSub::Stop(args) => stop::exec(args).await,
+        NodeSub::Status(args) => status::exec(args).await,
     }
 }
 

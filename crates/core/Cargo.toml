@@ -42,7 +42,7 @@ derivative = "2.2"
 num-traits = "0.2"
 bytes = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
-wc = { workspace = true, features = ["future_metrics", "future"] }
+wc = { workspace = true, features = ["future", "metrics"] }
 metrics = { workspace = true }
 itertools = "0.12"
 serde_with = "3.4"

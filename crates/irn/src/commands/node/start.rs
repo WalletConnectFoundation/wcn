@@ -91,9 +91,8 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
 
     let mut lockfile = Lockfile::new();
 
-    lockfile.acquire().map_err(|err| {
+    lockfile.acquire().inspect_err(|_| {
         tracing::error!(pid = ?lockfile.owner(), "working directory is locked by another instance");
-        err
     })?;
 
     let data_dir = PathBuf::from(&config.storage.data_dir);
@@ -185,6 +184,10 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
 
     let rocksdb = create_rocksdb_config(&config.storage.rocksdb);
 
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(Error::Prometheus)?;
+
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public()),
         keypair: config.identity.private_key,
@@ -223,10 +226,6 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         eth_address: config.identity.eth_address,
         smart_contract: config.smart_contract.map(Into::into),
     };
-
-    let prometheus = PrometheusBuilder::new()
-        .install_recorder()
-        .expect("install prometheus recorder");
 
     node::run(node::signal::shutdown_listener()?, prometheus, &config)
         .await?
@@ -319,5 +318,7 @@ fn create_rocksdb_config(raw: &super::config::Rocksdb) -> RocksdbDatabaseConfig 
                 );
             })
             .unwrap_or(defaults.row_cache_size),
+
+        ..Default::default()
     }
 }

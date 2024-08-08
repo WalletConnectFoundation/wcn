@@ -209,7 +209,7 @@ module "node" {
   region      = "eu-central-1"
   id          = each.key
   environment = local.environment
-  image       = "${data.aws_ecr_repository.node.repository_url}:1.431.0"
+  image       = "${data.aws_ecr_repository.node.repository_url}:1.432.2"
   node_memory = 4096 - 512
   node_cpu    = 2048
 
@@ -329,4 +329,3 @@ resource "aws_ec2_instance_connect_endpoint" "this" {
   subnet_id          = module.node["eu-central-1a-1"].subnet_id
   preserve_client_ip = false
 }
-

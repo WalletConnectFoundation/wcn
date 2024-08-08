@@ -228,6 +228,7 @@ struct RawConfig {
     rocksdb_block_cache_size: Option<usize>,
     rocksdb_block_size: Option<usize>,
     rocksdb_row_cache_size: Option<usize>,
+    rocksdb_enable_metrics: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -345,5 +346,9 @@ fn create_rocksdb_config(raw: &RawConfig) -> RocksdbDatabaseConfig {
                 );
             })
             .unwrap_or(defaults.row_cache_size),
+
+        enable_metrics: raw
+            .rocksdb_enable_metrics
+            .unwrap_or(defaults.enable_metrics),
     }
 }

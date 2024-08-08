@@ -1,15 +1,12 @@
-use {
-    indexmap::IndexSet,
-    std::{
-        hash::{BuildHasher, Hash},
-        ops::RangeInclusive,
-    },
+use std::{
+    collections::HashSet,
+    fmt,
+    hash::{BuildHasher, Hash},
+    ops::RangeInclusive,
 };
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
-
-const MAX_NODES: usize = 256;
 
 /// Identifier of a shard.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,94 +34,96 @@ impl ShardId {
 }
 
 /// A space of keys divided into a set of shards.
-#[derive(Clone)]
-pub struct Keyspace<const RF: usize, NodeId> {
-    nodes: IndexSet<NodeId>,
-    shards: Vec<Shard<RF>>,
+#[derive(Clone, PartialEq, Eq)]
+pub struct Keyspace<N, const RF: usize> {
+    nodes_count: usize,
+    shards: Vec<Shard<N, RF>>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Shard<const RF: usize> {
-    replicas: [usize; RF],
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Shard<N, const RF: usize> {
+    replicas: [N; RF],
 }
 
-impl<const RF: usize, N> Keyspace<RF, N> {
+impl<N, const RF: usize> fmt::Debug for Keyspace<N, RF> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Keyspace")
+            .field("nodes_count", &self.nodes_count)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<N, const RF: usize> Keyspace<N, RF>
+where
+    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd,
+{
     /// Creates a new [`Keyspace`].
     pub fn new(
         nodes: impl IntoIterator<Item = N>,
         build_hasher: &impl BuildHasher,
         mut sharding_strategy: impl Strategy<N>,
-    ) -> Result<Self, Error>
-    where
-        N: Hash + Eq + Ord,
-    {
-        const { assert!(RF > 0 && RF <= MAX_NODES) };
+    ) -> Result<Self, Error> {
+        const { assert!(RF > 0) };
 
-        let nodes: IndexSet<_> = nodes.into_iter().collect();
+        let nodes: HashSet<_> = nodes.into_iter().collect();
         let nodes_count = nodes.len();
-        if nodes_count < RF || nodes_count > MAX_NODES {
-            return Err(Error::InvalidNodesCount {
-                min: RF,
-                max: MAX_NODES,
-            });
+        if nodes_count < RF {
+            return Err(Error::InvalidNodesCount(RF));
         }
 
-        let replicas = [0; RF];
+        let replicas = [N::default(); RF];
         let n_shards = u16::MAX as usize + 1;
         let mut shards: Vec<_> = (0..n_shards).map(|_| Shard { replicas }).collect();
 
         // using [Randevouz](https://en.wikipedia.org/wiki/Rendezvous_hashing) hashing to assign nodes to shards.
 
-        let mut node_ranking: Vec<_> = nodes
-            .iter()
-            .enumerate()
-            .map(|(idx, id)| (0, id, idx))
-            .collect();
+        let mut node_ranking: Vec<_> = nodes.iter().map(|idx| (0, idx)).collect();
 
         for (shard_idx, shard) in shards.iter_mut().enumerate() {
-            for (score, node_id, _) in &mut node_ranking {
-                *score = build_hasher.hash_one((node_id, shard_idx));
+            for (score, node) in &mut node_ranking {
+                *score = build_hasher.hash_one((node, shard_idx));
             }
             node_ranking.sort_unstable();
 
             let mut cursor = 0;
-            for replica_idx in &mut shard.replicas {
+            for replica_id in &mut shard.replicas {
                 loop {
                     if cursor == node_ranking.len() {
                         return Err(Error::IncompleteReplicaSet);
                     }
 
-                    let (_, node_id, node_idx) = node_ranking[cursor];
+                    let (_, node) = node_ranking[cursor];
                     cursor += 1;
 
-                    if sharding_strategy.is_suitable_replica(shard_idx, node_id) {
-                        *replica_idx = node_idx;
+                    if sharding_strategy.is_suitable_replica(shard_idx, node) {
+                        *replica_id = *node;
                         break;
                     }
                 }
             }
         }
 
-        Ok(Self { nodes, shards })
+        Ok(Self {
+            nodes_count,
+            shards,
+        })
     }
 
     /// Returns an [`Iterator`] of replicas responsible for the shard with the
     /// given [`ShardId`].
-    pub fn shard_replicas(&self, shard_id: ShardId) -> impl Iterator<Item = &N> {
-        self.shards[shard_id.0 as usize]
-            .replicas
+    pub fn shard_replicas(&self, shard_id: ShardId) -> &[N; RF] {
+        &self.shards[shard_id.0 as usize].replicas
+    }
+
+    pub fn shards<'a>(&'a self) -> impl Iterator<Item = (ShardId, &'a [N; RF])> + 'a {
+        self.shards
             .iter()
-            .map(|idx| &self.nodes[*idx])
+            .enumerate()
+            .map(|(idx, s)| (ShardId(idx as u16), &s.replicas))
     }
 
-    /// Returns an [`Iterator`] of nodes in the [`Keyspace`].
-    pub fn nodes(&self) -> impl Iterator<Item = &N> {
-        self.nodes.iter()
-    }
-
-    /// Returns the number of nodes in the [`Keyspace`].
     pub fn nodes_count(&self) -> usize {
-        self.nodes.len()
+        self.nodes_count
     }
 }
 
@@ -136,26 +135,26 @@ pub trait Strategy<N> {
     /// In consecutive calls to this function `shard_idx` is going to either
     /// stay the same or increase, but never decrease. Also, this function will
     /// never be called for the same combination of `shard_idx` and
-    /// `node_id` again.
-    fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool;
+    /// `node` again.
+    fn is_suitable_replica(&mut self, shard_idx: usize, node: &N) -> bool;
 }
 
-impl<F, N> Strategy<N> for F
+impl<N, F> Strategy<N> for F
 where
     F: FnMut(usize, &N) -> bool,
 {
-    fn is_suitable_replica(&mut self, shard_idx: usize, node_id: &N) -> bool {
-        (self)(shard_idx, node_id)
+    fn is_suitable_replica(&mut self, shard_idx: usize, node: &N) -> bool {
+        (self)(shard_idx, node)
     }
 }
 
 /// Default sharding [`Strategy`] that considers every node to be equally
 /// suitable to be a replica for any shard.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DefaultStrategy;
 
 impl<N> Strategy<N> for DefaultStrategy {
-    fn is_suitable_replica(&mut self, _shard_idx: usize, _node_id: &N) -> bool {
+    fn is_suitable_replica(&mut self, _shard_idx: usize, _node: &N) -> bool {
         true
     }
 }
@@ -163,8 +162,8 @@ impl<N> Strategy<N> for DefaultStrategy {
 /// Error of [`Keyspace::new`].
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Nodes count should be in range [{}, {}]", min, max)]
-    InvalidNodesCount { min: usize, max: usize },
+    #[error("Nodes count should be larges than the replication factor ({_0})")]
+    InvalidNodesCount(usize),
 
     #[error("Sharding strategy didn't select enough nodes to fill a replica set")]
     IncompleteReplicaSet,
@@ -175,19 +174,58 @@ pub enum Error {
 fn test_keyspace() {
     use std::hash::{BuildHasherDefault, DefaultHasher};
 
-    testing::keyspace_test_suite::<3, _, _>(
-        BuildHasherDefault::<DefaultHasher>::default(),
-        || DefaultStrategy,
-        rand::random::<usize>,
-        testing::ExpectedDistributionVariance(vec![
-            (16, 0.03),
-            (32, 0.05),
-            (64, 0.07),
-            (128, 0.1),
-            (256, 0.15),
-        ]),
-        10,
+    let expected_variance = testing::ExpectedDistributionVariance(vec![
+        (16, 0.03),
+        (32, 0.05),
+        (64, 0.07),
+        (128, 0.1),
+        (256, 0.15),
+    ]);
+
+    let mut nodes: HashSet<_> = (0u8..3).collect();
+
+    let mut keyspace: Keyspace<u8, 3> = Keyspace::new(
+        nodes.iter().copied(),
+        &BuildHasherDefault::<DefaultHasher>::default(),
+        DefaultStrategy,
     )
+    .unwrap();
+    keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+
+    // scale cluster up to full capacity
+    for idx in 3..u8::MAX {
+        nodes.insert(idx);
+        let new_keyspace = Keyspace::new(
+            nodes.iter().copied(),
+            &BuildHasherDefault::<DefaultHasher>::default(),
+            DefaultStrategy,
+        )
+        .unwrap();
+        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+        keyspace = new_keyspace;
+    }
+
+    let mut nodes_vec: Vec<_> = nodes.iter().copied().collect();
+
+    // scale cluster down to RF
+    loop {
+        let i: usize = rand::random::<usize>() % nodes_vec.len();
+        nodes_vec.swap_remove(i);
+        nodes = nodes_vec.iter().copied().collect();
+
+        let new_keyspace = Keyspace::new(
+            nodes.iter().copied(),
+            &BuildHasherDefault::<DefaultHasher>::default(),
+            DefaultStrategy,
+        )
+        .unwrap();
+        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+        keyspace = new_keyspace;
+
+        if nodes.len() == 3 {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]

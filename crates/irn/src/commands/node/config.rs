@@ -1,5 +1,4 @@
 use {
-    irn_core::cluster::replication::ConsistencyLevel,
     network::{Keypair, PeerId},
     serde::{Deserialize, Serialize},
     std::net::{IpAddr, SocketAddr},
@@ -16,15 +15,11 @@ pub struct Identity {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Peer {
     pub id: PeerId,
-    pub group: u16,
 }
 
-impl From<Peer> for irn_core::PeerId {
+impl From<Peer> for PeerId {
     fn from(value: Peer) -> Self {
-        Self {
-            id: value.id,
-            group: value.group,
-        }
+        value.id
     }
 }
 
@@ -40,6 +35,8 @@ pub struct Server {
     pub bind_address: IpAddr,
     pub server_port: u16,
     pub client_port: u16,
+    pub raft_port: u16,
+    pub admin_port: u16,
     pub metrics_port: u16,
     pub warmup_delay: u64,
 }
@@ -76,12 +73,6 @@ pub struct Storage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Replication {
-    pub consistency_level: ConsistencyLevel,
-    pub factor: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct Network {
     pub request_concurrency_limit: usize,
     pub request_limiter_queue: usize,
@@ -114,7 +105,6 @@ pub struct Config {
     pub server: Server,
     pub authorization: Authorization,
     pub storage: Storage,
-    pub replication: Replication,
     pub network: Network,
     pub smart_contract: Option<SmartContractConfig>,
 }

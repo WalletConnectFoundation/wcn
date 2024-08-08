@@ -1,9 +1,5 @@
 use {
-    super::{
-        cf::DbColumn,
-        schema,
-        types::common::{iterators::DbIterator, KeyPosition},
-    },
+    super::{cf::DbColumn, schema, types::common::iterators::DbIterator},
     crate::{
         db::{batch, cf::Column, schema::ColumnFamilyName, types::common::CommonStorage},
         Error,
@@ -13,7 +9,7 @@ use {
     serde::{Deserialize, Serialize},
     std::{
         fmt::{self, Debug},
-        ops::Range,
+        ops::RangeInclusive,
         pin::pin,
     },
 };
@@ -98,7 +94,7 @@ impl RocksBackend {
     pub fn export(
         &self,
         (string, map): (DbColumn<schema::StringColumn>, DbColumn<schema::MapColumn>),
-        ranges: impl Iterator<Item = Range<Option<KeyPosition>>>,
+        range: RangeInclusive<u64>,
     ) -> impl Stream<Item = ExportItem> {
         // Because rocks iterators capture DB lifetime we would also need to include it
         // in "Exporter" stream, and then it's going to leak through the whole
@@ -109,21 +105,28 @@ impl RocksBackend {
         async_stream::try_stream! {
             let mut items_processed = 0;
 
-            for r in ranges {
-                let string_iter = DbIterator::new(
-                    schema::StringColumn::NAME,
-                    string.scan_by_position(r.start, r.end)?,
-                );
+            // rocks iterators are exclusive -- (start, end)
+            let start = (*range.start()).checked_sub(1);
+            let end = (*range.end()).checked_add(1);
 
-                let map_iter = DbIterator::new(
-                    schema::MapColumn::NAME,
-                    map.scan_by_position(r.start, r.end)?,
-                );
+            let string_iter = DbIterator::new(
+                schema::StringColumn::NAME,
+                string.scan_by_position(start, end)?,
+            );
 
-                for item in string_iter.into_iter().chain(map_iter) {
-                    yield ExportItem::Frame(item);
-                    items_processed += 1;
-                }
+            let map_iter = DbIterator::new(
+                schema::MapColumn::NAME,
+                map.scan_by_position(start, end)?,
+            );
+
+            for item in string_iter.into_iter() {
+                yield ExportItem::Frame(item);
+                items_processed += 1;
+            }
+
+            for item in map_iter.into_iter() {
+                yield ExportItem::Frame(item);
+                items_processed += 1;
             }
 
             yield ExportItem::Done(items_processed);
@@ -138,6 +141,7 @@ impl RocksBackend {
 #[cfg(test)]
 mod test {
     use {
+        super::*,
         crate::{
             db::{
                 schema::{
@@ -195,11 +199,38 @@ mod test {
             map_entries.push((key, pair));
         }
 
-        let data = src_db.export((string, map), [(None..None)].into_iter());
-        dest_db
-            .import_all(data.map(Ok::<_, Infallible>))
-            .await
-            .unwrap();
+        let mut n_exported = 0;
+
+        const KEYRANGE_SIZE: u64 = ((u64::MAX as u128 + 1) / (u8::MAX as u128 + 1)) as u64;
+        dbg!(KEYRANGE_SIZE);
+
+        let mut idx = 0u64;
+
+        loop {
+            let start = idx.checked_mul(KEYRANGE_SIZE).unwrap();
+            let range = RangeInclusive::new(start, start.checked_add(KEYRANGE_SIZE - 1).unwrap());
+
+            let data = src_db.export((string.clone(), map.clone()), range.clone());
+
+            dest_db
+                .import_all(
+                    data.inspect(|item| match item {
+                        ExportItem::Frame(Ok(_)) => n_exported += 1,
+                        _ => {}
+                    })
+                    .map(Ok::<_, Infallible>),
+                )
+                .await
+                .unwrap();
+
+            if *range.end() == u64::MAX {
+                break;
+            }
+
+            idx += 1;
+        }
+
+        assert_eq!(n_exported, NUM_ENTRIES * 2);
 
         let string = dest_db.column::<StringColumn>().unwrap();
         for (key, val) in string_entries {

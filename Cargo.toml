@@ -68,6 +68,7 @@ time = "0.3"
 
 [dependencies]
 irn = { package = "irn_core", path = "crates/core" }
+sharding = { path = "crates/sharding" }
 api = { workspace = true }
 raft = { workspace = true }
 network = { workspace = true }
@@ -112,6 +113,9 @@ sysinfo = "0.29.10"
 libp2p = { version = "0.53", features = ["serde", "tokio"] }
 parking_lot = "0.12"
 nix = { version = "0.28", default-features = false, features = ["signal"] }
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+anyerror = "0.1"
 
 alloy = { git = "https://github.com/alloy-rs/alloy", features = [
     "contract",

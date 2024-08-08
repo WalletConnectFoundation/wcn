@@ -1,9 +1,10 @@
 use {
-    crate::{contract, network::rpc, Network},
+    crate::{contract, network::rpc, Consensus, Network},
     anyhow::Result,
     backoff::ExponentialBackoffBuilder,
     chrono::Utc,
     futures::{stream, FutureExt, StreamExt, TryFutureExt},
+    irn::cluster::Consensus as _,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, io, path::PathBuf, time::Duration},
     time::OffsetDateTime,
@@ -11,6 +12,7 @@ use {
 
 pub struct Tracker<R> {
     reporter: R,
+    consensus: Consensus,
     network: Network,
     storage: Storage,
     state: State,
@@ -53,6 +55,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
 
     pub async fn new(
         network: Network,
+        consensus: Consensus,
         reporter: R,
         storage_dir: PathBuf,
         expected_node_version: u64,
@@ -64,6 +67,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
         Ok(Self {
             reporter,
             network,
+            consensus,
             storage,
             state,
             expected_node_version,
@@ -102,10 +106,16 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
 
         let node_update_deadline_reached = OffsetDateTime::now_utc() >= self.node_update_deadline;
 
-        stream::iter(self.network.peers().await)
-            .map(|id| {
-                rpc::Send::<rpc::Health, _, _>::send(&self.network.client, id, ())
-                    .map(move |r| (id, r))
+        let this = &self;
+        stream::iter(self.consensus.cluster().nodes().cloned())
+            .map(|node| async move {
+                rpc::Send::<rpc::Health, _, _>::send(
+                    &this.network.client,
+                    (&node.id, &node.addr),
+                    (),
+                )
+                .map(move |r| (node.id, r))
+                .await
             })
             .buffer_unordered(100)
             .filter_map(|(id, res)| async move {

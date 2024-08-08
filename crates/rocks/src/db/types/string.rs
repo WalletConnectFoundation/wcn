@@ -13,10 +13,9 @@ use {
         Error,
         UnixTimestampSecs,
     },
-    async_trait::async_trait,
+    std::future::Future,
 };
 
-#[async_trait]
 pub trait StringStorage<C>: CommonStorage<C>
 where
     C: Column,
@@ -24,69 +23,86 @@ where
     /// Gets value for a provided `key`.
     ///
     /// Time complexity: `O(1)`.
-    async fn get(&self, key: &C::KeyType) -> Result<Option<C::ValueType>, Error>;
+    fn get(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync;
 
     /// Sets value for a provided key.
     ///
     /// Time complexity: `O(1)`.
-    async fn set(
+    fn set(
         &self,
         key: &C::KeyType,
         value: &C::ValueType,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Delete the value associated with the given key.
     ///
     /// Time complexity: `O(1)`.
-    async fn del(&self, key: &C::KeyType) -> Result<(), Error>;
+    fn del(&self, key: &C::KeyType) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns the remaining time to live of a key that has a timeout.
-    async fn exp(&self, key: &C::KeyType) -> Result<Option<UnixTimestampSecs>, Error>;
+    fn exp(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
 
     /// Set a timeout on key. After the timeout has expired, the key will
     /// automatically be deleted. Passing `None` will remove the current timeout
     /// and persist the key.
-    async fn setexp(
+    fn setexp(
         &self,
         key: &C::KeyType,
         expiry: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }
 
-#[async_trait]
 impl<C: Column> StringStorage<C> for DbColumn<C> {
-    async fn get(&self, key: &C::KeyType) -> Result<Option<C::ValueType>, Error> {
-        let key = C::storage_key(key)?;
-        let entry = self.backend.get::<C::ValueType>(C::NAME, key).await?;
-        entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+    fn get(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync {
+        async {
+            let key = C::storage_key(key)?;
+            let entry = self.backend.get::<C::ValueType>(C::NAME, key).await?;
+            entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+        }
     }
 
-    async fn set(
+    fn set(
         &self,
         key: &C::KeyType,
         value: &C::ValueType,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = C::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                .with_payload(value, expiration),
-        )?;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
+            let value = serialize(
+                &context::MergeOp::<&C::ValueType>::new(update_timestamp)
+                    .with_payload(value, expiration),
+            )?;
 
-        self.backend.merge(C::NAME, key, value).await
+            self.backend.merge(C::NAME, key, value).await
+        }
     }
 
-    async fn del(&self, key: &C::KeyType) -> Result<(), Error> {
-        let key = C::storage_key(key)?;
-        self.backend.delete(C::NAME, key).await
+    fn del(&self, key: &C::KeyType) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async {
+            let key = C::storage_key(key)?;
+            self.backend.delete(C::NAME, key).await
+        }
     }
 
-    async fn exp(&self, key: &C::KeyType) -> Result<Option<UnixTimestampSecs>, Error> {
-        self.expiration(key, None).await
+    fn exp(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+        self.expiration(key, None)
     }
 
     async fn setexp(
@@ -174,7 +190,7 @@ mod tests {
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,
         },
-        std::{sync::Arc, thread, time::Duration},
+        std::{thread, time::Duration},
         test_log::test,
     };
 
@@ -190,7 +206,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         let key = &TestKey::new(42).into();
         let val = &TestValue::new("value1").into();
@@ -248,7 +264,7 @@ mod tests {
             .unwrap();
 
         let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         let key1 = TestKey::new(1).into();
         let key2 = TestKey::new(2).into();
@@ -308,7 +324,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         // Payload.
         {
@@ -370,8 +386,8 @@ mod tests {
             .unwrap();
         let db = rocks_db.column::<StringColumn>().unwrap();
 
-        let db1: Arc<dyn StringStorage<_>> = db.clone().into_string_storage();
-        let db2: Arc<dyn StringStorage<_>> = db.clone().into_string_storage();
+        let db1 = db.clone().into_string_storage();
+        let db2 = db.clone().into_string_storage();
 
         const N: usize = 25_000;
 
@@ -409,7 +425,7 @@ mod tests {
         // db_full is unbounded object exposing all methods, and db is coerced to
         // dynamic trait object -- which exposes only trait object's methods.
         let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db: &dyn StringStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key1 = &TestKey::new(1).into();
         let key2 = &TestKey::new(2).into();
@@ -452,7 +468,7 @@ mod tests {
             .unwrap();
 
         let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db: &dyn StringStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key1 = &TestKey::new(1).into();
         let key2 = &TestKey::new(2).into();
@@ -478,8 +494,8 @@ mod tests {
             .unwrap();
 
         // The similarly structured columns, saved into different column families.
-        let cf1: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
-        let cf2: &dyn StringStorage<_> = &rocks_db.column::<InternalStringColumn>().unwrap();
+        let cf1 = &rocks_db.column::<StringColumn>().unwrap();
+        let cf2 = &rocks_db.column::<InternalStringColumn>().unwrap();
 
         let key = &TestKey::new(42).into();
         let val1: Vec<u8> = TestValue::new("value1").into();

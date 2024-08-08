@@ -12,7 +12,7 @@ use {
         WithTimeouts,
     },
     futures::{Future, SinkExt},
-    libp2p::PeerId,
+    libp2p::{Multiaddr, PeerId},
     std::{
         io,
         marker::{self, PhantomData},
@@ -153,14 +153,14 @@ pub trait Callee<H>: marker::Send {
     ) -> impl Future<Output = Result<BiDirectionalStream, ConnectionHandlerError>> + marker::Send;
 }
 
-impl<H: Handshake> Callee<H> for PeerId {
+impl<H: Handshake> Callee<H> for (&PeerId, &Multiaddr) {
     fn establish_stream(
         &self,
         client: &Client<H>,
         rpc_id: Id,
     ) -> impl Future<Output = Result<BiDirectionalStream, ConnectionHandlerError>> + marker::Send
     {
-        client.establish_stream(*self, rpc_id)
+        client.establish_stream(self.0, self.1, rpc_id)
     }
 }
 

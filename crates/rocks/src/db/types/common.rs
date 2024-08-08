@@ -12,7 +12,7 @@ use {
     },
     async_trait::async_trait,
     byteorder::{BigEndian, WriteBytesExt},
-    std::fmt::Debug,
+    std::{fmt::Debug, future::Future},
 };
 
 pub mod iterators;
@@ -40,11 +40,11 @@ pub trait CommonStorage<C: cf::Column>: 'static + Debug + Send + Sync {
     ) -> Result<rocksdb::DBIterator, Error>;
 
     /// Returns the expiration of the key in unix timestamp in seconds format.
-    async fn expiration(
+    fn expiration(
         &self,
         key: &C::KeyType,
         subkey: Option<&C::SubKeyType>,
-    ) -> Result<Option<UnixTimestampSecs>, Error>;
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
 
     /// Saves hinted operation for later application.
     ///
@@ -54,7 +54,11 @@ pub trait CommonStorage<C: cf::Column>: 'static + Debug + Send + Sync {
     ///
     /// All hinted operations keys are suffixed with an auto-incrementing
     /// sequence number to ensure the order of operations.
-    async fn add_hinted_op(&self, op: HintedOp, tag: u64) -> Result<(), Error>;
+    fn add_hinted_op(
+        &self,
+        op: HintedOp,
+        tag: u64,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Commit hinted operations with tags within a certain range.
     ///
@@ -84,41 +88,49 @@ impl<C: cf::Column> CommonStorage<C> for cf::DbColumn<C> {
         Ok(iter)
     }
 
-    async fn expiration(
+    fn expiration(
         &self,
         key: &C::KeyType,
         subkey: Option<&C::SubKeyType>,
-    ) -> Result<Option<UnixTimestampSecs>, Error> {
-        let key = if let Some(subkey) = subkey {
-            C::ext_key(key, subkey)?
-        } else {
-            C::storage_key(key)?
-        };
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+        async move {
+            let key = if let Some(subkey) = subkey {
+                C::ext_key(key, subkey)?
+            } else {
+                C::storage_key(key)?
+            };
 
-        let data = self
-            .backend
-            .get::<C::ValueType>(C::NAME, key)
-            .await?
-            .ok_or(Error::EntryNotFound)?;
+            let data = self
+                .backend
+                .get::<C::ValueType>(C::NAME, key)
+                .await?
+                .ok_or(Error::EntryNotFound)?;
 
-        // Treat expired entries as non-existing.
-        if data.expired() || data.payload().is_none() {
-            return Err(Error::EntryNotFound);
+            // Treat expired entries as non-existing.
+            if data.expired() || data.payload().is_none() {
+                return Err(Error::EntryNotFound);
+            }
+
+            Ok(data.expiration_timestamp())
         }
-
-        Ok(data.expiration_timestamp())
     }
 
-    async fn add_hinted_op(&self, op: HintedOp, tag: u64) -> Result<(), Error> {
-        let mut key = Vec::with_capacity(8 + 8);
-        key.write_u64::<BigEndian>(tag)
-            .map_err(|_| Error::Serialize)?;
-        key.write_u64::<BigEndian>(self.backend.seq_num_gen.next())
-            .map_err(|_| Error::Serialize)?;
-        let value = serialize(&op)?;
-        self.backend
-            .put(<InternalHintedOpsColumn as cf::Column>::NAME, key, value)
-            .await
+    fn add_hinted_op(
+        &self,
+        op: HintedOp,
+        tag: u64,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let mut key = Vec::with_capacity(8 + 8);
+            key.write_u64::<BigEndian>(tag)
+                .map_err(|_| Error::Serialize)?;
+            key.write_u64::<BigEndian>(self.backend.seq_num_gen.next())
+                .map_err(|_| Error::Serialize)?;
+            let value = serialize(&op)?;
+            self.backend
+                .put(<InternalHintedOpsColumn as cf::Column>::NAME, key, value)
+                .await
+        }
     }
 
     fn commit_hinted_ops(&self, left: Option<u64>, right: Option<u64>) -> Result<(), Error> {
@@ -163,7 +175,7 @@ mod tests {
 
         // String operations.
         {
-            let col: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+            let col = &rocks_db.column::<StringColumn>().unwrap();
             let test_keys: Vec<_> = vec![TestKey::new(42), TestKey::new(43), TestKey::new(44)];
             let test_vals = [
                 TestValue::new("value1"),
@@ -245,7 +257,7 @@ mod tests {
 
         // Map operations.
         {
-            let col: &dyn MapStorage<_> = &rocks_db.column::<MapColumn>().unwrap();
+            let col = &rocks_db.column::<MapColumn>().unwrap();
 
             let keys = vec![TestKey::new(42), TestKey::new(43), TestKey::new(44)];
             let fields = vec![TestKey::new(142), TestKey::new(143), TestKey::new(144)];
@@ -393,7 +405,7 @@ mod tests {
         }
 
         // Ensure that no data is visible before commit.
-        let col: &dyn MapStorage<_> = &rocks_db.column::<MapColumn>().unwrap();
+        let col = &rocks_db.column::<MapColumn>().unwrap();
         assert_eq!(col.hcard(&TestKey::new(42).into()).await.unwrap(), 0);
 
         // Commit hinted ops.
@@ -431,7 +443,7 @@ mod tests {
         }
 
         // Ensure that no data is visible before commit.
-        let col: &dyn MapStorage<_> = &rocks_db.column::<MapColumn>().unwrap();
+        let col = &rocks_db.column::<MapColumn>().unwrap();
         assert_eq!(col.hcard(&TestKey::new(42).into()).await.unwrap(), 0);
 
         // Commit the portion of the hinted ops.

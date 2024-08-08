@@ -4,14 +4,16 @@ use {
         future::{FusedFuture, OptionFuture},
         FutureExt,
     },
-    irn::ShutdownReason,
-    metrics_exporter_prometheus::PrometheusBuilder,
+    irn::fsm,
+    metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
     tap::Pipe,
     time::{macros::datetime, OffsetDateTime},
+    xxhash_rust::xxh3::Xxh3Builder,
 };
 pub use {
+    cluster::Cluster,
     config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
     logger::Logger,
@@ -19,6 +21,7 @@ pub use {
     storage::Storage,
 };
 
+pub mod cluster;
 pub mod config;
 pub mod consensus;
 pub mod logger;
@@ -38,7 +41,7 @@ const NODE_VERSION: u64 = 2;
 /// [`NODE_VERSION`] are going to receive reduced rewards.
 const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-06-19 12:00:00 -0);
 
-pub type Node = irn::Node<Consensus, Network, Storage>;
+pub type Node = irn::Node<Consensus, Network, Storage, Xxh3Builder>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -81,33 +84,51 @@ pub fn exec() -> anyhow::Result<()> {
 
     let cfg = Config::from_env().context("failed to parse config")?;
 
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .expect("install prometheus recorder");
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
         .block_on(async move {
-            run(signal::shutdown_listener()?, &cfg).await?.await;
+            run(signal::shutdown_listener()?, prometheus, &cfg)
+                .await?
+                .await;
             Ok(())
         })
 }
 
 pub async fn run(
-    shutdown_fut: impl Future<Output = ShutdownReason>,
+    shutdown_fut: impl Future<Output = fsm::ShutdownReason> + Send,
+    prometheus: PrometheusHandle,
     cfg: &Config,
-) -> Result<impl Future<Output = ()>, Error> {
+) -> Result<impl Future<Output = ()> + Send, Error> {
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
-    let (stake_validator, performance_tracker) = if let Some(c) = &cfg.smart_contract {
+    let stake_validator = if let Some(c) = &cfg.smart_contract {
         let rpc_url = &c.eth_rpc_url;
         let addr = &c.config_address;
 
-        let sv = contract::StakeValidator::new(rpc_url, addr)
+        contract::StakeValidator::new(rpc_url, addr)
             .await
             .map(Some)
-            .map_err(Error::Contract)?;
+            .map_err(Error::Contract)?
+    } else {
+        None
+    };
 
-        let pt = if let Some(p) = &c.performance_reporter {
+    let consensus = Consensus::new(cfg, network.clone(), stake_validator)
+        .await
+        .map_err(Error::Consensus)?;
+
+    let performance_tracker = if let Some(c) = &cfg.smart_contract {
+        let rpc_url = &c.eth_rpc_url;
+        let addr = &c.config_address;
+
+        if let Some(p) = &c.performance_reporter {
             let dir = p.tracker_dir.clone();
 
             let reporter = contract::new_performance_reporter(rpc_url, addr, &p.signer_mnemonic)
@@ -116,6 +137,7 @@ pub async fn run(
 
             performance::Tracker::new(
                 network.clone(),
+                consensus.clone(),
                 reporter,
                 dir,
                 NODE_VERSION,
@@ -126,21 +148,12 @@ pub async fn run(
             .map_err(Error::PerformanceTracker)?
         } else {
             None
-        };
-
-        (sv, pt)
+        }
     } else {
-        (None, None)
+        None
     };
 
-    let consensus = Consensus::new(cfg, network.clone(), stake_validator)
-        .await
-        .map_err(Error::Consensus)?;
-
-    consensus.init(cfg).await.map_err(Error::Consensus)?;
-
     let node_opts = irn::NodeOpts {
-        replication_strategy: cfg.replication_strategy.clone(),
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
         replication_concurrency_limit: cfg.request_concurrency_limit,
         replication_request_queue: cfg.request_limiter_queue,
@@ -153,11 +166,17 @@ pub async fn run(
             }),
     };
 
-    let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
-
-    let prometheus = PrometheusBuilder::new()
-        .install_recorder()
-        .expect("install prometheus recorder");
+    let node = irn::Node::new(
+        cluster::Node {
+            id: cfg.id,
+            addr: cfg.replica_api_server_addr.clone(),
+        },
+        node_opts,
+        consensus,
+        network,
+        storage,
+        Xxh3Builder::new(),
+    );
 
     Network::spawn_servers(cfg, node.clone(), Some(prometheus.clone()))?;
 

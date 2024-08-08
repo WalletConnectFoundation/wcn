@@ -1,26 +1,26 @@
 use {
-    crate::{Keyspace, ShardId, Strategy},
-    rand::random,
+    crate::{Keyspace, ShardId},
     std::{
         collections::{HashMap, HashSet},
-        fmt,
-        hash::{BuildHasher, Hash},
+        hash::Hash,
     },
 };
 
-impl<const RF: usize, N> Keyspace<RF, N>
+impl<N, const RF: usize> Keyspace<N, RF>
 where
-    N: Eq + Hash + fmt::Debug,
+    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd,
 {
-    fn assert_variance_and_stability(
+    pub fn assert_variance_and_stability(
         &self,
-        old: &Self,
+        old_keyspace: &Self,
         expected_variance: &ExpectedDistributionVariance,
     ) {
-        println!();
-        dbg!(self.nodes.len());
+        let nodes: HashSet<_> = self.shards().flat_map(|(_, id)| id).collect();
+        let old_nodes: HashSet<_> = old_keyspace.shards().flat_map(|(_, id)| id).collect();
 
-        let mut shards_per_node = HashMap::<usize, usize>::new();
+        println!();
+
+        let mut shards_per_node = HashMap::<N, usize>::new();
 
         for shard in &self.shards {
             for node_idx in shard.replicas.iter() {
@@ -28,7 +28,7 @@ where
             }
         }
 
-        let mean = self.shards.len() * RF / self.nodes.len();
+        let mean = self.shards.len() * RF / self.nodes_count;
         let max_deviation = shards_per_node
             .values()
             .copied()
@@ -37,23 +37,20 @@ where
             .unwrap();
         let coefficient = max_deviation as f64 / mean as f64;
 
-        let allowed_coefficient = expected_variance.get(self.nodes.len());
+        let allowed_coefficient = expected_variance.get(self.nodes_count);
 
         dbg!(mean, max_deviation, coefficient, allowed_coefficient);
         assert!(coefficient <= allowed_coefficient);
 
-        let old_nodes: HashSet<_> = old.nodes().collect();
-        let new_nodes: HashSet<_> = self.nodes().collect();
-
         let mut allowed_shard_movements = 0;
 
-        let removed: HashSet<_> = old_nodes.difference(&new_nodes).collect();
-        let added: HashSet<_> = new_nodes.difference(&old_nodes).collect();
+        let removed: HashSet<_> = old_nodes.difference(&nodes).copied().collect();
+        let added: HashSet<_> = nodes.difference(&old_nodes).copied().collect();
 
         if !removed.is_empty() {
-            for shard in &old.shards {
-                for replica_idx in &shard.replicas {
-                    if removed.contains(&old.nodes.get_index(*replica_idx).unwrap()) {
+            for shard in &old_keyspace.shards {
+                for node_id in &shard.replicas {
+                    if removed.contains(node_id) {
                         allowed_shard_movements += 1;
                     }
                 }
@@ -65,13 +62,13 @@ where
 
         let mut shard_movements = 0;
         let mut replicas: HashSet<_>;
-        for shard_idx in 0..old.shards.len() {
+        for shard_idx in 0..old_keyspace.shards.len() {
             let shard_id = ShardId(shard_idx as u16);
 
-            replicas = self.shard_replicas(shard_id).collect();
+            replicas = self.shard_replicas(shard_id).into_iter().collect();
 
-            for node_id in old.shard_replicas(shard_id) {
-                if !replicas.contains(node_id) {
+            for node_id in old_keyspace.shard_replicas(shard_id) {
+                if !replicas.contains(&node_id) {
                     shard_movements += 1;
                 }
             }
@@ -119,148 +116,5 @@ impl ExpectedDistributionVariance {
         }
 
         panic!("Missing coefficient for nodes_count: {nodes_count}");
-    }
-}
-
-pub fn keyspace_test_suite<const RF: usize, NodeId, S>(
-    hasher_factory: impl BuildHasher,
-    sharding_strategy_factory: impl FnMut() -> S,
-    node_id_factory: impl FnMut() -> NodeId,
-    expected_variance: ExpectedDistributionVariance,
-    fuzzy_iterations: usize,
-) where
-    NodeId: Eq + Hash + Ord + Clone + fmt::Debug,
-    S: Strategy<NodeId>,
-{
-    let new_hasher = hasher_factory;
-    let mut new_strategy = sharding_strategy_factory;
-    let mut new_node_id = node_id_factory;
-
-    let initial_nodes = (0..RF).map(|_| new_node_id());
-
-    let mut keyspace: Keyspace<RF, _> =
-        Keyspace::new(initial_nodes, &new_hasher, new_strategy()).unwrap();
-    keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-
-    // add 10 nodes by 1
-    for _ in 0..10 {
-        let nodes = keyspace.nodes().cloned().chain([new_node_id()]);
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // remove 10 nodes by 1
-    for _ in 0..10 {
-        let mut nodes = keyspace.nodes.clone();
-        nodes.shift_remove_index(random::<usize>() % keyspace.nodes.len());
-
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // add 10 nodes at once
-    {
-        let ids = (0..10).map(|_| new_node_id());
-        let nodes = keyspace.nodes().cloned().chain(ids);
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // remove 10 nodes at once
-    {
-        let mut nodes = keyspace.nodes.clone();
-        for _ in 0..10 {
-            nodes.shift_remove_index(random::<usize>() % keyspace.nodes.len());
-        }
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // scale to 32 nodes
-    {
-        let add = 32usize
-            .checked_sub(keyspace.nodes_count())
-            .unwrap_or_default();
-        let ids = (0..add).map(|_| new_node_id());
-        let nodes = keyspace.nodes().cloned().chain(ids);
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // scale to 64 nodes
-    {
-        let add = 64usize
-            .checked_sub(keyspace.nodes_count())
-            .unwrap_or_default();
-        let ids = (0..add).map(|_| new_node_id());
-        let nodes = keyspace.nodes().cloned().chain(ids);
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // scale to 128 nodes
-    {
-        let add = 128usize
-            .checked_sub(keyspace.nodes_count())
-            .unwrap_or_default();
-        let ids = (0..add).map(|_| new_node_id());
-        let nodes = keyspace.nodes().cloned().chain(ids);
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // remove 1, add 1
-    {
-        let mut nodes = keyspace.nodes.clone();
-        nodes.shift_remove_index(random::<usize>() % keyspace.nodes.len());
-        nodes.insert(new_node_id());
-
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // remove 10, add 10
-    {
-        let mut nodes = keyspace.nodes.clone();
-        for _ in 0..10 {
-            nodes.shift_remove_index(random::<usize>() % keyspace.nodes.len());
-            nodes.insert(new_node_id());
-        }
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
-    }
-
-    // add / remove random amount of nodes
-    for _ in 0..fuzzy_iterations {
-        let mut nodes = keyspace.nodes.clone();
-
-        for _ in 0..2 {
-            let nodes_count = random::<usize>() % (crate::MAX_NODES - RF) + RF;
-            match nodes_count as isize - nodes.len() as isize {
-                n if n > 0 => {
-                    for _ in 0..n {
-                        nodes.insert(new_node_id());
-                    }
-                }
-                n => {
-                    for _ in 5..n.abs() {
-                        nodes.shift_remove_index(random::<usize>() % keyspace.nodes.len());
-                    }
-                }
-            }
-        }
-
-        let new_keyspace = Keyspace::new(nodes, &new_hasher, new_strategy()).unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
-        keyspace = new_keyspace;
     }
 }

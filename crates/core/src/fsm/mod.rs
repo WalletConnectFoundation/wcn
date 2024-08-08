@@ -1,269 +1,265 @@
 use {
-    crate::{
-        cluster::{self, Cluster},
+    crate::cluster::{
+        self,
+        keyspace::{self, MigrationPlan},
+        node,
         Consensus,
-        Migrations,
-        Network,
-        PeerId,
-        ShutdownReason,
+        Node,
     },
     backoff::{future::retry, ExponentialBackoff},
-    cluster::NodeOperationMode as Mode,
+    derive_more::From,
     futures::{
-        future::{self, BoxFuture},
-        stream::{self, BoxStream, FuturesUnordered},
-        Future,
+        future::{FusedFuture, OptionFuture},
+        stream,
         FutureExt,
-        Stream,
-        StreamExt,
+        TryFutureExt,
     },
-    std::{
-        pin::{pin, Pin},
-        sync::Arc,
-        time::Duration,
-    },
-    tokio::sync::{oneshot, RwLock},
+    std::{error::Error as StdError, future::Future, pin::pin, sync::Arc, time::Duration},
+    tokio::sync::oneshot,
+    tokio_stream::StreamExt as _,
 };
 
+pub trait MigrationManager<N: Node>: Send + Sync + 'static {
+    fn pull_keyranges(&self, plan: Arc<MigrationPlan<N>>) -> impl Future<Output = ()> + Send;
+}
+
 /// Finite-state machine of a running node.
-struct Fsm<'a, C, N, M> {
-    id: PeerId,
+struct Fsm<C: Consensus, M> {
+    node: C::Node,
 
     consensus: C,
-    network: N,
-    cluster: Arc<RwLock<Cluster>>,
-    migrations: M,
-
-    streams: Pin<&'a mut Streams>,
-
-    op_mode: Mode,
-    op_mode_commit_in_progress: Option<Mode>,
-    pending_shutdown: Option<ShutdownReason>,
+    migration_manager: M,
 
     warmup_delay: Duration,
 }
 
-// TODO: Once TAIT (type alias impl trait) feature is stabilized, we shouldn't
-// use dynamic dispatch here.
-/// Combination of all [`Future`]s and [`Stream`]s spawned inside the
-/// [`Fsm`] context.
-type Streams = stream::Select<
-    stream::FilterMap<
-        FuturesUnordered<BoxFuture<'static, Option<Event>>>,
-        future::Ready<Option<Event>>,
-        fn(Option<Event>) -> future::Ready<Option<Event>>,
-    >,
-    stream::SelectAll<BoxStream<'static, Event>>,
->;
+/// Reason for shutting down a node FSM.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShutdownReason {
+    /// The node is being decommissioned and isn't expected to be back online.
+    ///
+    /// It is required to perform data migrations in order to decommission a
+    /// node.
+    Decommission,
 
-/// Event happened in a context of [`Fsm`] produced by a spawned [`Future`] or
-/// [`Stream`].
+    /// The node is being restarted and is expected to be back online ASAP.
+    ///
+    /// Data migrations will not be performed.
+    Restart,
+}
+
+/// Event happened in a context of [`Fsm`].
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 enum Event {
-    /// Notification indicating that the node has received an update from the
-    /// consensus module and applied it to its cluster view.
-    ClusterViewUpdated(cluster::Diff),
-
-    /// Notification indicating that the node has broadcast a heartbeat to the
-    /// network.
-    HeartbeatTicked,
+    /// Notification indicating that the [`Cluster`] has been updated.
+    ClusterUpdated,
 
     /// Once node receives a shutdown signal, it will trigger this event.
     ShutdownTriggered(ShutdownReason),
-
-    /// Node completed warming up period after restart.
-    WarmupCompleted,
-
-    /// Notification indicating that the node has completed its booting
-    /// migrations.
-    BootingMigrationsCompleted,
-
-    /// Notification indicating that the node has completed its leaving
-    /// migrations.
-    LeavingMigrationsCompleted,
 }
 
 /// Runs finite-state machine of a node.
-pub(super) async fn run(
-    node_id: PeerId,
-    consensus: impl Consensus,
-    network: impl Network,
-    cluster: Arc<RwLock<Cluster>>,
-    migrations: impl Migrations,
+pub(super) fn run<C: Consensus>(
+    node: C::Node,
+    consensus: C,
+    migration_manager: impl MigrationManager<C::Node>,
     warmup_delay: Duration,
     shutdown_rx: oneshot::Receiver<ShutdownReason>,
-) -> ShutdownReason {
-    let futures = FuturesUnordered::new();
-    // So that `futures` never finishes.
-    futures.push(futures::future::pending().boxed());
-
-    let streams = pin!(stream::select(
-        futures.filter_map(future::ready as fn(Option<Event>) -> future::Ready<Option<Event>>),
-        stream::SelectAll::new()
-    ));
-
+) -> impl Future<Output = ShutdownReason> + Send {
     Fsm {
-        id: node_id,
+        node,
         consensus,
-        network,
-        cluster,
-        migrations,
-        streams,
-        op_mode: Mode::Started,
-        op_mode_commit_in_progress: None,
-        pending_shutdown: None,
+        migration_manager,
         warmup_delay,
     }
     .run(shutdown_rx)
-    .await
 }
 
-type ControlFlow = std::ops::ControlFlow<ShutdownReason>;
+#[derive(Debug)]
+enum Task<N: Node> {
+    AddNode,
 
-impl<'a, C, N, M> Fsm<'a, C, N, M>
+    CompletePulling(Arc<keyspace::MigrationPlan<N>>),
+
+    ShutdownNode,
+    StartupNode,
+
+    DecommissionNode,
+}
+
+impl<C, M> Fsm<C, M>
 where
     C: Consensus,
-    N: Network,
-    M: Migrations,
+    M: MigrationManager<C::Node>,
 {
-    async fn run(&mut self, shutdown_rx: oneshot::Receiver<ShutdownReason>) -> ShutdownReason {
-        self.listen_for_shutdown_signal(shutdown_rx);
-        self.handle_cluster_view_updates();
-        self.broadcast_heartbeat();
+    async fn run(self, shutdown_rx: oneshot::Receiver<ShutdownReason>) -> ShutdownReason {
+        let cluster_view = self.consensus.cluster_view();
+        let cluster_updates = cluster_view.updates().map(|_| Event::ClusterUpdated);
+
+        let shutdown_signal = shutdown_rx
+            .into_stream()
+            .map(|reason| Event::ShutdownTriggered(reason.unwrap_or(ShutdownReason::Restart)));
+        let mut pending_shutdown = None;
+
+        let events = cluster_updates
+            .merge(shutdown_signal)
+            .merge(stream::pending());
+        let mut events = pin!(events);
+
+        let mut state = None;
+
+        let mut fut = pin!(OptionFuture::from(None));
 
         loop {
-            match self.streams.next().await.unwrap() {
-                Event::ClusterViewUpdated(diff) => {
-                    if let ControlFlow::Break(reason) = self.handle_cluster_view_update(diff) {
-                        break reason;
+            if let Some(shutdown_reason) = cluster_view.peek(|c| {
+                let cluster_state = c.node_state(self.node.id());
+                if state != cluster_state {
+                    tracing::info!(node_id = ?self.node.id(), prev_state = ?state, new_state = ?cluster_state);
+                }
+
+                // Here we're comparing the node's local understandig of it's state with it's
+                // actual state within the `Cluster`.
+                match (&state, &cluster_state) {
+                    // If node just started and it's not in the `Cluster` it needs to join the
+                    // cluster.
+                    (None, None) => fut.set(Some(self.execute(Task::AddNode)).into()),
+
+                    // If both states are the same then the correct task is already running
+                    // (or completed).
+                    (a, b) if a == b => {}
+
+                    // If the node was removed from the cluster it means that it was decommissioned.
+                    (Some(_), None) => return Some(ShutdownReason::Decommission),
+
+                    // If node just started and we see `node::State::Restarting` in the `Cluster`
+                    // state it means that the node is coming back from a restart.
+                    (None, Some(node::State::Restarting)) => {
+                        fut.set(Some(self.execute(Task::StartupNode)).into())
+                    }
+
+                    // If the node has transitioned to `Restarting` from some other state, then we
+                    // need to do the restart itself.
+                    (Some(_), Some(node::State::Restarting)) => {
+                        return Some(ShutdownReason::Restart)
+                    }
+
+                    // `Cluster` state is the ultimate source of thuth, no matter the current local
+                    // `node::State`, so for these states we always follow what `Cluster` says.
+                    (_, Some(node::State::Pulling(plan))) => {
+                        fut.set(Some(self.execute(Task::CompletePulling(plan.clone()))).into());
+                    }
+                    (_, Some(node::State::Normal)) => match pending_shutdown {
+                        None => fut.set(None.into()),
+                        Some(ShutdownReason::Restart) => {
+                            fut.set(Some(self.execute(Task::ShutdownNode)).into())
+                        }
+                        Some(ShutdownReason::Decommission) => {
+                            fut.set(Some(self.execute(Task::DecommissionNode)).into())
+                        }
+                    },
+                    (_, Some(node::State::Decommissioning)) => fut.set(None.into()),
+                };
+
+                state = cluster_state;
+                None
+            }) {
+                return shutdown_reason;
+            }
+
+            let evt = tokio::select! {
+                _ = &mut fut, if !fut.is_terminated() => continue,
+                Some(evt) = events.next() => evt,
+            };
+
+            let shutdown_reason = match evt {
+                // next iteration of the loop will check the `Cluster`
+                Event::ClusterUpdated => continue,
+                Event::ShutdownTriggered(reason) => reason,
+            };
+
+            pending_shutdown = Some(shutdown_reason);
+
+            match (shutdown_reason, &state) {
+                // If the node is joining the cluster or is pulling data then shutdown should be
+                // delayed.
+                (reason, None) => {
+                    tracing::warn!(
+                        ?reason,
+                        "Node is joining the cluster, delaying the shutdown"
+                    );
+                }
+                (reason, Some(node::State::Pulling { .. })) => {
+                    tracing::warn!(?reason, "Node is `Pulling`, delaying the shutdown");
+                }
+
+                // We just went back from `Restarting`, the `StartupNode` task is running and we get
+                // a new `Restart` signal, so we need to delay it until the task is completed.
+                (reason, Some(node::State::Restarting)) => {
+                    tracing::warn!(?reason, "Node is starting up, delaying the shutdown");
+                }
+
+                // Weird, but can theoretically happen if something else updates our state in the
+                // `Cluster`, nothing to do.
+                (reason, Some(node::State::Decommissioning)) => {
+                    tracing::warn!(?reason, "Node is decommissioning, ignoring the shutdown");
+                }
+
+                // Regular decommissioning.
+                (ShutdownReason::Decommission, Some(node::State::Normal)) => {
+                    fut.set(Some(self.execute(Task::DecommissionNode)).into());
+                }
+
+                // Regular restart.
+                (ShutdownReason::Restart, Some(node::State::Normal)) => {
+                    fut.set(Some(self.execute(Task::ShutdownNode)).into());
+                }
+            }
+        }
+    }
+
+    fn execute(&self, task: Task<C::Node>) -> impl FusedFuture + Send + '_ {
+        async move {
+            let backoff = ExponentialBackoff {
+                initial_interval: Duration::from_secs(1),
+                max_interval: Duration::from_secs(10),
+                max_elapsed_time: None,
+                ..Default::default()
+            };
+
+            let _ = retry(backoff, || {
+                async {
+                    match &task {
+                        Task::AddNode => self.add_node().await,
+                        Task::CompletePulling(plan) => {
+                            self.complete_pulling(Arc::clone(plan)).await
+                        }
+                        Task::ShutdownNode => self.shutdown_node().await,
+                        Task::StartupNode => self.startup_node().await,
+                        Task::DecommissionNode => self.decommission_node().await,
                     }
                 }
-                Event::ShutdownTriggered(reason) => self.handle_shutdown(reason),
-                Event::BootingMigrationsCompleted => {
-                    self.commit_op_mode(cluster::NodeOperationMode::Normal);
-                }
-                Event::LeavingMigrationsCompleted => {
-                    self.commit_op_mode(cluster::NodeOperationMode::Left);
-                }
-                Event::HeartbeatTicked => {}
-                Event::WarmupCompleted => self.commit_op_mode(cluster::NodeOperationMode::Normal),
-            }
+                .map_err(Error::into_backoff)
+            })
+            .await;
         }
+        .fuse()
     }
 
-    fn handle_cluster_view_update(&mut self, diff: cluster::Diff) -> ControlFlow {
-        let Some(mode) = diff.node_op_mode(self.id) else {
-            return ControlFlow::Continue(());
-        };
-
-        let prev_op_mode = self.op_mode;
-        self.op_mode = mode;
-        tracing::info!(id = ?self.id, from = ?prev_op_mode, to = ?mode, "Transitioned");
-        self.resolve_op_mode_commit(mode);
-
-        match mode {
-            Mode::Started => self.commit_op_mode(Mode::Booting),
-            Mode::Booting => self.run_booting_migrations(),
-            Mode::Normal => {}
-            Mode::Leaving => self.run_leaving_migrations(),
-
-            // An edge case when a node decommisions itself and comes back online
-            // quick enough.
-            Mode::Left if prev_op_mode == Mode::Started => {
-                self.commit_op_mode(Mode::Booting);
-            }
-
-            Mode::Left => return ControlFlow::Break(ShutdownReason::Decommission),
-
-            // Recovering after restart.
-            Mode::Restarting if prev_op_mode == Mode::Started => self.warmup(),
-            // Restarting
-            Mode::Restarting => return ControlFlow::Break(ShutdownReason::Restart),
-        };
-
-        ControlFlow::Continue(())
+    async fn add_node(&self) -> Result<(), Error> {
+        self.consensus
+            .add_node(&self.node)
+            .await
+            .map_err(Error::from_consensus)
     }
 
-    // To make a graceful shutdown, we only do it if there's no pending op mode
-    // commits. If there is a commit we do a delayed shutdown, after the commit
-    // is done.
-    fn resolve_op_mode_commit(&mut self, mode: Mode) {
-        if let Some(in_progress) = self.op_mode_commit_in_progress {
-            // There's also a possibility that the real state jumps forward, so we do >=
-            // here.
-            if mode >= in_progress {
-                self.op_mode_commit_in_progress = None;
-                self.try_handle_pending_shutdown();
-            }
-        }
-    }
+    async fn complete_pulling(
+        &self,
+        plan: Arc<keyspace::MigrationPlan<C::Node>>,
+    ) -> Result<(), Error> {
+        let keyspace_version = plan.keyspace_version();
 
-    fn handle_shutdown(&mut self, reason: ShutdownReason) {
-        if self.is_delayed_shutdown_required(reason) {
-            self.pending_shutdown = Some(reason);
-        } else {
-            self.shutdown(reason)
-        }
-    }
+        self.migration_manager.pull_keyranges(plan).await;
 
-    fn is_delayed_shutdown_required(&self, reason: ShutdownReason) -> bool {
-        self.op_mode_commit_in_progress.is_some()
-            || (reason == ShutdownReason::Restart && self.op_mode == Mode::Booting)
-    }
-
-    fn try_handle_pending_shutdown(&mut self) {
-        match (self.op_mode, self.pending_shutdown.take()) {
-            // If we transitioned to `Booting` delay shutdown again.
-            (Mode::Booting, Some(ShutdownReason::Restart)) => {
-                let _ = self.pending_shutdown.insert(ShutdownReason::Restart);
-            }
-            (_, Some(reason)) => self.shutdown(reason),
-            _ => {}
-        }
-    }
-
-    fn shutdown(&mut self, reason: ShutdownReason) {
-        match reason {
-            ShutdownReason::Decommission => self.decommission(),
-            ShutdownReason::Restart => self.restart(),
-        }
-    }
-
-    fn decommission(&mut self) {
-        match self.op_mode {
-            // We may go directly to `Left` state if this `Node` isn't operational yet.
-            Mode::Started | Mode::Booting => self.commit_op_mode(Mode::Left),
-            Mode::Normal => self.commit_op_mode(Mode::Leaving),
-            mode @ (Mode::Leaving | Mode::Left | Mode::Restarting) => {
-                tracing::warn!(?mode, "Trying to decomission while already shutting down");
-            }
-        }
-    }
-
-    fn restart(&mut self) {
-        match self.op_mode {
-            Mode::Started | Mode::Normal => self.commit_op_mode(Mode::Restarting),
-            Mode::Booting => tracing::warn!("Trying to restart while Booting"),
-            mode @ (Mode::Leaving | Mode::Left | Mode::Restarting) => {
-                tracing::warn!(?mode, "Trying to restart while already shutting down")
-            }
-        }
-    }
-
-    fn warmup(&mut self) {
-        let warmup_delay = self.warmup_delay;
-
-        self.spawn_future(async move {
-            tokio::time::sleep(warmup_delay).await;
-            Some(Event::WarmupCompleted)
-        });
-    }
-
-    fn commit_op_mode(&mut self, mode: cluster::NodeOperationMode)
-    where
-        C: Consensus,
-    {
         let backoff = ExponentialBackoff {
             initial_interval: Duration::from_secs(1),
             max_interval: Duration::from_secs(10),
@@ -271,139 +267,97 @@ where
             ..Default::default()
         };
 
-        let id = self.id;
-        let consensus = self.consensus.clone();
-        let fut = async move {
-            let _ = retry(backoff, move || {
-                let consensus = consensus.clone();
+        let _ = retry(backoff, || {
+            self.consensus
+                .complete_pull(self.node.id(), keyspace_version)
+                .map_err(Error::from_consensus)
+                .map_err(Error::into_backoff)
+        })
+        .await;
 
-                async move {
-                    consensus
-                        .update_node_op_mode(id, mode)
-                        .await
-                        .map_err(|err| {
-                            tracing::error!(?id, ?err, "Consensus::update_node_operation_mode")
-                        })
-                        .map_err(backoff::Error::transient)?
-                        .map_err(|err| {
-                            // These errors are mostly expected to happen, except some possible
-                            // bugs, so let's use `info` here.
-                            tracing::info!(?id, ?err, "ClusterView::update_node_operation_mode")
-                        })
-                        .map_err(backoff::Error::transient)
-                }
-            })
-            .await;
-
-            tracing::info!(?id, ?mode, "Operation mode change committed");
-            None
-        };
-
-        self.op_mode_commit_in_progress = Some(mode);
-        self.spawn_future(fut);
+        Ok(())
     }
 
-    fn listen_for_shutdown_signal(&mut self, shutdown_rx: oneshot::Receiver<ShutdownReason>) {
-        let id = self.id;
-        let fut = shutdown_rx.map(move |res| match res {
-            Ok(reason) => {
-                tracing::info!(?id, "Shutdown signal received: {reason:?}");
-                reason
+    async fn shutdown_node(&self) -> Result<(), Error> {
+        self.consensus
+            .shutdown_node(self.node.id())
+            .await
+            .map_err(Error::from_consensus)
+    }
+
+    async fn startup_node(&self) -> Result<(), Error> {
+        tokio::time::sleep(self.warmup_delay).await;
+
+        self.consensus
+            .startup_node(&self.node)
+            .await
+            .map_err(Error::from_consensus)
+    }
+
+    async fn decommission_node(&self) -> Result<(), Error> {
+        self.consensus
+            .decommission_node(&self.node.id())
+            .await
+            .map_err(Error::from_consensus)
+    }
+}
+
+type Result<T, E> = std::result::Result<T, E>;
+
+pub struct Error(backoff::Error<anyhow::Error>);
+
+impl Error {
+    fn permanent(err: impl StdError + Send + Sync + 'static) -> Self {
+        Self(backoff::Error::permanent(anyhow::Error::new(err)))
+    }
+
+    fn transient(err: impl StdError + Send + Sync + 'static) -> Self {
+        Self(backoff::Error::transient(anyhow::Error::new(err)))
+    }
+
+    fn from_consensus<E>(err: E) -> Self
+    where
+        E: TryInto<cluster::Error, Error = E> + StdError + Send + Sync + 'static,
+    {
+        use cluster::Error as CE;
+
+        match err.try_into() {
+            Ok(
+                err @ (CE::NodeAlreadyExists
+                | CE::NodeAlreadyStarted
+                | CE::UnknownNode
+                | CE::NoMigration
+                | CE::KeyspaceVersionMismatch),
+            ) => {
+                tracing::warn!(?err);
+                Self::permanent(err)
             }
-            Err(_) => {
-                // Shouldn't normally happen
-                tracing::warn!(?id, "All shutdown handles are dropped. Decommissioning...");
-                ShutdownReason::Decommission
+            Ok(err @ (CE::Bug(_) | CE::NotBootstrapped)) => {
+                tracing::error!(?err);
+                Self::permanent(err)
             }
-        });
-
-        self.spawn_future(fut.map(Event::ShutdownTriggered).map(Some));
-    }
-
-    fn handle_cluster_view_updates(&mut self) {
-        let cluster = self.cluster.clone();
-        let network = self.network.clone();
-        let migrations = self.migrations.clone();
-        let id = self.id;
-
-        let st = self.consensus.changes().then(move |view| {
-            let cluster = cluster.clone();
-            let network = network.clone();
-            let migrations = migrations.clone();
-
-            async move {
-                let diff = cluster.write().await.install_view_update(view);
-
-                migrations.update_pending_ranges(()).await;
-
-                for node in &diff.added {
-                    network
-                        .register_peer_address(node.peer_id, node.addr.clone())
-                        .await;
-                }
-
-                for node in &diff.removed {
-                    network
-                        .unregister_peer_address(node.peer_id, node.addr.clone())
-                        .await;
-                }
-
-                tracing::debug!(?id, ?diff, "updates stream: cluster view updated");
-                Event::ClusterViewUpdated(diff)
+            Ok(err @ (CE::MigrationInProgress | CE::AnotherNodeRestarting)) => {
+                tracing::warn!(?err);
+                Self::transient(err)
             }
-        });
-
-        self.spawn_stream(st);
-    }
-
-    fn broadcast_heartbeat(&mut self) {
-        let interval = tokio::time::interval(Duration::from_secs(1));
-
-        let network = self.network.clone();
-        let id = self.id;
-        let st = tokio_stream::wrappers::IntervalStream::new(interval).then(move |_| {
-            let network = network.clone();
-
-            async move {
-                // TODO: Handle heartbeat by the leader and do evictions
-                if let Err(err) = network.broadcast_heartbeat().await {
-                    tracing::warn!(?id, ?err, "failed to broadcast heartbeat");
-                };
-
-                Event::HeartbeatTicked
+            Ok(err @ (CE::TooManyNodes | CE::TooFewNodes | CE::InvalidNode(_))) => {
+                tracing::error!(?err);
+                Self::transient(err)
             }
-        });
-
-        self.spawn_stream(st);
+            Err(err) => {
+                tracing::error!(?err);
+                Self::transient(err)
+            }
+        }
     }
 
-    fn run_booting_migrations(&mut self) {
-        self.spawn_future(
-            self.migrations
-                .clone()
-                .run_booting_migrations()
-                .map(|_| Some(Event::BootingMigrationsCompleted)),
-        );
+    fn into_backoff(self) -> backoff::Error<anyhow::Error> {
+        self.0
     }
+}
 
-    fn run_leaving_migrations(&mut self) {
-        self.spawn_future(
-            self.migrations
-                .clone()
-                .run_leaving_migrations()
-                .map(|_| Some(Event::LeavingMigrationsCompleted)),
-        );
-    }
-
-    /// Spawns a [`Future`] into the context of this [`NodeFsm`].
-    fn spawn_future(&mut self, fut: impl Future<Output = Option<Event>> + Send + 'static) {
-        let futures = self.streams.as_mut().get_mut().get_mut().0;
-        futures.get_mut().push(fut.boxed());
-    }
-
-    /// Spawns a [`Stream`] into the context of this [`NodeFsm`].
-    fn spawn_stream(&mut self, st: impl Stream<Item = Event> + Send + 'static) {
-        let streams = self.streams.as_mut().get_mut().get_mut().1;
-        streams.push(st.boxed());
+impl<E: StdError + Send + Sync + 'static> From<E> for Error {
+    fn from(err: E) -> Self {
+        Self::transient(err)
     }
 }

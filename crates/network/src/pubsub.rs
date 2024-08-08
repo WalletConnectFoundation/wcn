@@ -5,7 +5,7 @@ use {
         Message,
     },
     futures::{stream, FutureExt, StreamExt},
-    libp2p::PeerId,
+    libp2p::{Multiaddr, PeerId},
 };
 
 impl<const ID: rpc::Id, Msg> rpc::Oneshot<ID, Msg>
@@ -15,20 +15,13 @@ where
     /// Broadcasts a message to all known peers.
     pub async fn broadcast<C>(client: &C, msg: Msg)
     where
-        C: AsRef<Client> + Send<Self, PeerId, Msg>,
+        for<'a> C: AsRef<Client> + Send<Self, (&'a PeerId, &'a Multiaddr), Msg>,
     {
-        let peer_ids: Vec<_> = client
-            .as_ref()
-            .connection_handlers
-            .read()
-            .await
-            .keys()
-            .copied()
-            .collect();
+        let handlers = client.as_ref().connection_handlers.read().await.clone();
 
-        stream::iter(peer_ids)
-            .for_each_concurrent(None, |peer_id| {
-                Self::send(client, peer_id, msg.clone()).map(drop)
+        stream::iter(handlers.keys())
+            .for_each_concurrent(None, |(id, addr): &(PeerId, Multiaddr)| {
+                Self::send(client, (id, addr), msg.clone()).map(drop)
             })
             .await;
     }

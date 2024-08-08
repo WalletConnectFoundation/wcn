@@ -2,37 +2,24 @@
 
 use {
     crate::{
-        cluster::{
-            self,
-            keyspace::{hashring::Positioned, KeyPosition, Keyspace},
-            NodeOperationMode,
-        },
-        migration::StoreHinted,
-        network,
-        Network,
-        Node,
-        PeerId,
-        Storage,
+        cluster::{self, consensus, Consensus, Node as _},
+        AuthorizationOpts,
     },
-    async_trait::async_trait,
     derive_more::Into,
-    futures::{
-        stream::{FuturesUnordered, StreamExt},
-        FutureExt as _,
-    },
-    futures_util::future::BoxFuture,
-    sealed::{Reconcile, Replication as _},
+    futures::stream::{FuturesUnordered, StreamExt},
     serde::{Deserialize, Serialize},
     smallvec::{smallvec, SmallVec},
     std::{
         collections::HashMap,
-        fmt::Debug,
-        future,
-        hash::Hash,
-        sync::atomic::AtomicU32,
+        convert::Infallible,
+        error::Error as StdError,
+        fmt::{self, Debug},
+        future::{self, Future},
+        hash::{BuildHasher, Hash},
+        sync::Arc,
         time::Duration,
     },
-    tokio::sync::OwnedSemaphorePermit,
+    tokio::sync::{OwnedSemaphorePermit, Semaphore},
     wc::future::FutureExt,
 };
 
@@ -42,22 +29,77 @@ mod tests;
 /// Maximum time a request can spend in queue awaiting the execution permit.
 const REQUEST_QUEUE_TIMEOUT: Duration = Duration::from_millis(1500);
 
-pub type CoordinatorResponse<T, SE, NE> = Result<ReplicaResponse<T, SE>, CoordinatorError<NE>>;
+pub trait Network<Node, S: Storage<Op>, Op: StorageOperation>:
+    Clone + Send + Sync + 'static
+{
+    type Error: Clone + Eq + StdError;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct ReplicatedRequest<Op> {
-    pub key_position: KeyPosition,
-    pub operation: Op,
-    pub cluster_view_version: u128,
+    fn send(
+        &self,
+        to: &Node,
+        operation: Op,
+        keyspace_version: u64,
+    ) -> impl Future<Output = Result<ReplicaResponse<S, Op>, Self::Error>> + Send;
 }
 
-pub type ReplicaResponse<T, E> = Result<T, ReplicaError<E>>;
+pub trait Storage<Op: StorageOperation>: Clone + Send + Sync + 'static {
+    type Error: Eq + StdError + Send + Clone;
 
-pub trait Coordinator<Op>: Send + Sync + 'static {
-    type Output: Send + Sync + 'static;
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: Op,
+    ) -> impl Future<Output = Result<Op::Output, Self::Error>> + Send;
+}
 
-    type StorageError: Send + Sync + 'static;
-    type NetworkError: Send + Sync + 'static;
+pub type StorageError<S, Op> = <S as Storage<Op>>::Error;
+
+pub type CoordinatorResponse<S, Op> = Result<ReplicaResponse<S, Op>, CoordinatorError>;
+
+pub type ReplicaResponse<S, Op> =
+    Result<<Op as StorageOperation>::Output, ReplicaError<<S as Storage<Op>>::Error>>;
+
+#[derive(Clone, Debug)]
+pub struct Coordinator<C: Consensus, N, S, H> {
+    replica: Replica<C, S, H>,
+    network: N,
+
+    authorization: Option<Arc<AuthorizationOpts>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Replica<C: Consensus, S, H> {
+    node: C::Node,
+
+    consensus: C,
+    storage: S,
+    hasher_builder: H,
+
+    throttling: Throttling,
+}
+
+#[derive(Clone, Debug)]
+pub struct Throttling {
+    pub request_timeout: Duration,
+    pub request_limiter: Arc<Semaphore>,
+    pub request_limiter_queue: Arc<Semaphore>,
+}
+
+impl<C, N, S, H> Coordinator<C, N, S, H>
+where
+    C: Consensus,
+{
+    pub fn new(
+        replica: Replica<C, S, H>,
+        network: N,
+        authorization: Option<AuthorizationOpts>,
+    ) -> Self {
+        Self {
+            replica,
+            network,
+            authorization: authorization.map(Arc::new),
+        }
+    }
 
     /// Send a request to the replica set.
     ///
@@ -69,39 +111,17 @@ pub trait Coordinator<Op>: Send + Sync + 'static {
     /// produce the same value within the timeout, an error is returned. The
     /// exact number of required replicas is defined by consistency level of the
     /// selected replication strategy.
-    async fn replicate(
+    pub async fn replicate<Op>(
         &self,
         client_id: &libp2p::PeerId,
         operation: Op,
-    ) -> CoordinatorResponse<Self::Output, Self::StorageError, Self::NetworkError>;
-}
-
-impl<Op, C, N, S> Coordinator<Op> for Node<C, N, S>
-where
-    Op: ReplicatableOperation,
-    Op::Output: std::fmt::Debug,
-    Op::Key: std::fmt::Debug,
-    C: Sync + Send + 'static,
-    N: Network
-        + network::SendRequest<
-            ReplicatedRequest<Op>,
-            Response = Result<S::Ok, ReplicaError<S::Error>>,
-        >,
-    S: Storage<Positioned<Op>, Ok = Op::Output>,
-    S::Ok: Send + Sync,
-    S::Error: Send + Sync,
-    Result<N::Response, N::Error>: Clone + Eq,
-    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
-{
-    type Output = S::Ok;
-    type StorageError = S::Error;
-    type NetworkError = N::Error;
-
-    async fn replicate(
-        &self,
-        client_id: &libp2p::PeerId,
-        op: Op,
-    ) -> CoordinatorResponse<Self::Output, Self::StorageError, Self::NetworkError> {
+    ) -> CoordinatorResponse<S, Op>
+    where
+        Op: StorageOperation,
+        S: Storage<Op> + Storage<Op::RepairOperation>,
+        H: BuildHasher,
+        N: Network<C::Node, S, Op>,
+    {
         if let Some(auth) = &self.authorization {
             if !auth.allowed_coordinator_clients.contains(client_id) {
                 return Err(CoordinatorError::Unauthorized);
@@ -109,214 +129,193 @@ where
         }
 
         let _permit = self
+            .replica
             .try_acquire_replication_permit()
             .await
             .ok_or(CoordinatorError::Throttled)?;
 
-        let cluster = self.cluster.read().await;
+        let key = operation.as_ref();
+        let key_hash = self.replica.hasher_builder.hash_one(&key);
 
-        // Ensure that coordinator can cater for the operation.
-        if !cluster.node_reached_op_mode(&self.id, NodeOperationMode::Normal) {
-            return Err(CoordinatorError::InvalidOperationMode);
-        }
+        let cluster = self.replica.consensus.cluster();
+        let replica_set = cluster.replica_set(key_hash, Op::IS_WRITE)?;
+        let keyspace_version = cluster.keyspace_version();
 
-        let key = op.as_ref();
-        let key_position = cluster.keyspace().key_position(key);
-
-        // If the replica set is empty or doesn't have enough peers, return an error.
-        let replica_set = cluster.keyspace().replica_set(key_position);
-        if !replica_set.is_valid() {
-            return Err(CoordinatorError::InvalidReplicaSet);
-        }
-
-        let cluster_view_version = cluster.view().version();
-        let mut required_replicas = replica_set.strategy().required_replica_count();
-
-        let send_replicated = |peer_id: PeerId| {
-            let op = ReplicatedRequest {
-                key_position,
-                operation: op.clone(),
-                cluster_view_version,
-            };
-
+        let send_replicated = |node: &C::Node| {
+            let node = node.clone();
+            let storage = self.replica.storage.clone();
             let network = self.network.clone();
-            async move { IdValue::new(peer_id, network.send_request(peer_id, op).await) }.boxed()
+            let operation = operation.clone();
+
+            let is_coordinator = node.id() == self.replica.node.id();
+            async move {
+                // If coordinator is the replica perform the operation locally.
+                let resp = if is_coordinator {
+                    Ok(storage
+                        .exec(key_hash, operation)
+                        .await
+                        .map_err(ReplicaError::Storage))
+                } else {
+                    network.send(&node, operation, keyspace_version).await
+                };
+
+                IdValue::new(node.id().clone(), resp)
+            }
         };
 
-        let mut futures: FuturesUnordered<_> = replica_set
-            .remote_replicas(&self.id)
-            .map(|id| send_replicated(*id))
-            .collect();
+        let futures: FuturesUnordered<_> = replica_set.nodes.map(|n| send_replicated(n)).collect();
 
-        if Self::REQUIRES_HINTING {
-            // If key belongs to some booting node, forward request to that node.
-            // Normally, only a single node booting is enforced on consensus level, but we
-            // process for arbitrary number of booting nodes here.
-            let booting_peers: Vec<_> = cluster.booting_peers_owning_pos(key_position).collect();
-
-            // If key belongs to some leaving node, forward request to new owners of
-            // the key.
-            let new_owners: Vec<_> = cluster.new_owners_for_pos(key_position).collect();
-
-            required_replicas += booting_peers.len() + new_owners.len();
-
-            let hinted_ops = booting_peers
-                .into_iter()
-                .chain(new_owners)
-                .map(send_replicated);
-
-            futures.extend(hinted_ops);
-        };
-
-        // If coordinator is in the replica set, it will be included in the list of
-        // requests to process, but the operation will be performed locally.
-        let coordinator_in_replica_set = replica_set.contains(&self.id);
-        if coordinator_in_replica_set {
-            let op = Positioned {
-                position: key_position,
-                inner: op.clone(),
-            };
-
-            let peer_id = self.id;
-            let storage = self.storage.clone();
-            futures.push(
-                async move {
-                    IdValue::new(
-                        peer_id,
-                        Ok(storage.exec(op).await.map_err(ReplicaError::Storage)),
-                    )
-                }
-                .boxed(),
-            );
-        }
-
-        // Release `RWLock` before .await point.
-        drop(cluster);
-
-        let result =
-            match_values(required_replicas, futures, self.replication_request_timeout).await?;
+        let result = match_values(
+            replica_set.required_count,
+            futures,
+            self.replica.throttling.request_timeout,
+        )
+        .await?;
         match result {
             // Matching value received.
             MatchResult::Ok(value, responses) => {
                 // Attempt to repair the value on the coordinator node, only if it is in the
                 // replica set.
-                if !coordinator_in_replica_set {
-                    return value.map_err(CoordinatorError::Network);
+                if !responses
+                    .iter()
+                    .any(|r| &r.id == self.replica.node.id() && r.value != value)
+                {
+                    return value.map_err(|e| CoordinatorError::Network(e.to_string()));
                 }
 
-                let value = value.map_err(CoordinatorError::Network)?;
-                let values: Vec<IdValue<_, _>> = responses
-                    .into_iter()
-                    .filter_map(|res| match res.value {
-                        Ok(Ok(value)) => Some(IdValue::new(res.id, value)),
-                        _ => None,
-                    })
-                    .collect();
+                let output = match value {
+                    Ok(Ok(out)) => out,
+                    result => return result.map_err(|e| CoordinatorError::Network(e.to_string())),
+                };
 
-                match value {
-                    Ok(value) => match self.repair(op, key_position, value, values).await {
-                        Ok(repair_result) => Ok(Ok(repair_result)),
-                        Err(e) => Ok(Err(e)),
-                    },
-                    Err(e) => Ok(Err(e)),
+                if let Some(op) = operation.repair_operation(&output) {
+                    let _ = self
+                        .replica
+                        .storage
+                        .exec(key_hash, op)
+                        .await
+                        .map_err(|err| tracing::warn!(?err, "read repair failed"));
                 }
+
+                Ok(Ok(output))
             }
             // Not enough matching responses.
             MatchResult::Inconsistent(responses) => {
-                {
-                    use std::sync::atomic::Ordering;
-                    static COUNTER: AtomicU32 = AtomicU32::new(0);
-                    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-                    if counter % 10 == 0 {
-                        let op_kind = std::any::type_name::<Op>();
-                        tracing::debug!(?op_kind, ?responses, ?key, "inconsistent operation");
-                    }
-                }
-
-                let values = responses
+                let values: Vec<_> = responses
                     .into_iter()
                     .map(|res| res.value)
                     .filter_map(Result::ok)
                     .filter_map(Result::ok)
                     .collect();
 
-                Self::reconcile_results(values, required_replicas)
+                Op::reconcile_results(&values, replica_set.required_count)
                     .map(Ok)
                     .ok_or(CoordinatorError::InconsistentOperation)
             }
         }
     }
+
+    pub fn node(&self) -> &C::Node {
+        &self.replica.node
+    }
+
+    pub fn storage(&self) -> &S {
+        &self.replica.storage
+    }
+
+    pub fn consenus(&self) -> &C {
+        &self.replica.consensus
+    }
+
+    pub fn network(&self) -> &N {
+        &self.network
+    }
+
+    pub fn replica(&self) -> &Replica<C, S, H> {
+        &self.replica
+    }
 }
 
-pub trait Replica<Op>: Send + Sync + 'static {
-    type Output: Send + Sync + 'static;
-    type StorageError: Send + Sync + 'static;
+impl<C: Consensus, S, H> Replica<C, S, H> {
+    pub fn new(
+        node: C::Node,
+        consensus: C,
+        storage: S,
+        hasher_builder: H,
+        throttling: Throttling,
+    ) -> Self {
+        Self {
+            node,
+            consensus,
+            storage,
+            hasher_builder,
+            throttling,
+        }
+    }
 
-    async fn handle_replication(
+    pub async fn handle_replication<Op>(
         &self,
-        coordinator_id: &libp2p::PeerId,
-        r: ReplicatedRequest<Op>,
-    ) -> ReplicaResponse<Self::Output, Self::StorageError>;
-}
-
-impl<Op, C, N, S> Replica<Op> for Node<C, N, S>
-where
-    Op: ReplicatableOperation,
-    S: Storage<Positioned<Op>, Ok = Op::Output> + Send + Sync,
-    S::Ok: Send + Sync,
-    S::Error: Send + Sync,
-    N: Send + Sync + 'static,
-    C: Send + Sync + 'static,
-    Self: sealed::Replication<Op, Op::Type, StorageError = S::Error>,
-{
-    type Output = S::Ok;
-    type StorageError = S::Error;
-
-    async fn handle_replication(
-        &self,
-        coordinator_id: &libp2p::PeerId,
-        r: ReplicatedRequest<Op>,
-    ) -> ReplicaResponse<Self::Output, Self::StorageError> {
+        coordinator_id: &consensus::NodeId<C>,
+        operation: Op,
+        keyspace_version: u64,
+    ) -> ReplicaResponse<S, Op>
+    where
+        H: BuildHasher,
+        S: Storage<Op>,
+        Op: StorageOperation,
+    {
         let _permit = self
             .try_acquire_replication_permit()
             .await
             .ok_or(ReplicaError::Throttled)?;
 
-        self.cluster
-            .read()
+        self.consensus.cluster_view().peek(|cluster| {
+            if !cluster.contains_node(coordinator_id) {
+                return Err(ReplicaError::NotClusterMember);
+            }
+
+            if cluster.keyspace_version() != keyspace_version {
+                return Err(ReplicaError::KeyspaceVersionMismatch);
+            }
+
+            Ok(())
+        })?;
+
+        let key: &Op::Key = operation.as_ref();
+        let key_hash = self.hasher_builder.hash_one(key);
+
+        self.storage
+            .exec(key_hash, operation)
             .await
-            .validate_version(r.cluster_view_version)?
-            .validate_member(coordinator_id)?;
+            .map_err(ReplicaError::Storage)
+    }
 
-        let operation = Positioned {
-            position: r.key_position,
-            inner: r.operation,
-        };
-
-        sealed::Replication::exec_replicated(self, operation).await
+    pub fn node(&self) -> &C::Node {
+        &self.node
     }
 }
 
-impl<C, N, S> Node<C, N, S> {
+impl<C: Consensus, S, H> Replica<C, S, H> {
     async fn try_acquire_replication_permit(&self) -> Option<OwnedSemaphorePermit> {
         metrics::gauge!("irn_network_request_permits_available")
-            .set(self.replication_request_limiter.available_permits() as f64);
+            .set(self.throttling.request_limiter.available_permits() as f64);
 
         metrics::gauge!("irn_network_request_queue_permits_available")
-            .set(self.replication_request_limiter_queue.available_permits() as f64);
+            .set(self.throttling.request_limiter_queue.available_permits() as f64);
 
-        if let Ok(permit) = self.replication_request_limiter.clone().try_acquire_owned() {
+        if let Ok(permit) = self.throttling.request_limiter.clone().try_acquire_owned() {
             // If we're below the concurrency limit, return the permit immediately.
             Some(permit)
         } else {
             // If no permits are available, join the queue.
-            let Ok(_queue_permit) = self.replication_request_limiter_queue.try_acquire() else {
+            let Ok(_queue_permit) = self.throttling.request_limiter_queue.try_acquire() else {
                 // Request queue is also full. Nothing we can do.
                 return None;
             };
 
             // Await until the request permit is available, while holding the queue permit.
-            self.replication_request_limiter
+            self.throttling
+                .request_limiter
                 .clone()
                 .acquire_owned()
                 .with_timeout(REQUEST_QUEUE_TIMEOUT)
@@ -329,31 +328,26 @@ impl<C, N, S> Node<C, N, S> {
         }
     }
 
-    #[cfg(any(feature = "testing", test))]
-    pub async fn new_replicated_request<Op: ReplicatableOperation>(
-        &self,
-        op: Op,
-    ) -> ReplicatedRequest<Op> {
-        let cluster = self.cluster.read().await;
-        let key = op.as_ref();
+    // #[cfg(any(feature = "testing", test))]
+    // pub async fn new_replicated_request<Op: ReplicatableOperation>(
+    //     &self,
+    //     op: Op,
+    // ) -> ReplicatedRequest<Op> {
+    //     let cluster = self.consensus.read().await;
+    //     let key = op.as_ref();
 
-        ReplicatedRequest {
-            key_position: cluster.keyspace().key_position(key),
-            operation: op,
-            cluster_view_version: cluster.view().version(),
-        }
-    }
+    //     ReplicatedRequest {
+    //         key_hash: cluster.keyspace().key_position(key),
+    //         operation: op,
+    //         keyspace_version: cluster.view().version(),
+    //     }
+    // }
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-pub enum CoordinatorError<N> {
-    /// Request coordinator is in a wrong mode.
-    #[error("Invalid operation mode of the request coordinator")]
-    InvalidOperationMode,
-
-    /// Replica set doesn't have enough peers.
-    #[error("Invalid replica set")]
-    InvalidReplicaSet,
+pub enum CoordinatorError {
+    #[error("Cluster is not bootstrapped yet")]
+    ClusterNotBootstrapped,
 
     /// Operation timed out.
     #[error("Operation timed out")]
@@ -368,17 +362,40 @@ pub enum CoordinatorError<N> {
 
     /// Network error.
     #[error("Network error: {0}")]
-    Network(N),
+    Network(String),
 
     #[error("Client is not authorized to use this coordinator")]
     Unauthorized,
+
+    #[error("Other: {_0:?}")]
+    Other(String),
+}
+
+impl From<cluster::Error> for CoordinatorError {
+    fn from(err: cluster::Error) -> Self {
+        use cluster::Error;
+        match err {
+            Error::NotBootstrapped => Self::ClusterNotBootstrapped,
+            Error::NodeAlreadyExists
+            | Error::NodeAlreadyStarted
+            | Error::UnknownNode
+            | Error::TooManyNodes
+            | Error::TooFewNodes
+            | Error::MigrationInProgress
+            | Error::NoMigration
+            | Error::KeyspaceVersionMismatch
+            | Error::AnotherNodeRestarting
+            | Error::InvalidNode(_)
+            | Error::Bug(_) => Self::Other(err.to_string()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReplicaError<S> {
-    /// Cluster view versions of requester and responder don't match
-    #[error("ClusterView versions of requester and responder don't match")]
-    ClusterViewVersionMismatch,
+    /// Keyspace versions of requester and responder don't match
+    #[error("Keyspace versions of requester and responder don't match")]
+    KeyspaceVersionMismatch,
 
     #[error("Too many requests")]
     Throttled,
@@ -387,193 +404,48 @@ pub enum ReplicaError<S> {
     #[error("Local storage error: {0}")]
     Storage(S),
 
-    #[error(transparent)]
-    NotClusterMember(#[from] cluster::NotMemberError),
+    #[error("Coordinator is not a cluster member")]
+    NotClusterMember,
 }
 
-impl<S> From<cluster::ViewVersionMismatch> for ReplicaError<S> {
-    fn from(_: cluster::ViewVersionMismatch) -> Self {
-        Self::ClusterViewVersionMismatch
-    }
-}
+// impl<S> From<cluster::ViewVersionMismatch> for ReplicaError<S> {
+//     fn from(_: cluster::ViewVersionMismatch) -> Self {
+//         Self::ClusterViewVersionMismatch
+//     }
+// }
 
-impl<N> From<tokio::time::error::Elapsed> for CoordinatorError<N> {
+impl From<tokio::time::error::Elapsed> for CoordinatorError {
     fn from(_: tokio::time::error::Elapsed) -> Self {
         Self::Timeout
     }
 }
 
-pub trait ReplicatableOperation: AsRef<Self::Key> + Debug + Clone + Send + Sync + 'static {
-    type Type;
+pub trait StorageOperation: AsRef<Self::Key> + Debug + Clone + Send + Sync + 'static {
+    const IS_WRITE: bool;
+
     type Key: Hash + Send + Sync + 'static;
-    type Output: Send + 'static;
+    type Output: Clone + fmt::Debug + Eq + Send + 'static;
 
     /// The corresponding repair operation type for the current operation.
-    type RepairOperation;
+    type RepairOperation: StorageOperation;
 
     /// Returns an optional repair operation for the current operation.
-    fn repair_operation(&self, _new_value: Self::Output) -> Option<Self::RepairOperation> {
+    fn repair_operation(&self, _new_value: &Self::Output) -> Option<Self::RepairOperation> {
+        None
+    }
+
+    fn reconcile_results(
+        _results: &[Self::Output],
+        _required_replicas: usize,
+    ) -> Option<Self::Output> {
         None
     }
 }
 
-pub type ReplicatableOperationOutput<Op> = <Op as ReplicatableOperation>::Output;
+// pub type ReplicatableOperationOutput<Op> = <Op as StorageOperation>::Output;
 
-mod sealed {
-    use {
-        super::{async_trait, IdValue, Positioned, ReplicaError, ReplicatableOperation},
-        crate::{cluster::keyspace::KeyPosition, PeerId},
-    };
-
-    #[async_trait]
-    pub trait Replication<Op: ReplicatableOperation, Ty> {
-        type StorageError;
-
-        const REQUIRES_HINTING: bool;
-
-        fn reconcile_results(
-            _results: Vec<Op::Output>,
-            _required_replicas: usize,
-        ) -> Option<Op::Output> {
-            None
-        }
-
-        /// Repairs a value on the coordinator node, for operations that support
-        /// read repair.
-        async fn repair(
-            &self,
-            _op: Op,
-            _key_position: KeyPosition,
-            new_value: Op::Output,
-            _responses: Vec<IdValue<PeerId, Op::Output>>,
-        ) -> Result<Op::Output, ReplicaError<Self::StorageError>> {
-            Ok(new_value)
-        }
-
-        async fn exec_replicated(
-            &self,
-            op: Positioned<Op>,
-        ) -> Result<Op::Output, ReplicaError<Self::StorageError>>;
-    }
-
-    pub trait Reconcile: Sized {
-        fn reconcile(values: Vec<Self>, required_replicas: usize) -> Option<Self>;
-    }
-}
-
-pub struct Read;
-
-#[allow(clippy::trait_duplication_in_bounds)]
-#[async_trait]
-impl<C, N, S, Op, RepairOp, E> sealed::Replication<Op, Read> for Node<C, N, S>
-where
-    Op: ReplicatableOperation<Type = Read, RepairOperation = RepairOp>,
-    RepairOp: Send,
-    S: Storage<Positioned<Op>, Ok = Op::Output, Error = E>
-        + Storage<Positioned<RepairOp>, Ok = (), Error = E>,
-    E: Debug,
-    <Op as ReplicatableOperation>::Output: Clone + PartialEq,
-    <S as Storage<Positioned<Op>>>::Error: PartialEq,
-    Self: Send + Sync,
-{
-    type StorageError = E;
-
-    const REQUIRES_HINTING: bool = false;
-
-    async fn repair(
-        &self,
-        op: Op,
-        key_position: KeyPosition,
-        new_value: Op::Output,
-        responses: Vec<IdValue<PeerId, Op::Output>>,
-    ) -> Result<Op::Output, ReplicaError<Self::StorageError>> {
-        // If the operation doesn't support repair, return early.
-        let repair_op = if let Some(op) = op.repair_operation(new_value.clone()) {
-            op
-        } else {
-            return Ok(new_value);
-        };
-
-        // Repair is required if the coordinator node has diverged (either no response
-        // at all or a different value).
-        let needs_repair = responses
-            .iter()
-            .find(|res| res.id == self.id)
-            .map_or(true, |res| res.value != new_value);
-
-        if needs_repair {
-            let op = Positioned {
-                position: key_position,
-                inner: repair_op,
-            };
-            self.storage.exec(op).await.map_err(ReplicaError::Storage)?
-        }
-
-        Ok(new_value)
-    }
-
-    async fn exec_replicated(&self, op: Positioned<Op>) -> Result<Op::Output, ReplicaError<E>> {
-        self.storage.exec(op).await.map_err(ReplicaError::Storage)
-    }
-}
-
-pub struct ReconciledRead;
-
-#[async_trait]
-impl<C, N, S, Op> sealed::Replication<Op, ReconciledRead> for Node<C, N, S>
-where
-    Op: ReplicatableOperation<Type = ReconciledRead>,
-    Op::Output: Reconcile,
-    S: Storage<Positioned<Op>, Ok = Op::Output>,
-    Self: Send + Sync,
-{
-    type StorageError = S::Error;
-
-    const REQUIRES_HINTING: bool = false;
-
-    fn reconcile_results(results: Vec<Op::Output>, required_replicas: usize) -> Option<Op::Output> {
-        Op::Output::reconcile(results, required_replicas)
-    }
-
-    async fn exec_replicated(
-        &self,
-        op: Positioned<Op>,
-    ) -> Result<Op::Output, ReplicaError<S::Error>> {
-        self.storage.exec(op).await.map_err(ReplicaError::Storage)
-    }
-}
-
-pub struct Write;
-
-#[async_trait]
-impl<C, N, S, Op, E> sealed::Replication<Op, Write> for Node<C, N, S>
-where
-    Op: ReplicatableOperation<Type = Write, Output = ()>,
-    E: Send,
-    N: Send + Sync,
-    S: Storage<Positioned<Op>, Ok = (), Error = E>
-        + Storage<StoreHinted<Positioned<Op>>, Ok = (), Error = E>,
-    Self: Send + Sync,
-{
-    type StorageError = E;
-
-    const REQUIRES_HINTING: bool = true;
-
-    async fn exec_replicated(
-        &self,
-        operation: Positioned<Op>,
-    ) -> Result<Op::Output, ReplicaError<E>> {
-        if let Some(op) = self
-            .migration_manager
-            .store_hinted(operation)
-            .await
-            .map_err(ReplicaError::Storage)?
-        {
-            return self.storage.exec(op).await.map_err(ReplicaError::Storage);
-        }
-
-        Ok(())
-    }
+pub trait Reconcile: Sized {
+    fn reconcile(values: Vec<Self>, required_replicas: usize) -> Option<Self>;
 }
 
 impl<I, T: Eq + Hash + Ord> Reconcile for I
@@ -719,7 +591,7 @@ impl<K, V> IdValue<K, V> {
 /// reconciliation, or `None` for other types.
 async fn match_values<K: Clone + 'static, V: Eq + Clone + 'static>(
     k: usize,
-    mut futures_stream: FuturesUnordered<BoxFuture<'static, IdValue<K, V>>>,
+    mut futures_stream: FuturesUnordered<impl Future<Output = IdValue<K, V>> + Send + 'static>,
     ttl: Duration,
 ) -> Result<MatchResult<K, V>, tokio::time::error::Elapsed> {
     tokio::time::timeout(ttl, async {
@@ -746,4 +618,33 @@ async fn match_values<K: Clone + 'static, V: Eq + Clone + 'static>(
         }
     })
     .await
+}
+
+#[derive(Clone, Debug)]
+pub struct NoRepair;
+
+impl AsRef<()> for NoRepair {
+    fn as_ref(&self) -> &() {
+        &()
+    }
+}
+
+impl StorageOperation for NoRepair {
+    const IS_WRITE: bool = false;
+
+    type Key = ();
+    type Output = ();
+    type RepairOperation = Self;
+}
+
+impl<S: Clone + Send + Sync + 'static> Storage<NoRepair> for S {
+    type Error = Infallible;
+
+    fn exec(
+        &self,
+        _key_hash: u64,
+        _op: NoRepair,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async { Ok(()) }
+    }
 }

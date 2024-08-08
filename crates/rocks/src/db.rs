@@ -570,7 +570,7 @@ mod tests {
             .with_column_family(StringColumn)
             .build()
             .unwrap();
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         let key = &TestKey::new(42).into();
         let val = &TestValue::new("value1").into();

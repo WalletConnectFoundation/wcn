@@ -11,12 +11,14 @@ testing = []
 workspace = true
 
 [dependencies]
+anyhow = "1"
+sharding = { path = "../sharding" }
 backoff = { version = "0.4", features = ["tokio"] }
 libp2p = { version = "0.53", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["time"] }
+tokio-stream = { version = "0.1", features = ["time", "sync"] }
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["codec"] }
 thiserror = "1.0"
@@ -40,10 +42,13 @@ derivative = "2.2"
 num-traits = "0.2"
 bytes = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
-wc = { workspace = true, features = ["future_metrics"] }
+wc = { workspace = true, features = ["future_metrics", "future"] }
 metrics = { workspace = true }
 itertools = "0.12"
 serde_with = "3.4"
+arc-swap = "1.7"
+indexmap = { version = "2", features = ["serde"] }
+slab = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tui = "0.19"
@@ -62,7 +67,4 @@ tokio-stream = { version = "0.1", features = ["time", "sync"] }
 criterion = "0.5"
 alloc_counter = "0.0.4"
 rstest = "0.18"
-
-[[bench]]
-name = "partitioner"
-harness = false
+serde_json = "1"

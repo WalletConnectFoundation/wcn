@@ -1,6 +1,5 @@
 use {
     super::*,
-    futures::FutureExt,
     tokio::{
         sync::{
             mpsc,
@@ -51,7 +50,7 @@ async fn assert_matching_values_test_case(test_case: MatchingValuesTestCase) {
     let (tx, rx) = mpsc::unbounded_channel();
     let futures = FuturesUnordered::new();
     for (id, value, delay) in test_case.futures {
-        futures.push(async_value(id, value, delay, tx.clone()).boxed());
+        futures.push(async_value(id, value, delay, tx.clone()));
     }
     let result = match_values(test_case.k, futures, test_case.ttl)
         .await

@@ -51,8 +51,8 @@ impl<C: Consensus, N, S> Manager<C, N, S> {
         Self {
             node_id,
             consensus,
-            storage,
             network,
+            storage,
         }
     }
 

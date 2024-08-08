@@ -30,7 +30,7 @@ mod test;
 
 pub type Nodes<N> = node::SlotMap<N>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cluster<N: Node, K> {
     nodes: Nodes<N>,
     restarting_node: Option<N::Id>,
@@ -40,6 +40,18 @@ pub struct Cluster<N: Node, K> {
     migration: Option<Migration<N, K>>,
 
     version: u128,
+}
+
+impl<N: Node, K> Default for Cluster<N, K> {
+    fn default() -> Self {
+        Self {
+            nodes: Nodes::new(),
+            restarting_node: None,
+            keyspace: None,
+            migration: None,
+            version: 0,
+        }
+    }
 }
 
 #[derive(Clone, Derivative, PartialEq, Eq)]
@@ -56,13 +68,7 @@ struct Migration<N: Node, K> {
 
 impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
     pub fn new() -> Self {
-        Self {
-            nodes: Nodes::new(),
-            restarting_node: None,
-            keyspace: None,
-            migration: None,
-            version: 0,
-        }
+        Self::default()
     }
 
     pub fn into_viewable(self) -> Viewable<N, K> {
@@ -450,9 +456,9 @@ pub enum Error {
     #[error("Another node is currently restarting")]
     AnotherNodeRestarting,
 
-    #[error("Invalid Node: {}", 0_)]
+    #[error("Invalid Node: {_0}")]
     InvalidNode(String),
 
-    #[error("Bug: {}", 0_)]
+    #[error("Bug: {_0}")]
     Bug(String),
 }

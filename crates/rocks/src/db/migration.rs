@@ -119,12 +119,12 @@ impl RocksBackend {
                 map.scan_by_position(start, end)?,
             );
 
-            for item in string_iter.into_iter() {
+            for item in string_iter {
                 yield ExportItem::Frame(item);
                 items_processed += 1;
             }
 
-            for item in map_iter.into_iter() {
+            for item in map_iter {
                 yield ExportItem::Frame(item);
                 items_processed += 1;
             }

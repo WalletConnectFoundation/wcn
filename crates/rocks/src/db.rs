@@ -1,5 +1,7 @@
 //! Interfaces, adapters and utilities for `RocksDB` storage backend.
 
+#![allow(clippy::manual_async_fn)]
+
 use {
     crate::{
         db::{

@@ -296,7 +296,7 @@ where
 
     async fn decommission_node(&self) -> Result<(), Error> {
         self.consensus
-            .decommission_node(&self.node.id())
+            .decommission_node(self.node.id())
             .await
             .map_err(Error::from_consensus)
     }

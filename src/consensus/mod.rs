@@ -481,7 +481,6 @@ impl Raft {
                 let Some((voter_id, voter_addr)) = membership
                     .nodes()
                     .find_map(|(id, n)| voter_ids.contains(id).then_some((id.0, n.0.clone())))
-                    .clone()
                 else {
                     return Err(unauthorized_error());
                 };
@@ -561,7 +560,7 @@ pub enum ConsensusError {
     Cluster(cluster::Error),
 
     #[error(transparent)]
-    Other(Error<ClientWriteFail>),
+    Other(Box<Error<ClientWriteFail>>),
 }
 
 impl TryFrom<ConsensusError> for irn::cluster::Error {
@@ -586,7 +585,7 @@ impl irn::cluster::Consensus for Consensus {
                 change: Change::AddNode(AddNode { node: node.clone() }),
             })
             .map(|res| {
-                res.map_err(ConsensusError::Other)?
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
                     .data
                     .map(drop)
                     .map_err(ConsensusError::Cluster)
@@ -601,12 +600,12 @@ impl irn::cluster::Consensus for Consensus {
         self.inner
             .propose_change(raft::ProposeChangeRequest {
                 change: Change::CompletePull(CompletePull {
-                    node_id: node_id.clone(),
+                    node_id: *node_id,
                     keyspace_version,
                 }),
             })
             .map(|res| {
-                res.map_err(ConsensusError::Other)?
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
                     .data
                     .map(drop)
                     .map_err(ConsensusError::Cluster)
@@ -616,10 +615,10 @@ impl irn::cluster::Consensus for Consensus {
     fn shutdown_node(&self, id: &PeerId) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.inner
             .propose_change(raft::ProposeChangeRequest {
-                change: Change::ShutdownNode(ShutdownNode { id: id.clone() }),
+                change: Change::ShutdownNode(ShutdownNode { id: *id }),
             })
             .map(|res| {
-                res.map_err(ConsensusError::Other)?
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
                     .data
                     .map(drop)
                     .map_err(ConsensusError::Cluster)
@@ -635,7 +634,7 @@ impl irn::cluster::Consensus for Consensus {
                 change: Change::StartupNode(StartupNode { node: node.clone() }),
             })
             .map(|res| {
-                res.map_err(ConsensusError::Other)?
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
                     .data
                     .map(drop)
                     .map_err(ConsensusError::Cluster)
@@ -648,10 +647,10 @@ impl irn::cluster::Consensus for Consensus {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.inner
             .propose_change(raft::ProposeChangeRequest {
-                change: Change::DecommissionNode(DecommissionNode { id: id.clone() }),
+                change: Change::DecommissionNode(DecommissionNode { id: *id }),
             })
             .map(|res| {
-                res.map_err(ConsensusError::Other)?
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
                     .data
                     .map(drop)
                     .map_err(ConsensusError::Cluster)

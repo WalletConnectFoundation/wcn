@@ -66,8 +66,8 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
 
         Ok(Self {
             reporter,
-            network,
             consensus,
+            network,
             storage,
             state,
             expected_node_version,

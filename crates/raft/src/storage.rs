@@ -56,7 +56,7 @@ where
         let state = storage
             .read_state()
             .await?
-            .unwrap_or_else(|| C::State::default());
+            .unwrap_or_else(C::State::default);
         let vote = storage.read_vote().await?;
         let log = storage.read_log().await?.unwrap_or_default();
 

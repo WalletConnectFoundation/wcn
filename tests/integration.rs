@@ -637,7 +637,7 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
     });
 
     NodeHandle {
-        config: cfg.clone(),
+        config: cfg,
         thread_handle,
         shutdown_tx: tx,
         coordinator_api_client,

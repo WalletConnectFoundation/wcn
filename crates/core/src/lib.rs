@@ -1,3 +1,5 @@
+#![allow(clippy::manual_async_fn)]
+
 pub use cluster::Cluster;
 use {
     cluster::{consensus, Consensus, Node as _},
@@ -74,7 +76,7 @@ pub struct Node<C: Consensus, N, S, H> {
 impl<C: Consensus, N, S, H> Node<C, N, S, H> {
     /// Returns ID of this [`Node`].
     pub fn id(&self) -> &consensus::NodeId<C> {
-        &self.replication_coordinator.node().id()
+        self.replication_coordinator.node().id()
     }
 
     /// Returns storage of this [`Node`].
@@ -89,7 +91,7 @@ impl<C: Consensus, N, S, H> Node<C, N, S, H> {
 
     /// Returns Network impl of this [`Node`].
     pub fn network(&self) -> &N {
-        &self.replication_coordinator.network()
+        self.replication_coordinator.network()
     }
 
     pub fn coordinator(&self) -> &replication::Coordinator<C, N, S, H> {

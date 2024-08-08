@@ -51,12 +51,14 @@ fn split_range(range: &RangeInclusive<u64>, at: u64) -> (RangeInclusive<u64>, Ra
     )
 }
 
+type PendingRange<N> = Range<HashSet<<N as Node>::Id>>;
+
 // TODO: merge continuous ranges
 #[derive(Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct MigrationPlan<N: Node> {
     #[derivative(Debug = "ignore")]
-    pending_ranges: HashMap<N::Id, Vec<Range<HashSet<N::Id>>>>,
+    pending_ranges: HashMap<N::Id, Vec<PendingRange<N>>>,
     keyspace_version: u64,
 }
 

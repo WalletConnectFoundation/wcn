@@ -115,7 +115,7 @@ where
         &self.shards[shard_id.0 as usize].replicas
     }
 
-    pub fn shards<'a>(&'a self) -> impl Iterator<Item = (ShardId, &'a [N; RF])> + 'a {
+    pub fn shards(&self) -> impl Iterator<Item = (ShardId, &'_ [N; RF])> + '_ {
         self.shards
             .iter()
             .enumerate()

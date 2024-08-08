@@ -1001,7 +1001,7 @@ impl Network {
                 known_peers: cfg
                     .known_peers
                     .iter()
-                    .map(|(id, addr)| (id.clone(), addr.clone()))
+                    .map(|(id, addr)| (*id, addr.clone()))
                     .collect(),
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
@@ -1027,7 +1027,7 @@ impl Network {
         };
 
         let handler = RaftRpcHandler { raft, rpc_timeouts };
-        ::network::run_server(server_config, NoHandshake, handler.clone()).map(tokio::spawn)
+        ::network::run_server(server_config, NoHandshake, handler).map(tokio::spawn)
     }
 
     pub fn spawn_servers<S: StatusReporter>(

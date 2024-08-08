@@ -111,6 +111,7 @@ where
     /// produce the same value within the timeout, an error is returned. The
     /// exact number of required replicas is defined by consistency level of the
     /// selected replication strategy.
+    #[allow(clippy::trait_duplication_in_bounds)] // false positive
     pub async fn replicate<Op>(
         &self,
         client_id: &libp2p::PeerId,
@@ -135,7 +136,7 @@ where
             .ok_or(CoordinatorError::Throttled)?;
 
         let key = operation.as_ref();
-        let key_hash = self.replica.hasher_builder.hash_one(&key);
+        let key_hash = self.replica.hasher_builder.hash_one(key);
 
         let cluster = self.replica.consensus.cluster();
         let replica_set = cluster.replica_set(key_hash, Op::IS_WRITE)?;
@@ -163,7 +164,7 @@ where
             }
         };
 
-        let futures: FuturesUnordered<_> = replica_set.nodes.map(|n| send_replicated(n)).collect();
+        let futures: FuturesUnordered<_> = replica_set.nodes.map(send_replicated).collect();
 
         let result = match_values(
             replica_set.required_count,

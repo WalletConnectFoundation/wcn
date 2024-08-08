@@ -250,7 +250,7 @@ impl<H: Handshake> Client<H> {
                 // ad-hoc "copy-on-write" behaviour, the map changes infrequently and we don't
                 // want to clone it in the hot path.
                 let mut new_handlers = (**handlers).clone();
-                new_handlers.insert((id.clone(), multiaddr.clone()), handler.clone());
+                new_handlers.insert((*id, multiaddr.clone()), handler.clone());
                 *handlers = Arc::new(new_handlers);
                 handler
             }

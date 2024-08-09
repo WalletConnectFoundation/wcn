@@ -75,7 +75,7 @@ where
         let n_shards = u16::MAX as usize + 1;
         let mut shards: Vec<_> = (0..n_shards).map(|_| Shard { replicas }).collect();
 
-        // using [Randevouz](https://en.wikipedia.org/wiki/Rendezvous_hashing) hashing to assign nodes to shards.
+        // using [Rendezvous](https://en.wikipedia.org/wiki/Rendezvous_hashing) hashing to assign nodes to shards.
 
         let mut node_ranking: Vec<_> = nodes.iter().map(|idx| (0, idx)).collect();
 

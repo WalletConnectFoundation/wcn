@@ -6,7 +6,6 @@ use {
             batch,
             cf::{Column, DbColumn},
             context::{self, UnixTimestampMicros},
-            schema::MapColumn,
             types::common::{iterators, CommonStorage},
         },
         util::serde::serialize,
@@ -323,73 +322,16 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
     }
 }
 
-impl DbColumn<MapColumn> {
-    pub(crate) fn hset_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<MapColumn as Column>::KeyType,
-        pair: &Pair<<MapColumn as Column>::SubKeyType, <MapColumn as Column>::ValueType>,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = MapColumn::ext_key(key, &pair.field)?;
-        let value = serialize(&context::MergeOp::set(
-            &pair.value,
-            expiration,
-            update_timestamp,
-        ))?;
-
-        batch.merge(MapColumn::NAME, key, value);
-
-        Ok(())
-    }
-
-    pub(crate) fn hdel_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<MapColumn as Column>::KeyType,
-        field: &<MapColumn as Column>::SubKeyType,
-        timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = MapColumn::ext_key(key, field)?;
-        let value = serialize(&context::MergeOp::<<MapColumn as Column>::ValueType>::del(
-            timestamp,
-        ))?;
-
-        batch.merge(<MapColumn as Column>::NAME, key, value);
-
-        Ok(())
-    }
-
-    pub(crate) fn hsetexp_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<MapColumn as Column>::KeyType,
-        subkey: &<MapColumn as Column>::SubKeyType,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = MapColumn::ext_key(key, subkey)?;
-        let value = serialize(
-            &context::MergeOp::<<MapColumn as Column>::ValueType>::set_exp(
-                expiration,
-                update_timestamp,
-            ),
-        )?;
-
-        batch.merge(<MapColumn as Column>::NAME, key, value);
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::{
             db::{
-                schema::test_types::{TestKey, TestMapValue, TestValue},
+                schema::{
+                    test_types::{TestKey, TestMapValue, TestValue},
+                    MapColumn,
+                },
                 types::common::iterators::ScanResult,
             },
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},

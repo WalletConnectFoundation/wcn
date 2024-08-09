@@ -3638,7 +3638,6 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
- "indexmap 2.2.6",
  "itertools 0.12.1",
  "libp2p",
  "metrics",
@@ -3651,7 +3650,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sharding",
- "slab",
  "smallvec",
  "structopt",
  "tap",
@@ -6212,7 +6210,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f92a496fb766b417c996b9c5e57daf2f7ad3b0bebe1ccfca4856390e3d3bb67"
 dependencies = [
  "autocfg",
- "serde",
 ]
 
 [[package]]

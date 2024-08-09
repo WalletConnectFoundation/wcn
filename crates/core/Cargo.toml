@@ -47,8 +47,6 @@ metrics = { workspace = true }
 itertools = "0.12"
 serde_with = "3.4"
 arc-swap = "1.7"
-indexmap = { version = "2", features = ["serde"] }
-slab = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tui = "0.19"

@@ -92,12 +92,6 @@ impl<N: Node> SlotMap<N> {
             .and_then(|&idx| self.slots[idx as usize].as_ref())
     }
 
-    // pub fn get_slot(&self, id: &N::Id) -> Option<(Idx, &N)> {
-    //     self.id_to_slot_idx
-    //         .get(id)
-    //         .and_then(|&idx| self.slots[idx as usize].as_ref().map(|n| (idx, n)))
-    // }
-
     pub fn get_by_idx(&self, idx: u8) -> Option<&N> {
         let idx = idx as usize;
         if idx >= self.slots.len() {
@@ -106,12 +100,6 @@ impl<N: Node> SlotMap<N> {
 
         self.slots[idx].as_ref()
     }
-
-    // pub fn get_mut(&mut self, id: &N::Id) -> Option<&mut N> {
-    //     self.id_to_slot_idx
-    //         .get(id)
-    //         .and_then(|&idx| self.slots[idx as usize].as_mut())
-    // }
 
     pub fn contains(&self, id: &N::Id) -> bool {
         self.id_to_slot_idx.contains_key(id)
@@ -123,29 +111,6 @@ impl<N: Node> SlotMap<N> {
             .enumerate()
             .filter_map(|(idx, n)| n.as_ref().map(|n| (idx as u8, n)))
     }
-
-    // pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = (u16, &mut N)> {
-    //     self.slots
-    //         .iter_mut()
-    //         .enumerate()
-    //         .filter_map(|(idx, slot)| slot.map(|n| (idx, n)))
-    // }
-
-    // fn swap_slot(&mut self, slot: &mut Slot<N>) {
-    //     let slot_idx = slot.idx as usize;
-
-    //     if slot_idx >= self.slots.0.len() {
-    //         self.slots.0.resize(slot_idx + 1, None);
-    //     }
-
-    //     mem::swap(&mut slot.node, &mut self.slots.0[slot_idx])
-    // }
-
-    // pub fn swap_slots(&mut self, slots: &mut [Slot<N>]) {
-    //     for slot in &mut slots {
-    //         self.swap_slot(slot);
-    //     }
-    // }
 
     fn allocate_slot(&mut self) -> Option<u8> {
         if let Some(idx) = self.slots.iter().position(|n| n.is_none()) {

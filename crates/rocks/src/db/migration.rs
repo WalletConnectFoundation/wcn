@@ -14,8 +14,6 @@ use {
     },
 };
 
-pub mod hinted_ops;
-
 /// Maximum number of key-value pairs to be imported in one batch.
 ///
 /// When importing, data is coming one key-value pair at a time, it is

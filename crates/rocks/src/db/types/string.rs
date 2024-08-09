@@ -3,10 +3,8 @@
 use {
     crate::{
         db::{
-            batch,
             cf::{Column, DbColumn},
             context::{self, UnixTimestampMicros},
-            schema::StringColumn,
             types::common::CommonStorage,
         },
         util::serde::serialize,
@@ -127,60 +125,6 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
     }
 }
 
-/// Methods for adding batched operations to a given write batch.
-impl DbColumn<StringColumn> {
-    pub(crate) fn set_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<StringColumn as Column>::KeyType,
-        value: &<StringColumn as Column>::ValueType,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = StringColumn::storage_key(key)?;
-        let value = serialize(&context::MergeOp::set(value, expiration, update_timestamp))?;
-
-        batch.merge(StringColumn::NAME, key, value);
-
-        Ok(())
-    }
-
-    pub(crate) fn del_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<StringColumn as Column>::KeyType,
-        timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = StringColumn::storage_key(key)?;
-        let value =
-            serialize(&context::MergeOp::<<StringColumn as Column>::ValueType>::del(timestamp))?;
-
-        batch.merge(StringColumn::NAME, key, value);
-
-        Ok(())
-    }
-
-    pub(crate) fn setexp_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<StringColumn as Column>::KeyType,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = StringColumn::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<<StringColumn as Column>::ValueType>::set_exp(
-                expiration,
-                update_timestamp,
-            ),
-        )?;
-
-        batch.merge(StringColumn::NAME, key, value);
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use {
@@ -189,6 +133,7 @@ mod tests {
             db::schema::{
                 test_types::{TestKey, TestValue},
                 InternalStringColumn,
+                StringColumn,
             },
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,

@@ -2,7 +2,6 @@ use crate::db::{
     cf,
     compaction,
     context::{DataContext, MergeOp},
-    migration::hinted_ops::HintedOp,
     schema::{ColumnFamilyName, GenericKey},
 };
 
@@ -75,20 +74,4 @@ impl cf::Column for InternalMapColumn {
     type ValueType = Vec<u8>;
     type MergeOperator =
         compaction::AsymmetricMerge<Self, MergeOp<Self::ValueType>, DataContext<Self::ValueType>>;
-}
-
-/// Internal column for storing hinted operations.
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct InternalHintedOpsColumn;
-
-impl cf::Column for InternalHintedOpsColumn {
-    const NAME: ColumnFamilyName = ColumnFamilyName::InternalHintedOps;
-
-    const PREFIX_SEEK_ENABLED: bool = false;
-    type CompactionFilterFactory = compaction::NoopCompactionFilterFactory;
-
-    type KeyType = GenericKey;
-    type SubKeyType = ();
-    type ValueType = HintedOp;
-    type MergeOperator = compaction::NoMerge;
 }

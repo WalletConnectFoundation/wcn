@@ -12,7 +12,6 @@ use {
     },
     cf::ColumnFamilyName,
     futures_util::{FutureExt, TryFutureExt},
-    schema::seq_num::SeqNumGenerator,
     serde::de::DeserializeOwned,
     std::{
         collections::HashMap,
@@ -44,7 +43,6 @@ const LOG_FILE_NAME: &str = "LOG";
 pub struct RocksBackendInner {
     db: Arc<rocksdb::DB>,
     opts: rocksdb::Options,
-    seq_num_gen: SeqNumGenerator,
     reader: reader::Reader,
 
     // We need to stop log consumer task before shutting down RocksDB, otherwise it hangs
@@ -110,7 +108,7 @@ impl RocksBackend {
     }
 
     /// Puts value into a given column family using provided key and value pair.
-    async fn put(
+    async fn _put(
         &self,
         cf_name: ColumnFamilyName,
         key: impl AsRef<[u8]>,
@@ -367,7 +365,6 @@ impl RocksDatabaseBuilder {
             &*self.path,
             self.cfs,
         )?);
-        let seq_num_gen = SeqNumGenerator::new();
 
         let log_consumer_handle = tokio::spawn(
             consume_logs(self.path)
@@ -383,7 +380,6 @@ impl RocksDatabaseBuilder {
         let inner = Arc::new(RocksBackendInner {
             db,
             opts,
-            seq_num_gen,
             reader,
             log_consumer_handle: Some(log_consumer_handle),
         });

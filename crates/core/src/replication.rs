@@ -328,21 +328,6 @@ impl<C: Consensus, S, H> Replica<C, S, H> {
                 .ok()
         }
     }
-
-    // #[cfg(any(feature = "testing", test))]
-    // pub async fn new_replicated_request<Op: ReplicatableOperation>(
-    //     &self,
-    //     op: Op,
-    // ) -> ReplicatedRequest<Op> {
-    //     let cluster = self.consensus.read().await;
-    //     let key = op.as_ref();
-
-    //     ReplicatedRequest {
-    //         key_hash: cluster.keyspace().key_position(key),
-    //         operation: op,
-    //         keyspace_version: cluster.view().version(),
-    //     }
-    // }
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -409,12 +394,6 @@ pub enum ReplicaError<S> {
     NotClusterMember,
 }
 
-// impl<S> From<cluster::ViewVersionMismatch> for ReplicaError<S> {
-//     fn from(_: cluster::ViewVersionMismatch) -> Self {
-//         Self::ClusterViewVersionMismatch
-//     }
-// }
-
 impl From<tokio::time::error::Elapsed> for CoordinatorError {
     fn from(_: tokio::time::error::Elapsed) -> Self {
         Self::Timeout
@@ -442,8 +421,6 @@ pub trait StorageOperation: AsRef<Self::Key> + Debug + Clone + Send + Sync + 'st
         None
     }
 }
-
-// pub type ReplicatableOperationOutput<Op> = <Op as StorageOperation>::Output;
 
 pub trait Reconcile: Sized {
     fn reconcile(values: Vec<Self>, required_replicas: usize) -> Option<Self>;

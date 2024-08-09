@@ -21,9 +21,6 @@ pub mod fsm;
 pub mod migration;
 pub mod replication;
 
-// #[cfg(any(feature = "testing", test))]
-// pub mod test;
-
 /// [`Node`] configuration options.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeOpts {
@@ -66,12 +63,6 @@ pub struct Node<C: Consensus, N, S, H> {
     shutdown: Arc<Mutex<Option<oneshot::Sender<fsm::ShutdownReason>>>>,
     warmup_delay: Duration,
 }
-
-// impl<C, N, S> AsRef<Self> for Node<C, N, S> {
-//     fn as_ref(&self) -> &Self {
-//         self
-//     }
-// }
 
 impl<C: Consensus, N, S, H> Node<C, N, S, H> {
     /// Returns ID of this [`Node`].

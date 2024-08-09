@@ -44,20 +44,6 @@ pub type Field = Vec<u8>;
 pub type Value = Vec<u8>;
 pub type Cursor = Vec<u8>;
 
-// #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-// pub struct MigrationHeader {
-//     pub key_range: KeyRange<KeyPosition>,
-//     pub cluster_view_version: u128,
-// }
-
-// pub enum MigrationRequest {
-//     PullDataRequest(MigrationHeader),
-//     PushDataRequest(MigrationHeader),
-// }
-
-// pub type PullDataResult = Result<ExportItem, PullDataError>;
-// pub type PushDataResponse = Result<(), PullDataError>;
-
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct Get {
     #[as_ref]
@@ -331,7 +317,6 @@ impl Storage {
             .with_column_family(schema::InternalStringColumn)
             .with_column_family(schema::MapColumn)
             .with_column_family(schema::InternalMapColumn)
-            .with_column_family(schema::InternalHintedOpsColumn)
             .build()
             .map_err(map_err)?;
 
@@ -340,19 +325,6 @@ impl Storage {
             map: db.column().unwrap(),
             db,
         })
-    }
-
-    // TODO: Consider turning tests that require direct access to the unrelying
-    // storage into unit tests.
-
-    // Required for tests only.
-    pub fn string(&self) -> &DbColumn<schema::StringColumn> {
-        &self.string
-    }
-
-    // Required for tests only.
-    pub fn map(&self) -> &DbColumn<schema::MapColumn> {
-        &self.map
     }
 
     // Required for tests only.
@@ -394,28 +366,6 @@ impl replication::Storage<Set> for Storage {
     }
 }
 
-// #[async_trait]
-// impl replication::Storage<StoreHinted<Positioned<Set>>> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     async fn exec(&self, s: StoreHinted<Positioned<Set>>) -> Result<Self::Ok,
-// Self::Error> {         let op = s.operation.inner;
-//         let op = StringHintedOp::Set {
-//             key: GenericKey::new(s.operation.position, op.key),
-//             value: op.value,
-//             expiration: op.expiration,
-//             version: op.version,
-//         };
-
-//         self.string
-//             .add_hinted_op(HintedOp::String(op), s.operation.position)
-//             .with_labeled_metrics(const { &metric_labels("store_hinted_set")
-// })             .await
-//             .map_err(map_err)
-//     }
-// }
-
 impl replication::Storage<Del> for Storage {
     type Error = StorageError;
 
@@ -430,24 +380,6 @@ impl replication::Storage<Del> for Storage {
         }
     }
 }
-
-// #[async_trait]
-// impl irn::Storage<StoreHinted<Positioned<Del>>> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     async fn exec(&self, s: StoreHinted<Positioned<Del>>) -> Result<Self::Ok,
-// Self::Error> {         let op = StringHintedOp::Del {
-//             key: GenericKey::new(s.operation.position,
-// s.operation.inner.key),         };
-
-//         self.string
-//             .add_hinted_op(HintedOp::String(op), s.operation.position)
-//             .with_labeled_metrics(const { &metric_labels("store_hinted_del")
-// })             .await
-//             .map_err(map_err)
-//     }
-// }
 
 impl replication::Storage<GetExp> for Storage {
     type Error = StorageError;
@@ -486,27 +418,6 @@ impl replication::Storage<SetExp> for Storage {
         }
     }
 }
-
-// #[async_trait]
-// impl irn::Storage<StoreHinted<Positioned<SetExp>>> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     async fn exec(&self, s: StoreHinted<Positioned<SetExp>>) ->
-// Result<Self::Ok, Self::Error> {         let op = s.operation.inner;
-//         let op = StringHintedOp::SetExp {
-//             key: GenericKey::new(s.operation.position, op.key),
-//             expiration: op.expiration,
-//             version: op.version,
-//         };
-
-//         self.string
-//             .add_hinted_op(HintedOp::String(op), s.operation.position)
-//             .with_labeled_metrics(const {
-// &metric_labels("store_hinted_set_exp") })             .await
-//             .map_err(map_err)
-//     }
-// }
 
 impl replication::Storage<HGet> for Storage {
     type Error = StorageError;
@@ -547,31 +458,6 @@ impl replication::Storage<HSet> for Storage {
     }
 }
 
-// impl irn::Storage<StoreHinted<Positioned<HSet>>> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     fn exec(
-//         &self,
-//         s: StoreHinted<Positioned<HSet>>,
-//     ) -> impl Future<Output = Result<Result<Self::Ok, Self::Error>>> + Send +
-// Sync {         let op = s.operation.inner;
-//         let op = MapHintedOp::Set {
-//             key: GenericKey::new(s.operation.position, op.key),
-//             field: op.field,
-//             value: op.value,
-//             expiration: op.expiration,
-//             version: op.version,
-//         };
-
-//         self.map
-//             .add_hinted_op(HintedOp::Map(op), s.operation.position)
-//             .with_labeled_metrics(const { &metric_labels("store_hinted_hset")
-// })             .await
-//             .map_err(map_err)
-//     }
-// }
-
 impl replication::Storage<HDel> for Storage {
     type Error = StorageError;
 
@@ -590,26 +476,6 @@ impl replication::Storage<HDel> for Storage {
         }
     }
 }
-
-// #[async_trait]
-// impl irn::Storage<StoreHinted<Positioned<HDel>>> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     async fn exec(&self, s: StoreHinted<Positioned<HDel>>) ->
-// Result<Self::Ok, Self::Error> {         let op = s.operation.inner;
-//         let op = MapHintedOp::Del {
-//             key: GenericKey::new(s.operation.position, op.key),
-//             field: op.field,
-//         };
-
-//         self.map
-//             .add_hinted_op(HintedOp::Map(op), s.operation.position)
-//             .with_labeled_metrics(const { &metric_labels("store_hinted_hdel")
-// })             .await
-//             .map_err(map_err)
-//     }
-// }
 
 impl replication::Storage<HCard> for Storage {
     type Error = StorageError;
@@ -668,28 +534,6 @@ impl replication::Storage<HSetExp> for Storage {
         }
     }
 }
-
-// #[async_trait]
-// impl irn::Storage<StoreHinted<Positioned<HSetExp>>> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     async fn exec(&self, s: StoreHinted<Positioned<HSetExp>>) ->
-// Result<Self::Ok, Self::Error> {         let op = s.operation.inner;
-//         let op = MapHintedOp::SetExp {
-//             key: GenericKey::new(s.operation.position, op.key),
-//             field: op.field,
-//             expiration: op.expiration,
-//             version: op.version,
-//         };
-
-//         self.map
-//             .add_hinted_op(HintedOp::Map(op), s.operation.position)
-//             .with_labeled_metrics(const {
-// &metric_labels("store_hinted_hset_exp") })             .await
-//             .map_err(map_err)
-//     }
-// }
 
 impl replication::Storage<HFields> for Storage {
     type Error = StorageError;
@@ -778,30 +622,6 @@ impl migration::StorageExport for Storage {
         future::ok::<_, Infallible>(stream)
     }
 }
-
-// #[async_trait]
-// impl irn::Storage<CommitHintedOperations> for Storage {
-//     type Ok = ();
-//     type Error = StorageError;
-
-//     async fn exec(&self, ops: CommitHintedOperations) -> Result<Self::Ok,
-// Self::Error> {         stream::iter(ops.key_range.into_std_ranges())
-//             .map(Ok)
-//             .try_for_each_concurrent(2, |r| {
-//                 let db = self.db.clone();
-
-//                 async move {
-//                     tokio::task::spawn_blocking(move || {
-//                         db.commit_hinted_ops(r.start, r.end).map_err(map_err)
-//                     })
-//                     .with_labeled_metrics(const {
-// &metric_labels("commit_hinted_ops") })                     .await
-//                     .map_err(|e| StorageError::Other(format!("Join
-// spawn_blocking: {e:?}")))?                 }
-//             })
-//             .await
-//     }
-// }
 
 fn map_err(err: relay_rocks::Error) -> StorageError {
     use relay_rocks::Error;

@@ -165,6 +165,13 @@ impl RocksBackend {
             ro.set_iterate_upper_bound(right);
         }
 
+        // Without this if the cf has a prefix extractor and the range is outside a
+        // single prefix the iterator will return nothing.
+        //
+        // https://github.com/facebook/rocksdb/issues/5973#issuecomment-1423795401
+        // https://github.com/facebook/rocksdb/wiki/Prefix-Seek#how-to-ignore-prefix-bloom-filters-in-read
+        ro.set_total_order_seek(true);
+
         self.db
             .iterator_cf_opt(&self.cf_handle(C::NAME), ro, rocksdb::IteratorMode::Start)
     }

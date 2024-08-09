@@ -105,8 +105,8 @@ impl RocksBackend {
         async_stream::try_stream! {
             let mut items_processed = 0;
 
-            // rocks iterators are exclusive -- (start, end)
-            let start = (*range.start()).checked_sub(1);
+            // rocks iterators are exclusive -- [start, end)
+            let start = Some(*range.start());
             let end = (*range.end()).checked_add(1);
 
             let string_iter = DbIterator::new(
@@ -160,7 +160,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn export_import() {
-        const NUM_ENTRIES: usize = 1000;
+        const NUM_ENTRIES: usize = 100_000;
 
         let path = DBPath::new("export_import_src");
         let src_db = RocksDatabaseBuilder::new(&path)

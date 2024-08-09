@@ -65,7 +65,7 @@ where
         for shard_idx in 0..old_keyspace.shards.len() {
             let shard_id = ShardId(shard_idx as u16);
 
-            replicas = self.shard_replicas(shard_id).into_iter().collect();
+            replicas = self.shard_replicas(shard_id).iter().collect();
 
             for node_id in old_keyspace.shard_replicas(shard_id) {
                 if !replicas.contains(&node_id) {

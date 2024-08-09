@@ -14,7 +14,7 @@ use {
     derive_more::AsRef,
     futures::{
         future,
-        stream::{Map, Peekable},
+        stream::{self, Map, Peekable},
         Future,
         FutureExt,
         SinkExt,
@@ -48,7 +48,6 @@ use {
         collections::{HashMap, HashSet},
         fmt::{self, Debug},
         io,
-        net::SocketAddr,
         pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
@@ -715,20 +714,29 @@ impl<S: StatusReporter> RpcHandler<S> {
 
         self.pubsub.publish(evt.clone());
 
-        self.node.network().broadcast_pubsub(evt).await;
+        let cluster = self.node.consensus().cluster();
+
+        stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
+            .for_each_concurrent(None, |n| {
+                rpc::broadcast::Pubsub::send(
+                    &self.node.network().client,
+                    (&n.id, &n.addr),
+                    evt.clone(),
+                )
+                .map(drop)
+            })
+            .await;
     }
 
     async fn handle_pubsub_subscribe(
         &self,
         mut rx: RecvStream<api::Subscribe>,
         mut tx: SendStream<api::PubsubEventPayload>,
-        conn_info: &ConnectionInfo<HandshakeData>,
+        _conn_info: &ConnectionInfo<HandshakeData>,
     ) -> rpc::Result<()> {
         let req = rx.recv_message().await?;
 
-        let mut subscription = self
-            .pubsub
-            .subscribe(conn_info.remote_address, req.channels);
+        let mut subscription = self.pubsub.subscribe(req.channels);
 
         while let Some(msg) = subscription.rx.recv().await {
             tx.send(msg).await?;
@@ -1095,10 +1103,6 @@ impl Network {
             client: self.client.clone(),
         }
     }
-
-    pub(crate) async fn broadcast_pubsub(&self, evt: api::PubsubEventPayload) {
-        rpc::broadcast::Pubsub::broadcast(&self.client, evt).await;
-    }
 }
 
 #[derive(Clone)]
@@ -1253,7 +1257,13 @@ where
 
 #[derive(Clone, Debug, Default)]
 pub struct Pubsub {
-    subscribers: Arc<RwLock<HashMap<SocketAddr, Subscriber>>>,
+    inner: Arc<RwLock<PubSubInner>>,
+}
+
+#[derive(Debug, Default)]
+struct PubSubInner {
+    next_id: u64,
+    subscribers: HashMap<u64, Subscriber>,
 }
 
 impl Pubsub {
@@ -1261,17 +1271,22 @@ impl Pubsub {
         Self::default()
     }
 
-    fn subscribe(&self, subscriber_addr: SocketAddr, channels: HashSet<Vec<u8>>) -> Subscription {
+    fn subscribe(&self, channels: HashSet<Vec<u8>>) -> Subscription {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
-        let mut subscribers = self.subscribers.write().unwrap();
+        let mut inner = self.inner.write().unwrap();
 
         let (tx, rx) = mpsc::channel(512);
 
-        let _ = subscribers.insert(subscriber_addr, Subscriber { channels, tx });
+        let subscription_id = inner.next_id;
+        let _ = inner
+            .subscribers
+            .insert(subscription_id, Subscriber { channels, tx });
+
+        inner.next_id += 1;
 
         Subscription {
-            addr: subscriber_addr,
+            id: subscription_id,
             pubsub: self.clone(),
             rx,
         }
@@ -1280,7 +1295,7 @@ impl Pubsub {
     fn publish(&self, evt: api::PubsubEventPayload) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
-        let subscribers = self.subscribers.read().unwrap().clone();
+        let subscribers = self.inner.read().unwrap().subscribers.clone();
 
         for sub in subscribers.values() {
             if sub.channels.contains(&evt.channel) {
@@ -1305,7 +1320,7 @@ struct Subscriber {
 }
 
 struct Subscription {
-    addr: SocketAddr,
+    id: u64,
     pubsub: Pubsub,
 
     rx: mpsc::Receiver<api::PubsubEventPayload>,
@@ -1315,7 +1330,13 @@ impl Drop for Subscription {
     fn drop(&mut self) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
-        let _ = self.pubsub.subscribers.write().unwrap().remove(&self.addr);
+        let _ = self
+            .pubsub
+            .inner
+            .write()
+            .unwrap()
+            .subscribers
+            .remove(&self.id);
     }
 }
 

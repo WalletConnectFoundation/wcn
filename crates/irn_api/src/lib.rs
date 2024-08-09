@@ -293,7 +293,7 @@ pub struct NamespaceAuth {
     pub signature: auth::Signature,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PubsubEventPayload {
     pub channel: Vec<u8>,
     pub payload: Vec<u8>,

@@ -192,8 +192,11 @@ fn test_keyspace() {
     .unwrap();
     keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
 
-    // scale cluster up to full capacity
-    for idx in 3..u8::MAX {
+    // the test is very slow in debug builds
+    let max_nodes = if cfg!(debug_assertions) { 16 } else { u8::MAX };
+
+    // scale cluster up
+    for idx in 3..max_nodes {
         nodes.insert(idx);
         let new_keyspace = Keyspace::new(
             nodes.iter().copied(),

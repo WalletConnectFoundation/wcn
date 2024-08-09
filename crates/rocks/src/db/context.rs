@@ -84,16 +84,28 @@ impl<T> From<Option<T>> for Payload<T> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MergeOp<T> {
-    payload: Payload<T>,
-    expires: Option<TimestampUpdate>,
+    kind: MergeOpKind<T>,
+    expires: Option<UnixTimestampSecs>,
     timestamp: UnixTimestampMicros,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+enum MergeOpKind<T> {
+    Set(T),
+    SetExp,
+    #[default]
+    Del,
 }
 
 // Max TTL currently required by the business logic, with extra time leeway.
 const MAX_TTL_SECS: u64 = 30 * 86400 + 120;
 
 impl<T> MergeOp<T> {
-    pub fn new(timestamp: UnixTimestampMicros) -> Self {
+    fn new(
+        kind: MergeOpKind<T>,
+        expires: Option<UnixTimestampSecs>,
+        timestamp: UnixTimestampMicros,
+    ) -> Self {
         const TIME_LEEWAY_MICROS: u64 = 120 * 1000 * 1000;
         let now = crate::util::timestamp_micros();
 
@@ -101,47 +113,47 @@ impl<T> MergeOp<T> {
             tracing::warn!(now, timestamp, "invalid merge op timestamp");
         }
 
+        if let Some(expiration) = expires {
+            let now = crate::util::timestamp_secs();
+
+            if expiration > now + MAX_TTL_SECS {
+                tracing::warn!(now, expiration, "invalid merge op ttl");
+            }
+        }
+
         Self {
-            payload: Payload::None,
-            expires: None,
+            kind,
+            expires,
             timestamp,
         }
     }
 
-    pub fn with_payload(mut self, payload: T, expiration: Option<UnixTimestampSecs>) -> Self {
-        if let Some(expiration) = expiration {
-            let now = crate::util::timestamp_secs();
-
-            if expiration > now + MAX_TTL_SECS {
-                tracing::warn!(now, expiration, "invalid merge op ttl");
-            }
-        }
-
-        self.payload = Some(payload).into();
-        self.expires = Some(
-            expiration
-                .map(TimestampUpdate::Set)
-                .unwrap_or(TimestampUpdate::Unset),
-        );
-        self
+    pub fn set(
+        value: T,
+        expiration: Option<UnixTimestampSecs>,
+        timestamp: UnixTimestampMicros,
+    ) -> Self {
+        Self::new(MergeOpKind::Set(value), expiration, timestamp)
     }
 
-    pub fn with_expiration(mut self, expiration: TimestampUpdate) -> Self {
-        if let TimestampUpdate::Set(expiration) = expiration {
-            let now = crate::util::timestamp_secs();
+    pub fn set_exp(expiration: Option<UnixTimestampSecs>, timestamp: UnixTimestampMicros) -> Self {
+        Self::new(MergeOpKind::SetExp, expiration, timestamp)
+    }
 
-            if expiration > now + MAX_TTL_SECS {
-                tracing::warn!(now, expiration, "invalid merge op ttl");
-            }
-        }
+    pub fn del(timestamp: UnixTimestampMicros) -> Self {
+        // For how long the mark of the deleted record should stay in the database.
+        // We need it to properly merge concurrent updates/deletes during data
+        // migrations.
+        const LINGER_SECS: UnixTimestampSecs = 24 * 60 * 60; // a day
 
-        self.expires = Some(expiration);
-        self
+        Self::new(MergeOpKind::Del, Some(LINGER_SECS), timestamp)
     }
 }
 
 impl<T> Merge<Self> for MergeOp<T> {
     fn merge(&mut self, input: Self) {
+        use MergeOpKind as Kind;
+
         if input.timestamp <= self.timestamp {
             // Ignore updates with timestamps preceding this one.
             tracing::debug!(
@@ -152,23 +164,18 @@ impl<T> Merge<Self> for MergeOp<T> {
             return;
         }
 
-        self.expires = match (self.expires, input.expires) {
-            (None, Some(new_exp)) => Some(new_exp),
-
-            (Some(mut curr_exp), Some(new_exp)) => {
-                curr_exp.merge(new_exp);
-                Some(curr_exp)
+        self.kind = match (std::mem::take(&mut self.kind), input.kind) {
+            (_, set @ Kind::Set(_)) => set,
+            (_, del @ Kind::Del) => del,
+            (set @ Kind::Set(_), Kind::SetExp) => set,
+            (set_exp @ Kind::SetExp, Kind::SetExp) => set_exp,
+            (Kind::Del, Kind::SetExp) => {
+                tracing::warn!("It shouldn't be possible to set_exp for a deleted record");
+                return;
             }
-
-            (Some(curr_exp), None) => Some(curr_exp),
-
-            (None, None) => None,
         };
 
-        if input.payload.as_option().is_some() {
-            self.payload = input.payload;
-        }
-
+        self.expires = input.expires;
         self.timestamp = input.timestamp;
     }
 }
@@ -235,6 +242,8 @@ impl<T> DataContext<T> {
 /// Merges changes from the specified merge operation.
 impl<T> Merge<MergeOp<T>> for DataContext<T> {
     fn merge(&mut self, op: MergeOp<T>) {
+        use MergeOpKind as Kind;
+
         let updated_timestamp = self.updated.unwrap_or(self.created);
 
         if op.timestamp <= updated_timestamp {
@@ -247,22 +256,13 @@ impl<T> Merge<MergeOp<T>> for DataContext<T> {
             return;
         }
 
-        if let Some(payload) = op.payload.into() {
-            self.payload = Some(payload).into();
-        }
+        match op.kind {
+            Kind::Set(value) => self.payload = Payload::Some(value),
+            Kind::SetExp => {}
+            Kind::Del => self.payload = Payload::None,
+        };
 
-        if let Some(expires) = op.expires {
-            self.expires = match expires {
-                TimestampUpdate::Set(timestamp) => Some(timestamp),
-
-                TimestampUpdate::Extend(timestamp) => {
-                    Some(self.expires.unwrap_or(0).max(timestamp))
-                }
-
-                TimestampUpdate::Unset => None,
-            };
-        }
-
+        self.expires = op.expires;
         self.updated = Some(op.timestamp);
     }
 }

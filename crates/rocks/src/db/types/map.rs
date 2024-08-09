@@ -83,6 +83,7 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
+        timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns all values in the hash stored at `key`.
@@ -148,10 +149,11 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
             let key = C::ext_key(key, &pair.field)?;
-            let value = serialize(
-                &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                    .with_payload(&pair.value, expiration),
-            )?;
+            let value = serialize(&context::MergeOp::set(
+                &pair.value,
+                expiration,
+                update_timestamp,
+            ))?;
 
             self.backend.merge(C::NAME, key, value).await
         }
@@ -170,10 +172,11 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
 
             for &pair in pairs {
                 let key = C::ext_key(key, &pair.field)?;
-                let value = serialize(
-                    &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                        .with_payload(&pair.value, expiration),
-                )?;
+                let value = serialize(&context::MergeOp::set(
+                    &pair.value,
+                    expiration,
+                    update_timestamp,
+                ))?;
 
                 batch.merge(C::NAME, key, value);
             }
@@ -206,10 +209,13 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
+        timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
-            let ext_key = C::ext_key(key, field)?;
-            self.backend.delete(C::NAME, ext_key).await
+            let key = C::ext_key(key, field)?;
+            let value = serialize(&context::MergeOp::<&C::ValueType>::del(timestamp))?;
+
+            self.backend.merge(C::NAME, key, value).await
         }
     }
 
@@ -254,7 +260,21 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
             let key = C::storage_key(key)?;
 
             self.backend
-                .exec_blocking(|b| Ok(b.prefix_iterator::<C, _>(key).count()))
+                .exec_blocking(|b| {
+                    let iter = b.prefix_iterator::<C, _>(key);
+                    let mut count: usize = 0;
+                    let err = iterators::KeyValueIterator::<C>::new(iter)
+                        .values()
+                        .find_map(|res| match res {
+                            Ok(_) => {
+                                count += 1;
+                                None
+                            }
+                            Err(err) => Some(err),
+                        });
+
+                    err.map(Err).unwrap_or_else(|| Ok(count))
+                })
                 .await
         }
     }
@@ -292,15 +312,11 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
-            let expiration = expiration
-                .map(context::TimestampUpdate::Set)
-                .unwrap_or(context::TimestampUpdate::Unset);
-
             let key = C::ext_key(key, subkey)?;
-            let value = serialize(
-                &context::MergeOp::<C::ValueType>::new(update_timestamp)
-                    .with_expiration(expiration),
-            )?;
+            let value = serialize(&context::MergeOp::<C::ValueType>::set_exp(
+                expiration,
+                update_timestamp,
+            ))?;
 
             self.backend.merge(C::NAME, key, value).await
         }
@@ -317,10 +333,11 @@ impl DbColumn<MapColumn> {
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
         let key = MapColumn::ext_key(key, &pair.field)?;
-        let value = serialize(
-            &context::MergeOp::<&<MapColumn as Column>::ValueType>::new(update_timestamp)
-                .with_payload(&pair.value, expiration),
-        )?;
+        let value = serialize(&context::MergeOp::set(
+            &pair.value,
+            expiration,
+            update_timestamp,
+        ))?;
 
         batch.merge(MapColumn::NAME, key, value);
 
@@ -332,9 +349,15 @@ impl DbColumn<MapColumn> {
         batch: &mut batch::WriteBatch,
         key: &<MapColumn as Column>::KeyType,
         field: &<MapColumn as Column>::SubKeyType,
+        timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
         let key = MapColumn::ext_key(key, field)?;
-        batch.delete(<MapColumn as Column>::NAME, key);
+        let value = serialize(&context::MergeOp::<<MapColumn as Column>::ValueType>::del(
+            timestamp,
+        ))?;
+
+        batch.merge(<MapColumn as Column>::NAME, key, value);
+
         Ok(())
     }
 
@@ -346,14 +369,12 @@ impl DbColumn<MapColumn> {
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
-
         let key = MapColumn::ext_key(key, subkey)?;
         let value = serialize(
-            &context::MergeOp::<<MapColumn as Column>::ValueType>::new(update_timestamp)
-                .with_expiration(expiration),
+            &context::MergeOp::<<MapColumn as Column>::ValueType>::set_exp(
+                expiration,
+                update_timestamp,
+            ),
         )?;
 
         batch.merge(<MapColumn as Column>::NAME, key, value);
@@ -429,7 +450,9 @@ mod tests {
         );
 
         // Remove non-existent (should have no effect).
-        db.hdel(&key, &val3.field().into()).await.unwrap();
+        db.hdel(&key, &val3.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(
             db.hget(&key, &val1.field().into()).await.unwrap(),
             Some(val1.value().into())
@@ -440,13 +463,17 @@ mod tests {
         );
 
         // Remove messages.
-        db.hdel(&key, &val1.field().into()).await.unwrap();
+        db.hdel(&key, &val1.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
             Some(val2.value().into())
         );
-        db.hdel(&key, &val2.field().into()).await.unwrap();
+        db.hdel(&key, &val2.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
         assert_eq!(db.hget(&key, &val2.field().into()).await.unwrap(), None);
         assert!(db.hvals(&key).await.unwrap().is_empty());
@@ -544,6 +571,15 @@ mod tests {
 
             // Update the data with lower timestamp value. It's expected to be ignored.
             db.hset(&key, &val1.clone().into(), None, timestamp1)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.hget(&key, &val1.field().into()).await.unwrap(),
+                Some(val2.value().into())
+            );
+
+            // Remove the data with lower timestamp value. It's expected to be ignored.
+            db.hdel(&key, &val1.field().into(), timestamp1)
                 .await
                 .unwrap();
             assert_eq!(
@@ -798,7 +834,9 @@ mod tests {
         assert_eq!(db.hcard(key).await.unwrap(), 1);
 
         // When set element is removed, cardinality is updated correctly.
-        db.hdel(key, &msg.field().into()).await.unwrap();
+        db.hdel(key, &msg.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(db.hcard(key).await.unwrap(), 0);
     }
 

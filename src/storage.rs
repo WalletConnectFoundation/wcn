@@ -108,6 +108,7 @@ impl Operation for Set {
 pub struct Del {
     #[as_ref]
     pub key: Key,
+    pub version: UnixTimestampMicros,
 }
 
 impl Operation for Del {
@@ -185,6 +186,7 @@ pub struct HDel {
     #[as_ref]
     pub key: Key,
     pub field: Field,
+    pub version: UnixTimestampMicros,
 }
 
 impl Operation for HDel {
@@ -421,7 +423,7 @@ impl replication::Storage<Del> for Storage {
         async move {
             let key = GenericKey::new(key_hash, op.key);
             self.string
-                .del(&key)
+                .del(&key, op.version)
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
                 .await
                 .map_err(map_err)
@@ -581,7 +583,7 @@ impl replication::Storage<HDel> for Storage {
         async move {
             let key = GenericKey::new(key_hash, op.key);
             self.map
-                .hdel(&key, &op.field)
+                .hdel(&key, &op.field, op.version)
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
                 .await
                 .map_err(map_err)

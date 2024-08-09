@@ -215,6 +215,7 @@ mod tests {
                 // del(key=42)
                 HintedOp::String(StringHintedOp::Del {
                     key: test_keys[0].clone().into(),
+                    version: 2,
                 }),
             ];
 
@@ -319,6 +320,7 @@ mod tests {
                 HintedOp::Map(MapHintedOp::Del {
                     key: keys[0].clone().into(),
                     field: fields[0].clone().into(),
+                    version: 2,
                 }),
             ];
 
@@ -399,7 +401,7 @@ mod tests {
                 field: TestKey::new(i as u64).into(),
                 value: TestValue::new("value").into(),
                 expiration: None,
-                version: 0,
+                version: 1,
             });
             db.add_hinted_op(op, i as u64).await.unwrap();
         }
@@ -437,7 +439,7 @@ mod tests {
                 field: TestKey::new(i).into(),
                 value: TestValue::new("value").into(),
                 expiration: None,
-                version: 0,
+                version: 1,
             });
             db.add_hinted_op(op, i).await.unwrap();
         }

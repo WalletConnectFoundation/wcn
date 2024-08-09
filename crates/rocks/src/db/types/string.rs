@@ -42,7 +42,11 @@ where
     /// Delete the value associated with the given key.
     ///
     /// Time complexity: `O(1)`.
-    fn del(&self, key: &C::KeyType) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+    fn del(
+        &self,
+        key: &C::KeyType,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns the remaining time to live of a key that has a timeout.
     fn exp(
@@ -82,19 +86,21 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
             let key = C::storage_key(key)?;
-            let value = serialize(
-                &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                    .with_payload(value, expiration),
-            )?;
+            let value = serialize(&context::MergeOp::set(value, expiration, update_timestamp))?;
 
             self.backend.merge(C::NAME, key, value).await
         }
     }
 
-    fn del(&self, key: &C::KeyType) -> impl Future<Output = Result<(), Error>> + Send + Sync {
-        async {
+    fn del(
+        &self,
+        key: &C::KeyType,
+        timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
             let key = C::storage_key(key)?;
-            self.backend.delete(C::NAME, key).await
+            let value = serialize(&context::MergeOp::<&C::ValueType>::del(timestamp))?;
+            self.backend.merge(C::NAME, key, value).await
         }
     }
 
@@ -111,14 +117,11 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
-
         let key = C::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<C::ValueType>::new(update_timestamp).with_expiration(expiration),
-        )?;
+        let value = serialize(&context::MergeOp::<C::ValueType>::set_exp(
+            expiration,
+            update_timestamp,
+        ))?;
 
         self.backend.merge(C::NAME, key, value).await
     }
@@ -135,10 +138,7 @@ impl DbColumn<StringColumn> {
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
         let key = StringColumn::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<&<StringColumn as Column>::ValueType>::new(update_timestamp)
-                .with_payload(value, expiration),
-        )?;
+        let value = serialize(&context::MergeOp::set(value, expiration, update_timestamp))?;
 
         batch.merge(StringColumn::NAME, key, value);
 
@@ -149,9 +149,14 @@ impl DbColumn<StringColumn> {
         &self,
         batch: &mut batch::WriteBatch,
         key: &<StringColumn as Column>::KeyType,
+        timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
         let key = StringColumn::storage_key(key)?;
-        batch.delete(<StringColumn as Column>::NAME, key);
+        let value =
+            serialize(&context::MergeOp::<<StringColumn as Column>::ValueType>::del(timestamp))?;
+
+        batch.merge(StringColumn::NAME, key, value);
+
         Ok(())
     }
 
@@ -162,14 +167,12 @@ impl DbColumn<StringColumn> {
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
-
         let key = StringColumn::storage_key(key)?;
         let value = serialize(
-            &context::MergeOp::<<StringColumn as Column>::ValueType>::new(update_timestamp)
-                .with_expiration(expiration),
+            &context::MergeOp::<<StringColumn as Column>::ValueType>::set_exp(
+                expiration,
+                update_timestamp,
+            ),
         )?;
 
         batch.merge(StringColumn::NAME, key, value);
@@ -226,7 +229,7 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), Some(val_upd));
 
             // Remove data.
-            db.del(key).await.unwrap();
+            db.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(db.get(key).await.unwrap(), None);
         }
 
@@ -251,69 +254,6 @@ mod tests {
             let ttl = db.exp(key).await.unwrap();
             assert_eq!(ttl, Some(expiration));
         }
-    }
-
-    // TODO: Remove this test once we've completed the data pruning and removed the
-    // pruning code from compaction filters.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
-    async fn fix_invalid_timestamps() {
-        let path = DBPath::new("string_basic_ops");
-        let rocks_db = RocksDatabaseBuilder::new(&path)
-            .with_column_family(StringColumn)
-            .build()
-            .unwrap();
-
-        let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db = &rocks_db.column::<StringColumn>().unwrap();
-
-        let key1 = TestKey::new(1).into();
-        let key2 = TestKey::new(2).into();
-        let key3 = TestKey::new(3).into();
-        let key4 = TestKey::new(4).into();
-        let key5 = TestKey::new(5).into();
-        let key6 = TestKey::new(6).into();
-        let val = TestValue::new("value1").into();
-
-        assert_eq!(db.get(&key1).await.unwrap(), None);
-        assert_eq!(db.get(&key2).await.unwrap(), None);
-        assert_eq!(db.get(&key3).await.unwrap(), None);
-        assert_eq!(db.get(&key4).await.unwrap(), None);
-        assert_eq!(db.get(&key5).await.unwrap(), None);
-        assert_eq!(db.get(&key6).await.unwrap(), None);
-
-        db.set(&key1, &val, None, timestamp_micros()).await.unwrap();
-        db.set(&key2, &val, Some(timestamp_secs() + 1), timestamp_micros())
-            .await
-            .unwrap();
-        db.set(&key3, &val, Some(timestamp_secs() + 5), timestamp_micros())
-            .await
-            .unwrap();
-        db.set(&key4, &val, Some(u64::MAX), timestamp_micros())
-            .await
-            .unwrap();
-        db.set(&key5, &val, None, u64::MAX).await.unwrap();
-        db.set(&key6, &val, None, timestamp_micros()).await.unwrap();
-        db.set(&key6, &val, None, u64::MAX).await.unwrap();
-
-        // Trigger merge.
-        db_full.compact();
-
-        thread::sleep(Duration::from_secs(2));
-
-        // Cleanup.
-        db_full.compact();
-
-        // Compaction is expected to remove the following:
-        //  - key2: expired;
-        //  - key4: invalid TTL;
-        //  - key5: invalid creation timestamp;
-        //  - key6: invalid update timestamp.
-        assert_eq!(db.get(&key1).await.unwrap(), Some(val.clone()));
-        assert_eq!(db.get(&key2).await.unwrap(), None);
-        assert_eq!(db.get(&key3).await.unwrap(), Some(val.clone()));
-        assert_eq!(db.get(&key4).await.unwrap(), None);
-        assert_eq!(db.get(&key5).await.unwrap(), None);
-        assert_eq!(db.get(&key6).await.unwrap(), None);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
@@ -347,6 +287,10 @@ mod tests {
 
             // Update the data with lower timestamp value. It's expected to be ignored.
             db.set(key, val1, None, timestamp1).await.unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
+
+            // Delete the data with lower timestamp value. It's expected to be ignored.
+            db.del(key, timestamp1).await.unwrap();
             assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
         }
 
@@ -525,10 +469,10 @@ mod tests {
             assert_eq!(cf2.get(key).await.unwrap(), Some(updated_val.clone()));
 
             // Remove data.
-            cf1.del(key).await.unwrap();
+            cf1.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf1.get(key).await.unwrap(), None);
             assert_eq!(cf2.get(key).await.unwrap(), Some(updated_val.clone())); // still exists
-            cf2.del(key).await.unwrap();
+            cf2.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf2.get(key).await.unwrap(), None);
         }
     }

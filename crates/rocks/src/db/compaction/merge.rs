@@ -117,7 +117,12 @@ where
         opts.set_merge_operator(name, full_merge::<Self>, partial_merge::<Self>);
     }
 
-    fn partial_merge(_: &[u8], _: Option<&[u8]>, input: &MergeOperands) -> Result<Vec<u8>, Error> {
+    // `_output` is always `None` here
+    fn partial_merge(
+        _: &[u8],
+        _output: Option<&[u8]>,
+        input: &MergeOperands,
+    ) -> Result<Vec<u8>, Error> {
         let mut input = op_iter::<<Self as MergeOperator>::Input>(input);
 
         // Use the first merge operand as the output, and merge subsequent operands into

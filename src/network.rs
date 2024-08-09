@@ -367,6 +367,7 @@ impl<S: StatusReporter> RpcHandler<S> {
                 api::rpc::Del::handle(stream, |req| async {
                     let op = storage::Del {
                         key: prepare_key(req.key, conn_info)?,
+                        version: timestamp_micros(),
                     };
 
                     coordinator.replicate(client_id, op).map(api_result).await
@@ -425,6 +426,7 @@ impl<S: StatusReporter> RpcHandler<S> {
                     let op = storage::HDel {
                         key: prepare_key(req.key, conn_info)?,
                         field: req.field,
+                        version: timestamp_micros(),
                     };
 
                     coordinator.replicate(client_id, op).map(api_result).await

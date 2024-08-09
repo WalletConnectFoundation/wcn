@@ -122,7 +122,7 @@ impl RocksBackend {
     }
 
     /// Deletes a value with a provided key from a given column family.
-    async fn delete(&self, cf_name: ColumnFamilyName, key: impl AsRef<[u8]>) -> Result<(), Error> {
+    async fn _delete(&self, cf_name: ColumnFamilyName, key: impl AsRef<[u8]>) -> Result<(), Error> {
         self.db
             .delete_cf(&self.cf_handle(cf_name), key)
             .map_err(Into::into)

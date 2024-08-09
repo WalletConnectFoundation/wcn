@@ -28,6 +28,7 @@ pub enum StringHintedOp<C: Column> {
     },
     Del {
         key: C::KeyType,
+        version: UnixTimestampMicros,
     },
     SetExp {
         key: C::KeyType,
@@ -48,6 +49,7 @@ pub enum MapHintedOp<C: Column> {
     Del {
         key: C::KeyType,
         field: C::SubKeyType,
+        version: UnixTimestampMicros,
     },
     SetExp {
         key: C::KeyType,
@@ -128,7 +130,11 @@ fn handle_map_op(
             let pair = Pair::new(field, value);
             col.hset_batched(batch, &key, &pair, expiration, version)
         }
-        MapHintedOp::Del { key, field } => col.hdel_batched(batch, &key, &field),
+        MapHintedOp::Del {
+            key,
+            field,
+            version,
+        } => col.hdel_batched(batch, &key, &field, version),
         MapHintedOp::SetExp {
             key,
             field,
@@ -150,7 +156,7 @@ fn handle_string_op(
             expiration,
             version,
         } => col.set_batched(batch, &key, &value, expiration, version),
-        StringHintedOp::Del { key } => col.del_batched(batch, &key),
+        StringHintedOp::Del { key, version } => col.del_batched(batch, &key, version),
         StringHintedOp::SetExp {
             key,
             expiration,

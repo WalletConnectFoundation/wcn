@@ -302,7 +302,7 @@ impl TestCluster {
         }
     }
 
-    async fn test_pubsub(&mut self) {
+    async fn test_pubsub(&self) {
         tracing::info!("PubSub");
 
         let channel1 = b"channel1";
@@ -397,7 +397,7 @@ impl TestCluster {
             .await;
     }
 
-    async fn test_namespaces(&mut self) {
+    async fn test_namespaces(&self) {
         tracing::info!("Namespaces");
 
         let namespaces = (0..2)

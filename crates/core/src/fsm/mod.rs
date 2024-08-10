@@ -256,6 +256,12 @@ where
         &self,
         plan: Arc<keyspace::MigrationPlan<C::Node>>,
     ) -> Result<(), Error> {
+        // Wait a bit before pulling the data in case other nodes haven't received the
+        // update `Cluster` state yet.
+        // It's safe not to do so, however it reduces unnecessary amount of retries and
+        // `KeyspaceVersionMismatch` warnings.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
         let keyspace_version = plan.keyspace_version();
 
         self.migration_manager.pull_keyranges(plan).await;

@@ -466,10 +466,7 @@ fn cluster() {
     assert_eq!(cluster.version(), 4);
     assert_eq!(cluster.keyspace_version(), 0);
 
-    assert_eq!(
-        cluster.shutdown_node(&2),
-        Err(cluster::Error::AnotherNodeRestarting)
-    );
+    assert_eq!(cluster.shutdown_node(&2), Err(cluster::Error::NotNormal));
 
     assert_eq!(cluster.node_state(&2), Some(NodeState::Normal));
     assert_eq!(cluster.version(), 4);
@@ -540,7 +537,7 @@ fn cluster() {
 
     assert_eq!(
         cluster.add_node(Node::new(5, "eu")),
-        Err(cluster::Error::MigrationInProgress)
+        Err(cluster::Error::NotNormal)
     );
     assert_eq!(cluster.version(), 6);
     assert_eq!(cluster.keyspace_version(), 1);
@@ -563,10 +560,7 @@ fn cluster() {
     assert_eq!(cluster.version(), 6);
     assert_eq!(cluster.keyspace_version(), 1);
 
-    assert_eq!(
-        cluster.shutdown_node(&1),
-        Err(cluster::Error::MigrationInProgress)
-    );
+    assert_eq!(cluster.shutdown_node(&1), Err(cluster::Error::NotNormal));
 
     assert_eq!(cluster.complete_pull(&4, 1), Ok(true));
     assert_eq!(cluster.version(), 7);
@@ -628,7 +622,7 @@ fn cluster() {
 
     assert_eq!(
         cluster.decommission_node(&3),
-        Err(cluster::Error::MigrationInProgress)
+        Err(cluster::Error::NotNormal)
     );
     assert_eq!(cluster.version(), 8);
     assert_eq!(cluster.keyspace_version(), 2);

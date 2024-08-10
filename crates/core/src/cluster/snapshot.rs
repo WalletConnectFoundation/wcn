@@ -1,3 +1,5 @@
+//! Cluster snapshot machinery.
+
 use {
     super::{
         node::{self, SlotMap},
@@ -9,6 +11,8 @@ use {
     std::{borrow::Cow, collections::BTreeSet, sync::Arc},
 };
 
+/// Snapshot of a [`Cluster`] state suitable for network transmission and
+/// persistent storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound = "N: Serialize + DeserializeOwned")]
 pub struct Snapshot<'a, N: Node, K: Keyspace<N>> {
@@ -31,6 +35,7 @@ struct MigrationSnapshot<'a, N: Node, K: Keyspace<N>> {
 }
 
 impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
+    /// Builds a [`Snapshot`] of this [`Cluster`].
     pub fn snapshot(&self) -> Snapshot<'_, N, K> {
         Snapshot {
             nodes: self.nodes.slots().into(),
@@ -45,6 +50,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         }
     }
 
+    /// Re-constructs a [`Cluster`] out of the provided [`Snapshot`].
     pub fn from_snapshot(s: Snapshot<'_, N, K>) -> super::Result<Self> {
         let nodes = SlotMap::from_slots(s.nodes.into_owned())?;
         let keyspace = s

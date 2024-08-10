@@ -97,6 +97,7 @@ impl<C: Consensus, N, S, H> Node<C, N, S, H> {
         &self.migration_manager
     }
 
+    /// Returns representation of this [`Node`] in the [`Cluster`].
     pub fn cluster_node(&self) -> &C::Node {
         self.replica().node()
     }

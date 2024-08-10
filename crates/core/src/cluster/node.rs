@@ -1,12 +1,17 @@
+//! Data structures related to nodes in an IRN cluster.
+
 use {
     super::{keyspace, Nodes},
     serde::{de::DeserializeOwned, Serialize},
     std::{collections::HashMap, error::Error as StdError, fmt, hash::Hash, mem, sync::Arc},
 };
 
+/// Index of a [`Node`] in a [`SlotMap`].
 pub type Idx = u8;
 
+/// Node in a [`Cluster`](super::Cluster).
 pub trait Node: Clone + fmt::Debug + Eq + Send + Sync + 'static {
+    /// Unique identifiear of a [`Node`].
     type Id: Clone
         + fmt::Debug
         + Hash
@@ -18,17 +23,37 @@ pub trait Node: Clone + fmt::Debug + Eq + Send + Sync + 'static {
         + Sync
         + 'static;
 
+    /// Returns the [`Node::Id`] of this [`Node`].
     fn id(&self) -> &Self::Id;
 
+    /// Checks whether this [`Node`] can be added to a
+    /// [`Cluster`](super::Cluster) with the specified list of existing
+    /// [`Nodes`].
     fn can_add(&self, nodes: &Nodes<Self>) -> Result<(), impl StdError>;
+
+    /// Checks whether this [`Node`] can be updated to the provided value in a
+    /// [`Cluster`](super::Cluster) with the specified list of existing
+    /// [`Nodes`].
     fn can_update(&self, nodes: &Nodes<Self>, new_state: &Self) -> Result<(), impl StdError>;
 }
 
+/// State of a [`Node`] in a [`Cluster`](super::Cluster).
 #[derive(Clone, Debug)]
 pub enum State<N: Node> {
+    /// [`Node`] is pulling data from other [`Node`]s
+    /// [`Cluster`](super::Cluster) using the specified
+    /// [`keyspace::MigrationPlan`].
     Pulling(Arc<keyspace::MigrationPlan<N>>),
+
+    /// [`Node`] is operating normally.
     Normal,
+
+    /// [`Node`] is in a process of a restart initiated by
+    /// [`Cluster::shutdown_node`].
     Restarting,
+
+    /// [`Node`] is in a process of decommissioning initiated by
+    /// [`Cluster::decommission_node`].
     Decommissioning,
 }
 
@@ -44,8 +69,14 @@ impl<N: Node> PartialEq for State<N> {
     }
 }
 
+/// [`Node::Id`].
 pub type Id<N> = <N as Node>::Id;
 
+/// Collection which allows to retrieve stored [`Node`]s using both [`Idx`]es
+/// and [`Id`]s.
+///
+/// The collection has stable ordering which is guaranteed to be preserved after
+/// de/serialization.
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct SlotMap<N: Node> {
     id_to_slot_idx: HashMap<N::Id, u8>,
@@ -86,13 +117,15 @@ impl<N: Node> SlotMap<N> {
         &self.slots
     }
 
+    /// Gets [`Node`] by [`Node::Id`].
     pub fn get(&self, id: &N::Id) -> Option<&N> {
         self.id_to_slot_idx
             .get(id)
             .and_then(|&idx| self.slots[idx as usize].as_ref())
     }
 
-    pub fn get_by_idx(&self, idx: u8) -> Option<&N> {
+    /// Gets [`Node`] by [`Idx`].
+    pub fn get_by_idx(&self, idx: Idx) -> Option<&N> {
         let idx = idx as usize;
         if idx >= self.slots.len() {
             return None;
@@ -101,11 +134,14 @@ impl<N: Node> SlotMap<N> {
         self.slots[idx].as_ref()
     }
 
+    /// Indicates whether this collection contains the [`Node`] with the
+    /// specified [`Node::Id`].
     pub fn contains(&self, id: &N::Id) -> bool {
         self.id_to_slot_idx.contains_key(id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (u8, &N)> {
+    /// Returns an [`Iterator`] over the [`Node`] slots in this collection.
+    pub fn iter(&self) -> impl Iterator<Item = (Idx, &N)> {
         self.slots
             .iter()
             .enumerate()
@@ -125,6 +161,7 @@ impl<N: Node> SlotMap<N> {
         Some((self.slots.len() - 1) as u8)
     }
 
+    /// Inserts a [`Node`] into the collection.
     pub fn insert(&mut self, node: N) -> Result<Option<N>, SlotMapError> {
         let idx = if let Some(idx) = self.id_to_slot_idx.get(node.id()) {
             *idx
@@ -139,6 +176,8 @@ impl<N: Node> SlotMap<N> {
         Ok(node)
     }
 
+    /// Removes the [`Node`] with the specified [`Node::Id`] from this
+    /// collection.
     pub fn remove(&mut self, id: &N::Id) -> Option<N> {
         if let Some(idx) = self.id_to_slot_idx.remove(id) {
             return self.slots[idx as usize].take();
@@ -148,8 +187,10 @@ impl<N: Node> SlotMap<N> {
     }
 }
 
+/// [`SlotMap`] error.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum SlotMapError {
+    /// [`SlotMap`] is full.
     #[error("SlotMap is full")]
     Full,
 }

@@ -367,10 +367,9 @@ impl From<cluster::Error> for CoordinatorError {
             | Error::UnknownNode
             | Error::TooManyNodes
             | Error::TooFewNodes
-            | Error::MigrationInProgress
+            | Error::NotNormal
             | Error::NoMigration
             | Error::KeyspaceVersionMismatch
-            | Error::AnotherNodeRestarting
             | Error::InvalidNode(_)
             | Error::Bug(_) => Self::Other(err.to_string()),
         }

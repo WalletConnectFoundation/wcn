@@ -1,3 +1,5 @@
+//! Keyspace functionality required by an IRN cluster.
+
 use {
     super::{node, Node, Nodes},
     derivative::Derivative,
@@ -12,24 +14,49 @@ use {
     },
 };
 
+/// Keyspace functionality required by a [`Cluster`](super::Cluster).
 pub trait Keyspace<N: Node>: Clone + Send + Sync + 'static {
+    /// Snapshot of the [`Keyspace`] state suitable for network transmission and
+    /// persistent storage.
     type Snapshot<'a>: Serialize + DeserializeOwned;
 
+    /// Creates a new [`Keyspace`], distributing the keys across the list of
+    /// the provided [`Nodes`].
     fn new(nodes: &Nodes<N>) -> super::Result<Self>;
+
+    /// Updates the [`Keyspace`], redistributing the keys across the list of the
+    /// provided [`Nodes`].
+    ///
+    /// Returns `false` if the [`Keyspace`] state hasn't changed.
     fn update(&mut self, nodes: &Nodes<N>) -> super::Result<bool>;
+
+    /// Returns all the key [`Range`]s in this [`Keyspace`].
     fn ranges(&self) -> impl Iterator<Item = Range<&[node::Idx]>>;
 
-    fn replicas(&self, key_hash: u64) -> &[node::Idx];
+    /// Returns replicas responsible for the provided `key`.
+    fn replicas(&self, key: u64) -> &[node::Idx];
 
+    /// Builds a [`Keyspace::Snapshot`] of this [`Keyspace`].
     fn snapshot(&self) -> Self::Snapshot<'_>;
+
+    /// Re-constructs a [`Keyspace`] out of the provided [`Keyspace::Snapshot`]
+    /// and [`Nodes`].
     fn from_snapshot(nodes: &Nodes<N>, snapshot: Self::Snapshot<'_>) -> super::Result<Self>;
 
+    /// Returns the version of this [`Keyspace`].
+    ///
+    /// The version is expected to be increased after each [`Keyspace`]
+    /// modification.
     fn version(&self) -> u64;
 }
 
+/// Key range within a [`Keyspace`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Range<R> {
+    /// The range of keys this [`Range`] contains.
     pub keys: RangeInclusive<u64>,
+
+    /// List of replicas responsible for this [`Range`].
     pub replicas: R,
 }
 
@@ -53,6 +80,10 @@ fn split_range(range: &RangeInclusive<u64>, at: u64) -> (RangeInclusive<u64>, Ra
 
 type PendingRange<N> = Range<HashSet<<N as Node>::Id>>;
 
+/// [`Keyspace`] migration plan.
+///
+/// Represents a subset of keys to re-distribute after a [`Keyspace`] state has
+/// been changed.
 // TODO: merge continuous ranges
 #[derive(Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
@@ -87,6 +118,8 @@ impl<N: Node> MigrationPlan<N> {
         self.pending_ranges.keys()
     }
 
+    /// Returns a list of [`Range`]s that needs to be pulled by the [`Node`]
+    /// with the provided [`Node::Id`].
     pub fn pending_ranges(&self, node_id: &N::Id) -> &[Range<HashSet<N::Id>>] {
         self.pending_ranges
             .get(node_id)
@@ -94,6 +127,7 @@ impl<N: Node> MigrationPlan<N> {
             .unwrap_or_default()
     }
 
+    /// Returns the version of the new [`Keyspace`].
     pub fn keyspace_version(&self) -> u64 {
         self.keyspace_version
     }
@@ -191,11 +225,14 @@ impl<'a, N: Node> MigrationPlanner<'a, N> {
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum MigrationPlanError {
+pub(super) enum MigrationPlanError {
     #[error("Both ranges should cover all of the Keyspace - [0, u64::MAX]")]
     InvalidRange,
 }
 
+/// Sharded [`Keyspace`].
+///
+/// [`Keyspace`] implementation based on [`sharding`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sharded<const RF: usize, B, S> {
     keyspace: sharding::Keyspace<node::Idx, RF>,
@@ -203,11 +240,13 @@ pub struct Sharded<const RF: usize, B, S> {
     version: u64,
 }
 
+/// Snapshot of a [`Sharded`] keyspace.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Snapshot {
+pub struct ShardedSnapshot {
     version: u64,
 }
 
+/// [`sharding::Strategy`] of a [`Sharded`] [`Keyspace`].
 pub struct ShardingStrategy<'a, S, N: Node> {
     inner: S,
     nodes: &'a Nodes<N>,
@@ -259,7 +298,7 @@ where
     B: BuildHasher + Default + Clone + Send + Sync + 'static,
     S: sharding::Strategy<N> + Default + Clone + Send + Sync + 'static,
 {
-    type Snapshot<'a> = Snapshot;
+    type Snapshot<'a> = ShardedSnapshot;
 
     fn new(nodes: &Nodes<N>) -> super::Result<Self> {
         Self::new_inner(nodes, 0)
@@ -282,7 +321,7 @@ where
     }
 
     fn snapshot(&self) -> Self::Snapshot<'_> {
-        Snapshot {
+        ShardedSnapshot {
             version: self.version,
         }
     }

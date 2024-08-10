@@ -1,3 +1,5 @@
+//! Machinery responsible for managing the state of the IRN cluster.
+
 pub use {
     consensus::Consensus,
     keyspace::Keyspace,
@@ -28,8 +30,11 @@ pub mod view;
 #[cfg(test)]
 mod test;
 
+/// List of [`Node`]s in the [`Cluster`].
 pub type Nodes<N> = node::SlotMap<N>;
 
+/// Knowledge about the cluster state shared across all [`Node`]s in the
+/// cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cluster<N: Node, K> {
     nodes: Nodes<N>,
@@ -67,17 +72,23 @@ struct Migration<N: Node, K> {
 }
 
 impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
+    /// Creates a new empty [`Cluster`].
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Converts itself into a [`Viewable`] [`Cluster`].
     pub fn into_viewable(self) -> Viewable<N, K> {
         Viewable::new(self)
     }
 
+    /// Adds a new [`Node`] to the [`Cluster`].
+    ///
+    /// [`Cluster`] is required to be in the [normal](Cluster::is_normal)
+    /// operation mode.
     pub fn add_node(&mut self, node: N) -> Result<()> {
-        if self.migration.is_some() {
-            return Err(Error::MigrationInProgress);
+        if self.is_normal() {
+            return Err(Error::NotNormal);
         }
 
         if self.nodes.contains(node.id()) {
@@ -96,6 +107,11 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         Ok(())
     }
 
+    /// Notifies the [`Cluster`] that a [`Node`] has finished pulling data
+    /// required by the current [`keyspace::MigrationPlan`].
+    ///
+    /// Returns `false` if the [`Node`] didn't have any pending keyranges to
+    /// pull.
     pub fn complete_pull(&mut self, node_id: &N::Id, keyspace_version: u64) -> Result<bool> {
         let Some(migration) = self.migration.as_mut() else {
             return Err(Error::NoMigration);
@@ -127,20 +143,32 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         Ok(true)
     }
 
+    /// Initiates a restart process of a [`Node`], scheduling it to be
+    /// temporarily shut down.
+    ///
+    /// The [`Node`] is expected to be back online ASAP and to call
+    /// [`Cluster::startup_node`] when it's ready to be operational again.
+    ///
+    /// This should be used for for all planned node shutdowns, such as software
+    /// version upgrades, [`Node`] attribute updates, or regular
+    /// re-deployments.
+    ///
+    /// [`Cluster`] is required to be in the [normal](Cluster::is_normal)
+    /// operation mode.
+    ///
+    /// Returns `false` if the [`Node`] has already been shut down.
     pub fn shutdown_node(&mut self, id: &N::Id) -> Result<bool> {
         if !self.contains_node(id) {
             return Err(Error::UnknownNode);
         }
 
-        if self.migration.is_some() {
-            return Err(Error::MigrationInProgress);
+        if !self.is_normal() {
+            return Err(Error::NotNormal);
         }
 
-        match self.restarting_node.as_ref() {
-            None => {}
-            Some(node_id) if node_id == id => return Ok(false),
-            Some(_) => return Err(Error::AnotherNodeRestarting),
-        };
+        if self.restarting_node.as_ref() == Some(id) {
+            return Ok(false);
+        }
 
         self.restarting_node = Some(id.clone());
         self.incr_version();
@@ -148,6 +176,13 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         Ok(true)
     }
 
+    /// Finilazes a [`Node`] restart process, starting up the [`Node`] after
+    /// [`Cluster::shutdown_node`].
+    ///
+    /// This is the moment when [`Node`] attributes can be changed.
+    ///
+    /// This function may initiate a data migration process, as changing
+    /// [`Node`] attributes may affect the [`Keyspace`].
     pub fn startup_node(&mut self, node: N) -> Result<()> {
         let Some(old_node) = self.nodes.get(node.id()) else {
             return Err(Error::UnknownNode);
@@ -161,7 +196,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         // Can't happen under normal circumstances, as nodes are only allowed to restart
         // when there is no migration.
         if self.migration.is_some() {
-            return Err(Error::MigrationInProgress);
+            return Err(Error::NotNormal);
         }
 
         if old_node != &node {
@@ -183,9 +218,17 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         Ok(())
     }
 
+    /// Initiates a decommissioning process of a [`Node`], scheduling it to be
+    /// permanently removed from the [`Cluster`].
+    ///
+    /// Other [`Node`]s in the [`Cluster`] will need to pull data from the
+    /// decommissioning [`Node`] before we can remove it.
+    ///
+    /// [`Cluster`] is required to be in the [normal](Cluster::is_normal)
+    /// operation mode.
     pub fn decommission_node(&mut self, id: &N::Id) -> Result<()> {
-        if self.migration.is_some() {
-            return Err(Error::MigrationInProgress);
+        if self.is_normal() {
+            return Err(Error::NotNormal);
         }
 
         if !self.nodes.contains(id) {
@@ -201,6 +244,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         Ok(())
     }
 
+    /// Returns a [`Node`] by it's [`Node::Id`].
     pub fn node(&self, id: &N::Id) -> Option<&N> {
         // prioritize the new version of the `Node`
         if let Some(migration) = &self.migration {
@@ -210,6 +254,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         self.nodes.get(id)
     }
 
+    /// Returns an [`Iterator`] of [`Node`]s in the [`Cluster`].
     pub fn nodes(&self) -> impl Iterator<Item = &N> {
         use itertools::EitherOrBoth;
 
@@ -233,6 +278,8 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
             })
     }
 
+    /// Indicates whether the [`Node`] with the provided [`Node::Id`] is within
+    /// the [`Cluster`].
     pub fn contains_node(&self, id: &N::Id) -> bool {
         if self.nodes.contains(id) {
             return true;
@@ -244,6 +291,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
             .unwrap_or_default()
     }
 
+    /// Returns [`node::State`] of the [`Node`] with the provided [`Node::Id`].
     pub fn node_state(&self, id: &N::Id) -> Option<node::State<N>> {
         if self.restarting_node.as_ref() == Some(id) {
             return Some(node::State::Restarting);
@@ -264,6 +312,13 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         }
     }
 
+    /// Returns a [`ReplicaSet`] responsible for the provided `key_hash` on the
+    /// [`Keyspace`].
+    ///
+    /// `is_write` argument indicates whether the storage operation being
+    /// replicated modifies the data, if so and if we have an ongoing data
+    /// migration the machinery responsible for the data replication will need
+    /// to replicate the data to an additional set of replicas.
     pub fn replica_set(
         &self,
         key_hash: u64,
@@ -314,6 +369,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         })
     }
 
+    /// Returns the [`Keyspace::version`].
     pub fn keyspace_version(&self) -> u64 {
         if let Some(migration) = &self.migration {
             migration.keyspace.version()
@@ -325,8 +381,22 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         }
     }
 
+    /// Returns the current version of the [`Cluster`].
+    ///
+    /// The version is being increased each time the [`Cluster`] is being
+    /// modified.
     pub fn version(&self) -> u128 {
         self.version
+    }
+
+    /// Indicates whether this [`Cluster`] is in the normal operation mode,
+    /// meaning:
+    /// - there are no ongoing data migrations caused by [`Cluster::add_node`],
+    ///   [`Cluster::startup_node`] or [`Cluster::decommission_node`]
+    /// - all nodes are online -- we aren't waiting for any node to get back
+    ///   online after [`Cluster::shutdown_node`].
+    pub fn is_normal(&self) -> bool {
+        self.migration.is_none() && self.restarting_node.is_none()
     }
 
     fn begin_migration(&mut self, new_nodes: Nodes<N>) -> Result<()> {
@@ -417,48 +487,72 @@ fn complete_keyspace_ranges<'a, N: Node, K: Keyspace<N>>(
     })
 }
 
+/// A list of [`Node`]s a data should be replicated to.
 pub struct ReplicaSet<I> {
+    /// Required amount of [`Node`]s from the [`ReplicaSet::nodes`] list needed
+    /// to return the same response to a replicated operation in order for that
+    /// operation to be considered consistently replicated.
+    ///
+    /// Currently a quorum of `N / 2 + 1` nodes is required. Where `N` is the
+    /// length of [`ReplicaSet::nodes`] list.
+    ///
+    /// However, it can be higher if there's an ongoing data migration and the
+    /// operation is a write.
     pub required_count: usize,
+
+    /// An [`Iterator`] of [`Node`]s a data should be replicated to.
     pub nodes: I,
 }
 
+/// Result of a [`Cluster`] operation.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Error of a [`Cluster`] operation.
 #[derive(Debug, Clone, thiserror::Error, Serialize, Deserialize, PartialEq)]
 pub enum Error {
+    /// [`Cluster`] is not bootstrapped yet, because there's not enough
+    /// [`Node`]s added via [`Cluster::add_node`].
     #[error("Cluster is not bootstrapped yet")]
     NotBootstrapped,
 
+    /// [`Node`] is already a member of [`Cluster`].
     #[error("Node is already a member of the Cluster")]
     NodeAlreadyExists,
 
-    #[error("Node is already started")]
+    /// [`Node`] has already started via [`Cluster::startup_node`].
+    #[error("Node has already started")]
     NodeAlreadyStarted,
 
+    /// The [`Node`] is already started via [`Cluster::startup_node`].
     #[error("Node is not a member of the Cluster")]
     UnknownNode,
 
+    /// Max amount of [`Node`]s in the [`Cluster`] is reached.
     #[error("Max amount of nodes is reached")]
     TooManyNodes,
 
+    /// Min amount of [`Node`]s in the [`Cluster`] is reached.
     #[error("Min amount of nodes is reached")]
     TooFewNodes,
 
-    #[error("Cluster migration is in progress")]
-    MigrationInProgress,
+    /// [`Cluster`] is not in the [normal](Cluster::is_normal) operation mode.
+    #[error("Cluster is not in the normal operation mode")]
+    NotNormal,
 
+    /// [`Cluster`] doesn't have an ongoing data migration.
     #[error("Cluster doesn't have an ongoing migration")]
     NoMigration,
 
+    /// Provided [`Keyspace::version`] version doesn't the one in the
+    /// [`Cluster`].
     #[error("Keyspace version mismatch")]
     KeyspaceVersionMismatch,
 
-    #[error("Another node is currently restarting")]
-    AnotherNodeRestarting,
-
+    /// Some of the [`Node`] attributes are invalid.
     #[error("Invalid Node: {_0}")]
     InvalidNode(String),
 
+    /// Logical bug occured within [`Cluster`] machinery.
     #[error("Bug: {_0}")]
     Bug(String),
 }

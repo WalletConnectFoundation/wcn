@@ -336,7 +336,7 @@ impl Error {
                 tracing::error!(?err);
                 Self::permanent(err)
             }
-            Ok(err @ (CE::MigrationInProgress | CE::AnotherNodeRestarting)) => {
+            Ok(err @ CE::NotNormal) => {
                 tracing::warn!(?err);
                 Self::transient(err)
             }

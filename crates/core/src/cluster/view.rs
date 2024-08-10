@@ -1,3 +1,5 @@
+//! Viewable IRN cluster state.
+
 use {
     super::{Cluster, Node},
     crate::cluster,
@@ -8,6 +10,10 @@ use {
     tokio_stream::wrappers::WatchStream,
 };
 
+/// Viewable [`Cluster`].
+///
+/// Wraps [`Cluster`] and implements a notification system on top of it to
+/// automatically notify subscribers about changes in the [`Cluster`] state.
 #[derive(Debug, Clone)]
 pub struct Viewable<N: Node, K> {
     inner: Cluster<N, K>,
@@ -27,6 +33,8 @@ impl<N: Node, K: Clone> Viewable<N, K> {
         }
     }
 
+    /// Modifies the underlying [`Cluster`] and if the predicate function
+    /// returns `Ok(true)` notifies subscribers about the state change.
     pub fn modify(
         &mut self,
         f: impl FnOnce(&mut Cluster<N, K>) -> Result<bool, cluster::Error>,
@@ -39,15 +47,19 @@ impl<N: Node, K: Clone> Viewable<N, K> {
         Ok(modified)
     }
 
+    /// Returns a read-only [`Cluster`] [`View`].
     pub fn view(&self) -> View<N, K> {
         self.view.clone()
     }
 
+    /// Return a reference to the underlying [`Cluster`].
     pub fn inner(&self) -> &Cluster<N, K> {
         &self.inner
     }
 }
 
+/// Read-only view of a [`Cluster`] allowing to retrieve up-to-date versions of
+/// the associated [`Cluster`].
 #[derive(Debug, Clone)]
 pub struct View<N: Node, K> {
     cluster: Arc<ArcSwap<Cluster<N, K>>>,
@@ -65,14 +77,21 @@ impl<N: Node, K> View<N, K> {
         }
     }
 
+    /// Returns the current [`Cluster`] state.
     pub fn cluster(&self) -> Arc<Cluster<N, K>> {
         self.cluster.load_full()
     }
 
+    /// Peeks into the cluster [`State`] using the provided predicate function.
+    ///
+    /// More efficiend than [`View::cluster`] and should be preffered when
+    /// possible.
     pub fn peek<T>(&self, f: impl FnOnce(&Cluster<N, K>) -> T) -> T {
         f(&self.cluster.load())
     }
 
+    /// Returns a [`Steam`] of notifications indicating when the underlying
+    /// [`Cluster`] changes.
     pub fn updates(&self) -> impl Stream<Item = ()> + 'static {
         WatchStream::new(self.update_notifications.clone())
     }

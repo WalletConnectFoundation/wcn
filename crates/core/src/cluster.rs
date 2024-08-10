@@ -87,7 +87,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
     /// [`Cluster`] is required to be in the [normal](Cluster::is_normal)
     /// operation mode.
     pub fn add_node(&mut self, node: N) -> Result<()> {
-        if self.is_normal() {
+        if !self.is_normal() {
             return Err(Error::NotNormal);
         }
 
@@ -162,12 +162,12 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
             return Err(Error::UnknownNode);
         }
 
-        if !self.is_normal() {
-            return Err(Error::NotNormal);
-        }
-
         if self.restarting_node.as_ref() == Some(id) {
             return Ok(false);
+        }
+
+        if !self.is_normal() {
+            return Err(Error::NotNormal);
         }
 
         self.restarting_node = Some(id.clone());
@@ -227,7 +227,7 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
     /// [`Cluster`] is required to be in the [normal](Cluster::is_normal)
     /// operation mode.
     pub fn decommission_node(&mut self, id: &N::Id) -> Result<()> {
-        if self.is_normal() {
+        if !self.is_normal() {
             return Err(Error::NotNormal);
         }
 

@@ -552,7 +552,7 @@ pub enum Error {
     #[error("Invalid Node: {_0}")]
     InvalidNode(String),
 
-    /// Logical bug occured within [`Cluster`] machinery.
+    /// Logical bug occurred within [`Cluster`] machinery.
     #[error("Bug: {_0}")]
     Bug(String),
 }

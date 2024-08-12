@@ -212,9 +212,10 @@ mod test {
 
             dest_db
                 .import_all(
-                    data.inspect(|item| match item {
-                        ExportItem::Frame(Ok(_)) => n_exported += 1,
-                        _ => {}
+                    data.inspect(|item| {
+                        if let ExportItem::Frame(Ok(_)) = item {
+                            n_exported += 1
+                        }
                     })
                     .map(Ok::<_, Infallible>),
                 )

@@ -171,7 +171,7 @@ fn node_slot_map() {
 
 #[test]
 fn keyspace_migration_plan() {
-    const SHARD_SIZE: u64 = ((u64::MAX as u128 + 1) / 8 as u128) as u64;
+    const SHARD_SIZE: u64 = ((u64::MAX as u128 + 1) / 8u128) as u64;
 
     fn keyranges(shards: [&[u64; 3]; 8]) -> [keyspace::Range<&[u64; 3]>; 8] {
         let mut idx = 0;
@@ -238,7 +238,7 @@ fn keyspace_migration_plan() {
 fn snapshot() {
     let mut cluster = Cluster::new();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [],
         "restarting_node": null,
@@ -250,7 +250,7 @@ fn snapshot() {
 
     cluster.add_node(Node::new(1, "eu")).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"}],
         "restarting_node": null,
@@ -263,7 +263,7 @@ fn snapshot() {
     cluster.add_node(Node::new(2, "us")).unwrap();
     cluster.add_node(Node::new(3, "ap")).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "us"},{"id": 3, "region": "ap"}],
         "restarting_node": null,
@@ -275,7 +275,7 @@ fn snapshot() {
 
     cluster.add_node(Node::new(4, "eu")).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "us"},{"id": 3, "region": "ap"}],
         "restarting_node": null,
@@ -293,7 +293,7 @@ fn snapshot() {
 
     cluster.complete_pull(&4, 1).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "us"},{"id": 3, "region": "ap"},{"id": 4, "region": "eu"}],
         "restarting_node": null,
@@ -307,7 +307,7 @@ fn snapshot() {
 
     cluster.shutdown_node(&2).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "us"},{"id": 3, "region": "ap"},{"id": 4, "region": "eu"}],
         "restarting_node": 2,
@@ -321,7 +321,7 @@ fn snapshot() {
 
     cluster.startup_node(Node::new(2, "ap")).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "ap"},{"id": 3, "region": "ap"},{"id": 4, "region": "eu"}],
         "restarting_node": null,
@@ -335,7 +335,7 @@ fn snapshot() {
 
     cluster.decommission_node(&3).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "ap"},{"id": 3, "region": "ap"},{"id": 4, "region": "eu"}],
         "restarting_node": null,
@@ -355,7 +355,7 @@ fn snapshot() {
     cluster.complete_pull(&2, 2).unwrap();
     cluster.complete_pull(&4, 2).unwrap();
 
-    let serialized = serde_json::to_value(&cluster.snapshot()).unwrap();
+    let serialized = serde_json::to_value(cluster.snapshot()).unwrap();
     let expected_json = serde_json::json!({
         "nodes": [{"id": 1, "region": "eu"},{"id": 2, "region": "ap"},null,{"id": 4, "region": "eu"}],
         "restarting_node": null,

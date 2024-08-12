@@ -3,7 +3,7 @@ use {
     anyhow::Result,
     backoff::ExponentialBackoffBuilder,
     chrono::Utc,
-    futures::{stream, FutureExt, StreamExt, TryFutureExt},
+    futures::{stream, StreamExt, TryFutureExt},
     irn::cluster::Consensus as _,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, io, path::PathBuf, time::Duration},
@@ -109,18 +109,19 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
         let this = &self;
         stream::iter(self.consensus.cluster().nodes().cloned())
             .map(|node| async move {
-                rpc::Send::<rpc::Health, _, _>::send(
+                let res = rpc::Send::<rpc::Health, _, _>::send(
                     &this.network.client,
                     (&node.id, &node.addr),
                     (),
                 )
-                .map(move |r| (node.id, r))
-                .await
+                .await;
+
+                (node, res)
             })
             .buffer_unordered(100)
-            .filter_map(|(id, res)| async move {
+            .filter_map(|(node, res)| async move {
                 let resp = res
-                    .map_err(|err| tracing::warn!(%id, ?err, "healthcheck failed"))
+                    .map_err(|err| tracing::warn!(%node.id, ?err, "healthcheck failed"))
                     .ok()?;
 
                 let score_diff = if resp.node_version >= expected_node_version
@@ -136,7 +137,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
                     0.5
                 };
 
-                resp.eth_address.map(|addr| (addr, score_diff))
+                node.eth_address.map(|addr| (addr, score_diff))
             })
             .collect::<Vec<_>>()
             .await

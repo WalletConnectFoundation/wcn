@@ -77,10 +77,19 @@ pub type Id<N> = <N as Node>::Id;
 ///
 /// The collection has stable ordering which is guaranteed to be preserved after
 /// de/serialization.
-#[derive(Debug, Clone, Eq, PartialEq, Default)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SlotMap<N: Node> {
     id_to_slot_idx: HashMap<N::Id, u8>,
     slots: Vec<Slot<N>>,
+}
+
+impl<N: Node> Default for SlotMap<N> {
+    fn default() -> Self {
+        Self {
+            id_to_slot_idx: HashMap::new(),
+            slots: Vec::new(),
+        }
+    }
 }
 
 pub(super) type Slot<N> = Option<N>;
@@ -89,10 +98,7 @@ impl<N: Node> SlotMap<N> {
     pub(super) const MAX_SLOTS: usize = u8::MAX as usize + 1;
 
     pub(super) fn new() -> Self {
-        Self {
-            id_to_slot_idx: HashMap::new(),
-            slots: Vec::new(),
-        }
+        Self::default()
     }
 
     pub(super) fn from_slots(slots: Vec<Slot<N>>) -> Result<Self, SlotMapError> {

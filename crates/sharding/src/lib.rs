@@ -55,7 +55,7 @@ impl<N, const RF: usize> fmt::Debug for Keyspace<N, RF> {
 
 impl<N, const RF: usize> Keyspace<N, RF>
 where
-    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd + 'static,
+    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd,
 {
     /// Creates a new [`Keyspace`].
     pub fn new<S: ReplicationStrategy<N>>(
@@ -78,29 +78,32 @@ where
         // using [Rendezvous](https://en.wikipedia.org/wiki/Rendezvous_hashing) hashing to calculate
         // nodes' priority of being replicas per shard.
 
-        let mut node_priority_queue: Vec<_> = nodes
-            .iter()
-            .map(|node| ReplicaCandidate { priority: 0, node })
-            .collect();
+        let mut node_priority_queue: Vec<_> = nodes.iter().map(|idx| (0, idx)).collect();
 
-        'out: for (shard_idx, shard) in shards.iter_mut().enumerate() {
-            for item in &mut node_priority_queue {
-                item.priority = build_hasher.hash_one((item.node, shard_idx));
+        for (shard_idx, shard) in shards.iter_mut().enumerate() {
+            let mut replication_strategy = build_replication_strategy();
+
+            for (score, node) in &mut node_priority_queue {
+                *score = build_hasher.hash_one((node, shard_idx));
             }
             node_priority_queue.sort_unstable();
 
-            for (idx, node) in build_replication_strategy()
-                .choose_replicas(&node_priority_queue)
-                .enumerate()
-            {
-                shard.replicas[idx] = *node;
+            let mut cursor = 0;
+            for replica_id in &mut shard.replicas {
+                loop {
+                    if cursor == node_priority_queue.len() {
+                        return Err(Error::IncompleteReplicaSet);
+                    }
 
-                if idx == shard.replicas.len() - 1 {
-                    continue 'out;
+                    let (_, node) = node_priority_queue[cursor];
+                    cursor += 1;
+
+                    if replication_strategy.is_suitable_replica(node) {
+                        *replica_id = *node;
+                        break;
+                    }
                 }
             }
-
-            return Err(Error::IncompleteReplicaSet);
         }
 
         Ok(Self {
@@ -127,53 +130,27 @@ where
     }
 }
 
-/// Node priority in [`NodePriorityQueue`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
-pub struct ReplicaCandidate<'a, N> {
-    priority: u64,
-    node: &'a N,
+/// Strategy of how a shard should be replicated across nodes.
+///
+/// One instance of [`ReplicationStrategy`] is only responsible for determining
+/// replicas of a single shard.
+pub trait ReplicationStrategy<N> {
+    /// Indicates whether the specified node is suitable to be used as a
+    /// replica for the current shard.
+    ///
+    /// This function will never be called with the same `node` again on the
+    /// same instance of [`ReplicationStrategy`].
+    fn is_suitable_replica(&mut self, node: &N) -> bool;
 }
 
-impl<'a, N> ReplicaCandidate<'a, N> {
-    pub fn node(&self) -> &'a N {
-        self.node
-    }
-}
-
-// /// Priority queue of nodes, where the position of a node is the priority of
-// it /// being a replica for some shard.
-// pub trait ReplicaPriorityQueue<N: 'static> {
-//     /// [`Iterator`] of nodes representing the queue.
-//     fn iter(&self) -> impl Iterator<Item = &N>;
-// }
-
-// impl<N: 'static> ReplicaPriorityQueue<N> for Vec<(u64, &N)> {
-//     fn iter(&self) -> impl Iterator<Item = &N> {
-//         self.as_slice().iter().map(|(_, n)| *n)
-//     }
-// }
-
-/// Strategy of how shards are being replicated across nodes.
-pub trait ReplicationStrategy<N: 'static> {
-    /// Given a list of [`ReplicaCandidate`]s order by priority returns an
-    /// [`Iterator`] of nodes being chosen.
-    fn choose_replicas<'a>(
-        &'a mut self,
-        candidates: &'a [ReplicaCandidate<'a, N>],
-    ) -> impl Iterator<Item = &'a N>;
-}
-
-/// Default [`ReplicationStrategy`] that considers every node to be equally
+/// Default sharding [`Strategy`] that considers every node to be equally
 /// suitable to be a replica for any shard.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DefaultReplicationStrategy;
 
-impl<N: 'static> ReplicationStrategy<N> for DefaultReplicationStrategy {
-    fn choose_replicas<'a>(
-        &'a mut self,
-        candidates: &'a [ReplicaCandidate<'a, N>],
-    ) -> impl Iterator<Item = &'a N> {
-        candidates.iter().map(ReplicaCandidate::node)
+impl<N> ReplicationStrategy<N> for DefaultReplicationStrategy {
+    fn is_suitable_replica(&mut self, _node: &N) -> bool {
+        true
     }
 }
 

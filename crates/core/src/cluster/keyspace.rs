@@ -12,7 +12,6 @@ use {
         marker::PhantomData,
         ops::RangeInclusive,
     },
-    tap::TapOptional,
 };
 
 /// Keyspace functionality required by a [`Cluster`](super::Cluster).
@@ -245,69 +244,24 @@ pub struct ShardedSnapshot {
     version: u64,
 }
 
-#[derive(Clone, Debug)]
-pub struct ReplicaCandidates<'a, N: Node> {
-    inner: &'a [sharding::ReplicaCandidate<'a, node::Idx>],
-    nodes: &'a Nodes<N>,
-}
-
-impl<'a, N: Node> Copy for ReplicaCandidates<'a, N> {}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ReplicaCandidate<'a, N> {
-    node_idx: &'a node::Idx,
-    node: &'a N,
-}
-
-impl<'a, N: Node> ReplicaCandidates<'a, N> {
-    pub fn iter(&self) -> impl Iterator<Item = ReplicaCandidate<'a, N>> {
-        self.inner.iter().filter_map(|c| {
-            let node_idx = c.node();
-            let node = self
-                .nodes
-                .get_by_idx(*node_idx)
-                .tap_none(|| tracing::warn!(%node_idx, "ReplicaPriorityQueue: missing node"))?;
-
-            Some(ReplicaCandidate { node_idx, node })
-        })
-    }
-}
-
-impl<'a, N> ReplicaCandidate<'a, N> {
-    pub fn node(&self) -> &'a N {
-        self.node
-    }
-}
-
-pub trait ReplicationStrategy<N: Node>: Default {
-    /// Given [`ReplicaCandidates`] returns an [`Iterator`] of candidates being
-    /// chosen.
-    fn choose_replicas<'a>(
-        &'a mut self,
-        candidates: ReplicaCandidates<'a, N>,
-    ) -> impl Iterator<Item = ReplicaCandidate<'a, N>>;
-}
-
-struct ShardingReplicationStrategy<'a, S, N: Node> {
+/// [`sharding::ReplicationStrategy`] of a [`Sharded`] [`Keyspace`].
+pub struct ReplicationStrategy<'a, S, N: Node> {
     inner: S,
     nodes: &'a Nodes<N>,
 }
 
-impl<'s, S, N> sharding::ReplicationStrategy<node::Idx> for ShardingReplicationStrategy<'s, S, N>
+impl<'a, S, N> sharding::ReplicationStrategy<node::Idx> for ReplicationStrategy<'a, S, N>
 where
-    S: ReplicationStrategy<N>,
+    S: sharding::ReplicationStrategy<N>,
     N: Node,
 {
-    fn choose_replicas<'a>(
-        &'a mut self,
-        candidates: &'a [sharding::ReplicaCandidate<'a, node::Idx>],
-    ) -> impl Iterator<Item = &'a node::Idx> {
-        self.inner
-            .choose_replicas(ReplicaCandidates {
-                inner: candidates,
-                nodes: &self.nodes,
-            })
-            .map(|c| c.node_idx)
+    fn is_suitable_replica(&mut self, node_idx: &node::Idx) -> bool {
+        let Some(node) = self.nodes.get_by_idx(*node_idx) else {
+            tracing::warn!(%node_idx, "ReplicationStrategy: missing node");
+            return false;
+        };
+
+        self.inner.is_suitable_replica(node)
     }
 }
 
@@ -316,9 +270,9 @@ impl<const RF: usize, B, S> Sharded<RF, B, S> {
     where
         N: Node,
         B: BuildHasher + Default + Clone + Send + Sync + 'static,
-        S: ReplicationStrategy<N> + Clone + Send + Sync + 'static,
+        S: sharding::ReplicationStrategy<N> + Default + Clone + Send + Sync + 'static,
     {
-        let strategy = || ShardingReplicationStrategy {
+        let strategy = || ReplicationStrategy {
             inner: S::default(),
             nodes,
         };
@@ -340,7 +294,7 @@ impl<const RF: usize, N, B, S> Keyspace<N> for Sharded<RF, B, S>
 where
     N: Node,
     B: BuildHasher + Default + Clone + Send + Sync + 'static,
-    S: ReplicationStrategy<N> + Clone + Send + Sync + 'static,
+    S: sharding::ReplicationStrategy<N> + Default + Clone + Send + Sync + 'static,
 {
     type Snapshot<'a> = ShardedSnapshot;
 

@@ -1,13 +1,8 @@
 pub use irn::cluster::Error;
 use {
-    irn::cluster::{
-        self,
-        keyspace::{self, ReplicaCandidate, ReplicaCandidates},
-    },
+    irn::cluster,
     libp2p::{Multiaddr, PeerId},
     serde::{Deserialize, Serialize},
-    std::iter,
-    tap::TapOptional,
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
@@ -102,76 +97,33 @@ pub type Keyspace = cluster::keyspace::Sharded<3, Xxh3Builder, ReplicationStrate
 /// And it assumes that each region has at least one WalletConnect node.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReplicationStrategy {
-    wallet_connet_nodes: NodesByRegion,
-    operator_nodes: NodesByRegion,
+    has_operator_node: bool,
+
+    has_eu_node: bool,
+    has_us_node: bool,
+    has_ap_node: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct NodesByRegion {
-    eu: u8,
-    us: u8,
-    ap: u8,
-}
+impl sharding::ReplicationStrategy<Node> for ReplicationStrategy {
+    fn is_suitable_replica(&mut self, node: &Node) -> bool {
+        let is_operator_node = node.organization != WC_ORG;
 
-impl NodesByRegion {
-    fn incr(&mut self, region: NodeRegion) {
-        match region {
-            NodeRegion::Eu => self.eu += 1,
-            NodeRegion::Us => self.us += 1,
-            NodeRegion::Ap => self.ap += 1,
+        if is_operator_node && self.has_operator_node {
+            return false;
         }
-    }
 
-    fn has_node(&self, region: NodeRegion) -> bool {
-        match region {
-            NodeRegion::Eu => self.eu > 0,
-            NodeRegion::Us => self.us > 0,
-            NodeRegion::Ap => self.ap > 0,
+        match node.region {
+            NodeRegion::Eu if !self.has_eu_node => self.has_eu_node = true,
+            NodeRegion::Us if !self.has_us_node => self.has_us_node = true,
+            NodeRegion::Ap if !self.has_ap_node => self.has_ap_node = true,
+            _ => return false,
+        };
+
+        if is_operator_node {
+            self.has_operator_node = true;
         }
-    }
-}
 
-impl ReplicationStrategy {
-    fn choose_operator_node<'a>(
-        &mut self,
-        candidates: ReplicaCandidates<'a, Node>,
-    ) -> Option<ReplicaCandidate<'a, Node>> {
-        candidates
-            .iter()
-            .find(|c| c.node().organization != WC_ORG)
-            .tap_some(|c| self.operator_nodes.incr(c.node().region))
-    }
-
-    fn has_node_in_region<'a>(&self, region: NodeRegion) -> bool {
-        self.wallet_connet_nodes.has_node(region) || self.operator_nodes.has_node(region)
-    }
-
-    fn choose_wallet_connect_nodes<'s, 'a>(
-        &'s mut self,
-        candidates: ReplicaCandidates<'a, Node>,
-    ) -> impl Iterator<Item = ReplicaCandidate<'a, Node>> + 's
-    where
-        'a: 's,
-    {
-        candidates.iter().filter(|c| {
-            if c.node().organization != WC_ORG || self.has_node_in_region(c.node().region) {
-                return false;
-            }
-
-            self.wallet_connet_nodes.incr(c.node().region);
-            true
-        })
-    }
-}
-
-impl keyspace::ReplicationStrategy<Node> for ReplicationStrategy {
-    fn choose_replicas<'a>(
-        &'a mut self,
-        candidates: ReplicaCandidates<'a, Node>,
-    ) -> impl Iterator<Item = ReplicaCandidate<'a, Node>> {
-        self.choose_operator_node(candidates)
-            .into_iter()
-            .chain(self.choose_wallet_connect_nodes(candidates))
+        true
     }
 }
 
@@ -234,7 +186,23 @@ mod test {
     #[test]
     fn replication_strategy() {
         let mut strategy = ReplicationStrategy::default();
+        assert!(strategy.is_suitable_replica(&new_node("eu", WC_ORG, None)));
 
-        // strategy.is_suitable_replica(&new_node("eu", WC_ORG))
+        // nodes from the same region are no longer suitable
+        assert!(!strategy.is_suitable_replica(&new_node("eu", WC_ORG, None)));
+        assert!(!strategy.is_suitable_replica(&new_node("eu", "A", None)));
+
+        assert!(strategy.is_suitable_replica(&new_node("us", "A", None)));
+
+        // no more operator nodes are allowed
+        assert!(!strategy.is_suitable_replica(&new_node("ap", "B", None)));
+
+        assert!(strategy.is_suitable_replica(&new_node("ap", WC_ORG, None)));
+
+        // having 3 WalletConnect nodes is fine
+        let mut strategy = ReplicationStrategy::default();
+        assert!(strategy.is_suitable_replica(&new_node("eu", WC_ORG, None)));
+        assert!(strategy.is_suitable_replica(&new_node("us", WC_ORG, None)));
+        assert!(strategy.is_suitable_replica(&new_node("ap", WC_ORG, None)));
     }
 }

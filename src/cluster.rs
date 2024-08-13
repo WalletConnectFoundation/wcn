@@ -6,7 +6,7 @@ use {
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
-const WC_ORG: &'static str = "WalletConnect";
+const WC_ORG: &str = "WalletConnect";
 
 pub type Cluster = irn::Cluster<Node, Keyspace>;
 pub type Snapshot<'a> = cluster::Snapshot<'a, Node, Keyspace>;
@@ -96,6 +96,7 @@ pub type Keyspace = cluster::keyspace::Sharded<3, Xxh3Builder, ReplicationStrate
 ///
 /// And it assumes that each region has at least one WalletConnect node.
 #[derive(Clone, Copy, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ReplicationStrategy {
     has_operator_node: bool,
 

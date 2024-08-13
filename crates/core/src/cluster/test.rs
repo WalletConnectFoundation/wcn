@@ -1,7 +1,11 @@
 use {
-    super::{keyspace, node, Nodes},
+    super::{
+        keyspace::{self, ReplicaCandidate, ReplicaCandidates},
+        node,
+        Nodes,
+    },
     crate::cluster::{self, ReplicaSet},
-    futures::StreamExt,
+    futures::StreamExt as _,
     serde::{Deserialize, Serialize},
     std::{
         collections::HashSet,
@@ -73,7 +77,19 @@ impl cluster::Node for Node {
 
 type NodeState = node::State<Node>;
 
-type Keyspace = keyspace::Sharded<3, BuildHasherDefault<DefaultHasher>, sharding::DefaultStrategy>;
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ReplicationStrategy;
+
+impl keyspace::ReplicationStrategy<Node> for ReplicationStrategy {
+    fn choose_replicas<'a>(
+        &'a mut self,
+        candidates: ReplicaCandidates<'a, Node>,
+    ) -> impl Iterator<Item = ReplicaCandidate<'a, Node>> {
+        candidates.iter()
+    }
+}
+
+type Keyspace = keyspace::Sharded<3, BuildHasherDefault<DefaultHasher>, ReplicationStrategy>;
 
 type Cluster = crate::Cluster<Node, Keyspace>;
 

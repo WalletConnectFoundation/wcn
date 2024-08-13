@@ -8,7 +8,7 @@ use {
 
 impl<N, const RF: usize> Keyspace<N, RF>
 where
-    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd,
+    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd + 'static,
 {
     pub fn assert_variance_and_stability(
         &self,

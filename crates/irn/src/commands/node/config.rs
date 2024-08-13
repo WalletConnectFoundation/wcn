@@ -1,5 +1,6 @@
 use {
     network::{Keypair, PeerId},
+    node::cluster::NodeRegion,
     serde::{Deserialize, Serialize},
     std::net::{IpAddr, SocketAddr},
 };
@@ -8,7 +9,8 @@ use {
 pub struct Identity {
     #[serde(with = "keypair_as_base64")]
     pub private_key: Keypair,
-    pub group: u16,
+    pub region: NodeRegion,
+    pub organization: String,
     pub eth_address: Option<String>,
 }
 

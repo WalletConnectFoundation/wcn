@@ -473,8 +473,8 @@ fn complete_keyspace_ranges<'a, N: Node, K: Keyspace<N>>(
     keyspace: &'a K,
     missing: &'a AtomicBool,
 ) -> impl Iterator<Item = keyspace::Range<impl Iterator<Item = &'a N::Id>>> + 'a {
-    keyspace.ranges().map(move |range| {
-        range.map_replicas(move |r| {
+    keyspace.ranges().map(|range| {
+        range.map_replicas(|r| {
             r.iter().filter_map(|&idx| {
                 nodes
                     .get_by_idx(idx)

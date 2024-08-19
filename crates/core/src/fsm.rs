@@ -59,13 +59,13 @@ enum Event {
 }
 
 /// Runs finite-state machine of a node.
-pub(super) fn run<C: Consensus>(
+pub(super) async fn run<C: Consensus>(
     node: C::Node,
     consensus: C,
     migration_manager: impl MigrationManager<C::Node>,
     warmup_delay: Duration,
     shutdown_rx: oneshot::Receiver<ShutdownReason>,
-) -> impl Future<Output = ShutdownReason> + Send {
+) -> ShutdownReason {
     Fsm {
         node,
         consensus,
@@ -73,6 +73,7 @@ pub(super) fn run<C: Consensus>(
         warmup_delay,
     }
     .run(shutdown_rx)
+    .await
 }
 
 #[derive(Debug)]

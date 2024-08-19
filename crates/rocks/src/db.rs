@@ -107,25 +107,6 @@ impl RocksBackend {
             .await
     }
 
-    /// Puts value into a given column family using provided key and value pair.
-    async fn _put(
-        &self,
-        cf_name: ColumnFamilyName,
-        key: impl AsRef<[u8]>,
-        value: impl AsRef<[u8]>,
-    ) -> Result<(), Error> {
-        self.db
-            .put_cf(&self.cf_handle(cf_name), key, value)
-            .map_err(Into::into)
-    }
-
-    /// Deletes a value with a provided key from a given column family.
-    async fn _delete(&self, cf_name: ColumnFamilyName, key: impl AsRef<[u8]>) -> Result<(), Error> {
-        self.db
-            .delete_cf(&self.cf_handle(cf_name), key)
-            .map_err(Into::into)
-    }
-
     /// Merges changes to the value in a given column family.
     async fn merge(
         &self,

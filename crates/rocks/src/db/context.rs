@@ -170,7 +170,6 @@ impl<T> Merge<Self> for MergeOp<T> {
             (set @ Kind::Set(_), Kind::SetExp) => set,
             (set_exp @ Kind::SetExp, Kind::SetExp) => set_exp,
             (Kind::Del, Kind::SetExp) => {
-                tracing::warn!("It shouldn't be possible to set_exp for a deleted record");
                 return;
             }
         };

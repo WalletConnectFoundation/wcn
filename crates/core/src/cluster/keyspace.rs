@@ -180,17 +180,17 @@ impl<'a, N: Node> MigrationPlanner<'a, N> {
 
                     match old.end().cmp(new.end()) {
                         Ordering::Equal => {
-                            self.process_range(new)?;
+                            self.process_range(new);
                             (next_old_range(&mut self), next_new_range(&mut self))
                         }
                         Ordering::Less => {
                             let (new_left, new_right) = split_range(&new, *old.end());
-                            self.process_range(new_left)?;
+                            self.process_range(new_left);
                             (next_old_range(&mut self), Some(new_right))
                         }
                         Ordering::Greater => {
                             let (old_left, old_right) = split_range(&old, *new.end());
-                            self.process_range(old_left)?;
+                            self.process_range(old_left);
                             (Some(old_right), next_new_range(&mut self))
                         }
                     }
@@ -200,9 +200,9 @@ impl<'a, N: Node> MigrationPlanner<'a, N> {
         }
     }
 
-    fn process_range(&mut self, range: RangeInclusive<u64>) -> Result<(), MigrationPlanError> {
+    fn process_range(&mut self, range: RangeInclusive<u64>) {
         if self.old_replicas == self.new_replicas {
-            return Ok(());
+            return;
         }
 
         for id in self.new_replicas.difference(&self.old_replicas).copied() {
@@ -219,8 +219,6 @@ impl<'a, N: Node> MigrationPlanner<'a, N> {
                 let _ = self.plan.pending_ranges.insert(id.clone(), ranges);
             }
         }
-
-        Ok(())
     }
 }
 

@@ -24,9 +24,6 @@ pub mod replication;
 /// [`Node`] configuration options.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeOpts {
-    /// Replication strategy to use.
-    // pub replication_strategy: Strategy,
-
     /// Timeout of a request from a coordinator to a replica.
     pub replication_request_timeout: Duration,
 

@@ -130,8 +130,6 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
         }
 
         if migration.pulling_nodes.is_empty() {
-            let _ = migration;
-
             if let Some(migration) = self.migration.take() {
                 self.nodes = migration.nodes;
                 self.keyspace = Some(migration.keyspace);

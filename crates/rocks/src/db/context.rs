@@ -12,43 +12,6 @@ pub type UnixTimestampSecs = u64;
 /// Unix timestamp in microseconds.
 pub type UnixTimestampMicros = u64;
 
-/// Custom wrapper for timestamp updates to avoid using double option as the
-/// serialized field, since serde would serialize `Some(None)` as `None`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum TimestampUpdate {
-    Set(UnixTimestampSecs),
-    Extend(UnixTimestampSecs),
-    Unset,
-}
-
-impl Merge<Self> for TimestampUpdate {
-    fn merge(&mut self, input: Self) {
-        let input = match input {
-            Self::Extend(extend_to) => match *self {
-                // Extend if we have a specific value set.
-                Self::Set(set_to) => {
-                    if extend_to > set_to {
-                        Self::Set(extend_to)
-                    } else {
-                        *self
-                    }
-                }
-
-                // Straightforward extension. Select the max value.
-                Self::Extend(extend_from) => Self::Extend(extend_from.max(extend_to)),
-
-                // If the value's been unset, it'll remain unset.
-                Self::Unset => *self,
-            },
-
-            // `Set` and `Unset` variants overwrite the value unconditionally.
-            _ => input,
-        };
-
-        *self = input;
-    }
-}
-
 /// Custom wrapper to avoid using `Option<()>` which causes serialization
 /// issues.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]

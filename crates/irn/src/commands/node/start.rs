@@ -1,7 +1,7 @@
 use {
     super::{Error, Lockfile, LogFormat},
-    irn_core::{cluster::replication::Strategy, PeerId},
     metrics_exporter_prometheus::PrometheusBuilder,
+    network::PeerId,
     node::RocksdbDatabaseConfig,
     std::{
         collections::{HashMap, HashSet},
@@ -189,28 +189,32 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         .map_err(Error::Prometheus)?;
 
     let config = node::Config {
-        id: PeerId::from_public_key(&config.identity.private_key.public(), config.identity.group),
+        id: PeerId::from_public_key(&config.identity.private_key.public()),
         keypair: config.identity.private_key,
-        addr: network::socketaddr_to_multiaddr(SocketAddr::new(
+        replica_api_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
             config.server.bind_address,
             config.server.server_port,
         )),
-        api_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
+        coordinator_api_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
             config.server.bind_address,
             config.server.client_port,
         )),
+        raft_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
+            config.server.bind_address,
+            config.server.raft_port,
+        )),
+        admin_api_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
+            config.server.bind_address,
+            config.server.admin_port,
+        )),
         metrics_addr: SocketAddr::new(config.server.bind_address, config.server.metrics_port)
             .to_string(),
-        is_raft_member: config.authorization.is_consensus_member,
+        is_raft_voter: false,
         bootstrap_nodes,
         known_peers,
         raft_dir: consensus_dir,
         rocksdb_dir: data_dir,
         rocksdb,
-        replication_strategy: Strategy::new(
-            config.replication.factor,
-            config.replication.consistency_level,
-        ),
         request_concurrency_limit: config.network.request_concurrency_limit,
         request_limiter_queue: config.network.request_limiter_queue,
         network_connection_timeout: config.network.connection_timeout,
@@ -223,13 +227,9 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         smart_contract: config.smart_contract.map(Into::into),
     };
 
-    node::run(
-        node::signal::shutdown_listener()?,
-        &config,
-        Some(prometheus),
-    )
-    .await?
-    .await;
+    node::run(node::signal::shutdown_listener()?, prometheus, &config)
+        .await?
+        .await;
 
     Ok(())
 }

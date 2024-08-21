@@ -1,11 +1,12 @@
+#![allow(clippy::manual_async_fn)]
+
 use {
     anyhow::Context,
-    contract::{StatusData, StatusReporter},
     futures::{
         future::{FusedFuture, OptionFuture},
         FutureExt,
     },
-    irn::ShutdownReason,
+    irn::fsm,
     metrics_exporter_prometheus::{
         BuildError as PrometheusBuildError,
         PrometheusBuilder,
@@ -15,8 +16,10 @@ use {
     std::{fmt::Debug, future::Future, pin::pin, time::Duration},
     tap::Pipe,
     time::{macros::datetime, OffsetDateTime},
+    xxhash_rust::xxh3::Xxh3Builder,
 };
 pub use {
+    cluster::Cluster,
     config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
     logger::Logger,
@@ -24,6 +27,7 @@ pub use {
     storage::Storage,
 };
 
+pub mod cluster;
 pub mod config;
 pub mod consensus;
 pub mod logger;
@@ -43,7 +47,7 @@ const NODE_VERSION: u64 = 3;
 /// [`NODE_VERSION`] are going to receive reduced rewards.
 const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-07-25 12:00:00 -0);
 
-pub type Node = irn::Node<Consensus, Network, Storage>;
+pub type Node = irn::Node<Consensus, Network, Storage, Xxh3Builder>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -101,7 +105,7 @@ pub fn exec() -> anyhow::Result<()> {
         .build()
         .unwrap()
         .block_on(async move {
-            run(signal::shutdown_listener()?, &cfg, Some(prometheus))
+            run(signal::shutdown_listener()?, prometheus, &cfg)
                 .await?
                 .await;
             Ok(())
@@ -109,68 +113,71 @@ pub fn exec() -> anyhow::Result<()> {
 }
 
 pub async fn run(
-    shutdown_fut: impl Future<Output = ShutdownReason>,
+    shutdown_fut: impl Future<Output = fsm::ShutdownReason> + Send,
+    prometheus: PrometheusHandle,
     cfg: &Config,
-    prometheus: Option<PrometheusHandle>,
-) -> Result<impl Future<Output = ()>, Error> {
+) -> Result<impl Future<Output = ()> + Send, Error> {
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
-    let (stake_validator, performance_tracker, status_reporter) =
-        if let Some(c) = &cfg.smart_contract {
-            let rpc_url = &c.eth_rpc_url;
-            let addr = &c.config_address;
+    let stake_validator = if let Some(c) = &cfg.smart_contract {
+        let rpc_url = &c.eth_rpc_url;
+        let addr = &c.config_address;
 
-            let sv = contract::StakeValidator::new(rpc_url, addr)
-                .await
-                .map(Some)
-                .map_err(Error::Contract)?;
-
-            let pt = if let Some(reporter) = &c.performance_reporter {
-                let dir = reporter.tracker_dir.clone();
-
-                let reporter =
-                    contract::new_performance_reporter(rpc_url, addr, &reporter.signer_mnemonic)
-                        .await
-                        .map_err(Error::Contract)?;
-
-                performance::Tracker::new(
-                    network.clone(),
-                    reporter,
-                    dir,
-                    NODE_VERSION,
-                    NODE_VERSION_UPDATE_DEADLINE,
-                )
-                .await
-                .map(Some)
-                .map_err(Error::PerformanceTracker)?
-            } else {
-                None
-            };
-
-            let sr = if let Some(eth_address) = &cfg.eth_address {
-                Some(
-                    contract::new_status_reporter(rpc_url, addr, eth_address)
-                        .await
-                        .map_err(Error::Contract)?,
-                )
-            } else {
-                None
-            };
-
-            (sv, pt, sr)
-        } else {
-            (None, None, None)
-        };
+        contract::StakeValidator::new(rpc_url, addr)
+            .await
+            .map(Some)
+            .map_err(Error::Contract)?
+    } else {
+        None
+    };
 
     let consensus = Consensus::new(cfg, network.clone(), stake_validator)
         .await
         .map_err(Error::Consensus)?;
 
-    consensus.init(cfg).await.map_err(Error::Consensus)?;
+    let (performance_tracker, status_reporter) = if let Some(c) = &cfg.smart_contract {
+        let rpc_url = &c.eth_rpc_url;
+        let addr = &c.config_address;
+
+        let pr = if let Some(pr) = &c.performance_reporter {
+            let dir = pr.tracker_dir.clone();
+
+            let reporter = contract::new_performance_reporter(rpc_url, addr, &pr.signer_mnemonic)
+                .await
+                .map_err(Error::Contract)?;
+
+            performance::Tracker::new(
+                network.clone(),
+                consensus.clone(),
+                reporter,
+                dir,
+                NODE_VERSION,
+                NODE_VERSION_UPDATE_DEADLINE,
+            )
+            .await
+            .map(Some)
+            .map_err(Error::PerformanceTracker)?
+        } else {
+            None
+        };
+
+        let sr = if let Some(eth_address) = &cfg.eth_address {
+            Some(
+                contract::new_status_reporter(rpc_url, addr, eth_address)
+                    .await
+                    .map_err(Error::Contract)?,
+            )
+        } else {
+            None
+        };
+
+        (pr, sr)
+    } else {
+        (None, None)
+    };
 
     let node_opts = irn::NodeOpts {
-        replication_strategy: cfg.replication_strategy.clone(),
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
         replication_concurrency_limit: cfg.request_concurrency_limit,
         replication_request_queue: cfg.request_limiter_queue,
@@ -183,16 +190,21 @@ pub async fn run(
             }),
     };
 
-    let node = irn::Node::new(cfg.id, node_opts, consensus, network, storage);
+    let node = irn::Node::new(
+        cluster::Node {
+            id: cfg.id,
+            addr: cfg.replica_api_server_addr.clone(),
+        },
+        node_opts,
+        consensus,
+        network,
+        storage,
+        Xxh3Builder::new(),
+    );
 
     Network::spawn_servers(cfg, node.clone(), prometheus.clone(), status_reporter)?;
 
-    // TODO: figure out a cleaner way to do this toggle
-    let metrics_srv = if let Some(prometheus) = prometheus {
-        metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn)
-    } else {
-        tokio::spawn(async { Ok(()) })
-    };
+    let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 
     let node_clone = node.clone();
     let node_fut = async move {
@@ -244,17 +256,3 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
-
-// TODO: consider moving to a test_utils module or exporting the trait once src
-// is within crates/
-// or removing this althogether if its only used to please the compiler
-#[derive(Debug, Clone)]
-pub struct TestStatusReporter;
-
-impl StatusReporter for TestStatusReporter {
-    async fn report_status(&self) -> anyhow::Result<StatusData> {
-        Ok(StatusData {
-            stake: Default::default(),
-        })
-    }
-}

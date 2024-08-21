@@ -1,10 +1,13 @@
 //! Raft storage adapter.
 
 use {
+    super::StateSnapshot,
+    crate::Cluster,
     async_trait::async_trait,
     raft::{storage::Error, Log, Vote},
     serde::{de::DeserializeOwned, Serialize},
     std::{io, path::PathBuf},
+    tokio::sync::watch,
 };
 
 const RAFT_VOTE_FILE_NAME: &str = "vote.json";
@@ -14,11 +17,15 @@ const RAFT_STATE_FILE_NAME: &str = "state.json";
 #[derive(Clone)]
 pub(super) struct Adapter {
     raft_dir: PathBuf,
+    tx: Option<watch::Sender<Option<super::State>>>,
 }
 
 impl Adapter {
-    pub(super) fn new(raft_dir: PathBuf) -> Self {
-        Self { raft_dir }
+    pub(super) fn new(raft_dir: PathBuf, tx: watch::Sender<Option<super::State>>) -> Self {
+        Self {
+            raft_dir,
+            tx: Some(tx),
+        }
     }
 
     async fn read<T: DeserializeOwned>(&self, file_name: &str) -> Result<Option<T>, Error> {
@@ -38,10 +45,24 @@ impl Adapter {
             .await
             .map_err(|e| Error::new(&e))
     }
+
+    fn send_update(&mut self, state: &super::State) {
+        let Some(tx) = &self.tx else {
+            return;
+        };
+
+        if tx.is_closed() {
+            let _ = tx;
+            self.tx = None;
+            return;
+        }
+
+        let _ = tx.send(Some(state.clone()));
+    }
 }
 
 #[async_trait]
-impl<C: raft::TypeConfig> raft::Storage<C> for Adapter {
+impl<C: raft::TypeConfig<State = super::State>> raft::Storage<C> for Adapter {
     async fn read_vote(&mut self) -> Result<Option<Vote<C>>, Error> {
         self.read(RAFT_VOTE_FILE_NAME).await
     }
@@ -59,11 +80,35 @@ impl<C: raft::TypeConfig> raft::Storage<C> for Adapter {
     }
 
     async fn read_state(&mut self) -> Result<Option<C::State>, Error> {
-        self.read(RAFT_STATE_FILE_NAME).await
+        let Some(snapshot) = self.read::<StateSnapshot>(RAFT_STATE_FILE_NAME).await? else {
+            return Ok(None);
+        };
+
+        let state = super::State {
+            last_applied_log: snapshot.last_applied_log,
+            membership: snapshot.membership,
+            cluster: Cluster::from_snapshot(snapshot.cluster)
+                .map_err(|e| Error::new(&e))?
+                .into_viewable(),
+        };
+
+        self.send_update(&state);
+
+        Ok(Some(state))
     }
 
     async fn write_state(&mut self, state: &C::State) -> Result<(), Error> {
-        self.write(RAFT_STATE_FILE_NAME, state).await
+        let cluster = state.cluster.view().cluster();
+
+        let snapshot = StateSnapshot {
+            last_applied_log: state.last_applied_log,
+            membership: state.membership.clone(),
+            cluster: cluster.snapshot(),
+        };
+
+        self.write(RAFT_STATE_FILE_NAME, &snapshot).await?;
+        self.send_update(state);
+        Ok(())
     }
 }
 
@@ -71,19 +116,22 @@ impl<C: raft::TypeConfig> raft::Storage<C> for Adapter {
 mod test {
     use {
         crate::{
-            consensus::{Change, Node, State, StoredMembership},
+            consensus::{Change, Node, NodeId, ShutdownNode, State, StoredMembership},
+            Cluster,
             TypeConfig,
         },
-        irn::{cluster, PeerId},
+        libp2p::PeerId,
         raft::{testing::log_id, Storage},
         std::{
             collections::{BTreeMap, BTreeSet},
             path::PathBuf,
         },
+        tokio::sync::watch,
     };
 
     fn adapter(dir: PathBuf) -> impl raft::Storage<TypeConfig> {
-        super::Adapter::new(dir)
+        let (tx, _) = watch::channel(None);
+        super::Adapter::new(dir, tx)
     }
 
     #[tokio::test]
@@ -94,40 +142,39 @@ mod test {
 
         assert_eq!(storage.read_vote().await, Ok(None));
         assert_eq!(storage.read_log().await, Ok(None));
-        assert_eq!(storage.read_state().await, Ok(None));
+        assert!(storage.read_state().await.unwrap().is_none());
 
         let peer_id = PeerId::random();
 
-        let vote = raft::Vote::<TypeConfig>::new(1, peer_id);
+        let vote = raft::Vote::<TypeConfig>::new(1, NodeId(peer_id));
         assert_eq!(storage.write_vote(&vote).await, Ok(()));
         assert_eq!(storage.read_vote().await, Ok(Some(vote)));
 
         let mut config = BTreeSet::new();
-        config.insert(peer_id);
+        config.insert(NodeId(peer_id));
 
         let mut nodes = BTreeMap::new();
-        nodes.insert(peer_id, Node::default());
+        nodes.insert(NodeId(peer_id), Node::default());
 
         let membership = raft::Membership::new(vec![config], nodes);
 
         let log = raft::Log {
-            last_purged_id: Some(log_id(1, peer_id, 1)),
+            last_purged_id: Some(log_id(1, NodeId(peer_id), 1)),
             entries: {
                 let mut map = BTreeMap::new();
 
                 map.insert(1, raft::LogEntry::default());
 
                 let normal = raft::LogEntry {
-                    log_id: log_id(2, peer_id, 1),
-                    payload: raft::LogEntryPayload::Normal(Change::NodeOperationMode(
-                        PeerId::default(),
-                        cluster::NodeOperationMode::Booting,
-                    )),
+                    log_id: log_id(2, NodeId(peer_id), 1),
+                    payload: raft::LogEntryPayload::Normal(Change::ShutdownNode(ShutdownNode {
+                        id: peer_id,
+                    })),
                 };
                 map.insert(2, normal);
 
                 let membership = raft::LogEntry {
-                    log_id: log_id(2, peer_id, 2),
+                    log_id: log_id(2, NodeId(peer_id), 2),
                     payload: raft::LogEntryPayload::Membership(membership.clone()),
                 };
                 map.insert(2, membership);
@@ -138,11 +185,13 @@ mod test {
         assert_eq!(storage.read_vote().await, Ok(Some(vote)));
 
         let state = State {
-            last_applied_log: Some(log_id(1, peer_id, 1)),
-            membership: StoredMembership::new(Some(log_id(1, peer_id, 1)), membership),
-            cluster_view: Default::default(),
+            last_applied_log: Some(log_id(1, NodeId(peer_id), 1)),
+            membership: StoredMembership::new(Some(log_id(1, NodeId(peer_id), 1)), membership),
+            cluster: Cluster::new().into_viewable(),
         };
         assert_eq!(storage.write_state(&state).await, Ok(()));
-        assert_eq!(storage.read_state().await, Ok(Some(state)));
+        let read_state = storage.read_state().await.unwrap().unwrap();
+        assert_eq!(read_state.last_applied_log, state.last_applied_log);
+        assert_eq!(read_state.membership, state.membership);
     }
 }

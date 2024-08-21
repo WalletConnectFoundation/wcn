@@ -3,20 +3,17 @@
 use {
     crate::{
         db::{
-            batch,
             cf::{Column, DbColumn},
             context::{self, UnixTimestampMicros},
-            schema::StringColumn,
             types::common::CommonStorage,
         },
         util::serde::serialize,
         Error,
         UnixTimestampSecs,
     },
-    async_trait::async_trait,
+    std::future::Future,
 };
 
-#[async_trait]
 pub trait StringStorage<C>: CommonStorage<C>
 where
     C: Column,
@@ -24,69 +21,92 @@ where
     /// Gets value for a provided `key`.
     ///
     /// Time complexity: `O(1)`.
-    async fn get(&self, key: &C::KeyType) -> Result<Option<C::ValueType>, Error>;
+    fn get(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync;
 
     /// Sets value for a provided key.
     ///
     /// Time complexity: `O(1)`.
-    async fn set(
+    fn set(
         &self,
         key: &C::KeyType,
         value: &C::ValueType,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Delete the value associated with the given key.
     ///
     /// Time complexity: `O(1)`.
-    async fn del(&self, key: &C::KeyType) -> Result<(), Error>;
+    fn del(
+        &self,
+        key: &C::KeyType,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns the remaining time to live of a key that has a timeout.
-    async fn exp(&self, key: &C::KeyType) -> Result<Option<UnixTimestampSecs>, Error>;
+    fn exp(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
 
     /// Set a timeout on key. After the timeout has expired, the key will
     /// automatically be deleted. Passing `None` will remove the current timeout
     /// and persist the key.
-    async fn setexp(
+    fn setexp(
         &self,
         key: &C::KeyType,
         expiry: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }
 
-#[async_trait]
 impl<C: Column> StringStorage<C> for DbColumn<C> {
-    async fn get(&self, key: &C::KeyType) -> Result<Option<C::ValueType>, Error> {
-        let key = C::storage_key(key)?;
-        let entry = self.backend.get::<C::ValueType>(C::NAME, key).await?;
-        entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+    fn get(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync {
+        async {
+            let key = C::storage_key(key)?;
+            let entry = self.backend.get::<C::ValueType>(C::NAME, key).await?;
+            entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+        }
     }
 
-    async fn set(
+    fn set(
         &self,
         key: &C::KeyType,
         value: &C::ValueType,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = C::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                .with_payload(value, expiration),
-        )?;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
+            let value = serialize(&context::MergeOp::set(value, expiration, update_timestamp))?;
 
-        self.backend.merge(C::NAME, key, value).await
+            self.backend.merge(C::NAME, key, value).await
+        }
     }
 
-    async fn del(&self, key: &C::KeyType) -> Result<(), Error> {
-        let key = C::storage_key(key)?;
-        self.backend.delete(C::NAME, key).await
+    fn del(
+        &self,
+        key: &C::KeyType,
+        timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
+            let value = serialize(&context::MergeOp::<&C::ValueType>::del(timestamp))?;
+            self.backend.merge(C::NAME, key, value).await
+        }
     }
 
-    async fn exp(&self, key: &C::KeyType) -> Result<Option<UnixTimestampSecs>, Error> {
-        self.expiration(key, None).await
+    fn exp(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+        self.expiration(key, None)
     }
 
     async fn setexp(
@@ -95,70 +115,13 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
-
         let key = C::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<C::ValueType>::new(update_timestamp).with_expiration(expiration),
-        )?;
+        let value = serialize(&context::MergeOp::<C::ValueType>::set_exp(
+            expiration,
+            update_timestamp,
+        ))?;
 
         self.backend.merge(C::NAME, key, value).await
-    }
-}
-
-/// Methods for adding batched operations to a given write batch.
-impl DbColumn<StringColumn> {
-    pub(crate) fn set_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<StringColumn as Column>::KeyType,
-        value: &<StringColumn as Column>::ValueType,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = StringColumn::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<&<StringColumn as Column>::ValueType>::new(update_timestamp)
-                .with_payload(value, expiration),
-        )?;
-
-        batch.merge(StringColumn::NAME, key, value);
-
-        Ok(())
-    }
-
-    pub(crate) fn del_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<StringColumn as Column>::KeyType,
-    ) -> Result<(), Error> {
-        let key = StringColumn::storage_key(key)?;
-        batch.delete(<StringColumn as Column>::NAME, key);
-        Ok(())
-    }
-
-    pub(crate) fn setexp_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<StringColumn as Column>::KeyType,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
-
-        let key = StringColumn::storage_key(key)?;
-        let value = serialize(
-            &context::MergeOp::<<StringColumn as Column>::ValueType>::new(update_timestamp)
-                .with_expiration(expiration),
-        )?;
-
-        batch.merge(StringColumn::NAME, key, value);
-
-        Ok(())
     }
 }
 
@@ -170,11 +133,12 @@ mod tests {
             db::schema::{
                 test_types::{TestKey, TestValue},
                 InternalStringColumn,
+                StringColumn,
             },
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,
         },
-        std::{sync::Arc, thread, time::Duration},
+        std::{thread, time::Duration},
         test_log::test,
     };
 
@@ -190,7 +154,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         let key = &TestKey::new(42).into();
         let val = &TestValue::new("value1").into();
@@ -210,7 +174,7 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), Some(val_upd));
 
             // Remove data.
-            db.del(key).await.unwrap();
+            db.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(db.get(key).await.unwrap(), None);
         }
 
@@ -237,69 +201,6 @@ mod tests {
         }
     }
 
-    // TODO: Remove this test once we've completed the data pruning and removed the
-    // pruning code from compaction filters.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
-    async fn fix_invalid_timestamps() {
-        let path = DBPath::new("string_basic_ops");
-        let rocks_db = RocksDatabaseBuilder::new(&path)
-            .with_column_family(StringColumn)
-            .build()
-            .unwrap();
-
-        let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
-
-        let key1 = TestKey::new(1).into();
-        let key2 = TestKey::new(2).into();
-        let key3 = TestKey::new(3).into();
-        let key4 = TestKey::new(4).into();
-        let key5 = TestKey::new(5).into();
-        let key6 = TestKey::new(6).into();
-        let val = TestValue::new("value1").into();
-
-        assert_eq!(db.get(&key1).await.unwrap(), None);
-        assert_eq!(db.get(&key2).await.unwrap(), None);
-        assert_eq!(db.get(&key3).await.unwrap(), None);
-        assert_eq!(db.get(&key4).await.unwrap(), None);
-        assert_eq!(db.get(&key5).await.unwrap(), None);
-        assert_eq!(db.get(&key6).await.unwrap(), None);
-
-        db.set(&key1, &val, None, timestamp_micros()).await.unwrap();
-        db.set(&key2, &val, Some(timestamp_secs() + 1), timestamp_micros())
-            .await
-            .unwrap();
-        db.set(&key3, &val, Some(timestamp_secs() + 5), timestamp_micros())
-            .await
-            .unwrap();
-        db.set(&key4, &val, Some(u64::MAX), timestamp_micros())
-            .await
-            .unwrap();
-        db.set(&key5, &val, None, u64::MAX).await.unwrap();
-        db.set(&key6, &val, None, timestamp_micros()).await.unwrap();
-        db.set(&key6, &val, None, u64::MAX).await.unwrap();
-
-        // Trigger merge.
-        db_full.compact();
-
-        thread::sleep(Duration::from_secs(2));
-
-        // Cleanup.
-        db_full.compact();
-
-        // Compaction is expected to remove the following:
-        //  - key2: expired;
-        //  - key4: invalid TTL;
-        //  - key5: invalid creation timestamp;
-        //  - key6: invalid update timestamp.
-        assert_eq!(db.get(&key1).await.unwrap(), Some(val.clone()));
-        assert_eq!(db.get(&key2).await.unwrap(), None);
-        assert_eq!(db.get(&key3).await.unwrap(), Some(val.clone()));
-        assert_eq!(db.get(&key4).await.unwrap(), None);
-        assert_eq!(db.get(&key5).await.unwrap(), None);
-        assert_eq!(db.get(&key6).await.unwrap(), None);
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
     async fn modification_timetsamp() {
         let path = DBPath::new("string_modification_timetsamp");
@@ -308,7 +209,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         // Payload.
         {
@@ -331,6 +232,10 @@ mod tests {
 
             // Update the data with lower timestamp value. It's expected to be ignored.
             db.set(key, val1, None, timestamp1).await.unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
+
+            // Delete the data with lower timestamp value. It's expected to be ignored.
+            db.del(key, timestamp1).await.unwrap();
             assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
         }
 
@@ -370,8 +275,8 @@ mod tests {
             .unwrap();
         let db = rocks_db.column::<StringColumn>().unwrap();
 
-        let db1: Arc<dyn StringStorage<_>> = db.clone().into_string_storage();
-        let db2: Arc<dyn StringStorage<_>> = db.clone().into_string_storage();
+        let db1 = db.clone().into_string_storage();
+        let db2 = db.clone().into_string_storage();
 
         const N: usize = 25_000;
 
@@ -409,7 +314,7 @@ mod tests {
         // db_full is unbounded object exposing all methods, and db is coerced to
         // dynamic trait object -- which exposes only trait object's methods.
         let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db: &dyn StringStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key1 = &TestKey::new(1).into();
         let key2 = &TestKey::new(2).into();
@@ -452,7 +357,7 @@ mod tests {
             .unwrap();
 
         let db_full = rocks_db.column::<StringColumn>().unwrap();
-        let db: &dyn StringStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key1 = &TestKey::new(1).into();
         let key2 = &TestKey::new(2).into();
@@ -478,8 +383,8 @@ mod tests {
             .unwrap();
 
         // The similarly structured columns, saved into different column families.
-        let cf1: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
-        let cf2: &dyn StringStorage<_> = &rocks_db.column::<InternalStringColumn>().unwrap();
+        let cf1 = &rocks_db.column::<StringColumn>().unwrap();
+        let cf2 = &rocks_db.column::<InternalStringColumn>().unwrap();
 
         let key = &TestKey::new(42).into();
         let val1: Vec<u8> = TestValue::new("value1").into();
@@ -509,10 +414,10 @@ mod tests {
             assert_eq!(cf2.get(key).await.unwrap(), Some(updated_val.clone()));
 
             // Remove data.
-            cf1.del(key).await.unwrap();
+            cf1.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf1.get(key).await.unwrap(), None);
             assert_eq!(cf2.get(key).await.unwrap(), Some(updated_val.clone())); // still exists
-            cf2.del(key).await.unwrap();
+            cf2.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf2.get(key).await.unwrap(), None);
         }
     }

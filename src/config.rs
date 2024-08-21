@@ -1,6 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
-    irn::{cluster::replication::Strategy, PeerId},
+    libp2p::PeerId,
     network::Multiaddr,
     serde::{de::Error, Deserialize, Deserializer},
     std::{
@@ -21,17 +21,22 @@ pub struct Config {
     /// [`network::Keypair`] of the local [`Node`].
     pub keypair: network::Keypair,
 
-    /// [`network::Multiaddr`] of the local [`Node`].
-    pub addr: network::Multiaddr,
+    pub is_raft_voter: bool,
 
-    /// Address of the external API.
-    pub api_addr: network::Multiaddr,
+    /// [`network::Multiaddr`] of the Raft server.
+    pub raft_server_addr: network::Multiaddr,
+
+    /// [`network::Multiaddr`] of the replica API server.
+    pub replica_api_server_addr: network::Multiaddr,
+
+    /// [`network::Multiaddr`] of the coordinator API server.
+    pub coordinator_api_server_addr: network::Multiaddr,
+
+    /// [`network::Multiaddr`] of the admin API server.
+    pub admin_api_server_addr: network::Multiaddr,
 
     /// Service metrics HTTP address.
     pub metrics_addr: String,
-
-    /// Indicator of whether the node to run should be a Raft member.
-    pub is_raft_member: bool,
 
     /// List of known peers.
     pub known_peers: HashMap<PeerId, Multiaddr>,
@@ -50,9 +55,6 @@ pub struct Config {
 
     /// Performance-related RocksDB configuration.
     pub rocksdb: RocksdbDatabaseConfig,
-
-    /// Replication strategy.
-    pub replication_strategy: Strategy,
 
     /// API and inter-node storage request concurrency limit.
     pub request_concurrency_limit: usize,
@@ -112,18 +114,19 @@ impl Config {
         tracing::info!(config = ?rocksdb, "rocksdb configuration");
 
         let mut cfg = Config {
-            id: PeerId::from_public_key(&raw.keypair.public(), raw.group),
+            id: PeerId::from_public_key(&raw.keypair.public()),
             keypair: raw.keypair,
-            addr: raw.addr,
-            api_addr: raw.api_addr,
+            is_raft_voter: raw.is_raft_voter.unwrap_or_default(),
+            raft_server_addr: raw.raft_server_addr,
+            replica_api_server_addr: raw.replica_api_server_addr,
+            coordinator_api_server_addr: raw.coordinator_api_server_addr,
+            admin_api_server_addr: raw.admin_api_server_addr,
             metrics_addr: raw.metrics_addr,
-            is_raft_member: raw.is_raft_member.unwrap_or(false),
             bootstrap_nodes: None,
             known_peers: known_peers_from_env()?,
             raft_dir: raw.raft_dir,
             rocksdb_dir: raw.rocksdb_dir,
             rocksdb,
-            replication_strategy: envy::prefixed("REPLICATION_STRATEGY_").from_env()?,
             request_concurrency_limit: raw.request_concurrency_limit.unwrap_or(10000),
             request_limiter_queue: raw.request_limiter_queue.unwrap_or(32768),
             network_connection_timeout: raw.network_connection_timeout.unwrap_or(1000),
@@ -163,7 +166,7 @@ impl Config {
         if let Some(nodes) = raw.bootstrap_nodes {
             let map_fn = |id| {
                 if id == cfg.id {
-                    return Ok((id, cfg.addr.clone()));
+                    return Ok((id, cfg.replica_api_server_addr.clone()));
                 };
 
                 cfg.known_peers
@@ -184,13 +187,14 @@ struct RawConfig {
     #[serde(deserialize_with = "deserialize_keypair")]
     #[serde(rename = "secret_key")]
     keypair: network::Keypair,
-    group: u16,
 
-    #[serde(rename = "raft_member")]
-    is_raft_member: Option<bool>,
+    is_raft_voter: Option<bool>,
 
-    addr: network::Multiaddr,
-    api_addr: network::Multiaddr,
+    raft_server_addr: network::Multiaddr,
+    replica_api_server_addr: network::Multiaddr,
+    coordinator_api_server_addr: network::Multiaddr,
+    admin_api_server_addr: network::Multiaddr,
+
     metrics_addr: String,
     bootstrap_nodes: Option<Vec<PeerId>>,
     raft_dir: PathBuf,

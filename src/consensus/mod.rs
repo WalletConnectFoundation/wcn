@@ -1,72 +1,103 @@
 use {
-    crate::{contract, network::rpc, Config, Multiaddr, Network, RemoteNode, TypeConfig},
+    crate::{
+        cluster,
+        contract,
+        network::rpc,
+        Cluster,
+        Config,
+        Multiaddr,
+        Network,
+        RemoteNode,
+        TypeConfig,
+    },
     anyhow::Context,
     async_trait::async_trait,
     backoff::{future::retry, ExponentialBackoff},
-    derive_more::{Deref, Display},
-    futures::{stream, StreamExt},
-    irn::{
-        cluster::{self, ClusterView},
-        PeerId,
-        ShutdownReason,
-    },
+    derive_more::{AsRef, Deref, Display},
+    futures::FutureExt as _,
+    irn::fsm::ShutdownReason,
+    libp2p::PeerId,
     parking_lot::Mutex,
-    raft::{Raft, RemoteError, State as _},
+    raft::{
+        storage::{Snapshot, SnapshotMeta},
+        Raft as _,
+        RemoteError,
+    },
     serde::{Deserialize, Serialize},
     std::{
         collections::{HashMap, HashSet},
+        error::Error as StdError,
         fmt::Debug,
-        io,
+        future::Future,
+        io::{self, Cursor},
         sync::Arc,
         time::Duration,
     },
     tap::{Pipe, TapFallible},
+    tokio::sync::watch,
 };
 
 mod storage;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[derive(Clone)]
 pub struct State {
     last_applied_log: Option<LogId>,
     membership: StoredMembership,
-    cluster_view: ClusterView,
+    cluster: cluster::Viewable,
 }
 
-impl State {
-    pub fn into_cluster_view(self) -> ClusterView {
-        self.cluster_view
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            last_applied_log: None,
+            membership: StoredMembership::default(),
+            cluster: Cluster::new().into_viewable(),
+        }
     }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct StateSnapshot<'a> {
+    last_applied_log: Option<LogId>,
+    membership: StoredMembership,
+    cluster: cluster::Snapshot<'a>,
 }
 
 impl raft::State<TypeConfig> for State {
     type Ok = bool;
-    type Error = cluster::UpdateNodeOpModeError;
+    type Error = cluster::Error;
 
-    fn apply(&mut self, entry: &LogEntry) -> cluster::UpdateNodeOpModeResult {
+    fn apply(&mut self, entry: &LogEntry) -> Result<bool, Self::Error> {
         let res = match &entry.payload {
             raft::LogEntryPayload::Blank => Ok(true),
-            raft::LogEntryPayload::Normal(Change::NodeOperationMode(id, mode)) => {
-                self.cluster_view.update_node_op_mode(*id, *mode)
-            }
+            raft::LogEntryPayload::Normal(change) => match change {
+                Change::AddNode(c) => self
+                    .cluster
+                    .modify(|cluster| cluster.add_node(c.node.clone()).map(|()| true))
+                    .map_err(Into::into),
+
+                Change::CompletePull(c) => self
+                    .cluster
+                    .modify(|cluster| cluster.complete_pull(&c.node_id, c.keyspace_version))
+                    .map_err(Into::into),
+
+                Change::ShutdownNode(c) => self
+                    .cluster
+                    .modify(|cluster| cluster.shutdown_node(&c.id))
+                    .map_err(Into::into),
+
+                Change::StartupNode(c) => self
+                    .cluster
+                    .modify(|cluster| cluster.startup_node(c.node.clone()).map(|()| true))
+                    .map_err(Into::into),
+
+                Change::DecommissionNode(c) => self
+                    .cluster
+                    .modify(|cluster| cluster.decommission_node(&c.id).map(|()| true))
+                    .map_err(Into::into),
+            },
             raft::LogEntryPayload::Membership(membership) => {
-                let current_nodes = self.cluster_view.nodes();
-
-                let nodes = membership.nodes().map(|(id, node)| {
-                    let node = current_nodes
-                        .get(id)
-                        .cloned()
-                        .unwrap_or_else(|| cluster::Node::new(*id, node.0.clone()));
-                    (node.peer_id, node)
-                });
-
-                let nodes: HashMap<_, _> = nodes.collect();
-                if current_nodes != &nodes {
-                    self.cluster_view.set_peers(nodes);
-                }
-
                 self.membership = StoredMembership::new(Some(entry.log_id), membership.clone());
-
                 Ok(true)
             }
         };
@@ -84,11 +115,89 @@ impl raft::State<TypeConfig> for State {
     fn stored_membership(&self) -> &StoredMembership {
         &self.membership
     }
+
+    fn snapshot(&self) -> Result<raft::storage::Snapshot<TypeConfig>, impl StdError + 'static> {
+        let last_log_id = self.last_applied_log_id();
+        let meta = SnapshotMeta::<TypeConfig> {
+            last_log_id,
+            last_membership: self.stored_membership().clone(),
+            snapshot_id: last_log_id.map(|id| id.to_string()).unwrap_or_default(),
+        };
+
+        let cluster = self.cluster.view().cluster();
+
+        postcard::to_allocvec(&StateSnapshot {
+            last_applied_log: meta.last_log_id,
+            membership: meta.last_membership.clone(),
+            cluster: cluster.snapshot(),
+        })
+        .map(|data| Snapshot::<TypeConfig> {
+            meta,
+            snapshot: Box::new(Cursor::new(data)),
+        })
+    }
+
+    fn install_snapshot(
+        &mut self,
+        meta: &raft::storage::SnapshotMeta<TypeConfig>,
+        snapshot: Box<io::Cursor<Vec<u8>>>,
+    ) -> Result<(), impl StdError + Send + 'static> {
+        let data = snapshot.into_inner();
+
+        let snapshot: StateSnapshot<'static> = postcard::from_bytes(data.as_slice())
+            .map_err(|e| cluster::Error::Bug(format!("failed to deserialize snapshot: {e}")))?;
+
+        let new_cluster = Cluster::from_snapshot(snapshot.cluster)?;
+        self.cluster.modify(|c| {
+            *c = new_cluster;
+            Ok(true)
+        })?;
+
+        self.last_applied_log = meta.last_log_id;
+        self.membership = meta.last_membership.clone();
+
+        Ok::<_, cluster::Error>(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Change {
-    NodeOperationMode(PeerId, cluster::NodeOperationMode),
+    AddNode(AddNode),
+    CompletePull(CompletePull),
+    ShutdownNode(ShutdownNode),
+    StartupNode(StartupNode),
+    DecommissionNode(DecommissionNode),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BootstrapCluster {
+    pub nodes: Vec<cluster::Node>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddNode {
+    pub node: cluster::Node,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletePull {
+    pub node_id: PeerId,
+    pub keyspace_version: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShutdownNode {
+    pub id: PeerId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartupNode {
+    pub node: cluster::Node,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecommissionNode {
+    pub id: PeerId,
 }
 
 // `openraft::Node` has the `Default` bound, however `libp2p::Mutliaddr` doesn't
@@ -103,21 +212,29 @@ impl Default for Node {
 }
 
 #[derive(Clone, Deref)]
-pub struct Consensus {
+pub struct Raft {
     id: PeerId,
 
     #[deref]
-    raft: raft::RaftImpl<TypeConfig, Network>,
+    inner: raft::RaftImpl<TypeConfig, Network>,
 
     network: Network,
 
     authorization: Option<Authorization>,
 
-    initial_membership: Arc<Mutex<Option<raft::Membership<PeerId, Node>>>>,
+    initial_membership: Arc<Mutex<Option<raft::Membership<NodeId, Node>>>>,
 
     bootstrap_nodes: Arc<Option<HashMap<PeerId, Multiaddr>>>,
+    is_voter: bool,
 
     stake_validator: Option<contract::StakeValidator>,
+}
+
+#[derive(Clone, Deref)]
+pub struct Consensus {
+    #[deref]
+    inner: Raft,
+    cluster_view: cluster::View,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,6 +252,15 @@ pub enum InitializationError {
 
     #[error("Failed to join the consensus")]
     Join,
+
+    #[error("Failed to spawn Raft server")]
+    SpawnServer(#[from] network::Error),
+
+    #[error("Cluster needs to be bootstrapped, but no bootstrap nodes are provided")]
+    NotBootstrapNodes,
+
+    #[error(transparent)]
+    Cluster(irn::cluster::Error),
 }
 
 impl Consensus {
@@ -163,20 +289,24 @@ impl Consensus {
             ..Default::default()
         };
 
-        raft::new(
-            cfg.id,
+        let (tx, mut state) = watch::channel(None);
+        let storage_adapter = storage::Adapter::new(cfg.raft_dir.clone(), tx);
+
+        let raft = raft::new(
+            NodeId(cfg.id),
             raft_config,
             cfg.bootstrap_nodes
                 .clone()
-                .map(|nodes| nodes.into_iter().map(|(id, addr)| (id, Node(addr)))),
-            State::default(),
+                .map(|nodes| nodes.into_iter().map(|(id, addr)| (NodeId(id), Node(addr)))),
             network.clone(),
-            storage::Adapter::new(cfg.raft_dir.clone()),
+            storage_adapter,
         )
         .await
-        .map(|raft| Self {
+        .map_err(InitializationError::Task)?;
+
+        let raft = Raft {
             id: cfg.id,
-            raft,
+            inner: raft,
             network,
             authorization: cfg.authorized_raft_candidates.as_ref().map(|candidates| {
                 Authorization {
@@ -185,12 +315,66 @@ impl Consensus {
             }),
             initial_membership: Default::default(),
             bootstrap_nodes: Arc::new(cfg.bootstrap_nodes.clone()),
+            is_voter: cfg.is_raft_voter,
             stake_validator,
-        })
-        .map_err(InitializationError::Task)
+        };
+
+        Network::spawn_raft_server(cfg, raft.clone())?;
+
+        raft.init(cfg).await?;
+
+        let cluster_view = loop {
+            state.changed().await.unwrap();
+
+            if let Some(state) = state.borrow_and_update().clone() {
+                break state.cluster.view();
+            };
+        };
+
+        let consensus = Self {
+            inner: raft,
+            cluster_view,
+        };
+
+        Ok(consensus)
     }
 
-    pub async fn init(&self, cfg: &Config) -> Result<(), InitializationError> {
+    pub async fn shutdown(&self, reason: ShutdownReason) {
+        match reason {
+            ShutdownReason::Decommission => {
+                let raft = self.inner.clone();
+                let req = RemoveMemberRequest {
+                    node_id: NodeId(self.id),
+                    is_learner: self.bootstrap_nodes.is_none() && !self.is_voter,
+                };
+
+                let backoff = ExponentialBackoff {
+                    initial_interval: Duration::from_secs(1),
+                    ..Default::default()
+                };
+                let _ = retry(backoff, move || {
+                    let raft = raft.clone();
+                    let req = req.clone();
+
+                    async move {
+                        raft.inner
+                            .remove_member(req)
+                            .await
+                            .tap_err(|err| tracing::error!(?err, "Raft::remove_member"))
+                            .map_err(backoff::Error::transient)
+                    }
+                })
+                .await;
+            }
+            ShutdownReason::Restart => {}
+        }
+
+        self.inner.shutdown().await
+    }
+}
+
+impl Raft {
+    async fn init(&self, cfg: &Config) -> Result<(), InitializationError> {
         // If it's a bootstrap launch or a subsequent launch of a bootnode we don't need
         // to add a new member manually.
         if cfg.bootstrap_nodes.is_some() {
@@ -199,21 +383,21 @@ impl Consensus {
 
         let backoff = ExponentialBackoff {
             initial_interval: Duration::from_secs(1),
-            max_elapsed_time: Some(Duration::from_secs(10)),
+            max_elapsed_time: Some(Duration::from_secs(60)),
             ..Default::default()
         };
         retry(backoff, move || async {
             let req = AddMemberRequest {
-                node_id: self.id,
-                node: Node(cfg.addr.clone()),
-                learner_only: !cfg.is_raft_member,
+                node_id: NodeId(self.id),
+                node: Node(cfg.raft_server_addr.clone()),
+                learner_only: !self.is_voter,
                 payload: cfg.eth_address.as_ref().map(|addr| AddMemberPayload {
                     operator_eth_address: addr.clone(),
                 }),
             };
 
-            for peer_id in cfg.known_peers.keys() {
-                let peer = self.network.get_peer(*peer_id);
+            for (peer_id, multiaddr) in &cfg.known_peers {
+                let peer = self.network.get_peer(peer_id, multiaddr);
 
                 let res = async {
                     peer.send_rpc::<rpc::raft::AddMember, _>(req.clone())
@@ -251,46 +435,6 @@ impl Consensus {
         .await
     }
 
-    pub async fn shutdown(&self, reason: ShutdownReason) {
-        match reason {
-            ShutdownReason::Decommission => {
-                let mut voter_ids = self.raft.state().membership.voter_ids();
-                let is_voter = voter_ids.any(|id| id == self.id);
-
-                let raft = self.raft.clone();
-                let req = RemoveMemberRequest {
-                    node_id: self.id,
-                    is_learner: !is_voter,
-                };
-
-                let backoff = ExponentialBackoff {
-                    initial_interval: Duration::from_secs(1),
-                    ..Default::default()
-                };
-                let _ = retry(backoff, move || {
-                    let raft = raft.clone();
-                    let req = req.clone();
-
-                    async move {
-                        raft.remove_member(req)
-                            .await
-                            .tap_err(|err| tracing::error!(?err, "Raft::remove_member"))
-                            .map_err(backoff::Error::transient)
-                    }
-                })
-                .await;
-            }
-            ShutdownReason::Restart => {}
-        }
-
-        self.raft.shutdown().await
-    }
-
-    /// Returns the current [`ClusterView`].
-    pub fn cluster_view(&self) -> ClusterView {
-        self.raft.state().cluster_view
-    }
-
     pub async fn add_member(
         &self,
         peer_id: &libp2p::PeerId,
@@ -303,20 +447,18 @@ impl Consensus {
                 return Err(unauthorized_error());
             }
 
-            let state = self.raft.state();
-            let membership = state.stored_membership();
+            let membership = self.inner.metrics().membership_config;
 
             // if local node is a voter, do the whitelist-based authorization.
-            if membership.voter_ids().any(|i| i == self.id) {
+            if membership.voter_ids().any(|i| i.0 == self.id) {
                 // if this is a proxy request - a learner node trying to promote
                 // a candidate via this voter node - check that
                 // the requestor is a member of the cluster.
-                if peer_id != &req.node_id.id && !membership.nodes().any(|(i, _)| &i.id == peer_id)
-                {
+                if peer_id != &req.node_id.0 && !membership.nodes().any(|(i, _)| &i.0 == peer_id) {
                     return Err(unauthorized_error());
                 }
 
-                if !auth.allowed_candidates.contains(&req.node_id.id) {
+                if !auth.allowed_candidates.contains(&req.node_id.0) {
                     return Err(unauthorized_error());
                 }
 
@@ -335,13 +477,18 @@ impl Consensus {
             }
             // otherwise forward the request to a voter.
             else {
-                let Some(voter_id) = membership.voter_ids().next() else {
+                let voter_ids: HashSet<_> = membership.voter_ids().collect();
+                let Some((voter_id, voter_addr)) = membership
+                    .nodes()
+                    .find_map(|(id, n)| voter_ids.contains(id).then_some((id.0, n.0.clone())))
+                else {
                     return Err(unauthorized_error());
                 };
 
                 return self
                     .network
-                    .get_peer(voter_id)
+                    .get_peer(&voter_id, &voter_addr)
+                    .into_owned()
                     .add_member(req)
                     .await
                     .map_err(|err| {
@@ -354,7 +501,7 @@ impl Consensus {
             }
         }
 
-        self.raft.add_member(req).await
+        self.inner.add_member(req).await
     }
 
     pub async fn remove_member(
@@ -362,34 +509,32 @@ impl Consensus {
         peer_id: &libp2p::PeerId,
         req: RemoveMemberRequest,
     ) -> RemoveMemberResult {
-        let state = self.raft.state();
-        let membership = state.stored_membership();
+        let membership = self.inner.metrics().membership_config;
 
         // Nodes are generally only allowed to remove themselves.
         // Voters are allowed to remove anyone.
-        if peer_id != &req.node_id.id && !membership.voter_ids().any(|i| &i.id == peer_id) {
+        if peer_id != &req.node_id.0 && !membership.voter_ids().any(|i| &i.0 == peer_id) {
             return Err(unauthorized_error());
         }
 
-        self.raft.remove_member(req).await
+        self.inner.remove_member(req).await
     }
 
     pub fn is_member(&self, peer_id: &libp2p::PeerId) -> bool {
-        let state = self.raft.state();
-        let membership = state.stored_membership();
+        let membership = self.inner.metrics().membership_config;
 
-        if membership.nodes().any(|(i, _)| &i.id == peer_id) {
+        if membership.nodes().any(|(i, _)| &i.0 == peer_id) {
             return true;
         }
 
         if let Some(nodes) = self.bootstrap_nodes.as_ref() {
-            if nodes.keys().any(|i| &i.id == peer_id) {
+            if nodes.keys().any(|i| i == peer_id) {
                 return true;
             }
         }
 
         if let Some(m) = self.initial_membership.lock().as_ref() {
-            if m.nodes().any(|(i, _)| &i.id == peer_id) {
+            if m.nodes().any(|(i, _)| &i.0 == peer_id) {
                 return true;
             }
         }
@@ -409,89 +554,187 @@ fn unauthorized_error() -> Error<raft::ClientWriteFail<TypeConfig>> {
     ))
 }
 
-pub type ClusterChangesStream = stream::Map<raft::UpdatesStream<State>, fn(State) -> ClusterView>;
+#[derive(Debug, thiserror::Error)]
+pub enum ConsensusError {
+    #[error(transparent)]
+    Cluster(cluster::Error),
 
-#[async_trait]
-impl irn::Consensus for Consensus {
-    type Stream = ClusterChangesStream;
-    type Error = Error<ClientWriteFail>;
+    #[error(transparent)]
+    Other(Box<Error<ClientWriteFail>>),
+}
 
-    async fn update_node_op_mode(
-        &self,
-        id: PeerId,
-        mode: cluster::NodeOperationMode,
-    ) -> Result<cluster::UpdateNodeOpModeResult, Self::Error> {
-        self.raft
+impl TryFrom<ConsensusError> for irn::cluster::Error {
+    type Error = ConsensusError;
+
+    fn try_from(err: ConsensusError) -> Result<Self, Self::Error> {
+        match err {
+            ConsensusError::Cluster(e) => Ok(e),
+            _ => Err(err),
+        }
+    }
+}
+
+impl irn::cluster::Consensus for Consensus {
+    type Node = cluster::Node;
+    type Keyspace = cluster::Keyspace;
+    type Error = ConsensusError;
+
+    fn add_node(&self, node: &Self::Node) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner
             .propose_change(raft::ProposeChangeRequest {
-                change: Change::NodeOperationMode(id, mode),
+                change: Change::AddNode(AddNode { node: node.clone() }),
             })
-            .await
-            .map(|resp| resp.data)
+            .map(|res| {
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
+                    .data
+                    .map(drop)
+                    .map_err(ConsensusError::Cluster)
+            })
     }
 
-    fn changes(&self) -> ClusterChangesStream {
-        self.raft.updates().map(State::into_cluster_view)
+    fn complete_pull(
+        &self,
+        node_id: &PeerId,
+        keyspace_version: u64,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner
+            .propose_change(raft::ProposeChangeRequest {
+                change: Change::CompletePull(CompletePull {
+                    node_id: *node_id,
+                    keyspace_version,
+                }),
+            })
+            .map(|res| {
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
+                    .data
+                    .map(drop)
+                    .map_err(ConsensusError::Cluster)
+            })
+    }
+
+    fn shutdown_node(&self, id: &PeerId) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner
+            .propose_change(raft::ProposeChangeRequest {
+                change: Change::ShutdownNode(ShutdownNode { id: *id }),
+            })
+            .map(|res| {
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
+                    .data
+                    .map(drop)
+                    .map_err(ConsensusError::Cluster)
+            })
+    }
+
+    fn startup_node(
+        &self,
+        node: &Self::Node,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner
+            .propose_change(raft::ProposeChangeRequest {
+                change: Change::StartupNode(StartupNode { node: node.clone() }),
+            })
+            .map(|res| {
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
+                    .data
+                    .map(drop)
+                    .map_err(ConsensusError::Cluster)
+            })
+    }
+
+    fn decommission_node(
+        &self,
+        id: &PeerId,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.inner
+            .propose_change(raft::ProposeChangeRequest {
+                change: Change::DecommissionNode(DecommissionNode { id: *id }),
+            })
+            .map(|res| {
+                res.map_err(|e| ConsensusError::Other(Box::new(e)))?
+                    .data
+                    .map(drop)
+                    .map_err(ConsensusError::Cluster)
+            })
+    }
+
+    fn cluster(&self) -> Arc<Cluster> {
+        self.cluster_view.cluster()
+    }
+
+    fn cluster_view(&self) -> &cluster::View {
+        &self.cluster_view
     }
 }
 
 #[async_trait]
 impl raft::Network<TypeConfig> for Network {
-    type Client = RemoteNode;
+    type Client = RemoteNode<'static>;
 
-    async fn new_client(&self, target: PeerId, _node: &Node) -> Self::Client {
-        self.get_peer(target)
+    async fn new_client(&self, target: NodeId, node: &Node) -> Self::Client {
+        self.get_peer(&target.0, &node.0).into_owned()
     }
 }
 
 #[async_trait]
-impl Raft<TypeConfig, raft::RpcApi> for RemoteNode {
+impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
     async fn add_member(&self, req: AddMemberRequest) -> AddMemberRpcResult {
         self.send_rpc::<rpc::raft::AddMember, _>(req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
-            .map_err(|e| RemoteError::new(self.id(), e).into())
+            .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn remove_member(&self, req: RemoveMemberRequest) -> RemoveMemberRpcResult {
         self.send_rpc::<rpc::raft::RemoveMember, _>(req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
-            .map_err(|e| RemoteError::new(self.id(), e).into())
+            .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn propose_change(&self, req: ProposeChangeRequest) -> ProposeChangeRpcResult {
         self.send_rpc::<rpc::raft::ProposeChange, _>(req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
-            .map_err(|e| RemoteError::new(self.id(), e).into())
+            .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn append_entries(&self, req: AppendEntriesRequest) -> AppendEntriesRpcResult {
         self.send_rpc::<rpc::raft::AppendEntries, _>(req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
-            .map_err(|e| RemoteError::new(self.id(), e).into())
+            .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn install_snapshot(&self, req: InstallSnapshotRequest) -> InstallSnapshotRpcResult {
         self.send_rpc::<rpc::raft::InstallSnapshot, _>(req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
-            .map_err(|e| RemoteError::new(self.id(), e).into())
+            .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn vote(&self, req: VoteRequest) -> VoteRpcResult {
         self.send_rpc::<rpc::raft::Vote, _>(req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
-            .map_err(|e| RemoteError::new(self.id(), e).into())
+            .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, Display, Hash, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq,
+)]
+pub struct NodeId(PeerId);
+
+impl Default for NodeId {
+    fn default() -> Self {
+        Self(PeerId::from_multihash(Default::default()).unwrap())
     }
 }
 
 impl raft::TypeConfig for TypeConfig {
     type State = State;
     type Change = Change;
-    type NodeId = PeerId;
+    type NodeId = NodeId;
     type Node = Node;
     type AddMemberPayload = AddMemberPayload;
 }

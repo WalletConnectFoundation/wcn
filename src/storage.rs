@@ -1,44 +1,27 @@
 pub use relay_rocks::StorageError as Error;
 use {
     crate::Config,
-    async_trait::async_trait,
-    derive_more::{AsRef, From, TryInto},
-    futures::{stream, stream::BoxStream, Stream, StreamExt, TryStreamExt},
+    derive_more::AsRef,
+    futures::{future, stream::BoxStream, Stream, StreamExt, TryFutureExt as _},
     irn::{
-        cluster::keyspace::{hashring::Positioned, KeyPosition, KeyRange},
-        migration::{
-            self,
-            booting::PullDataError,
-            CommitHintedOperations,
-            Export,
-            Import,
-            StoreHinted,
-        },
+        migration::{self, AnyError},
         replication::{
+            self,
             Cardinality,
+            NoRepair,
             Page,
-            Read,
-            ReconciledRead,
-            ReplicatableOperation as Operation,
-            ReplicatedRequest as Replicated,
-            Write,
+            Reconcile,
+            StorageOperation as Operation,
         },
     },
+    raft::Infallible,
     relay_rocks::{
         db::{
             cf::DbColumn,
             context::UnixTimestampMicros,
-            migration::{
-                hinted_ops::{HintedOp, MapHintedOp, StringHintedOp},
-                ExportItem,
-            },
+            migration::ExportItem,
             schema::{self, GenericKey},
-            types::{
-                common::{iterators::ScanOptions, CommonStorage},
-                map::Pair,
-                MapStorage,
-                StringStorage,
-            },
+            types::{common::iterators::ScanOptions, map::Pair, MapStorage, StringStorage},
         },
         util::timestamp_micros,
         RocksBackend,
@@ -48,7 +31,11 @@ use {
         UnixTimestampSecs,
     },
     serde::{Deserialize, Serialize},
-    std::{fmt, fmt::Debug},
+    std::{
+        fmt::{self, Debug},
+        future::Future,
+        ops::RangeInclusive,
+    },
     wc::metrics::{future_metrics, FutureExt},
 };
 
@@ -57,39 +44,6 @@ pub type Field = Vec<u8>;
 pub type Value = Vec<u8>;
 pub type Cursor = Vec<u8>;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct MigrationHeader {
-    pub key_range: KeyRange<KeyPosition>,
-    pub cluster_view_version: u128,
-}
-
-pub enum MigrationRequest {
-    PullDataRequest(MigrationHeader),
-    PushDataRequest(MigrationHeader),
-}
-
-pub type PullDataResult = Result<ExportItem, PullDataError>;
-pub type PushDataResponse = Result<(), PullDataError>;
-
-#[derive(Clone, Debug, From, TryInto, Serialize, Deserialize)]
-pub enum ReplicationRequest {
-    Get(Replicated<Get>),
-    Set(Replicated<Set>),
-    Del(Replicated<Del>),
-    GetExp(Replicated<GetExp>),
-    SetExp(Replicated<SetExp>),
-
-    HGet(Replicated<HGet>),
-    HSet(Replicated<HSet>),
-    HDel(Replicated<HDel>),
-    HCard(Replicated<HCard>),
-    HGetExp(Replicated<HGetExp>),
-    HSetExp(Replicated<HSetExp>),
-    HFields(Replicated<HFields>),
-    HVals(Replicated<HVals>),
-    HScan(Replicated<HScan>),
-}
-
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct Get {
     #[as_ref]
@@ -97,17 +51,17 @@ pub struct Get {
 }
 
 impl Operation for Get {
-    type Type = Read;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Option<Value>;
     type RepairOperation = Set;
 
-    fn repair_operation(&self, new_value: Self::Output) -> Option<Self::RepairOperation> {
-        new_value.as_ref()?;
+    fn repair_operation(&self, new_value: &Self::Output) -> Option<Self::RepairOperation> {
+        let new_value = new_value.as_ref()?;
 
         Some(Set {
             key: self.key.clone(),
-            value: new_value.unwrap(),
+            value: new_value.clone(),
             // TODO: We should probably not be using `None` here. Even without querying the
             // expiration time, we can set to some default value (and once the original quorum peers
             // expire, this value will not affect the responses, and eventually will be garbage
@@ -130,23 +84,24 @@ pub struct Set {
 }
 
 impl Operation for Set {
-    type Type = Write;
+    const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct Del {
     #[as_ref]
     pub key: Key,
+    pub version: UnixTimestampMicros,
 }
 
 impl Operation for Del {
-    type Type = Write;
+    const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -156,10 +111,10 @@ pub struct GetExp {
 }
 
 impl Operation for GetExp {
-    type Type = Read;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Option<UnixTimestampSecs>;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -173,10 +128,10 @@ pub struct SetExp {
 }
 
 impl Operation for SetExp {
-    type Type = Write;
+    const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -187,10 +142,10 @@ pub struct HGet {
 }
 
 impl Operation for HGet {
-    type Type = Read;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Option<Value>;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -206,10 +161,10 @@ pub struct HSet {
 }
 
 impl Operation for HSet {
-    type Type = Write;
+    const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -217,13 +172,14 @@ pub struct HDel {
     #[as_ref]
     pub key: Key,
     pub field: Field,
+    pub version: UnixTimestampMicros,
 }
 
 impl Operation for HDel {
-    type Type = Write;
+    const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -233,10 +189,17 @@ pub struct HCard {
 }
 
 impl Operation for HCard {
-    type Type = ReconciledRead;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Cardinality;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
+
+    fn reconcile_results(
+        results: &[Self::Output],
+        required_replicas: usize,
+    ) -> Option<Self::Output> {
+        Cardinality::reconcile(results.to_vec(), required_replicas)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -247,10 +210,10 @@ pub struct HGetExp {
 }
 
 impl Operation for HGetExp {
-    type Type = Read;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Option<UnixTimestampSecs>;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -265,10 +228,10 @@ pub struct HSetExp {
 }
 
 impl Operation for HSetExp {
-    type Type = Write;
+    const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -278,10 +241,17 @@ pub struct HFields {
 }
 
 impl Operation for HFields {
-    type Type = ReconciledRead;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Vec<Field>;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
+
+    fn reconcile_results(
+        results: &[Self::Output],
+        required_replicas: usize,
+    ) -> Option<Self::Output> {
+        Vec::reconcile(results.to_vec(), required_replicas)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -291,10 +261,17 @@ pub struct HVals {
 }
 
 impl Operation for HVals {
-    type Type = ReconciledRead;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Vec<Value>;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
+
+    fn reconcile_results(
+        results: &[Self::Output],
+        required_replicas: usize,
+    ) -> Option<Self::Output> {
+        Vec::reconcile(results.to_vec(), required_replicas)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -306,10 +283,17 @@ pub struct HScan {
 }
 
 impl Operation for HScan {
-    type Type = ReconciledRead;
+    const IS_WRITE: bool = false;
     type Key = Key;
     type Output = Page<(Cursor, Value)>;
-    type RepairOperation = ();
+    type RepairOperation = NoRepair;
+
+    fn reconcile_results(
+        results: &[Self::Output],
+        required_replicas: usize,
+    ) -> Option<Self::Output> {
+        Page::reconcile(results.to_vec(), required_replicas)
+    }
 }
 
 /// [`Storage`] backend.
@@ -333,7 +317,6 @@ impl Storage {
             .with_column_family(schema::InternalStringColumn)
             .with_column_family(schema::MapColumn)
             .with_column_family(schema::InternalMapColumn)
-            .with_column_family(schema::InternalHintedOpsColumn)
             .build()
             .map_err(map_err)?;
 
@@ -344,433 +327,299 @@ impl Storage {
         })
     }
 
-    // TODO: Consider turning tests that require direct access to the unrelying
-    // storage into unit tests.
-
-    // Required for tests only.
-    pub fn string(&self) -> &DbColumn<schema::StringColumn> {
-        &self.string
-    }
-
-    // Required for tests only.
-    pub fn map(&self) -> &DbColumn<schema::MapColumn> {
-        &self.map
-    }
-
     // Required for tests only.
     pub fn db(&self) -> &RocksBackend {
         &self.db
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<()>> for Storage {
-    type Ok = ();
+impl replication::Storage<Get> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, _: Positioned<()>) -> Result<Self::Ok, Self::Error> {
-        Err(StorageError::UnsupportedOperation)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: Get,
+    ) -> impl Future<Output = Result<Option<Value>, Self::Error>> + Send {
+        async move {
+            self.string
+                .get(&GenericKey::new(key_hash, op.key))
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<Get>> for Storage {
-    type Ok = Option<Value>;
+impl replication::Storage<Set> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<Get>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.string
-            .get(&key)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
-            .await
-            .map_err(map_err)
+    fn exec(&self, key_hash: u64, op: Set) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.string
+                .set(&key, &op.value, op.expiration, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<Set>> for Storage {
-    type Ok = ();
+impl replication::Storage<Del> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<Set>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.string
-            .set(&key, &op.inner.value, op.inner.expiration, op.inner.version)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
-            .await
-            .map_err(map_err)
+    fn exec(&self, key_hash: u64, op: Del) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.string
+                .del(&key, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<StoreHinted<Positioned<Set>>> for Storage {
-    type Ok = ();
+impl replication::Storage<GetExp> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, s: StoreHinted<Positioned<Set>>) -> Result<Self::Ok, Self::Error> {
-        let op = s.operation.inner;
-        let op = StringHintedOp::Set {
-            key: GenericKey::new(s.operation.position, op.key),
-            value: op.value,
-            expiration: op.expiration,
-            version: op.version,
-        };
-
-        self.string
-            .add_hinted_op(HintedOp::String(op), s.operation.position)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_set"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: GetExp,
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.string
+                .exp(&key)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<Del>> for Storage {
-    type Ok = ();
+impl replication::Storage<SetExp> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<Del>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.string
-            .del(&key)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: SetExp,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.string
+                .setexp(&key, op.expiration, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<StoreHinted<Positioned<Del>>> for Storage {
-    type Ok = ();
+impl replication::Storage<HGet> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, s: StoreHinted<Positioned<Del>>) -> Result<Self::Ok, Self::Error> {
-        let op = StringHintedOp::Del {
-            key: GenericKey::new(s.operation.position, s.operation.inner.key),
-        };
-
-        self.string
-            .add_hinted_op(HintedOp::String(op), s.operation.position)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_del"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HGet,
+    ) -> impl Future<Output = Result<Option<Value>, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hget(&key, &op.field)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<GetExp>> for Storage {
-    type Ok = Option<UnixTimestampSecs>;
+impl replication::Storage<HSet> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<GetExp>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.string
-            .exp(&key)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HSet,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            let pair = Pair::new(op.field, op.value);
+            self.map
+                .hset(&key, &pair, op.expiration, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<SetExp>> for Storage {
-    type Ok = ();
+impl replication::Storage<HDel> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<SetExp>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.string
-            .setexp(&key, op.inner.expiration, op.inner.version)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HDel,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hdel(&key, &op.field, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<StoreHinted<Positioned<SetExp>>> for Storage {
-    type Ok = ();
+impl replication::Storage<HCard> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, s: StoreHinted<Positioned<SetExp>>) -> Result<Self::Ok, Self::Error> {
-        let op = s.operation.inner;
-        let op = StringHintedOp::SetExp {
-            key: GenericKey::new(s.operation.position, op.key),
-            expiration: op.expiration,
-            version: op.version,
-        };
-
-        self.string
-            .add_hinted_op(HintedOp::String(op), s.operation.position)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_set_exp"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HCard,
+    ) -> impl Future<Output = Result<Cardinality, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hcard(&key)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
+                .await
+                .map(|card| Cardinality(card as u64))
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<HGet>> for Storage {
-    type Ok = Option<Value>;
+impl replication::Storage<HGetExp> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<HGet>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hget(&key, &op.inner.field)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HGetExp,
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hexp(&key, &op.field)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<HSet>> for Storage {
-    type Ok = ();
+impl replication::Storage<HSetExp> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<HSet>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        let pair = Pair::new(op.inner.field, op.inner.value);
-        self.map
-            .hset(&key, &pair, op.inner.expiration, op.inner.version)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HSetExp,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hsetexp(&key, &op.field, op.expiration, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<StoreHinted<Positioned<HSet>>> for Storage {
-    type Ok = ();
+impl replication::Storage<HFields> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, s: StoreHinted<Positioned<HSet>>) -> Result<Self::Ok, Self::Error> {
-        let op = s.operation.inner;
-        let op = MapHintedOp::Set {
-            key: GenericKey::new(s.operation.position, op.key),
-            field: op.field,
-            value: op.value,
-            expiration: op.expiration,
-            version: op.version,
-        };
-
-        self.map
-            .add_hinted_op(HintedOp::Map(op), s.operation.position)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_hset"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HFields,
+    ) -> impl Future<Output = Result<Vec<Field>, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hfields(&key)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hfields"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<HDel>> for Storage {
-    type Ok = ();
+impl replication::Storage<HVals> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, op: Positioned<HDel>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hdel(&key, &op.inner.field)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HVals,
+    ) -> impl Future<Output = Result<Vec<Value>, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.map
+                .hvals(&key)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hvals"))
+                .await
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<StoreHinted<Positioned<HDel>>> for Storage {
-    type Ok = ();
+impl replication::Storage<HScan> for Storage {
     type Error = StorageError;
 
-    async fn exec(&self, s: StoreHinted<Positioned<HDel>>) -> Result<Self::Ok, Self::Error> {
-        let op = s.operation.inner;
-        let op = MapHintedOp::Del {
-            key: GenericKey::new(s.operation.position, op.key),
-            field: op.field,
-        };
-
-        self.map
-            .add_hinted_op(HintedOp::Map(op), s.operation.position)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "store_hinted_hdel"))
-            .await
-            .map_err(map_err)
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HScan,
+    ) -> impl Future<Output = Result<Page<(Cursor, Value)>, Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            let opts = ScanOptions::new(op.count as usize).with_cursor(op.cursor);
+            self.map
+                .hscan(&key, opts)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
+                .await
+                .map(|res| Page {
+                    items: res.items,
+                    has_more: res.has_more,
+                })
+                .map_err(map_err)
+        }
     }
 }
 
-#[async_trait]
-impl irn::Storage<Positioned<HCard>> for Storage {
-    type Ok = Cardinality;
-    type Error = StorageError;
-
-    async fn exec(&self, op: Positioned<HCard>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hcard(&key)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
-            .await
-            .map(|card| Cardinality(card as u64))
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl irn::Storage<Positioned<HGetExp>> for Storage {
-    type Ok = Option<UnixTimestampSecs>;
-    type Error = StorageError;
-
-    async fn exec(&self, op: Positioned<HGetExp>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hexp(&key, &op.inner.field)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
-            .await
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl irn::Storage<Positioned<HSetExp>> for Storage {
-    type Ok = ();
-    type Error = StorageError;
-
-    async fn exec(&self, op: Positioned<HSetExp>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hsetexp(&key, &op.inner.field, op.inner.expiration, op.inner.version)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
-            .await
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl irn::Storage<StoreHinted<Positioned<HSetExp>>> for Storage {
-    type Ok = ();
-    type Error = StorageError;
-
-    async fn exec(&self, s: StoreHinted<Positioned<HSetExp>>) -> Result<Self::Ok, Self::Error> {
-        let op = s.operation.inner;
-        let op = MapHintedOp::SetExp {
-            key: GenericKey::new(s.operation.position, op.key),
-            field: op.field,
-            expiration: op.expiration,
-            version: op.version,
-        };
-
-        self.map
-            .add_hinted_op(HintedOp::Map(op), s.operation.position)
-            .with_metrics(
-                future_metrics!("storage_operation", "op_name" => "store_hinted_hset_exp"),
-            )
-            .await
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl irn::Storage<Positioned<HFields>> for Storage {
-    type Ok = Vec<Field>;
-    type Error = StorageError;
-
-    async fn exec(&self, op: Positioned<HFields>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hfields(&key)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hfields"))
-            .await
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl irn::Storage<Positioned<HVals>> for Storage {
-    type Ok = Vec<Value>;
-    type Error = StorageError;
-
-    async fn exec(&self, op: Positioned<HVals>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        self.map
-            .hvals(&key)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hvals"))
-            .await
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl irn::Storage<Positioned<HScan>> for Storage {
-    type Ok = Page<(Cursor, Value)>;
-    type Error = StorageError;
-
-    async fn exec(&self, op: Positioned<HScan>) -> Result<Self::Ok, Self::Error> {
-        let key = GenericKey::new(op.position, op.inner.key);
-        let opts = ScanOptions::new(op.inner.count as usize).with_cursor(op.inner.cursor);
-        self.map
-            .hscan(&key, opts)
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
-            .await
-            .map(|res| Page {
-                items: res.items,
-                has_more: res.has_more,
-            })
-            .map_err(map_err)
-    }
-}
-
-#[async_trait]
-impl<Data, E> irn::Storage<Import<Data>> for Storage
+impl<St, E> migration::StorageImport<St> for Storage
 where
-    Data: Stream<Item = Result<ExportItem, E>> + Send + 'static,
+    St: Stream<Item = Result<ExportItem, E>> + Send + 'static,
     E: fmt::Debug,
 {
-    type Ok = ();
-    type Error = StorageError;
-
-    async fn exec(&self, op: Import<Data>) -> Result<Self::Ok, Self::Error> {
-        self.db.import_all(op.data).await.map_err(map_err)
+    fn import(&self, data: St) -> impl Future<Output = Result<(), impl AnyError>> {
+        self.db.import_all(data).map_err(map_err)
     }
 }
 
-#[async_trait]
-impl irn::Storage<Export> for Storage {
-    type Ok = BoxStream<'static, ExportItem>;
-    type Error = StorageError;
+impl migration::StorageExport for Storage {
+    type Stream = BoxStream<'static, ExportItem>;
 
-    async fn exec(&self, op: migration::Export) -> Result<Self::Ok, Self::Error> {
-        let ranges = op.key_range.into_std_ranges();
-
+    fn export(
+        &self,
+        keyrange: RangeInclusive<u64>,
+    ) -> impl Future<Output = Result<Self::Stream, impl AnyError>> {
         let stream = self
             .db
-            .export((self.string.clone(), self.map.clone()), ranges.into_iter());
+            .export((self.string.clone(), self.map.clone()), keyrange)
+            .boxed();
 
-        Ok(stream.boxed())
-    }
-}
-
-#[async_trait]
-impl irn::Storage<CommitHintedOperations> for Storage {
-    type Ok = ();
-    type Error = StorageError;
-
-    async fn exec(&self, ops: CommitHintedOperations) -> Result<Self::Ok, Self::Error> {
-        stream::iter(ops.key_range.into_std_ranges())
-            .map(Ok)
-            .try_for_each_concurrent(2, |r| {
-                let db = self.db.clone();
-
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        db.commit_hinted_ops(r.start, r.end).map_err(map_err)
-                    })
-                    .with_metrics(
-                        future_metrics!("storage_operation", "op_name" => "commit_hinted_ops"),
-                    )
-                    .await
-                    .map_err(|e| StorageError::Other(format!("Join spawn_blocking: {e:?}")))?
-                }
-            })
-            .await
+        future::ok::<_, Infallible>(stream)
     }
 }
 

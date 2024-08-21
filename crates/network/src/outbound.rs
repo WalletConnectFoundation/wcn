@@ -1,5 +1,14 @@
 use {
-    crate::{rpc, BiDirectionalStream, Client, Handshake, PendingConnection},
+    crate::{
+        multiaddr_to_socketaddr,
+        rpc,
+        BiDirectionalStream,
+        Client,
+        ConnectionHandlerKey,
+        Handshake,
+        InvalidMultiaddrError,
+        PendingConnection,
+    },
     backoff::ExponentialBackoffBuilder,
     derivative::Derivative,
     derive_more::From,
@@ -8,7 +17,7 @@ use {
         FutureExt,
         TryFutureExt,
     },
-    libp2p::PeerId,
+    libp2p::{Multiaddr, PeerId},
     std::{
         io,
         net::SocketAddr,
@@ -23,13 +32,6 @@ use {
 pub(super) struct ConnectionHandler<H> {
     inner: Arc<RwLock<ConnectionHandlerInner>>,
     handshake: H,
-}
-
-impl<H> ConnectionHandler<H> {
-    pub(super) fn set_addr(&self, addr: SocketAddr) -> Result<(), PoisonError<()>> {
-        self.inner.write().map_err(|_| PoisonError::new(()))?.addr = addr;
-        Ok(())
-    }
 }
 
 #[derive(Derivative)]
@@ -193,8 +195,8 @@ pub enum ConnectionError {
 
 #[derive(Clone, Debug, From, thiserror::Error, Eq, PartialEq)]
 pub enum ConnectionHandlerError {
-    #[error("Peer is not registered")]
-    PeerNotRegistered,
+    #[error("Invalid Multiaddr")]
+    InvalidMultiaddr(InvalidMultiaddrError),
 
     #[error("There's no healthy connections to any peer at the moment")]
     NoAvailablePeers,
@@ -225,15 +227,36 @@ impl<H: Handshake> Client<H> {
     /// Establishes a [`BiDirectionalStream`] with the requested remote peer.
     pub async fn establish_stream(
         &self,
-        id: PeerId,
+        id: &PeerId,
+        multiaddr: &Multiaddr,
         rpc_id: rpc::Id,
     ) -> Result<BiDirectionalStream, ConnectionHandlerError> {
-        self.connection_handlers
-            .read()
-            .await
-            .get(&id)
-            .cloned()
-            .ok_or(ConnectionHandlerError::PeerNotRegistered)?
+        let handlers = self.connection_handlers.read().await;
+        let handler = if let Some(handler) = handlers.get(&ConnectionHandlerKey(id, multiaddr)) {
+            handler.clone()
+        } else {
+            let handler = ConnectionHandler::new(
+                multiaddr_to_socketaddr(multiaddr)?,
+                self.endpoint.clone(),
+                self.handshake.clone(),
+                self.connection_timeout,
+            );
+
+            drop(handlers);
+            let mut handlers = self.connection_handlers.write().await;
+            if let Some(handler) = handlers.get(&ConnectionHandlerKey(id, multiaddr)) {
+                handler.clone()
+            } else {
+                // ad-hoc "copy-on-write" behaviour, the map changes infrequently and we don't
+                // want to clone it in the hot path.
+                let mut new_handlers = (**handlers).clone();
+                new_handlers.insert((*id, multiaddr.clone()), handler.clone());
+                *handlers = Arc::new(new_handlers);
+                handler
+            }
+        };
+
+        handler
             .establish_stream(rpc_id)
             .with_timeout(Duration::from_secs(5))
             .await

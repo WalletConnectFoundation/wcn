@@ -172,7 +172,7 @@ where
     DbColumn<C>: StringStorage<C>,
 {
     #[inline]
-    pub fn into_string_storage(self) -> Arc<dyn StringStorage<C>> {
+    pub fn into_string_storage(self) -> Arc<impl StringStorage<C>> {
         Arc::new(self)
     }
 }
@@ -183,7 +183,7 @@ where
     DbColumn<C>: MapStorage<C>,
 {
     #[inline]
-    pub fn into_map_storage(self) -> Arc<dyn MapStorage<C>> {
+    pub fn into_map_storage(self) -> Arc<impl MapStorage<C>> {
         Arc::new(self)
     }
 }

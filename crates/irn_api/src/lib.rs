@@ -69,7 +69,7 @@ pub type Value = Vec<u8>;
 pub type Cursor = Vec<u8>;
 pub type Cardinality = u64;
 
-#[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
+#[derive(Debug, thiserror::Error, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Error {
     #[error("Missing namespace authorization")]
     Unauthorized,
@@ -84,7 +84,7 @@ pub enum Error {
     Internal(#[from] InternalError),
 }
 
-#[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
+#[derive(Debug, thiserror::Error, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[error("{code}: {message}")]
 pub struct InternalError {
     pub code: Cow<'static, str>,
@@ -293,7 +293,7 @@ pub struct NamespaceAuth {
     pub signature: auth::Signature,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PubsubEventPayload {
     pub channel: Vec<u8>,
     pub payload: Vec<u8>,

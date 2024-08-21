@@ -25,11 +25,20 @@ pub use {
 };
 use {
     async_trait::async_trait,
-    futures::stream::{self, StreamExt},
-    openraft::error::{RPCError, RaftError},
+    futures::stream,
+    openraft::{
+        error::{RPCError, RaftError},
+        RaftMetrics,
+    },
     serde::{Deserialize, Serialize},
-    std::{error::Error as StdError, fmt, future::Future, result::Result as StdResult, sync::Arc},
-    tokio::sync::watch,
+    std::{
+        error::Error as StdError,
+        fmt,
+        future::Future,
+        io::Cursor,
+        result::Result as StdResult,
+        sync::Arc,
+    },
     tokio_stream::wrappers::WatchStream,
 };
 
@@ -96,9 +105,7 @@ pub type ApplyResult<C> = StdResult<
 >;
 
 /// Application-provided state machine implementation.
-pub trait State<C: TypeConfig>:
-    Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync + 'static
-{
+pub trait State<C: TypeConfig>: Default + Clone + Send + Sync + 'static {
     /// Successful result of [`State::apply`].
     type Ok: Default + Debug + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static;
 
@@ -107,6 +114,14 @@ pub trait State<C: TypeConfig>:
 
     /// Applies [`LogEntry`] to this [`State`].
     fn apply(&mut self, entry: &LogEntry<C>) -> ApplyResult<C>;
+
+    fn snapshot(&self) -> StdResult<storage::Snapshot<C>, impl StdError + 'static>;
+
+    fn install_snapshot(
+        &mut self,
+        meta: &storage::SnapshotMeta<C>,
+        snapshot: Box<Cursor<Vec<u8>>>,
+    ) -> StdResult<(), impl StdError + Send + 'static>;
 
     /// Returns the [`LogId`] of the last applied [`LogEntry`] to this
     /// [`State`] (if any).
@@ -121,15 +136,13 @@ pub async fn new<C: TypeConfig, N: Network<C> + Clone, S: Storage<C> + Clone>(
     node_id: C::NodeId,
     config: Config,
     initial_members: Option<impl Iterator<Item = (C::NodeId, C::Node)>>,
-    initial_state: C::State,
     network: N,
     storage: S,
 ) -> Result<C, RaftImpl<C, N>, InitializeError<C>> {
     use openraft::error::InitializeError as E;
 
-    let watch = Watch::new(Arc::new(initial_state));
     let network_adapter = network::Adapter(network.clone());
-    let storage_adapter = storage::Adapter::new(storage, watch.sender.clone())
+    let storage_adapter = storage::Adapter::new(storage)
         .await
         .map_err(InitializeError::Storage)
         .map_err(Error::<C, _>::APIError)?;
@@ -161,7 +174,6 @@ pub async fn new<C: TypeConfig, N: Network<C> + Clone, S: Storage<C> + Clone>(
     Ok(RaftImpl {
         raft: openraft,
         network,
-        watch,
     })
 }
 
@@ -490,25 +502,6 @@ pub type ClientWriteResponse<C> = raft::ClientWriteResponse<OpenRaft<C>>;
 /// Result of [`Raft::append_entries`] or [`Raft::propose_change`] operations.
 pub type ClientWriteResult<C, A = Api> = Result<C, ClientWriteResponse<C>, ClientWriteFail<C>, A>;
 
-#[derive(Clone, Debug)]
-struct Watch<State> {
-    sender: Arc<watch::Sender<Arc<State>>>,
-    receiver: watch::Receiver<Arc<State>>,
-}
-
-impl<State> Watch<State>
-where
-    State: Send + Sync,
-{
-    fn new(init: Arc<State>) -> Self {
-        let (sender, receiver) = watch::channel(init);
-        Self {
-            sender: Arc::new(sender),
-            receiver,
-        }
-    }
-}
-
 // `openraft` is currently in a process of splitting the `StateMachine` out of
 // the `Storage`. But the new API is only partially ready. So they ask us to
 // temporary use this type for both `Storage` and `StateMachine`.
@@ -520,7 +513,6 @@ type OpenRaftImpl<C> = openraft::Raft<OpenRaft<C>>;
 pub struct RaftImpl<C: TypeConfig, N: Network<C>> {
     raft: OpenRaftImpl<C>,
     network: N,
-    watch: Watch<C::State>,
 }
 
 impl<C, N> Clone for RaftImpl<C, N>
@@ -532,18 +524,12 @@ where
         Self {
             raft: self.raft.clone(),
             network: self.network.clone(),
-            watch: self.watch.clone(),
         }
     }
 }
 
 type RaftClientWriteError<C> =
     openraft::error::ClientWriteError<<C as TypeConfig>::NodeId, <C as TypeConfig>::Node>;
-
-// TODO: Use [`Arc::unwrap_or_clone`] once stabilized
-fn arc_unwrap_or_clone<T: Clone>(arc: Arc<T>) -> T {
-    Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())
-}
 
 /// Stream of [`Raft`] state updates.
 pub type UpdatesStream<T> = stream::Map<WatchStream<Arc<T>>, fn(Arc<T>) -> T>;
@@ -553,11 +539,6 @@ where
     C: TypeConfig,
     N: Network<C>,
 {
-    /// Returns a new [`UpdatesStream`].
-    pub fn updates(&self) -> UpdatesStream<C::State> {
-        WatchStream::new(self.watch.receiver.clone()).map(arc_unwrap_or_clone)
-    }
-
     /// Tries to perform a local client write operation, if the local node isn't
     /// the leader falls back to calling the leader via RPC.
     async fn client_write<'a, F1, F2>(
@@ -621,9 +602,8 @@ where
         }
     }
 
-    /// Returns the current [`State`].
-    pub fn state(&self) -> C::State {
-        (**self.watch.receiver.borrow()).clone()
+    pub fn metrics(&self) -> RaftMetrics<C::NodeId, C::Node> {
+        self.raft.metrics().borrow().clone()
     }
 }
 

@@ -9,7 +9,7 @@ use {
     },
     anyhow::{Context, Result},
     reqwest::Client,
-    std::{str::FromStr, sync::Arc},
+    std::{future::Future, str::FromStr, sync::Arc},
 };
 
 sol!(
@@ -117,7 +117,7 @@ impl StakeValidator {
 }
 
 pub trait PerformanceReporter {
-    async fn report_performance(&self, data: PerformanceData) -> Result<()>;
+    fn report_performance(&self, data: PerformanceData) -> impl Future<Output = Result<()>> + Send;
 }
 
 struct PerformanceReporterImpl<P> {

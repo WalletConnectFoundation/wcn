@@ -3620,6 +3620,8 @@ name = "irn_core"
 version = "0.1.0"
 dependencies = [
  "alloc_counter",
+ "anyhow",
+ "arc-swap",
  "async-trait",
  "backoff",
  "better-panic",
@@ -3645,7 +3647,9 @@ dependencies = [
  "rand 0.7.3",
  "rstest",
  "serde",
+ "serde_json",
  "serde_with",
+ "sharding",
  "smallvec",
  "structopt",
  "tap",
@@ -3667,6 +3671,7 @@ name = "irn_node"
 version = "0.0.0"
 dependencies = [
  "alloy",
+ "anyerror",
  "anyhow",
  "async-trait",
  "atty",
@@ -3691,6 +3696,7 @@ dependencies = [
  "nix 0.28.0",
  "once_cell",
  "parking_lot",
+ "postcard",
  "proc-mounts",
  "raft",
  "rand 0.8.5",
@@ -3700,6 +3706,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "sharding",
  "smallvec",
  "sysinfo",
  "tap",
@@ -3716,6 +3723,7 @@ dependencies = [
  "vergen",
  "vergen-pretty",
  "wc",
+ "xxhash-rust",
 ]
 
 [[package]]

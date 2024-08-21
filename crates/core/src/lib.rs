@@ -1,13 +1,11 @@
-pub use {
-    self::{consensus::Consensus, identity::PeerId, network::Network},
-    storage::Storage,
-};
+#![allow(clippy::manual_async_fn)]
+
+pub use cluster::Cluster;
 use {
-    async_trait::async_trait,
-    cluster::{replication::Strategy, Cluster},
-    derive_more::AsRef,
-    futures::{Future, FutureExt},
+    cluster::{consensus, Consensus, Node as _},
+    futures::{Future, FutureExt as _},
     pin_project::pin_project,
+    replication::Replica,
     std::{
         collections::HashSet,
         pin::{pin, Pin},
@@ -15,28 +13,17 @@ use {
         task,
         time::Duration,
     },
-    tokio::sync::{oneshot, RwLock, Semaphore},
+    tokio::sync::{oneshot, Semaphore},
 };
 
 pub mod cluster;
-pub mod consensus;
-pub mod identity;
-pub mod network;
-pub mod storage;
-
-#[cfg(any(feature = "testing", test))]
-pub mod test;
-
-mod fsm;
+pub mod fsm;
 pub mod migration;
 pub mod replication;
 
 /// [`Node`] configuration options.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeOpts {
-    /// Replication strategy to use.
-    pub replication_strategy: Strategy,
-
     /// Timeout of a request from a coordinator to a replica.
     pub replication_request_timeout: Duration,
 
@@ -65,97 +52,99 @@ pub struct AuthorizationOpts {
 }
 
 /// Shared [`Handle`] to a [`Node`].
-#[derive(AsRef, Clone, Debug)]
-pub struct Node<C, N, S> {
-    #[as_ref]
-    id: PeerId,
+#[derive(Clone, Debug)]
+pub struct Node<C: Consensus, N, S, H> {
+    replication_coordinator: replication::Coordinator<C, N, S, H>,
+    migration_manager: migration::Manager<C, N, S>,
 
-    cluster: Arc<RwLock<Cluster>>,
-    consensus: C,
-    network: N,
-    storage: S,
-
-    migration_manager: migration::Manager<N, S>,
-
-    shutdown: Arc<Mutex<Option<oneshot::Sender<ShutdownReason>>>>,
-
-    replication_request_timeout: Duration,
-    replication_request_limiter: Arc<Semaphore>,
-    replication_request_limiter_queue: Arc<Semaphore>,
+    shutdown: Arc<Mutex<Option<oneshot::Sender<fsm::ShutdownReason>>>>,
     warmup_delay: Duration,
-
-    authorization: Option<Arc<AuthorizationOpts>>,
 }
 
-impl<C, N, S> AsRef<Self> for Node<C, N, S> {
-    fn as_ref(&self) -> &Self {
-        self
-    }
-}
-
-impl<C, N, S> Node<C, N, S> {
-    /// Returns [`PeerId`] of this [`Node`].
-    pub fn id(&self) -> &PeerId {
-        &self.id
+impl<C: Consensus, N, S, H> Node<C, N, S, H> {
+    /// Returns ID of this [`Node`].
+    pub fn id(&self) -> &consensus::NodeId<C> {
+        self.replication_coordinator.node().id()
     }
 
-    /// Returns [`Storage`] of this [`Node`].
+    /// Returns storage of this [`Node`].
     pub fn storage(&self) -> &S {
-        &self.storage
+        self.replication_coordinator.storage()
     }
 
-    /// Returns [`Cluster`] of this [`Node`].
-    pub fn cluster(&self) -> Arc<RwLock<Cluster>> {
-        self.cluster.clone()
-    }
-
-    /// Returns [`Consensus`] impl of this [`Node`].
+    /// Returns [`Consensus`] of this [`Node`].
     pub fn consensus(&self) -> &C {
-        &self.consensus
+        self.replication_coordinator.consenus()
     }
 
-    /// Returns [`Network`] impl of this [`Node`].
+    /// Returns Network impl of this [`Node`].
     pub fn network(&self) -> &N {
-        &self.network
+        self.replication_coordinator.network()
+    }
+
+    pub fn coordinator(&self) -> &replication::Coordinator<C, N, S, H> {
+        &self.replication_coordinator
+    }
+
+    pub fn replica(&self) -> &replication::Replica<C, S, H> {
+        self.replication_coordinator.replica()
+    }
+
+    pub fn migration_manager(&self) -> &migration::Manager<C, N, S> {
+        &self.migration_manager
+    }
+
+    /// Returns representation of this [`Node`] in the [`Cluster`].
+    pub fn cluster_node(&self) -> &C::Node {
+        self.replica().node()
     }
 }
 
-impl<C, N, S> Node<C, N, S>
+impl<C, N, S, H> Node<C, N, S, H>
 where
-    C: Consensus,
-    N: Network,
-    S: Clone + Send + Sync + 'static,
-    migration::Manager<N, S>: BootingMigrations + LeavingMigrations,
+    C: Consensus + Clone,
+    N: migration::Network<C::Node>,
+    S: migration::StorageImport<N::DataStream> + Clone,
 {
     /// Creates a new [`Node`] using the provided [`NodeOpts`] and dependencies.
-    pub fn new(id: PeerId, opts: NodeOpts, consensus: C, network: N, storage: S) -> Self {
-        let cluster = Arc::new(RwLock::new(Cluster::new(opts.replication_strategy)));
+    pub fn new(
+        inner: C::Node,
+        opts: NodeOpts,
+        consensus: C,
+        network: N,
+        storage: S,
+        hasher_builder: H,
+    ) -> Self {
+        let id = inner.id().clone();
 
-        let migration_manager =
-            migration::Manager::new(id, network.clone(), storage.clone(), cluster.clone());
+        let throttling = replication::Throttling {
+            request_timeout: opts.replication_request_timeout,
+            request_limiter: Arc::new(Semaphore::new(opts.replication_concurrency_limit)),
+            request_limiter_queue: Arc::new(Semaphore::new(opts.replication_request_queue)),
+        };
+
+        let replica = Replica::new(
+            inner,
+            consensus.clone(),
+            storage.clone(),
+            hasher_builder,
+            throttling,
+        );
 
         Node {
-            id,
-            storage,
-            cluster,
-            consensus,
-            network,
-            migration_manager,
+            replication_coordinator: replication::Coordinator::new(
+                replica,
+                network.clone(),
+                opts.authorization,
+            ),
+            migration_manager: migration::Manager::new(id, consensus, network, storage),
             shutdown: Arc::new(Mutex::new(None)),
-            replication_request_timeout: opts.replication_request_timeout,
-            replication_request_limiter: Arc::new(Semaphore::new(
-                opts.replication_concurrency_limit,
-            )),
-            replication_request_limiter_queue: Arc::new(Semaphore::new(
-                opts.replication_request_queue,
-            )),
             warmup_delay: opts.warmup_delay,
-            authorization: opts.authorization.map(Arc::new),
         }
     }
 
     /// Runs this [`Node`].
-    pub async fn run(self) -> Result<ShutdownReason, AlreadyRunning> {
+    pub async fn run(self) -> Result<fsm::ShutdownReason, AlreadyRunning> {
         let shutdown_rx = {
             let mut shared_tx = self.shutdown.lock().unwrap();
             if shared_tx.is_some() {
@@ -168,10 +157,8 @@ where
         };
 
         fsm::run(
-            self.id,
-            self.consensus.clone(),
-            self.network.clone(),
-            self.cluster.clone(),
+            self.replication_coordinator.node().clone(),
+            self.consensus().clone(),
             self.migration_manager.clone(),
             self.warmup_delay,
             shutdown_rx,
@@ -185,9 +172,9 @@ where
 #[error("Node already running")]
 pub struct AlreadyRunning;
 
-impl<C, N, S> Node<C, N, S> {
+impl<C: Consensus, N, S, H> Node<C, N, S, H> {
     /// Initiates shut down process of this [`Node`].
-    pub fn shutdown(&self, reason: ShutdownReason) -> Result<(), ShutdownError> {
+    pub fn shutdown(&self, reason: fsm::ShutdownReason) -> Result<(), ShutdownError> {
         let tx = self.shutdown.lock().unwrap().take().ok_or(ShutdownError)?;
         tx.send(reason).map_err(|_| ShutdownError)
     }
@@ -197,45 +184,6 @@ impl<C, N, S> Node<C, N, S> {
 #[derive(Debug, thiserror::Error)]
 #[error("Shutdown is already in progress")]
 pub struct ShutdownError;
-
-/// Reason for shutting down a [`Node`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ShutdownReason {
-    /// The [`Node`] is being decommissioned and isn't expected to be back
-    /// online.
-    ///
-    /// It is required to perform data migrations in order to decommission a
-    /// [`Node`].
-    Decommission,
-
-    /// The [`Node`] is being restarted and is expected to be back online ASAP.
-    ///
-    /// Data migrations are not being performed.
-    Restart,
-}
-
-#[async_trait]
-pub trait Migrations:
-    BootingMigrations + LeavingMigrations + Clone + Send + Sync + 'static
-{
-    // TODO: `migration::Manager` should own the `PendingRange`s, but that would
-    // require to extract them from the `Cluster`. `()` is a placeholder for
-    // now.
-    // For now this function is only used to trigger a post-migration clean-up.
-    // But the idea is to make FSM to recalculate pending ranges on cluster
-    // updates and give them to the `migration::Manager` here.
-    async fn update_pending_ranges(&self, _ranges: ());
-}
-
-#[async_trait]
-pub trait BootingMigrations: Clone + Send + 'static {
-    async fn run_booting_migrations(self);
-}
-
-#[async_trait]
-pub trait LeavingMigrations: Clone + Send + 'static {
-    async fn run_leaving_migrations(self);
-}
 
 /// Represents a running service as a non-detached [`Future`] and gives access
 /// to it's handle.
@@ -263,5 +211,16 @@ where
     }
 }
 
-#[cfg(any(feature = "testing", test))]
-pub type StubbedNode = Node<consensus::Stub, network::Stub, storage::Stub>;
+impl<C, N, S> fsm::MigrationManager<C::Node> for migration::Manager<C, N, S>
+where
+    C: Consensus,
+    N: migration::Network<C::Node>,
+    S: migration::StorageImport<N::DataStream> + Clone,
+{
+    fn pull_keyranges(
+        &self,
+        plan: Arc<cluster::keyspace::MigrationPlan<C::Node>>,
+    ) -> impl Future<Output = ()> + Send {
+        migration::Manager::pull_ranges(self, plan)
+    }
+}

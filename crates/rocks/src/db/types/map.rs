@@ -6,16 +6,14 @@ use {
             batch,
             cf::{Column, DbColumn},
             context::{self, UnixTimestampMicros},
-            schema::MapColumn,
             types::common::{iterators, CommonStorage},
         },
         util::serde::serialize,
         Error,
         UnixTimestampSecs,
     },
-    async_trait::async_trait,
     serde::{Deserialize, Serialize},
-    std::{fmt::Debug, hash::Hash},
+    std::{fmt::Debug, future::Future, hash::Hash},
 };
 
 /// Defines `(field, value)` pair.
@@ -32,18 +30,17 @@ impl<F, V> Pair<F, V> {
 }
 
 /// Main interface for map data type.
-#[async_trait]
 pub trait MapStorage<C: Column>: CommonStorage<C> {
     /// Sets the specified `(field, value)` pair for the hash stored at `key`.
     ///
     /// Time complexity: `O(1)`.
-    async fn hset(
+    fn hset(
         &self,
         key: &C::KeyType,
         pair: &Pair<C::SubKeyType, C::ValueType>,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Sets the specified list of `(field, value)` pairs for the hash stored at
     /// `key`.
@@ -52,268 +49,276 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
     /// Additionally, [`hset`] allows to set a TTL on per member basis.
     ///
     /// Time complexity: `O(n)`.
-    async fn hmset(
+    fn hmset(
         &self,
         key: &C::KeyType,
         pairs: &[&Pair<C::SubKeyType, C::ValueType>],
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns the value associated with `field` in the hash stored at `key`.
     ///
     /// Time complexity: `O(1)`.
-    async fn hget(
+    fn hget(
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
-    ) -> Result<Option<C::ValueType>, Error>;
+    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync;
 
     /// Returns if `field` is an existing field in the hash stored at `key`.
     ///
     /// Time complexity: `O(1)`.
-    async fn hexists(&self, key: &C::KeyType, field: &C::SubKeyType) -> Result<bool, Error>;
+    fn hexists(
+        &self,
+        key: &C::KeyType,
+        field: &C::SubKeyType,
+    ) -> impl Future<Output = Result<bool, Error>> + Send + Sync;
 
     /// Removes the specified `field` from the hash stored at `key`.
     ///
     /// Time complexity: `O(1)`.
-    async fn hdel(&self, key: &C::KeyType, field: &C::SubKeyType) -> Result<(), Error>;
+    fn hdel(
+        &self,
+        key: &C::KeyType,
+        field: &C::SubKeyType,
+        timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns all values in the hash stored at `key`.
     ///
     /// Time complexity: `O(n)`, where `n` is the size of hash.
-    async fn hvals(&self, key: &C::KeyType) -> Result<Vec<C::ValueType>, Error>;
+    fn hvals(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Vec<C::ValueType>, Error>> + Send + Sync;
 
     /// Returns all field names in the hash stored at `key`.
     ///
     /// Time complexity: `O(n)`, where `n` is the size of hash.
-    async fn hfields(&self, key: &C::KeyType) -> Result<Vec<C::SubKeyType>, Error>;
+    fn hfields(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Vec<C::SubKeyType>, Error>> + Send + Sync;
 
     /// Returns the set cardinality (number of elements) of the hash stored at
     /// key.
     ///
     /// Time complexity: `O(n)`.
-    async fn hcard(&self, key: &C::KeyType) -> Result<usize, Error>;
+    fn hcard(&self, key: &C::KeyType) -> impl Future<Output = Result<usize, Error>> + Send + Sync;
 
     /// Iterates over the items in the hash stored at `key`, and returns a batch
     /// of items of specified size.
     ///
     /// Also returns a cursor that can be used to retrieve the next batch of
     /// items.
-    async fn hscan(
+    fn hscan(
         &self,
         key: &C::KeyType,
         opts: iterators::ScanOptions<iterators::GenericCursor>,
-    ) -> Result<iterators::ScanResult<C::ValueType>, Error>;
+    ) -> impl Future<Output = Result<iterators::ScanResult<C::ValueType>, Error>> + Send + Sync;
 
     /// Returns the remaining time to live of a map value stored at the given
     /// key.
-    async fn hexp(
+    fn hexp(
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
-    ) -> Result<Option<UnixTimestampSecs>, Error>;
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
 
     /// Set a time to live for a map value stored at the given key. After the
     /// timeout has expired, the value will automatically be deleted. Passing
     /// `None` will remove the current timeout and persist the key.
-    async fn hsetexp(
+    fn hsetexp(
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error>;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }
 
-#[async_trait]
 impl<C: Column> MapStorage<C> for DbColumn<C> {
-    async fn hset(
+    fn hset(
         &self,
         key: &C::KeyType,
         pair: &Pair<C::SubKeyType, C::ValueType>,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = C::ext_key(key, &pair.field)?;
-        let value = serialize(
-            &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                .with_payload(&pair.value, expiration),
-        )?;
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::ext_key(key, &pair.field)?;
+            let value = serialize(&context::MergeOp::set(
+                &pair.value,
+                expiration,
+                update_timestamp,
+            ))?;
 
-        self.backend.merge(C::NAME, key, value).await
+            self.backend.merge(C::NAME, key, value).await
+        }
     }
 
-    async fn hmset(
+    fn hmset(
         &self,
         key: &C::KeyType,
         pairs: &[&Pair<C::SubKeyType, C::ValueType>],
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        // Batch updates as an atomic write operation.
-        let mut batch = batch::WriteBatch::new(self.backend.clone());
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            // Batch updates as an atomic write operation.
+            let mut batch = batch::WriteBatch::new(self.backend.clone());
 
-        for &pair in pairs {
-            let key = C::ext_key(key, &pair.field)?;
-            let value = serialize(
-                &context::MergeOp::<&C::ValueType>::new(update_timestamp)
-                    .with_payload(&pair.value, expiration),
-            )?;
+            for &pair in pairs {
+                let key = C::ext_key(key, &pair.field)?;
+                let value = serialize(&context::MergeOp::set(
+                    &pair.value,
+                    expiration,
+                    update_timestamp,
+                ))?;
 
-            batch.merge(C::NAME, key, value);
+                batch.merge(C::NAME, key, value);
+            }
+
+            self.backend.write_batch(batch)
         }
-
-        self.backend.write_batch(batch)
     }
 
-    async fn hget(
+    fn hget(
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
-    ) -> Result<Option<C::ValueType>, Error> {
-        let ext_key = C::ext_key(key, field)?;
-        let entry = self.backend.get::<C::ValueType>(C::NAME, ext_key).await?;
-        entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync {
+        async move {
+            let ext_key = C::ext_key(key, field)?;
+            let entry = self.backend.get::<C::ValueType>(C::NAME, ext_key).await?;
+            entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+        }
     }
 
-    async fn hexists(&self, key: &C::KeyType, field: &C::SubKeyType) -> Result<bool, Error> {
-        self.hget(key, field).await.map(|v| v.is_some())
+    fn hexists(
+        &self,
+        key: &C::KeyType,
+        field: &C::SubKeyType,
+    ) -> impl Future<Output = Result<bool, Error>> + Send + Sync {
+        async move { self.hget(key, field).await.map(|v| v.is_some()) }
     }
 
-    async fn hdel(&self, key: &C::KeyType, field: &C::SubKeyType) -> Result<(), Error> {
-        let ext_key = C::ext_key(key, field)?;
-        self.backend.delete(C::NAME, ext_key).await
+    fn hdel(
+        &self,
+        key: &C::KeyType,
+        field: &C::SubKeyType,
+        timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::ext_key(key, field)?;
+            let value = serialize(&context::MergeOp::<&C::ValueType>::del(timestamp))?;
+
+            self.backend.merge(C::NAME, key, value).await
+        }
     }
 
-    async fn hvals(&self, key: &C::KeyType) -> Result<Vec<C::ValueType>, Error> {
-        let key = C::storage_key(key)?;
+    fn hvals(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Vec<C::ValueType>, Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
 
-        self.backend
-            .exec_blocking(|b| {
-                let iter = b.prefix_iterator::<C, _>(key);
-                iterators::KeyValueIterator::<C>::new(iter)
-                    .values()
-                    .collect()
-            })
-            .await
+            self.backend
+                .exec_blocking(|b| {
+                    let iter = b.prefix_iterator::<C, _>(key);
+                    iterators::KeyValueIterator::<C>::new(iter)
+                        .values()
+                        .collect()
+                })
+                .await
+        }
     }
 
-    async fn hfields(&self, key: &C::KeyType) -> Result<Vec<C::SubKeyType>, Error> {
-        let key = C::storage_key(key)?;
+    fn hfields(
+        &self,
+        key: &C::KeyType,
+    ) -> impl Future<Output = Result<Vec<C::SubKeyType>, Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
 
-        self.backend
-            .exec_blocking(|b| {
-                let iter = b.prefix_iterator::<C, _>(key);
-                iterators::KeyValueIterator::<C>::new(iter)
-                    .subkeys()
-                    .collect()
-            })
-            .await
+            self.backend
+                .exec_blocking(|b| {
+                    let iter = b.prefix_iterator::<C, _>(key);
+                    iterators::KeyValueIterator::<C>::new(iter)
+                        .subkeys()
+                        .collect()
+                })
+                .await
+        }
     }
 
-    async fn hcard(&self, key: &C::KeyType) -> Result<usize, Error> {
-        let key = C::storage_key(key)?;
+    fn hcard(&self, key: &C::KeyType) -> impl Future<Output = Result<usize, Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
 
-        self.backend
-            .exec_blocking(|b| Ok(b.prefix_iterator::<C, _>(key).count()))
-            .await
+            self.backend
+                .exec_blocking(|b| {
+                    let iter = b.prefix_iterator::<C, _>(key);
+                    let mut count: usize = 0;
+                    let err = iterators::KeyValueIterator::<C>::new(iter)
+                        .values()
+                        .find_map(|res| match res {
+                            Ok(_) => {
+                                count += 1;
+                                None
+                            }
+                            Err(err) => Some(err),
+                        });
+
+                    err.map(Err).unwrap_or_else(|| Ok(count))
+                })
+                .await
+        }
     }
 
-    async fn hscan(
+    fn hscan(
         &self,
         key: &C::KeyType,
         opts: iterators::ScanOptions<iterators::GenericCursor>,
-    ) -> Result<iterators::ScanResult<C::ValueType>, Error> {
-        let key = key.clone();
+    ) -> impl Future<Output = Result<iterators::ScanResult<C::ValueType>, Error>> + Send + Sync
+    {
+        async move {
+            let key = key.clone();
 
-        self.backend
-            .exec_blocking(move |b| {
-                iterators::scan::<C, iterators::CursorAndValue, _>(&b, &key, opts)
-            })
-            .await
+            self.backend
+                .exec_blocking(move |b| {
+                    iterators::scan::<C, iterators::CursorAndValue, _>(&b, &key, opts)
+                })
+                .await
+        }
     }
 
-    async fn hexp(
+    fn hexp(
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
-    ) -> Result<Option<UnixTimestampSecs>, Error> {
-        self.expiration(key, Some(subkey)).await
+    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+        self.expiration(key, Some(subkey))
     }
 
-    async fn hsetexp(
+    fn hsetexp(
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
         expiration: Option<UnixTimestampSecs>,
         update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::ext_key(key, subkey)?;
+            let value = serialize(&context::MergeOp::<C::ValueType>::set_exp(
+                expiration,
+                update_timestamp,
+            ))?;
 
-        let key = C::ext_key(key, subkey)?;
-        let value = serialize(
-            &context::MergeOp::<C::ValueType>::new(update_timestamp).with_expiration(expiration),
-        )?;
-
-        self.backend.merge(C::NAME, key, value).await
-    }
-}
-
-impl DbColumn<MapColumn> {
-    pub(crate) fn hset_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<MapColumn as Column>::KeyType,
-        pair: &Pair<<MapColumn as Column>::SubKeyType, <MapColumn as Column>::ValueType>,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let key = MapColumn::ext_key(key, &pair.field)?;
-        let value = serialize(
-            &context::MergeOp::<&<MapColumn as Column>::ValueType>::new(update_timestamp)
-                .with_payload(&pair.value, expiration),
-        )?;
-
-        batch.merge(MapColumn::NAME, key, value);
-
-        Ok(())
-    }
-
-    pub(crate) fn hdel_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<MapColumn as Column>::KeyType,
-        field: &<MapColumn as Column>::SubKeyType,
-    ) -> Result<(), Error> {
-        let key = MapColumn::ext_key(key, field)?;
-        batch.delete(<MapColumn as Column>::NAME, key);
-        Ok(())
-    }
-
-    pub(crate) fn hsetexp_batched(
-        &self,
-        batch: &mut batch::WriteBatch,
-        key: &<MapColumn as Column>::KeyType,
-        subkey: &<MapColumn as Column>::SubKeyType,
-        expiration: Option<UnixTimestampSecs>,
-        update_timestamp: UnixTimestampMicros,
-    ) -> Result<(), Error> {
-        let expiration = expiration
-            .map(context::TimestampUpdate::Set)
-            .unwrap_or(context::TimestampUpdate::Unset);
-
-        let key = MapColumn::ext_key(key, subkey)?;
-        let value = serialize(
-            &context::MergeOp::<<MapColumn as Column>::ValueType>::new(update_timestamp)
-                .with_expiration(expiration),
-        )?;
-
-        batch.merge(<MapColumn as Column>::NAME, key, value);
-
-        Ok(())
+            self.backend.merge(C::NAME, key, value).await
+        }
     }
 }
 
@@ -323,17 +328,17 @@ mod tests {
         super::*,
         crate::{
             db::{
-                schema::test_types::{TestKey, TestMapValue, TestValue},
+                schema::{
+                    test_types::{TestKey, TestMapValue, TestValue},
+                    MapColumn,
+                },
                 types::common::iterators::ScanResult,
             },
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,
         },
         core::time::Duration,
-        std::{
-            collections::{BTreeSet, HashSet},
-            sync::Arc,
-        },
+        std::collections::{BTreeSet, HashSet},
     };
 
     fn timestamp(added: UnixTimestampSecs) -> UnixTimestampSecs {
@@ -347,7 +352,7 @@ mod tests {
             .with_column_family(MapColumn)
             .build()
             .unwrap();
-        let db: &dyn MapStorage<_> = &rocks_db.column::<MapColumn>().unwrap();
+        let db = &rocks_db.column::<MapColumn>().unwrap();
 
         let key = TestKey::new(42).into();
         let val1 = TestMapValue::generate();
@@ -387,7 +392,9 @@ mod tests {
         );
 
         // Remove non-existent (should have no effect).
-        db.hdel(&key, &val3.field().into()).await.unwrap();
+        db.hdel(&key, &val3.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(
             db.hget(&key, &val1.field().into()).await.unwrap(),
             Some(val1.value().into())
@@ -398,13 +405,17 @@ mod tests {
         );
 
         // Remove messages.
-        db.hdel(&key, &val1.field().into()).await.unwrap();
+        db.hdel(&key, &val1.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
             Some(val2.value().into())
         );
-        db.hdel(&key, &val2.field().into()).await.unwrap();
+        db.hdel(&key, &val2.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
         assert_eq!(db.hget(&key, &val2.field().into()).await.unwrap(), None);
         assert!(db.hvals(&key).await.unwrap().is_empty());
@@ -469,7 +480,7 @@ mod tests {
             .with_column_family(MapColumn)
             .build()
             .unwrap();
-        let db: &dyn MapStorage<_> = &rocks_db.column::<MapColumn>().unwrap();
+        let db = &rocks_db.column::<MapColumn>().unwrap();
 
         // Payload.
         {
@@ -502,6 +513,15 @@ mod tests {
 
             // Update the data with lower timestamp value. It's expected to be ignored.
             db.hset(&key, &val1.clone().into(), None, timestamp1)
+                .await
+                .unwrap();
+            assert_eq!(
+                db.hget(&key, &val1.field().into()).await.unwrap(),
+                Some(val2.value().into())
+            );
+
+            // Remove the data with lower timestamp value. It's expected to be ignored.
+            db.hdel(&key, &val1.field().into(), timestamp1)
                 .await
                 .unwrap();
             assert_eq!(
@@ -563,7 +583,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let db: &dyn MapStorage<_> = &rocks_db.column::<MapColumn>().unwrap();
+        let db = &rocks_db.column::<MapColumn>().unwrap();
 
         let val1 = &TestMapValue::new(TestValue::new("data1"), TestValue::new("data1"));
         let val2 = &TestMapValue::new(TestValue::new("data2"), TestValue::new("data2"));
@@ -604,7 +624,7 @@ mod tests {
             .build()
             .unwrap();
         let db_full = rocks_db.column::<MapColumn>().unwrap();
-        let db: &dyn MapStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key1 = TestKey::new(1).into();
         let key2 = TestKey::new(2).into();
@@ -654,11 +674,11 @@ mod tests {
             .build()
             .unwrap();
         let db_full = rocks_db.column::<MapColumn>().unwrap();
-        let db: &dyn MapStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
-        let db1: Arc<dyn MapStorage<_>> = db_full.clone().into_map_storage();
-        let db2: Arc<dyn MapStorage<_>> = db_full.clone().into_map_storage();
-        let db3: Arc<dyn MapStorage<_>> = db_full.clone().into_map_storage();
+        let db1 = db_full.clone().into_map_storage();
+        let db2 = db_full.clone().into_map_storage();
+        let db3 = db_full.clone().into_map_storage();
 
         const N: usize = 25_000;
 
@@ -713,7 +733,7 @@ mod tests {
             .build()
             .unwrap();
         let db_full = rocks_db.column::<MapColumn>().unwrap();
-        let db: &dyn MapStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key = &TestKey::new(1).into();
 
@@ -756,7 +776,9 @@ mod tests {
         assert_eq!(db.hcard(key).await.unwrap(), 1);
 
         // When set element is removed, cardinality is updated correctly.
-        db.hdel(key, &msg.field().into()).await.unwrap();
+        db.hdel(key, &msg.field().into(), timestamp_micros())
+            .await
+            .unwrap();
         assert_eq!(db.hcard(key).await.unwrap(), 0);
     }
 
@@ -768,7 +790,7 @@ mod tests {
             .build()
             .unwrap();
         let db_full = rocks_db.column::<MapColumn>().unwrap();
-        let db: &dyn MapStorage<_> = &db_full.clone();
+        let db = &db_full.clone();
 
         let key1 = TestKey::new(1).into();
         let key2 = TestKey::new(2).into();

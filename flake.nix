@@ -31,18 +31,18 @@
           clang
         ];
         rustc = {
-          stable = fenixPackages.beta.rustc;
+          stable = fenixPackages.stable.rustc;
           nightly = fenixPackages.minimal.rustc;
         };
         cargo = {
-          stable = fenixPackages.beta.cargo;
+          stable = fenixPackages.stable.cargo;
           nightly = fenixPackages.minimal.cargo;
         };
         rust-std = {
-          stable = fenixPackages.beta.rust-std;
+          stable = fenixPackages.stable.rust-std;
           nightly = fenixPackages.minimal.rust-std;
         };
-        rust-src = fenixPackages.beta.rust-src;
+        rust-src = fenixPackages.stable.rust-src;
         rustfmt = fenixPackages.default.rustfmt;
         clippy = fenixPackages.default.clippy;
       in {

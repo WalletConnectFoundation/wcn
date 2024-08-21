@@ -1,5 +1,6 @@
 use {
     crate::{config::Config, network::rpc, Error, Node},
+    irn::cluster::Consensus,
     metrics_exporter_prometheus::PrometheusHandle,
     std::{future::Future, net::SocketAddr, path::Path, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
@@ -216,11 +217,17 @@ async fn scrape_prometheus(
     node: Node,
     peer_id: libp2p::PeerId,
 ) -> String {
-    if node.id().id == peer_id {
+    if node.id() == &peer_id {
         return handle.render();
     }
 
-    rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, peer_id, ())
+    let cluster = node.consensus().cluster();
+    let Some(addr) = cluster.node(&peer_id).map(|n| &n.addr) else {
+        tracing::warn!(%peer_id, "not in cluster");
+        return String::new();
+    };
+
+    rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, (&peer_id, addr), ())
         .await
         .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrape prometheus metrics"))
         .unwrap_or_default()

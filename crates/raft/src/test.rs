@@ -1,6 +1,6 @@
 use {
     crate::{
-        storage::test::Storage as TestStorage,
+        storage::{self, test::Storage as TestStorage, Snapshot, SnapshotMeta},
         AddMemberRequest,
         AddMemberRpcResult,
         AppendEntriesRequest,
@@ -29,9 +29,9 @@ use {
         VoteRpcResult,
     },
     async_trait::async_trait,
-    futures::{StreamExt, TryFutureExt},
+    futures::TryFutureExt,
     serde::{Deserialize, Serialize},
-    std::{sync::Arc, time::Duration},
+    std::{convert::Infallible, error::Error as StdError, io::Cursor, sync::Arc, time::Duration},
     tokio::{
         sync::{mpsc, oneshot, Mutex},
         time::sleep,
@@ -79,6 +79,37 @@ impl crate::State<C> for State {
         Ok(())
     }
 
+    fn snapshot(&self) -> Result<storage::Snapshot<C>, impl StdError + 'static> {
+        let last_log_id = self.last_applied_log_id();
+        let meta = SnapshotMeta::<C> {
+            last_log_id,
+            last_membership: self.stored_membership().clone(),
+            snapshot_id: last_log_id.map(|id| id.to_string()).unwrap_or_default(),
+        };
+
+        Ok::<_, Infallible>(Snapshot::<C> {
+            meta,
+            snapshot: Box::new(Cursor::new(self.counter.to_be_bytes().into())),
+        })
+    }
+
+    fn install_snapshot(
+        &mut self,
+        meta: &storage::SnapshotMeta<C>,
+        snapshot: Box<Cursor<Vec<u8>>>,
+    ) -> Result<(), impl StdError + Send + 'static> {
+        let data = snapshot.into_inner();
+        assert!(data.len() == 8);
+        let mut bytes = [0; 8];
+        bytes.copy_from_slice(&data);
+
+        self.counter = u64::from_be_bytes(bytes);
+        self.last_applied_log = meta.last_log_id;
+        self.membership = meta.last_membership.clone();
+
+        Ok::<_, Infallible>(())
+    }
+
     /// Returns the [`LogId`] of the last applied [`LogEntry`] to this
     /// [`State`] (if any).
     fn last_applied_log_id(&self) -> Option<LogId<C>> {
@@ -104,16 +135,15 @@ pub struct DummyError;
 #[tokio::test]
 async fn cluster() {
     let network = TestNetwork::new();
-    let storage = TestStorage::default();
 
     cluster_suite(
         [
-            (1, (), network.clone(), storage.clone()),
-            (2, (), network.clone(), storage.clone()),
-            (3, (), network.clone(), storage.clone()),
-            (4, (), network.clone(), storage.clone()),
-            (5, (), network.clone(), storage.clone()),
-            (6, (), network.clone(), storage.clone()),
+            (1, (), network.clone(), TestStorage::default()),
+            (2, (), network.clone(), TestStorage::default()),
+            (3, (), network.clone(), TestStorage::default()),
+            (4, (), network.clone(), TestStorage::default()),
+            (5, (), network.clone(), TestStorage::default()),
+            (6, (), network.clone(), TestStorage::default()),
         ],
         network.clone(),
     )
@@ -134,23 +164,21 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
         ..Default::default()
     };
 
-    let initial_state = State::default();
-
     let run_node = |idx: usize| {
         let node_id = nodes[idx].0;
         // make only first 5 nodes to be bootstrap nodes
         let members = (idx < 5).then_some(members.clone());
         let config = config.clone();
-        let state = initial_state.clone();
         let network = nodes[idx].2.clone();
         let storage = nodes[idx].3.clone();
+        let state = storage.state.clone();
         let sp = server_spawner.clone();
 
         async move {
-            crate::new(node_id, config, members, state, network, storage)
+            crate::new(node_id, config, members, network, storage.clone())
                 .map_ok(|raft| {
                     sp.spawn_server(node_id, raft.clone());
-                    TestNode { raft }
+                    TestNode { raft, state }
                 })
                 .await
         }
@@ -269,18 +297,19 @@ async fn cluster_suite<Sp: ServerSpawner<C> + Clone>(
 
 struct TestNode {
     raft: RaftImpl<C, TestNetwork>,
+    state: Arc<std::sync::Mutex<Option<State>>>,
 }
 
 impl TestNode {
     async fn assert_state(&self, counter: u64) {
         tokio::time::timeout(Duration::from_secs(10), async {
-            let mut updates = self.raft.updates();
             loop {
-                let state = updates.next().await.unwrap();
+                let state = self.state.lock().unwrap().clone();
                 eprintln!("{state:?}");
-                if state.counter == counter {
+                if state.map(|s| s.counter) == Some(counter) {
                     return;
                 }
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
         })
         .await

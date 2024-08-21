@@ -111,15 +111,6 @@ async fn suite() {
             keypair: keypair.clone(),
         };
 
-        for (remote_id, remote_addr, ..) in &peers {
-            if id != remote_id {
-                client
-                    .register_peer(*remote_id, remote_addr.clone())
-                    .await
-                    .unwrap();
-            }
-        }
-
         clients.push(client.clone());
 
         let node = Node {
@@ -136,14 +127,16 @@ async fn suite() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     for (i, ((local_id, ..), client)) in peers.iter().zip(&clients).enumerate() {
-        for (remote_id, ..) in &peers {
+        for (remote_id, remote_addr, _) in &peers {
             if local_id == remote_id {
                 continue;
             }
 
+            let to = (remote_id, remote_addr);
+
             // unary
 
-            let res = UnaryRpc::send(client, *remote_id, "ping".to_string()).await;
+            let res = UnaryRpc::send(client, to, "ping".to_string()).await;
             assert_eq!(res, Ok("pong".to_string()));
 
             let res = UnaryRpc::send(client, AnyPeer, "ping".to_string()).await;
@@ -151,7 +144,7 @@ async fn suite() {
 
             // streaming
 
-            StreamingRpc::send(client, *remote_id, |mut tx, mut rx| async move {
+            StreamingRpc::send(client, to, |mut tx, mut rx| async move {
                 for _ in 0..3 {
                     tx.send("ping".to_string()).await?;
                     assert_eq!(rx.recv_message().await?, "pong".to_string());

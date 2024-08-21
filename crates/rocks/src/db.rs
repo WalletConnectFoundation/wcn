@@ -1,5 +1,7 @@
 //! Interfaces, adapters and utilities for `RocksDB` storage backend.
 
+#![allow(clippy::manual_async_fn)]
+
 use {
     crate::{
         db::{
@@ -10,7 +12,6 @@ use {
     },
     cf::ColumnFamilyName,
     futures_util::{FutureExt, TryFutureExt},
-    schema::seq_num::SeqNumGenerator,
     serde::de::DeserializeOwned,
     std::{
         collections::HashMap,
@@ -42,7 +43,6 @@ const LOG_FILE_NAME: &str = "LOG";
 pub struct RocksBackendInner {
     db: Arc<rocksdb::DB>,
     opts: rocksdb::Options,
-    seq_num_gen: SeqNumGenerator,
     reader: reader::Reader,
 
     // We need to stop log consumer task before shutting down RocksDB, otherwise it hangs
@@ -107,25 +107,6 @@ impl RocksBackend {
             .await
     }
 
-    /// Puts value into a given column family using provided key and value pair.
-    async fn put(
-        &self,
-        cf_name: ColumnFamilyName,
-        key: impl AsRef<[u8]>,
-        value: impl AsRef<[u8]>,
-    ) -> Result<(), Error> {
-        self.db
-            .put_cf(&self.cf_handle(cf_name), key, value)
-            .map_err(Into::into)
-    }
-
-    /// Deletes a value with a provided key from a given column family.
-    async fn delete(&self, cf_name: ColumnFamilyName, key: impl AsRef<[u8]>) -> Result<(), Error> {
-        self.db
-            .delete_cf(&self.cf_handle(cf_name), key)
-            .map_err(Into::into)
-    }
-
     /// Merges changes to the value in a given column family.
     async fn merge(
         &self,
@@ -162,6 +143,13 @@ impl RocksBackend {
         if let Some(right) = right {
             ro.set_iterate_upper_bound(right);
         }
+
+        // Without this if the cf has a prefix extractor and the range is outside a
+        // single prefix the iterator will return nothing.
+        //
+        // https://github.com/facebook/rocksdb/issues/5973#issuecomment-1423795401
+        // https://github.com/facebook/rocksdb/wiki/Prefix-Seek#how-to-ignore-prefix-bloom-filters-in-read
+        ro.set_total_order_seek(true);
 
         self.db
             .iterator_cf_opt(&self.cf_handle(C::NAME), ro, rocksdb::IteratorMode::Start)
@@ -358,7 +346,6 @@ impl RocksDatabaseBuilder {
             &*self.path,
             self.cfs,
         )?);
-        let seq_num_gen = SeqNumGenerator::new();
 
         let log_consumer_handle = tokio::spawn(
             consume_logs(self.path)
@@ -374,7 +361,6 @@ impl RocksDatabaseBuilder {
         let inner = Arc::new(RocksBackendInner {
             db,
             opts,
-            seq_num_gen,
             reader,
             log_consumer_handle: Some(log_consumer_handle),
         });
@@ -579,7 +565,7 @@ mod tests {
             .with_column_family(StringColumn)
             .build()
             .unwrap();
-        let db: &dyn StringStorage<_> = &rocks_db.column::<StringColumn>().unwrap();
+        let db = &rocks_db.column::<StringColumn>().unwrap();
 
         let key = &TestKey::new(42).into();
         let val = &TestValue::new("value1").into();

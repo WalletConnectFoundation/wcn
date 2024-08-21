@@ -8,12 +8,13 @@ use {
     openraft::{ErrorSubject, ErrorVerb, OptionalSend, StorageIOError},
     serde::{Deserialize, Serialize},
     std::{collections::BTreeMap, fmt, io::Cursor, ops::RangeBounds, sync::Arc},
-    tokio::sync::{watch, RwLock},
+    tokio::sync::RwLock,
 };
 
 type StorageError<C> = openraft::StorageError<<C as TypeConfig>::NodeId>;
-type Snapshot<C> = openraft::Snapshot<OpenRaft<C>>;
-type SnapshotMeta<C> = openraft::SnapshotMeta<<C as TypeConfig>::NodeId, <C as TypeConfig>::Node>;
+pub type Snapshot<C> = openraft::Snapshot<OpenRaft<C>>;
+pub type SnapshotMeta<C> =
+    openraft::SnapshotMeta<<C as TypeConfig>::NodeId, <C as TypeConfig>::Node>;
 type LogState<C> = openraft::LogState<OpenRaft<C>>;
 
 /// Persistent raft [`Storage`].
@@ -44,21 +45,18 @@ pub(crate) struct Adapter<C: TypeConfig, S> {
 
     vote: Option<Vote<C>>,
     log: Arc<RwLock<Log<C>>>,
-    state: Arc<watch::Sender<Arc<C::State>>>,
+    state: C::State,
 }
 
 impl<C: TypeConfig, S> Adapter<C, S>
 where
     S: Storage<C>,
 {
-    pub async fn new(
-        mut storage: S,
-        state: Arc<watch::Sender<Arc<C::State>>>,
-    ) -> Result<Self, Error> {
-        if let Some(s) = storage.read_state().await? {
-            state.send_replace(Arc::new(s));
-        };
-
+    pub async fn new(mut storage: S) -> Result<Self, Error> {
+        let state = storage
+            .read_state()
+            .await?
+            .unwrap_or_else(C::State::default);
         let vote = storage.read_vote().await?;
         let log = storage.read_log().await?.unwrap_or_default();
 
@@ -85,34 +83,17 @@ where
         &mut self,
         f: impl FnOnce(&mut C::State),
     ) -> Result<(), StorageError<C>> {
-        self.state.send_modify(|arc| f(Arc::make_mut(arc)));
+        f(&mut self.state);
 
-        let state = (*self.state.borrow()).clone();
-        self.storage.write_state(&*state).await.map_err(|e| {
+        self.storage.write_state(&self.state).await.map_err(|e| {
             StorageIOError::new(ErrorSubject::StateMachine, ErrorVerb::Write, e).into()
         })
     }
 }
 
 fn build_snapshot<C: TypeConfig, St: State<C>>(state: &St) -> Result<Snapshot<C>, StorageError<C>> {
-    let last_log_id = state.last_applied_log_id();
-    let meta = SnapshotMeta::<C> {
-        last_log_id,
-        last_membership: state.stored_membership().clone(),
-        snapshot_id: last_log_id.map(|id| id.to_string()).unwrap_or_default(),
-    };
-
-    let data = postcard::to_allocvec(state).map_err(|e| {
-        StorageIOError::new(
-            ErrorSubject::Snapshot(Some(meta.signature())),
-            ErrorVerb::Read,
-            Error::new(&e),
-        )
-    })?;
-
-    Ok(Snapshot::<C> {
-        meta,
-        snapshot: Box::new(Cursor::new(data)),
+    state.snapshot().map_err(|e| {
+        StorageIOError::new(ErrorSubject::StateMachine, ErrorVerb::Read, Error::new(&e)).into()
     })
 }
 
@@ -159,7 +140,7 @@ where
     async fn last_applied_state(
         &mut self,
     ) -> Result<(Option<LogId<C>>, StoredMembership<C>), StorageError<C>> {
-        let state = self.state.borrow();
+        let state = &self.state;
         Ok((
             state.last_applied_log_id(),
             state.stored_membership().clone(),
@@ -191,22 +172,32 @@ where
         meta: &SnapshotMeta<C>,
         snapshot: Box<Cursor<Vec<u8>>>,
     ) -> Result<(), StorageError<C>> {
-        let data = snapshot.into_inner();
+        let mut state = self.state.clone();
+        let meta = meta.clone();
 
-        let new_state = postcard::from_bytes(data.as_slice()).map_err(|e| {
-            StorageIOError::new(
-                ErrorSubject::Snapshot(Some(meta.signature())),
-                ErrorVerb::Read,
-                Error::new(&e),
-            )
-        })?;
+        let new_state = tokio::task::spawn_blocking(move || {
+            state
+                .install_snapshot(&meta, snapshot)
+                .map_err(|e| {
+                    StorageIOError::<C::NodeId>::new(
+                        ErrorSubject::StateMachine,
+                        ErrorVerb::Write,
+                        Error::new(&e),
+                    )
+                })
+                .map(|_| state)
+        })
+        .await
+        .map_err(|e| {
+            StorageIOError::new(ErrorSubject::StateMachine, ErrorVerb::Write, Error::new(&e))
+        })??;
 
         self.modify_and_write_state(|state| *state = new_state)
             .await
     }
 
     async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<C>>, StorageError<C>> {
-        build_snapshot(&**self.state.borrow()).map(Some)
+        build_snapshot(&self.state).map(Some)
     }
 
     async fn get_log_state(&mut self) -> Result<LogState<C>, StorageError<C>> {
@@ -254,7 +245,7 @@ impl<C: TypeConfig> openraft::RaftLogReader<OpenRaft<C>> for LogReader<C> {
 }
 
 pub struct SnapshotBuilder<State> {
-    state: Arc<watch::Sender<Arc<State>>>,
+    state: State,
 }
 
 #[async_trait]
@@ -262,7 +253,7 @@ impl<C: TypeConfig, St: State<C>> openraft::RaftSnapshotBuilder<OpenRaft<C>>
     for SnapshotBuilder<St>
 {
     async fn build_snapshot(&mut self) -> Result<Snapshot<C>, StorageError<C>> {
-        build_snapshot(&**self.state.borrow())
+        build_snapshot(&self.state)
     }
 }
 
@@ -342,16 +333,17 @@ impl<C: TypeConfig> Log<C> {
 #[cfg(test)]
 pub mod test {
     use {
-        super::{async_trait, watch, Arc, Error, Log, StorageError, Vote},
+        super::{async_trait, Error, Log, StorageError, Vote},
         crate::{
             test::{State, C},
             OpenRaft,
         },
+        std::sync::{Arc, Mutex},
     };
 
     #[derive(Clone, Default)]
     pub struct Storage {
-        state: Option<State>,
+        pub state: Arc<Mutex<Option<State>>>,
         log: Option<Log<C>>,
         vote: Option<Vote<C>>,
     }
@@ -377,11 +369,11 @@ pub mod test {
         }
 
         async fn read_state(&mut self) -> Result<Option<State>, Error> {
-            Ok(self.state.clone())
+            Ok(self.state.lock().unwrap().clone())
         }
 
         async fn write_state(&mut self, state: &State) -> Result<(), Error> {
-            self.state = Some(state.clone());
+            *self.state.lock().unwrap() = Some(state.clone());
             Ok(())
         }
     }
@@ -391,9 +383,7 @@ pub mod test {
     #[async_trait]
     impl openraft::testing::StoreBuilder<OpenRaft<C>, S, S> for Storage {
         async fn build(&self) -> Result<((), S, S), StorageError<C>> {
-            let (tx, _) = watch::channel(Arc::new(State::default()));
-
-            let adapter = super::Adapter::new(self.clone(), Arc::new(tx))
+            let adapter = super::Adapter::new(Storage::default())
                 .await
                 .expect("Adapter::new");
 

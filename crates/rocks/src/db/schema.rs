@@ -1,11 +1,5 @@
 pub use {
-    columns::{
-        InternalHintedOpsColumn,
-        InternalMapColumn,
-        InternalStringColumn,
-        MapColumn,
-        StringColumn,
-    },
+    columns::{InternalMapColumn, InternalStringColumn, MapColumn, StringColumn},
     keys::GenericKey,
 };
 use {
@@ -15,7 +9,6 @@ use {
 
 pub mod columns;
 pub mod keys;
-pub(crate) mod seq_num;
 pub mod test_types;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

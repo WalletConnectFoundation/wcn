@@ -24,7 +24,7 @@ impl WriteBatch {
             .put_cf(&self.backend.cf_handle(cf), key, value)
     }
 
-    pub(crate) fn delete<K>(&mut self, cf: ColumnFamilyName, key: K)
+    pub(crate) fn _delete<K>(&mut self, cf: ColumnFamilyName, key: K)
     where
         K: AsRef<[u8]>,
     {

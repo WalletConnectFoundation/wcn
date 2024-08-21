@@ -19,7 +19,7 @@ const KEY_LEN_SIG_SEED: usize = 32;
 const KEY_LEN_ENCRYPTION: usize = 32;
 const SIG_LEN_ED25519: usize = 64;
 
-#[derive(Debug, thiserror::Error, Clone)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error, Clone)]
 pub enum Error {
     #[error("Invalid key length")]
     KeyLength,

@@ -10,12 +10,12 @@ use {
     quinn::VarInt,
     serde::{Deserialize, Serialize},
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashMap,
         convert::Infallible,
         io,
         net::{SocketAddr, UdpSocket},
         pin::Pin,
-        sync::{Arc, PoisonError},
+        sync::Arc,
         task,
         time::Duration,
     },
@@ -65,7 +65,16 @@ pub struct ClientConfig<H = NoHandshake> {
     pub connection_timeout: Duration,
 }
 
-type OutboundConnectionHandlers<H> = IndexMap<PeerId, outbound::ConnectionHandler<H>>;
+#[derive(Clone, Copy, Debug, Hash)]
+struct ConnectionHandlerKey<'a>(&'a PeerId, &'a Multiaddr);
+
+impl<'a> indexmap::Equivalent<(PeerId, Multiaddr)> for ConnectionHandlerKey<'a> {
+    fn equivalent(&self, key: &(PeerId, Multiaddr)) -> bool {
+        (self.0, self.1) == (&key.0, &key.1)
+    }
+}
+
+type OutboundConnectionHandlers<H> = IndexMap<(PeerId, Multiaddr), outbound::ConnectionHandler<H>>;
 
 /// Network client.
 #[derive(Clone, Debug)]
@@ -97,17 +106,17 @@ impl<H: Handshake> Client<H> {
             .known_peers
             .into_iter()
             .filter_map(|(id, addr)| {
-                (id != local_peer_id).then(|| multiaddr_to_socketaddr(addr).map(|a| (id, a)))
+                (id != local_peer_id).then(|| multiaddr_to_socketaddr(&addr).map(|a| (id, addr, a)))
             })
             .map(|res| {
-                res.map(|(id, addr)| {
+                res.map(|(id, multiaddr, socketaddr)| {
                     let handler = outbound::ConnectionHandler::new(
-                        addr,
+                        socketaddr,
                         endpoint.clone(),
                         cfg.handshake.clone(),
                         cfg.connection_timeout,
                     );
-                    (id, handler)
+                    ((id, multiaddr), handler)
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -124,80 +133,6 @@ impl<H: Handshake> Client<H> {
     /// [`PeerId`] of this [`Client`].
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
-    }
-
-    /// Registers a new peer.
-    pub async fn register_peer(
-        &self,
-        id: PeerId,
-        addr: Multiaddr,
-    ) -> Result<(), RegisterPeerError> {
-        if self.peer_id == id {
-            return Ok(());
-        }
-
-        let addr = multiaddr_to_socketaddr(addr)?;
-
-        self.connection_handlers_mut(|handlers| {
-            handlers
-                .entry(id)
-                .or_insert_with(|| {
-                    outbound::ConnectionHandler::new(
-                        addr,
-                        self.endpoint.clone(),
-                        self.handshake.clone(),
-                        self.connection_timeout,
-                    )
-                })
-                .set_addr(addr)
-        })
-        .await?;
-
-        Ok(())
-    }
-
-    /// Unregisters a peer.
-    pub async fn unregister_peer(&self, id: PeerId) {
-        self.connection_handlers_mut(|handlers| drop(handlers.shift_remove(&id)))
-            .await;
-    }
-
-    /// Returns a list of connected peers.
-    pub async fn peers(&self) -> HashSet<PeerId> {
-        self.connection_handlers
-            .read()
-            .await
-            .keys()
-            .copied()
-            .collect()
-    }
-
-    // ad-hoc "copy-on-write" behaviour, the map changes infrequently and we don't
-    // want to clone it in the hot path.
-    async fn connection_handlers_mut<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce(&mut IndexMap<PeerId, outbound::ConnectionHandler<H>>) -> T,
-    {
-        let mut handlers = self.connection_handlers.write().await;
-        let mut new = (**handlers).clone();
-        let out = f(&mut new);
-        *handlers = Arc::new(new);
-        out
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RegisterPeerError {
-    #[error(transparent)]
-    InvalidMultiaddr(#[from] InvalidMultiaddrError),
-
-    #[error("Poisoned lock")]
-    Lock,
-}
-
-impl<G> From<PoisonError<G>> for RegisterPeerError {
-    fn from(_: PoisonError<G>) -> Self {
-        Self::Lock
     }
 }
 
@@ -224,7 +159,7 @@ pub fn run_server<H: Handshake>(
     server_config.transport = transport_config.clone();
     server_config.migration(false);
 
-    let socket_addr = match multiaddr_to_socketaddr(cfg.addr.clone())? {
+    let socket_addr = match multiaddr_to_socketaddr(&cfg.addr)? {
         SocketAddr::V4(v4) => SocketAddr::new([0, 0, 0, 0].into(), v4.port()),
         SocketAddr::V6(v6) => SocketAddr::new([0, 0, 0, 0, 0, 0, 0, 0].into(), v6.port()),
     };
@@ -256,7 +191,7 @@ pub enum Error {
     InvalidMultiaddr(#[from] InvalidMultiaddrError),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 #[error("{0}: invalid QUIC Multiaddr")]
 pub struct InvalidMultiaddrError(Multiaddr);
 
@@ -441,8 +376,8 @@ where
     }
 }
 
-fn multiaddr_to_socketaddr(addr: Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
-    try_multiaddr_to_socketaddr(&addr).ok_or_else(|| InvalidMultiaddrError(addr))
+fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
+    try_multiaddr_to_socketaddr(addr).ok_or_else(|| InvalidMultiaddrError(addr.clone()))
 }
 
 pub fn socketaddr_to_multiaddr(addr: SocketAddr) -> Multiaddr {

@@ -107,7 +107,7 @@ pub trait Kind: Sized + Clone + 'static {
 
 type NetworkClient = Metered<WithTimeouts<network::Client<Handshake>>>;
 
-#[derive(Debug, thiserror::Error, Clone)]
+#[derive(Debug, Eq, PartialEq, thiserror::Error, Clone)]
 pub enum Error {
     #[error("Network: {0:?}")]
     Network(#[from] outbound::Error),
@@ -119,7 +119,7 @@ pub enum Error {
     Encryption(#[from] super::auth::Error),
 }
 
-type Result<T, E = Error> = std::result::Result<T, E>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl Client {
     pub fn new(cfg: Config) -> Result<Self, network::Error> {

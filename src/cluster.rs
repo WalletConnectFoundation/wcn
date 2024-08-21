@@ -21,16 +21,16 @@ pub struct Node {
 
 impl Node {
     fn validate_constraints(&self, nodes: &cluster::Nodes<Self>) -> Result<(), NodeError> {
-        let err = nodes.iter().find_map(|(_, n)| {
-            if self.id == n.id {
+        let err = nodes.iter().find_map(|(_, node)| {
+            if self.id == node.id {
                 return None;
             }
 
-            match (&self.eth_address, &n.eth_address) {
+            match (&self.eth_address, &node.eth_address) {
                 (Some(my_addr), Some(addr)) if my_addr == addr => {
                     return Some(NodeError::EthAddressConflict {
                         addr: addr.clone(),
-                        node_id: n.id,
+                        node_id: node.id,
                     })
                 }
                 _ => {}

@@ -181,7 +181,6 @@ pub mod rpc {
         #[derive(Clone, Debug, Serialize, Deserialize)]
         pub struct HealthResponse {
             pub node_version: u64,
-            pub eth_address: Option<String>,
         }
 
         pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, HealthResponse>;
@@ -685,7 +684,6 @@ impl<S: StatusReporter> RpcHandler<S> {
                 rpc::Health::handle(stream, |_req| async {
                     rpc::health::HealthResponse {
                         node_version: crate::NODE_VERSION,
-                        eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
                     }
                 })
                 .await

@@ -28,15 +28,13 @@ impl Node {
 
             match (&self.eth_address, &node.eth_address) {
                 (Some(my_addr), Some(addr)) if my_addr == addr => {
-                    return Some(NodeError::EthAddressConflict {
+                    Some(NodeError::EthAddressConflict {
                         addr: addr.clone(),
                         node_id: node.id,
                     })
                 }
-                _ => {}
+                _ => None,
             }
-
-            None
         });
 
         err.map(Err).unwrap_or(Ok(()))

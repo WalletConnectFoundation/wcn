@@ -74,8 +74,6 @@ pub struct Set {
     pub key: Key,
     pub value: Value,
     pub expiration: UnixTimestampSecs,
-
-    #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
@@ -91,8 +89,6 @@ pub struct SetVal {
     #[as_ref]
     pub key: Key,
     pub value: Value,
-
-    #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
@@ -135,8 +131,6 @@ pub struct SetExp {
     #[as_ref]
     pub key: Key,
     pub expiration: UnixTimestampSecs,
-
-    #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
@@ -168,8 +162,6 @@ pub struct HSet {
     pub field: Field,
     pub value: Value,
     pub expiration: UnixTimestampSecs,
-
-    #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
@@ -186,8 +178,6 @@ pub struct HSetVal {
     pub key: Key,
     pub field: Field,
     pub value: Value,
-
-    #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
@@ -253,8 +243,6 @@ pub struct HSetExp {
     pub key: Key,
     pub field: Field,
     pub expiration: UnixTimestampSecs,
-
-    #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 

@@ -105,12 +105,14 @@ pub mod rpc {
 
         pub type Get = Rpc<{ rpc::id(b"r_get") }, storage::Get>;
         pub type Set = Rpc<{ rpc::id(b"r_set") }, storage::Set>;
+        pub type SetVal = Rpc<{ rpc::id(b"r_set_val") }, storage::SetVal>;
         pub type Del = Rpc<{ rpc::id(b"r_del") }, storage::Del>;
         pub type GetExp = Rpc<{ rpc::id(b"r_get_exp") }, storage::GetExp>;
         pub type SetExp = Rpc<{ rpc::id(b"r_set_exp") }, storage::SetExp>;
 
         pub type HGet = Rpc<{ rpc::id(b"r_hget") }, storage::HGet>;
         pub type HSet = Rpc<{ rpc::id(b"r_hset") }, storage::HSet>;
+        pub type HSetVal = Rpc<{ rpc::id(b"r_hset_val") }, storage::HSetVal>;
         pub type HDel = Rpc<{ rpc::id(b"r_hdel") }, storage::HDel>;
         pub type HGetExp = Rpc<{ rpc::id(b"r_hget_exp") }, storage::HGetExp>;
         pub type HSetExp = Rpc<{ rpc::id(b"r_hset_exp") }, storage::HSetExp>;
@@ -345,16 +347,30 @@ impl<S: StatusReporter> RpcHandler<S> {
                         key: prepare_key(req.key, conn_info)?,
                     };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                    coordinator
+                        .replicate(client_id, op)
+                        .map(api_result)
+                        .await
+                        .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
                 })
                 .await
             }
             api::rpc::Set::ID => {
                 api::rpc::Set::handle(stream, |req| async move {
-                    let op = storage::Set {
+                    if let Some(expiration) = req.expiration {
+                        let op = storage::Set {
+                            key: prepare_key(req.key, conn_info)?,
+                            value: req.value,
+                            expiration,
+                            version: timestamp_micros(),
+                        };
+
+                        return coordinator.replicate(client_id, op).map(api_result).await;
+                    }
+
+                    let op = storage::SetVal {
                         key: prepare_key(req.key, conn_info)?,
                         value: req.value,
-                        expiration: req.expiration,
                         version: timestamp_micros(),
                     };
 
@@ -385,9 +401,16 @@ impl<S: StatusReporter> RpcHandler<S> {
             }
             api::rpc::SetExp::ID => {
                 api::rpc::SetExp::handle(stream, |req| async move {
+                    let Some(expiration) = req.expiration else {
+                        return Err(api::Error::Internal(api::InternalError {
+                            code: "invalid_request".into(),
+                            message: "`None` expiration is no longer allowed".into(),
+                        }));
+                    };
+
                     let op = storage::SetExp {
                         key: prepare_key(req.key, conn_info)?,
-                        expiration: req.expiration,
+                        expiration,
                         version: timestamp_micros(),
                     };
 
@@ -402,17 +425,32 @@ impl<S: StatusReporter> RpcHandler<S> {
                         field: req.field,
                     };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                    coordinator
+                        .replicate(client_id, op)
+                        .map(api_result)
+                        .await
+                        .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
                 })
                 .await
             }
             api::rpc::HSet::ID => {
                 api::rpc::HSet::handle(stream, |req| async move {
-                    let op = storage::HSet {
+                    if let Some(expiration) = req.expiration {
+                        let op = storage::HSet {
+                            key: prepare_key(req.key, conn_info)?,
+                            field: req.field,
+                            value: req.value,
+                            expiration,
+                            version: timestamp_micros(),
+                        };
+
+                        return coordinator.replicate(client_id, op).map(api_result).await;
+                    }
+
+                    let op = storage::HSetVal {
                         key: prepare_key(req.key, conn_info)?,
                         field: req.field,
                         value: req.value,
-                        expiration: req.expiration,
                         version: timestamp_micros(),
                     };
 
@@ -445,10 +483,17 @@ impl<S: StatusReporter> RpcHandler<S> {
             }
             api::rpc::HSetExp::ID => {
                 api::rpc::HSetExp::handle(stream, |req| async move {
+                    let Some(expiration) = req.expiration else {
+                        return Err(api::Error::Internal(api::InternalError {
+                            code: "invalid_request".into(),
+                            message: "`None` expiration is no longer allowed".into(),
+                        }));
+                    };
+
                     let op = storage::HSetExp {
                         key: prepare_key(req.key, conn_info)?,
                         field: req.field,
-                        expiration: req.expiration,
+                        expiration,
                         version: timestamp_micros(),
                     };
 
@@ -591,6 +636,12 @@ impl<S: StatusReporter> RpcHandler<S> {
                 })
                 .await
             }
+            rpc::replica::SetVal::ID => {
+                rpc::replica::SetVal::handle(stream, |req| {
+                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                })
+                .await
+            }
             rpc::replica::Del::ID => {
                 rpc::replica::Del::handle(stream, |req| {
                     replica.handle_replication(peer_id, req.operation, req.keyspace_version)
@@ -617,6 +668,12 @@ impl<S: StatusReporter> RpcHandler<S> {
             }
             rpc::replica::HSet::ID => {
                 rpc::replica::HSet::handle(stream, |req| {
+                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                })
+                .await
+            }
+            rpc::replica::HSetVal::ID => {
+                rpc::replica::HSetVal::handle(stream, |req| {
                     replica.handle_replication(peer_id, req.operation, req.keyspace_version)
                 })
                 .await
@@ -1163,6 +1220,10 @@ impl MapRpc for storage::Set {
     type Rpc = rpc::replica::Set;
 }
 
+impl MapRpc for storage::SetVal {
+    type Rpc = rpc::replica::SetVal;
+}
+
 impl MapRpc for storage::Del {
     type Rpc = rpc::replica::Del;
 }
@@ -1181,6 +1242,10 @@ impl MapRpc for storage::HGet {
 
 impl MapRpc for storage::HSet {
     type Rpc = rpc::replica::HSet;
+}
+
+impl MapRpc for storage::HSetVal {
+    type Rpc = rpc::replica::HSetVal;
 }
 
 impl MapRpc for storage::HDel {

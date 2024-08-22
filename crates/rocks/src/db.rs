@@ -548,7 +548,7 @@ mod tests {
             },
             types::StringStorage,
         },
-        util::{db_path::DBPath, timestamp_micros},
+        util::{db_path::DBPath, timestamp_micros, timestamp_secs},
         Error,
         RocksDatabaseBuilder,
         UnixTimestampSecs,
@@ -560,6 +560,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
     async fn op_responses() {
+        let expiration = timestamp_secs() + 600;
         let path = DBPath::new("op_responses");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -575,7 +576,7 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Set expiration to non-existent data.
-            db.setexp(key, Some(timestamp(30)), timestamp_micros())
+            db.setexp(key, timestamp(30), timestamp_micros())
                 .await
                 .unwrap();
             assert_eq!(db.get(key).await.unwrap(), None);
@@ -583,12 +584,13 @@ mod tests {
             // Expiration from non-existent keys return an error.
             assert!(matches!(db.exp(key).await, Err(Error::EntryNotFound)));
 
-            // Should return `None` when the key does not have an expiration.
-            db.set(key, val, None, timestamp_micros()).await.unwrap();
-            assert!(matches!(db.exp(key).await, Ok(None)));
+            db.set(key, val, expiration, timestamp_micros())
+                .await
+                .unwrap();
+            assert_eq!(db.exp(key).await, Ok(expiration));
 
             // Should return proper TTL if set for an existing key.
-            let expiration = Some(timestamp(30));
+            let expiration = timestamp(30);
             db.setexp(key, expiration, timestamp_micros())
                 .await
                 .unwrap();

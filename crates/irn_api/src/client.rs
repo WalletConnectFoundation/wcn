@@ -346,18 +346,13 @@ impl<K: Kind> Client<K> {
             .transpose()
     }
 
-    pub async fn set(
-        &self,
-        key: Key,
-        value: Value,
-        expiration: Option<UnixTimestampSecs>,
-    ) -> Result<()> {
+    pub async fn set(&self, key: Key, value: Value, expiration: UnixTimestampSecs) -> Result<()> {
         let value = self.try_seal(&key.namespace, value)?;
 
         let op = super::Set {
             key,
             value,
-            expiration,
+            expiration: Some(expiration),
         };
 
         self.exec(rpc::Set::send_owned, op).await
@@ -369,10 +364,12 @@ impl<K: Kind> Client<K> {
         self.exec(rpc::Del::send_owned, op).await
     }
 
-    pub async fn get_exp(&self, key: Key) -> Result<Option<UnixTimestampSecs>> {
+    pub async fn get_exp(&self, key: Key) -> Result<UnixTimestampSecs> {
         let op = super::GetExp { key };
 
-        self.exec(rpc::GetExp::send_owned, op).await
+        self.exec(rpc::GetExp::send_owned, op)
+            .await?
+            .ok_or_else(|| Error::Api(super::Error::NotFound))
     }
 
     pub async fn set_exp(&self, key: Key, expiration: Option<UnixTimestampSecs>) -> Result<()> {
@@ -396,7 +393,7 @@ impl<K: Kind> Client<K> {
         key: Key,
         field: Field,
         value: Value,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
     ) -> Result<()> {
         let value = self.try_seal(&key.namespace, value)?;
 
@@ -404,7 +401,7 @@ impl<K: Kind> Client<K> {
             key,
             field,
             value,
-            expiration,
+            expiration: Some(expiration),
         };
 
         self.exec(rpc::HSet::send_owned, op).await
@@ -416,10 +413,12 @@ impl<K: Kind> Client<K> {
         self.exec(rpc::HDel::send_owned, op).await
     }
 
-    pub async fn hget_exp(&self, key: Key, field: Field) -> Result<Option<UnixTimestampSecs>> {
+    pub async fn hget_exp(&self, key: Key, field: Field) -> Result<UnixTimestampSecs> {
         let op = super::HGetExp { key, field };
 
-        self.exec(rpc::HGetExp::send_owned, op).await
+        self.exec(rpc::HGetExp::send_owned, op)
+            .await?
+            .ok_or_else(|| Error::Api(super::Error::NotFound))
     }
 
     pub async fn hset_exp(

@@ -24,16 +24,26 @@ where
     fn get(
         &self,
         key: &C::KeyType,
-    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync;
 
-    /// Sets value for a provided key.
+    /// Sets value and expiration for a provided key.
     ///
     /// Time complexity: `O(1)`.
     fn set(
         &self,
         key: &C::KeyType,
         value: &C::ValueType,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+
+    /// Sets value for a provided key (only if the value already exists).
+    ///
+    /// Time complexity: `O(1)`.
+    fn set_val(
+        &self,
+        key: &C::KeyType,
+        value: &C::ValueType,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
@@ -50,7 +60,7 @@ where
     fn exp(
         &self,
         key: &C::KeyType,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync;
 
     /// Set a timeout on key. After the timeout has expired, the key will
     /// automatically be deleted. Passing `None` will remove the current timeout
@@ -58,7 +68,7 @@ where
     fn setexp(
         &self,
         key: &C::KeyType,
-        expiry: Option<UnixTimestampSecs>,
+        expiry: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }
@@ -67,11 +77,16 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
     fn get(
         &self,
         key: &C::KeyType,
-    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync {
+    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync
+    {
         async {
             let key = C::storage_key(key)?;
-            let entry = self.backend.get::<C::ValueType>(C::NAME, key).await?;
-            entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+            let Some(data) = self.backend.get::<C::ValueType>(C::NAME, key).await? else {
+                return Ok(None);
+            };
+
+            let exp = data.expiration_timestamp();
+            Ok(data.into_payload().map(|value| (value, exp)))
         }
     }
 
@@ -79,12 +94,26 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         value: &C::ValueType,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
             let key = C::storage_key(key)?;
             let value = serialize(&context::MergeOp::set(value, expiration, update_timestamp))?;
+
+            self.backend.merge(C::NAME, key, value).await
+        }
+    }
+
+    fn set_val(
+        &self,
+        key: &C::KeyType,
+        value: &C::ValueType,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::storage_key(key)?;
+            let value = serialize(&context::MergeOp::set_val(value, update_timestamp))?;
 
             self.backend.merge(C::NAME, key, value).await
         }
@@ -105,14 +134,14 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
     fn exp(
         &self,
         key: &C::KeyType,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync {
         self.expiration(key, None)
     }
 
     async fn setexp(
         &self,
         key: &C::KeyType,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> Result<(), Error> {
         let key = C::storage_key(key)?;
@@ -148,6 +177,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
     async fn basic_ops() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("string_basic_ops");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -163,15 +194,17 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Add data.
-            db.set(key, val, None, timestamp_micros()).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val.clone()));
+            db.set(key, val, expiration, timestamp_micros())
+                .await
+                .unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some((val.clone(), expiration)));
 
             // Update data.
             let val_upd = TestValue::new("updated value").into();
-            db.set(key, &val_upd, None, timestamp_micros())
+            db.set(key, &val_upd, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val_upd));
+            assert_eq!(db.get(key).await.unwrap(), Some((val_upd, expiration)));
 
             // Remove data.
             db.del(key, timestamp_micros()).await.unwrap();
@@ -186,23 +219,26 @@ mod tests {
             let res = db.exp(key).await;
             assert!(matches!(res, Err(Error::EntryNotFound)));
 
-            // No TTL.
-            db.set(key, val, None, timestamp_micros()).await.unwrap();
+            db.set(key, val, expiration, timestamp_micros())
+                .await
+                .unwrap();
             let res = db.exp(key).await;
-            assert!(matches!(res, Ok(None)));
+            assert_eq!(res, Ok(expiration));
 
             // Set TTL to 5 sec.
             let expiration = timestamp(5);
-            db.setexp(key, Some(expiration), timestamp_micros())
+            db.setexp(key, expiration, timestamp_micros())
                 .await
                 .unwrap();
             let ttl = db.exp(key).await.unwrap();
-            assert_eq!(ttl, Some(expiration));
+            assert_eq!(ttl, expiration);
         }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
     async fn modification_timetsamp() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("string_modification_timetsamp");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -223,20 +259,20 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Add data.
-            db.set(key, val1, None, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val1.clone()));
+            db.set(key, val1, expiration, timestamp1).await.unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some((val1.clone(), expiration)));
 
             // Update the data with higher timestamp value. It's expected to succeed.
-            db.set(key, val2, None, timestamp2).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
+            db.set(key, val2, expiration, timestamp2).await.unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some((val2.clone(), expiration)));
 
             // Update the data with lower timestamp value. It's expected to be ignored.
-            db.set(key, val1, None, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
+            db.set(key, val1, expiration, timestamp1).await.unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some((val2.clone(), expiration)));
 
             // Delete the data with lower timestamp value. It's expected to be ignored.
             db.del(key, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val2.clone()));
+            assert_eq!(db.get(key).await.unwrap(), Some((val2.clone(), expiration)));
         }
 
         // Expiry.
@@ -252,22 +288,24 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Add data.
-            db.set(key, val, Some(expiry1), timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some(val.clone()));
-            assert_eq!(db.exp(key).await.unwrap(), Some(expiry1));
+            db.set(key, val, expiry1, timestamp1).await.unwrap();
+            assert_eq!(db.get(key).await.unwrap(), Some((val.clone(), expiry1)));
+            assert_eq!(db.exp(key).await.unwrap(), expiry1);
 
             // Update the data with higher timestamp value. It's expected to succeed.
-            db.setexp(key, Some(expiry2), timestamp2).await.unwrap();
-            assert_eq!(db.exp(key).await.unwrap(), Some(expiry2));
+            db.setexp(key, expiry2, timestamp2).await.unwrap();
+            assert_eq!(db.exp(key).await.unwrap(), expiry2);
 
             // Update the data with lower timestamp value. It's expected to be ignored.
-            db.setexp(key, Some(expiry1), timestamp1).await.unwrap();
-            assert_eq!(db.exp(key).await.unwrap(), Some(expiry2));
+            db.setexp(key, expiry1, timestamp1).await.unwrap();
+            assert_eq!(db.exp(key).await.unwrap(), expiry2);
         }
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn multithreaded() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("string_multithreaded");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -284,14 +322,18 @@ mod tests {
             for i in (0..N).step_by(2) {
                 let key = &TestKey::new(i as u64).into();
                 let val = &TestValue::new(format!("value_{i}")).into();
-                db1.set(key, val, None, timestamp_micros()).await.unwrap();
+                db1.set(key, val, expiration, timestamp_micros())
+                    .await
+                    .unwrap();
             }
         });
         let h2 = tokio::spawn(async move {
             for i in (1..N).step_by(2) {
                 let key = &TestKey::new(i as u64).into();
                 let val = TestValue::new(format!("value_{i}")).into();
-                db2.set(key, &val, None, timestamp_micros()).await.unwrap();
+                db2.set(key, &val, expiration, timestamp_micros())
+                    .await
+                    .unwrap();
             }
         });
         futures::future::join_all(vec![h1, h2]).await;
@@ -299,12 +341,14 @@ mod tests {
         for i in 0..N {
             let key = &TestKey::new(i as u64).into();
             let val = TestValue::new(format!("value_{i}")).into();
-            assert_eq!(db.get(key).await.unwrap(), Some(val));
+            assert_eq!(db.get(key).await.unwrap(), Some((val, expiration)));
         }
     }
 
     #[test(tokio::test(flavor = "multi_thread"))]
     async fn expired_keys_removed() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("string_expired_keys_removed");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -319,10 +363,12 @@ mod tests {
         let key1 = &TestKey::new(1).into();
         let key2 = &TestKey::new(2).into();
         let val = TestValue::new("value").into();
-        db.set(key1, &val, Some(timestamp(1)), timestamp_micros())
+        db.set(key1, &val, timestamp(1), timestamp_micros())
             .await
             .unwrap();
-        db.set(key2, &val, None, timestamp_micros()).await.unwrap();
+        db.set(key2, &val, expiration, timestamp_micros())
+            .await
+            .unwrap();
 
         // Trigger merge.
         db_full.compact();
@@ -350,6 +396,8 @@ mod tests {
 
     #[test(tokio::test(flavor = "multi_thread"))]
     async fn expired_keys_not_returned() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("string_expired_keys_removed");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -362,10 +410,12 @@ mod tests {
         let key1 = &TestKey::new(1).into();
         let key2 = &TestKey::new(2).into();
         let val = TestValue::new("value").into();
-        db.set(key1, &val, Some(timestamp(1)), timestamp_micros())
+        db.set(key1, &val, timestamp(1), timestamp_micros())
             .await
             .unwrap();
-        db.set(key2, &val, None, timestamp_micros()).await.unwrap();
+        db.set(key2, &val, expiration, timestamp_micros())
+            .await
+            .unwrap();
 
         thread::sleep(Duration::from_secs(2));
 
@@ -375,6 +425,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn multiple_cfs() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("string_multiple_cfs");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(StringColumn)
@@ -395,28 +447,50 @@ mod tests {
             assert_eq!(cf2.get(key).await.unwrap(), None);
 
             // Add different values under the same key in different column families.
-            cf1.set(key, &val1, None, timestamp_micros()).await.unwrap();
-            assert_eq!(cf1.get(key).await.unwrap(), Some(val1.clone()));
+            cf1.set(key, &val1, expiration, timestamp_micros())
+                .await
+                .unwrap();
+            assert_eq!(
+                cf1.get(key).await.unwrap(),
+                Some((val1.clone(), expiration))
+            );
             assert_eq!(cf2.get(key).await.unwrap(), None); // db1 update only!
-            cf2.set(key, &val2, None, timestamp_micros()).await.unwrap();
-            assert_eq!(cf1.get(key).await.unwrap(), Some(val1.clone())); // still val1
-            assert_eq!(cf2.get(key).await.unwrap(), Some(val2.clone()));
+            cf2.set(key, &val2, expiration, timestamp_micros())
+                .await
+                .unwrap();
+            assert_eq!(
+                cf1.get(key).await.unwrap(),
+                Some((val1.clone(), expiration))
+            ); // still val1
+            assert_eq!(
+                cf2.get(key).await.unwrap(),
+                Some((val2.clone(), expiration))
+            );
 
             // Update data.
             let updated_val = TestValue::new("updated value").into();
-            cf1.set(key, &updated_val, None, timestamp_micros())
+            cf1.set(key, &updated_val, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            cf2.set(key, &updated_val, None, timestamp_micros())
+            cf2.set(key, &updated_val, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            assert_eq!(cf1.get(key).await.unwrap(), Some(updated_val.clone()));
-            assert_eq!(cf2.get(key).await.unwrap(), Some(updated_val.clone()));
+            assert_eq!(
+                cf1.get(key).await.unwrap(),
+                Some((updated_val.clone(), expiration))
+            );
+            assert_eq!(
+                cf2.get(key).await.unwrap(),
+                Some((updated_val.clone(), expiration))
+            );
 
             // Remove data.
             cf1.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf1.get(key).await.unwrap(), None);
-            assert_eq!(cf2.get(key).await.unwrap(), Some(updated_val.clone())); // still exists
+            assert_eq!(
+                cf2.get(key).await.unwrap(),
+                Some((updated_val.clone(), expiration))
+            ); // still exists
             cf2.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf2.get(key).await.unwrap(), None);
         }

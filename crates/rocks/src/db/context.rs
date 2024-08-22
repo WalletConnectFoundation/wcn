@@ -3,6 +3,8 @@
 
 use {
     super::compaction::Merge,
+    crate::util::timestamp_secs,
+    derive_more::From,
     serde::{Deserialize, Serialize},
 };
 
@@ -48,33 +50,59 @@ impl<T> From<Option<T>> for Payload<T> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MergeOp<T> {
     kind: MergeOpKind<T>,
-    expires: Option<UnixTimestampSecs>,
     timestamp: UnixTimestampMicros,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+struct MergeSet<T> {
+    value: T,
+    expiration: UnixTimestampSecs,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MergeSetVal<T> {
+    value: T,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MergeSetExp {
+    expiration: UnixTimestampSecs,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MergeDel {
+    expiration: UnixTimestampSecs,
+}
+
+#[derive(Debug, From, Serialize, Deserialize)]
 enum MergeOpKind<T> {
-    Set(T),
-    SetExp,
-    #[default]
-    Del,
+    Set(MergeSet<T>),
+    SetVal(MergeSetVal<T>),
+    SetExp(MergeSetExp),
+    Del(MergeDel),
 }
 
 // Max TTL currently required by the business logic, with extra time leeway.
 const MAX_TTL_SECS: u64 = 30 * 86400 + 120;
 
 impl<T> MergeOp<T> {
-    fn new(
-        kind: MergeOpKind<T>,
-        expires: Option<UnixTimestampSecs>,
-        timestamp: UnixTimestampMicros,
-    ) -> Self {
+    fn new(kind: impl Into<MergeOpKind<T>>, timestamp: UnixTimestampMicros) -> Self {
+        use MergeOpKind as Kind;
+
         const TIME_LEEWAY_MICROS: u64 = 120 * 1000 * 1000;
         let now = crate::util::timestamp_micros();
 
         if timestamp > now + TIME_LEEWAY_MICROS {
             tracing::warn!(now, timestamp, "invalid merge op timestamp");
         }
+
+        let kind = kind.into();
+        let expires = match &kind {
+            Kind::Set(set) => Some(set.expiration),
+            Kind::SetExp(set_exp) => Some(set_exp.expiration),
+            Kind::Del(del) => Some(del.expiration),
+            Kind::SetVal(_) => None,
+        };
 
         if let Some(expiration) = expires {
             let now = crate::util::timestamp_secs();
@@ -84,37 +112,38 @@ impl<T> MergeOp<T> {
             }
         }
 
-        Self {
-            kind,
-            expires,
-            timestamp,
-        }
+        Self { kind, timestamp }
     }
 
-    pub fn set(
-        value: T,
-        expiration: Option<UnixTimestampSecs>,
-        timestamp: UnixTimestampMicros,
-    ) -> Self {
-        Self::new(MergeOpKind::Set(value), expiration, timestamp)
+    pub fn set(value: T, expiration: UnixTimestampSecs, timestamp: UnixTimestampMicros) -> Self {
+        Self::new(MergeSet { value, expiration }, timestamp)
     }
 
-    pub fn set_exp(expiration: Option<UnixTimestampSecs>, timestamp: UnixTimestampMicros) -> Self {
-        Self::new(MergeOpKind::SetExp, expiration, timestamp)
+    pub fn set_val(value: T, timestamp: UnixTimestampMicros) -> Self {
+        Self::new(MergeSetVal { value }, timestamp)
+    }
+
+    pub fn set_exp(expiration: UnixTimestampSecs, timestamp: UnixTimestampMicros) -> Self {
+        Self::new(MergeSetExp { expiration }, timestamp)
     }
 
     pub fn del(timestamp: UnixTimestampMicros) -> Self {
         // For how long the mark of the deleted record should stay in the database.
         // We need it to properly merge concurrent updates/deletes during data
         // migrations.
-        const LINGER_SECS: UnixTimestampSecs = 24 * 60 * 60; // a day
+        const LINGER_SECS: u64 = 24 * 60 * 60; // a day
 
-        Self::new(MergeOpKind::Del, Some(LINGER_SECS), timestamp)
+        Self::new(
+            MergeDel {
+                expiration: timestamp_secs() + LINGER_SECS,
+            },
+            timestamp,
+        )
     }
 }
 
 impl<T> Merge<Self> for MergeOp<T> {
-    fn merge(&mut self, input: Self) {
+    fn merge(mut self, input: Self) -> Self {
         use MergeOpKind as Kind;
 
         if input.timestamp <= self.timestamp {
@@ -124,21 +153,43 @@ impl<T> Merge<Self> for MergeOp<T> {
                 other_timestamp = input.timestamp,
                 "ignoring merge operand. invalid timestamp"
             );
-            return;
+            return self;
         }
 
-        self.kind = match (std::mem::take(&mut self.kind), input.kind) {
+        self.kind = match (self.kind, input.kind) {
             (_, set @ Kind::Set(_)) => set,
-            (_, del @ Kind::Del) => del,
-            (set @ Kind::Set(_), Kind::SetExp) => set,
-            (set_exp @ Kind::SetExp, Kind::SetExp) => set_exp,
-            (Kind::Del, Kind::SetExp) => {
-                return;
+            (_, del @ Kind::Del(_)) => del,
+
+            (Kind::SetVal(_), set_val @ Kind::SetVal(_)) => set_val,
+            (Kind::SetExp(_), set_exp @ Kind::SetExp(_)) => set_exp,
+
+            (Kind::Set(set), Kind::SetVal(set_val)) => MergeSet {
+                value: set_val.value,
+                expiration: set.expiration,
             }
+            .into(),
+            (Kind::Set(set), Kind::SetExp(set_exp)) => MergeSet {
+                value: set.value,
+                expiration: set_exp.expiration,
+            }
+            .into(),
+
+            (Kind::SetVal(set_val), Kind::SetExp(set_exp)) => MergeSet {
+                value: set_val.value,
+                expiration: set_exp.expiration,
+            }
+            .into(),
+            (Kind::SetExp(set_exp), Kind::SetVal(set_val)) => MergeSet {
+                value: set_val.value,
+                expiration: set_exp.expiration,
+            }
+            .into(),
+
+            (del @ Kind::Del(_), Kind::SetVal(_) | Kind::SetExp(_)) => del,
         };
 
-        self.expires = input.expires;
         self.timestamp = input.timestamp;
+        self
     }
 }
 
@@ -153,7 +204,7 @@ pub struct DataContext<T> {
     /// most operations involving reading.
     payload: Payload<T>,
     /// Unix-timestamp (in seconds) with expiration time.
-    expires: Option<UnixTimestampSecs>,
+    expires: UnixTimestampSecs,
     /// Unix-timestamp (in microseconds) of last modified time.
     updated: Option<UnixTimestampMicros>,
     /// Unix-timestamp (in microseconds) of entry creation time.
@@ -177,16 +228,14 @@ impl<T> DataContext<T> {
     }
 
     /// Returns expiration timestamp (in seconds), if it is set for the object.
-    pub fn expiration_timestamp(&self) -> Option<UnixTimestampSecs> {
+    pub fn expiration_timestamp(&self) -> UnixTimestampSecs {
         self.expires
     }
 
     /// Returns `true` if expiration time is set and reached, so the object is
     /// considered expired.
     pub fn expired(&self) -> bool {
-        self.expires.map_or(false, |expiry_time| {
-            expiry_time <= crate::util::timestamp_secs()
-        })
+        self.expires <= crate::util::timestamp_secs()
     }
 
     /// Returns modification timestamp (in milliseconds), if it is set for the
@@ -203,7 +252,7 @@ impl<T> DataContext<T> {
 
 /// Merges changes from the specified merge operation.
 impl<T> Merge<MergeOp<T>> for DataContext<T> {
-    fn merge(&mut self, op: MergeOp<T>) {
+    fn merge(mut self, op: MergeOp<T>) -> Self {
         use MergeOpKind as Kind;
 
         let updated_timestamp = self.updated.unwrap_or(self.created);
@@ -215,16 +264,23 @@ impl<T> Merge<MergeOp<T>> for DataContext<T> {
                 other_timestamp = op.timestamp,
                 "ignoring data context merge. invalid timestamp"
             );
-            return;
+            return self;
         }
 
         match op.kind {
-            Kind::Set(value) => self.payload = Payload::Some(value),
-            Kind::SetExp => {}
-            Kind::Del => self.payload = Payload::None,
+            Kind::Set(set) => {
+                self.payload = Payload::Some(set.value);
+                self.expires = set.expiration;
+            }
+            Kind::SetVal(set_val) => self.payload = Payload::Some(set_val.value),
+            Kind::SetExp(set_exp) => self.expires = set_exp.expiration,
+            Kind::Del(del) => {
+                self.payload = Payload::None;
+                self.expires = del.expiration;
+            }
         };
 
-        self.expires = op.expires;
         self.updated = Some(op.timestamp);
+        self
     }
 }

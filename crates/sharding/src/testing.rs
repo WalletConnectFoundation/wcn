@@ -2,24 +2,23 @@ use {
     crate::{Keyspace, ShardId},
     std::{
         collections::{HashMap, HashSet},
+        fmt,
         hash::Hash,
     },
 };
 
 impl<N, const RF: usize> Keyspace<N, RF>
 where
-    N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd + 'static,
+    N: Copy + fmt::Debug + Default + Hash + Eq + PartialEq + Ord + PartialOrd + 'static,
 {
-    pub fn assert_variance_and_stability(
-        &self,
-        old_keyspace: &Self,
-        expected_variance: &ExpectedDistributionVariance,
-    ) {
-        let nodes: HashSet<_> = self.shards().flat_map(|(_, id)| id).collect();
-        let old_nodes: HashSet<_> = old_keyspace.shards().flat_map(|(_, id)| id).collect();
-
-        println!();
-
+    /// Asserts that the `min/max` ratio is larger than the provided value.
+    /// Where `min` is the minimum amount of shards being assigned to a node,
+    /// and `max` is the maximum.
+    ///
+    /// Ratio of `0.7`, for example, means that the minimum is 70% of the
+    /// maximum. So, when the highest loaded node has 100% cpu load, the lowest
+    /// loaded node would have 70%.
+    pub fn assert_distribution(&self, expected_min_max_ratio: f64) {
         let mut shards_per_node = HashMap::<N, usize>::new();
 
         for shard in &self.shards {
@@ -28,93 +27,51 @@ where
             }
         }
 
-        let mean = self.shards.len() * RF / self.nodes_count;
-        let max_deviation = shards_per_node
-            .values()
-            .copied()
-            .map(|n| (mean as isize - n as isize).unsigned_abs())
-            .max()
-            .unwrap();
-        let coefficient = max_deviation as f64 / mean as f64;
+        let min = shards_per_node.values().min().copied().unwrap();
+        let max = shards_per_node.values().max().copied().unwrap();
 
-        let allowed_coefficient = expected_variance.get(self.nodes_count);
+        let actual_min_max_ratio = min as f64 / max as f64;
 
-        dbg!(mean, max_deviation, coefficient, allowed_coefficient);
-        assert!(coefficient <= allowed_coefficient);
+        dbg!(
+            expected_min_max_ratio,
+            actual_min_max_ratio,
+            min,
+            max,
+            shards_per_node,
+        );
+        assert!(actual_min_max_ratio >= expected_min_max_ratio)
+    }
 
-        let mut allowed_shard_movements = 0;
-
-        let removed: HashSet<_> = old_nodes.difference(&nodes).copied().collect();
-        let added: HashSet<_> = nodes.difference(&old_nodes).copied().collect();
-
-        if !removed.is_empty() {
-            for shard in &old_keyspace.shards {
-                for node_id in &shard.replicas {
-                    if removed.contains(node_id) {
-                        allowed_shard_movements += 1;
-                    }
-                }
-            }
-        }
-
-        allowed_shard_movements +=
-            (((added.len() * RF * mean) as f64) * (1.0 + allowed_coefficient)) as usize;
-
-        let mut shard_movements = 0;
+    /// Asserts that the stability coefficient between 2 keyspaces is
+    /// larger than the provided value.
+    ///
+    /// The coefficient represents how many shards remained assigned to the same
+    /// nodes. So `0.7`, for example, would mean that 70% of shards haven't been
+    /// moved, and 30% moved from one node to another.
+    pub fn assert_stability(&self, old_self: &Self, expected_coefficient: f64) {
+        let mut shards_moved = 0;
         let mut replicas: HashSet<_>;
-        for shard_idx in 0..old_keyspace.shards.len() {
+        for shard_idx in 0..old_self.shards.len() {
             let shard_id = ShardId(shard_idx as u16);
 
             replicas = self.shard_replicas(shard_id).iter().collect();
 
-            for node_id in old_keyspace.shard_replicas(shard_id) {
+            for node_id in old_self.shard_replicas(shard_id) {
                 if !replicas.contains(&node_id) {
-                    shard_movements += 1;
+                    shards_moved += 1;
                 }
             }
         }
 
+        let shards_total = self.shards.len() * RF;
+        let actual_coefficient = 1.0 - shards_moved as f64 / shards_total as f64;
+
         dbg!(
-            shard_movements,
-            allowed_shard_movements,
-            removed.len(),
-            added.len()
+            expected_coefficient,
+            actual_coefficient,
+            shards_total,
+            shards_moved,
         );
-        assert!(shard_movements <= allowed_shard_movements);
-    }
-}
-
-/// Specifies the expected shard distribution variance.
-///
-/// Each element of the [`Vec`] should be an `(N, C)` tuple, where `N` is number
-/// of nodes in the cluster and `C` is a maximum allowed mean absolute deviation
-/// coefficient.
-///
-/// For example, coefficient of `0.1` means that the maximum and the minimum
-/// amount of shards per node are allowed to deviate from the mean (the average)
-/// by 10%.
-/// Let's say the expected mean is 100 shards per node, then coefficient of
-/// `0.1` will allow the number of shards per node to deviate in the range of
-/// `90..=110`.
-///
-/// Not every cluster size needs to be specified, one may specify
-/// the expected variance as a range:
-/// ```
-/// sharding::testing::ExpectedDistributionVariance(vec![(4, 0.01), (8, 0.02), (256, 0.1)]);
-/// ```
-/// This would mean that for a cluster size of up to 4 nodes the coefficient is
-/// `0.01`, for a cluster size in the range of `5..8` the coefficient is `0.02`
-/// and so on.
-pub struct ExpectedDistributionVariance(pub Vec<(usize, f64)>);
-
-impl ExpectedDistributionVariance {
-    fn get(&self, nodes_count: usize) -> f64 {
-        for (count, coef) in self.0.iter().copied() {
-            if nodes_count <= count {
-                return coef;
-            }
-        }
-
-        panic!("Missing coefficient for nodes_count: {nodes_count}");
+        assert!(actual_coefficient >= expected_coefficient)
     }
 }

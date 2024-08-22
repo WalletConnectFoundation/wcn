@@ -288,6 +288,11 @@ impl<const RF: usize, B, S> Sharded<RF, B, S> {
                 e @ sharding::Error::IncompleteReplicaSet => super::Error::Bug(e.to_string()),
             })
     }
+
+    /// Returns the underlying [`sharding::Keyspace`].
+    pub fn sharding(&self) -> &sharding::Keyspace<u8, RF> {
+        &self.keyspace
+    }
 }
 
 impl<const RF: usize, N, B, S> Keyspace<N> for Sharded<RF, B, S>

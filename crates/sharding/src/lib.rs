@@ -157,7 +157,7 @@ impl<N> ReplicationStrategy<N> for DefaultReplicationStrategy {
 /// Error of [`Keyspace::new`].
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Nodes count should be larges than the replication factor ({_0})")]
+    #[error("Nodes count should be larger than the replication factor ({_0})")]
     InvalidNodesCount(usize),
 
     #[error("Sharding strategy didn't select enough nodes to fill a replica set")]
@@ -169,13 +169,14 @@ pub enum Error {
 fn test_keyspace() {
     use std::hash::{BuildHasherDefault, DefaultHasher};
 
-    let expected_variance = testing::ExpectedDistributionVariance(vec![
-        (16, 0.03),
-        (32, 0.05),
-        (64, 0.07),
-        (128, 0.1),
-        (256, 0.15),
-    ]);
+    let expected_distribution_and_stability = |nodes_count: usize| match nodes_count {
+        _ if nodes_count <= 16 => (0.96, 0.74),
+        _ if nodes_count <= 32 => (0.93, 0.94),
+        _ if nodes_count <= 64 => (0.90, 0.96),
+        _ if nodes_count <= 128 => (0.86, 0.98),
+        _ if nodes_count <= 256 => (0.82, 0.99),
+        _ => unreachable!(),
+    };
 
     let mut nodes: HashSet<_> = (0u8..3).collect();
 
@@ -185,7 +186,7 @@ fn test_keyspace() {
         || DefaultReplicationStrategy,
     )
     .unwrap();
-    keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+    keyspace.assert_distribution(1.0);
 
     // the test is very slow in debug builds
     let max_nodes = if cfg!(debug_assertions) { 16 } else { u8::MAX };
@@ -199,7 +200,12 @@ fn test_keyspace() {
             || DefaultReplicationStrategy,
         )
         .unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+
+        dbg!(nodes.len());
+
+        let (min_max_ratio, stability_coef) = expected_distribution_and_stability(nodes.len());
+        new_keyspace.assert_distribution(min_max_ratio);
+        new_keyspace.assert_stability(&keyspace, stability_coef);
         keyspace = new_keyspace;
     }
 
@@ -217,7 +223,12 @@ fn test_keyspace() {
             || DefaultReplicationStrategy,
         )
         .unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+
+        dbg!(nodes.len());
+
+        let (min_max_ratio, stability_coef) = expected_distribution_and_stability(nodes.len());
+        new_keyspace.assert_distribution(min_max_ratio);
+        new_keyspace.assert_stability(&keyspace, stability_coef);
         keyspace = new_keyspace;
 
         if nodes.len() == 3 {

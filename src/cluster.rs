@@ -130,7 +130,11 @@ impl sharding::ReplicationStrategy<Node> for ReplicationStrategy {
 
 #[cfg(test)]
 mod test {
-    use {super::*, cluster::Node as _, sharding::ReplicationStrategy as _};
+    use {
+        super::*,
+        cluster::{keyspace, Keyspace as _, Node as _},
+        sharding::ReplicationStrategy as _,
+    };
 
     fn new_node(
         region: &'static str,
@@ -205,5 +209,132 @@ mod test {
         assert!(strategy.is_suitable_replica(&new_node("eu", WC_ORG, None)));
         assert!(strategy.is_suitable_replica(&new_node("us", WC_ORG, None)));
         assert!(strategy.is_suitable_replica(&new_node("ap", WC_ORG, None)));
+    }
+
+    #[test]
+    fn keyspace() {
+        struct Context {
+            nodes: cluster::Nodes<Node>,
+            keyspace: Keyspace,
+            old_keyspace: Keyspace,
+        }
+
+        // bootstrap
+        // {region}: {WalletConnect nodes}/{operator nodes}
+        // eu: 1/0, us: 1/0, ap: 1/0
+        let mut nodes = cluster::Nodes::<Node>::default();
+        nodes.insert(new_node("eu", &WC_ORG, None)).unwrap();
+        nodes.insert(new_node("us", &WC_ORG, None)).unwrap();
+        nodes.insert(new_node("ap", &WC_ORG, None)).unwrap();
+        let keyspace = Keyspace::new(&nodes).unwrap();
+
+        let ctx = &mut Context {
+            old_keyspace: keyspace.clone(),
+            nodes,
+            keyspace,
+        };
+
+        let assert_distribution_and_stability =
+            |ctx: &mut Context, min_max_ratio, stability_coef| {
+                ctx.keyspace.sharding().assert_distribution(min_max_ratio);
+                ctx.keyspace
+                    .sharding()
+                    .assert_stability(&ctx.old_keyspace.sharding(), stability_coef);
+            };
+
+        assert_distribution_and_stability(ctx, 1.0, 1.0);
+
+        let add_node = |ctx: &mut Context, region, org| {
+            ctx.nodes.insert(new_node(region, org, None)).unwrap();
+            ctx.old_keyspace = ctx.keyspace.clone();
+            assert_eq!(ctx.keyspace.update(&ctx.nodes), Ok(true));
+        };
+
+        let remove_node = |ctx: &mut Context, region, org| {
+            let remove = new_node(region, org, None);
+            let id = ctx
+                .nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.region == remove.region && node.organization == remove.organization)
+                        .then_some(node.id)
+                })
+                .unwrap();
+            ctx.nodes.remove(&id);
+            ctx.old_keyspace = ctx.keyspace.clone();
+            assert_eq!(ctx.keyspace.update(&ctx.nodes), Ok(true));
+        };
+
+        // eu: 2/0, us: 1/0, ap: 1/0
+        add_node(ctx, "eu", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.49, 0.83);
+
+        // eu: 2/0, us: 2/0, ap: 1/0
+        add_node(ctx, "us", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.49, 0.83);
+
+        // eu: 2/0, us: 2/0, ap: 2/0
+        add_node(ctx, "ap", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.99, 0.83);
+
+        // eu: 3/0, us: 2/0, ap: 2/0
+        add_node(ctx, "eu", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.66, 0.88);
+
+        // eu: 3/0, us: 3/0, ap: 2/0
+        add_node(ctx, "us", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.66, 0.88);
+
+        // eu: 3/0, us: 3/0, ap: 3/0
+        add_node(ctx, "ap", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.98, 0.88);
+
+        // eu: 3/1, us: 3/0, ap: 3/0
+        add_node(ctx, "eu", "operator_A");
+        assert_distribution_and_stability(ctx, 0.74, 0.91);
+
+        // eu: 3/1, us: 3/1, ap: 3/0
+        add_node(ctx, "us", "operator_B");
+        assert_distribution_and_stability(ctx, 0.65, 0.91);
+
+        // eu: 3/1, us: 3/1, ap: 3/1
+        add_node(ctx, "ap", "operator_C");
+        assert_distribution_and_stability(ctx, 0.70, 0.91);
+
+        // eu: 3/2, us: 3/1, ap: 3/1
+        add_node(ctx, "eu", "operator_D");
+        assert_distribution_and_stability(ctx, 0.56, 0.93);
+
+        // eu: 3/2, us: 3/2, ap: 3/1
+        add_node(ctx, "us", "operator_E");
+        assert_distribution_and_stability(ctx, 0.50, 0.93);
+
+        // eu: 3/2, us: 3/2, ap: 3/2
+        add_node(ctx, "ap", "operator_F");
+        assert_distribution_and_stability(ctx, 0.52, 0.93);
+
+        // eu: 4/2, us: 3/2, ap: 3/2
+        add_node(ctx, "eu", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.46, 0.93);
+
+        // eu: 4/2, us: 4/2, ap: 3/2
+        add_node(ctx, "us", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.46, 0.93);
+
+        // eu: 4/2, us: 4/2, ap: 4/2
+        add_node(ctx, "ap", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.59, 0.93);
+
+        // eu: 3/2, us: 4/2, ap: 4/2
+        remove_node(ctx, "eu", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.46, 0.93);
+
+        // eu: 3/2, us: 3/2, ap: 4/2
+        remove_node(ctx, "us", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.45, 0.93);
+
+        // eu: 3/2, us: 3/2, ap: 3/2
+        remove_node(ctx, "ap", &WC_ORG);
+        assert_distribution_and_stability(ctx, 0.51, 0.93);
     }
 }

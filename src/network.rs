@@ -636,6 +636,12 @@ impl<S: StatusReporter> RpcHandler<S> {
                 })
                 .await
             }
+            rpc::replica::SetVal::ID => {
+                rpc::replica::SetVal::handle(stream, |req| {
+                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                })
+                .await
+            }
             rpc::replica::Del::ID => {
                 rpc::replica::Del::handle(stream, |req| {
                     replica.handle_replication(peer_id, req.operation, req.keyspace_version)
@@ -662,6 +668,12 @@ impl<S: StatusReporter> RpcHandler<S> {
             }
             rpc::replica::HSet::ID => {
                 rpc::replica::HSet::handle(stream, |req| {
+                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                })
+                .await
+            }
+            rpc::replica::HSetVal::ID => {
+                rpc::replica::HSetVal::handle(stream, |req| {
                     replica.handle_replication(peer_id, req.operation, req.keyspace_version)
                 })
                 .await

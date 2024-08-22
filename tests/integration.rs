@@ -401,6 +401,8 @@ impl TestCluster {
     async fn test_namespaces(&self) {
         tracing::info!("Namespaces");
 
+        let expiration = timestamp_secs() + 600;
+
         let namespaces = (0..2)
             .map(|i| {
                 let auth = auth::Auth::from_secret(
@@ -446,7 +448,7 @@ impl TestCluster {
         // Add shared data without a namespace. Validate that it's accessible by both
         // clients.
         client0
-            .set(shared_key.clone(), shared_value.clone(), None)
+            .set(shared_key.clone(), shared_value.clone(), expiration)
             .await
             .unwrap();
         assert_eq!(
@@ -467,7 +469,10 @@ impl TestCluster {
             bytes: b"key1".to_vec(),
         };
         let value = b"value2".to_vec();
-        client0.set(key.clone(), value.clone(), None).await.unwrap();
+        client0
+            .set(key.clone(), value.clone(), expiration)
+            .await
+            .unwrap();
         assert_eq!(client0.get(key.clone()).await.unwrap(), Some(value.clone()));
         key.namespace = Some(namespace1);
         assert_eq!(client1.get(key.clone()).await.unwrap(), None);
@@ -495,7 +500,7 @@ impl TestCluster {
                     bytes: key.0.clone(),
                 };
                 client0
-                    .hset(key, field.0.clone(), value.0.clone(), None)
+                    .hset(key, field.0.clone(), value.0.clone(), expiration)
                     .await
                     .unwrap();
             }
@@ -509,7 +514,7 @@ impl TestCluster {
                     bytes: key.0.clone(),
                 };
                 client0
-                    .hset(key, field.0.clone(), value.0.clone(), None)
+                    .hset(key, field.0.clone(), value.0.clone(), expiration)
                     .await
                     .unwrap();
             }
@@ -647,7 +652,7 @@ impl TestCluster {
 
                 this.random_node()
                     .coordinator_api_client
-                    .set(key, set.value, Some(set.expiration))
+                    .set(key, set.value, set.expiration)
                     .await
                     .unwrap();
 
@@ -740,7 +745,7 @@ impl TestCluster {
 
                 self.random_node()
                     .coordinator_api_client
-                    .set(key, set.value, Some(set.expiration))
+                    .set(key, set.value, set.expiration)
                     .await
                     .unwrap();
 

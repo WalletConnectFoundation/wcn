@@ -346,18 +346,13 @@ impl<K: Kind> Client<K> {
             .transpose()
     }
 
-    pub async fn set(
-        &self,
-        key: Key,
-        value: Value,
-        expiration: Option<UnixTimestampSecs>,
-    ) -> Result<()> {
+    pub async fn set(&self, key: Key, value: Value, expiration: UnixTimestampSecs) -> Result<()> {
         let value = self.try_seal(&key.namespace, value)?;
 
         let op = super::Set {
             key,
             value,
-            expiration,
+            expiration: Some(expiration),
         };
 
         self.exec(rpc::Set::send_owned, op).await
@@ -398,7 +393,7 @@ impl<K: Kind> Client<K> {
         key: Key,
         field: Field,
         value: Value,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
     ) -> Result<()> {
         let value = self.try_seal(&key.namespace, value)?;
 
@@ -406,7 +401,7 @@ impl<K: Kind> Client<K> {
             key,
             field,
             value,
-            expiration,
+            expiration: Some(expiration),
         };
 
         self.exec(rpc::HSet::send_owned, op).await

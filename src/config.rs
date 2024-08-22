@@ -1,5 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
+    crate::cluster::NodeRegion,
     libp2p::PeerId,
     network::Multiaddr,
     serde::{de::Error, Deserialize, Deserializer},
@@ -91,6 +92,12 @@ pub struct Config {
 
     // Bootstrap node config.
     pub smart_contract: Option<SmartContractConfig>,
+
+    // Region in which the node is being deployed.
+    pub region: NodeRegion,
+
+    // Organization that operates this node.
+    pub organization: String,
 }
 
 #[derive(Clone, Debug)]
@@ -116,6 +123,8 @@ impl Config {
         let mut cfg = Config {
             id: PeerId::from_public_key(&raw.keypair.public()),
             keypair: raw.keypair,
+            region: raw.region,
+            organization: raw.organization,
             is_raft_voter: raw.is_raft_voter.unwrap_or_default(),
             raft_server_addr: raw.raft_server_addr,
             replica_api_server_addr: raw.replica_api_server_addr,
@@ -187,6 +196,9 @@ struct RawConfig {
     #[serde(deserialize_with = "deserialize_keypair")]
     #[serde(rename = "secret_key")]
     keypair: network::Keypair,
+
+    region: NodeRegion,
+    organization: String,
 
     is_raft_voter: Option<bool>,
 

@@ -194,6 +194,8 @@ pub async fn run(
         cluster::Node {
             id: cfg.id,
             addr: cfg.replica_api_server_addr.clone(),
+            region: cfg.region,
+            organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
         },
         node_opts,

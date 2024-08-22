@@ -1,8 +1,9 @@
 use {
     super::{keyspace, node, Nodes},
     crate::cluster::{self, ReplicaSet},
-    futures::StreamExt,
+    futures::StreamExt as _,
     serde::{Deserialize, Serialize},
+    sharding::DefaultReplicationStrategy,
     std::{
         collections::HashSet,
         error::Error as StdError,
@@ -73,7 +74,7 @@ impl cluster::Node for Node {
 
 type NodeState = node::State<Node>;
 
-type Keyspace = keyspace::Sharded<3, BuildHasherDefault<DefaultHasher>, sharding::DefaultStrategy>;
+type Keyspace = keyspace::Sharded<3, BuildHasherDefault<DefaultHasher>, DefaultReplicationStrategy>;
 
 type Cluster = crate::Cluster<Node, Keyspace>;
 

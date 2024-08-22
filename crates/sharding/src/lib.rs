@@ -58,10 +58,10 @@ where
     N: Copy + Default + Hash + Eq + PartialEq + Ord + PartialOrd,
 {
     /// Creates a new [`Keyspace`].
-    pub fn new(
+    pub fn new<S: ReplicationStrategy<N>>(
         nodes: impl IntoIterator<Item = N>,
         build_hasher: &impl BuildHasher,
-        mut sharding_strategy: impl Strategy<N>,
+        build_replication_strategy: impl Fn() -> S,
     ) -> Result<Self, Error> {
         const { assert!(RF > 0) };
 
@@ -75,27 +75,30 @@ where
         let n_shards = u16::MAX as usize + 1;
         let mut shards: Vec<_> = (0..n_shards).map(|_| Shard { replicas }).collect();
 
-        // using [Rendezvous](https://en.wikipedia.org/wiki/Rendezvous_hashing) hashing to assign nodes to shards.
+        // using [Rendezvous](https://en.wikipedia.org/wiki/Rendezvous_hashing) hashing to calculate
+        // nodes' priority of being replicas per shard.
 
-        let mut node_ranking: Vec<_> = nodes.iter().map(|idx| (0, idx)).collect();
+        let mut node_priority_queue: Vec<_> = nodes.iter().map(|idx| (0, idx)).collect();
 
         for (shard_idx, shard) in shards.iter_mut().enumerate() {
-            for (score, node) in &mut node_ranking {
+            let mut replication_strategy = build_replication_strategy();
+
+            for (score, node) in &mut node_priority_queue {
                 *score = build_hasher.hash_one((node, shard_idx));
             }
-            node_ranking.sort_unstable();
+            node_priority_queue.sort_unstable();
 
             let mut cursor = 0;
             for replica_id in &mut shard.replicas {
                 loop {
-                    if cursor == node_ranking.len() {
+                    if cursor == node_priority_queue.len() {
                         return Err(Error::IncompleteReplicaSet);
                     }
 
-                    let (_, node) = node_ranking[cursor];
+                    let (_, node) = node_priority_queue[cursor];
                     cursor += 1;
 
-                    if sharding_strategy.is_suitable_replica(shard_idx, node) {
+                    if replication_strategy.is_suitable_replica(node) {
                         *replica_id = *node;
                         break;
                     }
@@ -127,34 +130,26 @@ where
     }
 }
 
-/// Sharding strategy.
-pub trait Strategy<N> {
+/// Strategy of how a shard should be replicated across nodes.
+///
+/// One instance of [`ReplicationStrategy`] is only responsible for determining
+/// replicas of a single shard.
+pub trait ReplicationStrategy<N> {
     /// Indicates whether the specified node is suitable to be used as a
-    /// replica for the specified shard.
+    /// replica for the current shard.
     ///
-    /// In consecutive calls to this function `shard_idx` is going to either
-    /// stay the same or increase, but never decrease. Also, this function will
-    /// never be called for the same combination of `shard_idx` and
-    /// `node` again.
-    fn is_suitable_replica(&mut self, shard_idx: usize, node: &N) -> bool;
-}
-
-impl<N, F> Strategy<N> for F
-where
-    F: FnMut(usize, &N) -> bool,
-{
-    fn is_suitable_replica(&mut self, shard_idx: usize, node: &N) -> bool {
-        (self)(shard_idx, node)
-    }
+    /// This function will never be called with the same `node` again on the
+    /// same instance of [`ReplicationStrategy`].
+    fn is_suitable_replica(&mut self, node: &N) -> bool;
 }
 
 /// Default sharding [`Strategy`] that considers every node to be equally
 /// suitable to be a replica for any shard.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DefaultStrategy;
+pub struct DefaultReplicationStrategy;
 
-impl<N> Strategy<N> for DefaultStrategy {
-    fn is_suitable_replica(&mut self, _shard_idx: usize, _node: &N) -> bool {
+impl<N> ReplicationStrategy<N> for DefaultReplicationStrategy {
+    fn is_suitable_replica(&mut self, _node: &N) -> bool {
         true
     }
 }
@@ -162,7 +157,7 @@ impl<N> Strategy<N> for DefaultStrategy {
 /// Error of [`Keyspace::new`].
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Nodes count should be larges than the replication factor ({_0})")]
+    #[error("Nodes count should be larger than the replication factor ({_0})")]
     InvalidNodesCount(usize),
 
     #[error("Sharding strategy didn't select enough nodes to fill a replica set")]
@@ -174,23 +169,24 @@ pub enum Error {
 fn test_keyspace() {
     use std::hash::{BuildHasherDefault, DefaultHasher};
 
-    let expected_variance = testing::ExpectedDistributionVariance(vec![
-        (16, 0.03),
-        (32, 0.05),
-        (64, 0.07),
-        (128, 0.1),
-        (256, 0.15),
-    ]);
+    let expected_distribution_and_stability = |nodes_count: usize| match nodes_count {
+        _ if nodes_count <= 16 => (0.96, 0.74),
+        _ if nodes_count <= 32 => (0.93, 0.94),
+        _ if nodes_count <= 64 => (0.90, 0.96),
+        _ if nodes_count <= 128 => (0.86, 0.98),
+        _ if nodes_count <= 256 => (0.82, 0.99),
+        _ => unreachable!(),
+    };
 
     let mut nodes: HashSet<_> = (0u8..3).collect();
 
     let mut keyspace: Keyspace<u8, 3> = Keyspace::new(
         nodes.iter().copied(),
         &BuildHasherDefault::<DefaultHasher>::default(),
-        DefaultStrategy,
+        || DefaultReplicationStrategy,
     )
     .unwrap();
-    keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+    keyspace.assert_distribution(1.0);
 
     // the test is very slow in debug builds
     let max_nodes = if cfg!(debug_assertions) { 16 } else { u8::MAX };
@@ -201,10 +197,15 @@ fn test_keyspace() {
         let new_keyspace = Keyspace::new(
             nodes.iter().copied(),
             &BuildHasherDefault::<DefaultHasher>::default(),
-            DefaultStrategy,
+            || DefaultReplicationStrategy,
         )
         .unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+
+        dbg!(nodes.len());
+
+        let (min_max_ratio, stability_coef) = expected_distribution_and_stability(nodes.len());
+        new_keyspace.assert_distribution(min_max_ratio);
+        new_keyspace.assert_stability(&keyspace, stability_coef);
         keyspace = new_keyspace;
     }
 
@@ -219,10 +220,15 @@ fn test_keyspace() {
         let new_keyspace = Keyspace::new(
             nodes.iter().copied(),
             &BuildHasherDefault::<DefaultHasher>::default(),
-            DefaultStrategy,
+            || DefaultReplicationStrategy,
         )
         .unwrap();
-        new_keyspace.assert_variance_and_stability(&keyspace, &expected_variance);
+
+        dbg!(nodes.len());
+
+        let (min_max_ratio, stability_coef) = expected_distribution_and_stability(nodes.len());
+        new_keyspace.assert_distribution(min_max_ratio);
+        new_keyspace.assert_stability(&keyspace, stability_coef);
         keyspace = new_keyspace;
 
         if nodes.len() == 3 {

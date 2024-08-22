@@ -244,24 +244,24 @@ pub struct ShardedSnapshot {
     version: u64,
 }
 
-/// [`sharding::Strategy`] of a [`Sharded`] [`Keyspace`].
-pub struct ShardingStrategy<'a, S, N: Node> {
+/// [`sharding::ReplicationStrategy`] of a [`Sharded`] [`Keyspace`].
+pub struct ReplicationStrategy<'a, S, N: Node> {
     inner: S,
     nodes: &'a Nodes<N>,
 }
 
-impl<'a, S, N> sharding::Strategy<node::Idx> for ShardingStrategy<'a, S, N>
+impl<'a, S, N> sharding::ReplicationStrategy<node::Idx> for ReplicationStrategy<'a, S, N>
 where
-    S: sharding::Strategy<N>,
+    S: sharding::ReplicationStrategy<N>,
     N: Node,
 {
-    fn is_suitable_replica(&mut self, shard_idx: usize, node_idx: &node::Idx) -> bool {
+    fn is_suitable_replica(&mut self, node_idx: &node::Idx) -> bool {
         let Some(node) = self.nodes.get_by_idx(*node_idx) else {
-            tracing::warn!(%node_idx, "sharding::Strategy: missing node");
+            tracing::warn!(%node_idx, "ReplicationStrategy: missing node");
             return false;
         };
 
-        self.inner.is_suitable_replica(shard_idx, node)
+        self.inner.is_suitable_replica(node)
     }
 }
 
@@ -270,9 +270,9 @@ impl<const RF: usize, B, S> Sharded<RF, B, S> {
     where
         N: Node,
         B: BuildHasher + Default + Clone + Send + Sync + 'static,
-        S: sharding::Strategy<N> + Default + Clone + Send + Sync + 'static,
+        S: sharding::ReplicationStrategy<N> + Default + Clone + Send + Sync + 'static,
     {
-        let strategy = ShardingStrategy {
+        let strategy = || ReplicationStrategy {
             inner: S::default(),
             nodes,
         };
@@ -288,13 +288,18 @@ impl<const RF: usize, B, S> Sharded<RF, B, S> {
                 e @ sharding::Error::IncompleteReplicaSet => super::Error::Bug(e.to_string()),
             })
     }
+
+    /// Returns the underlying [`sharding::Keyspace`].
+    pub fn sharding(&self) -> &sharding::Keyspace<u8, RF> {
+        &self.keyspace
+    }
 }
 
 impl<const RF: usize, N, B, S> Keyspace<N> for Sharded<RF, B, S>
 where
     N: Node,
     B: BuildHasher + Default + Clone + Send + Sync + 'static,
-    S: sharding::Strategy<N> + Default + Clone + Send + Sync + 'static,
+    S: sharding::ReplicationStrategy<N> + Default + Clone + Send + Sync + 'static,
 {
     type Snapshot<'a> = ShardedSnapshot;
 

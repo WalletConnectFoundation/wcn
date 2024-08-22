@@ -149,7 +149,7 @@ mod test {
                 },
                 types::{map::Pair, MapStorage, StringStorage},
             },
-            util::{db_path::DBPath, timestamp_micros},
+            util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,
         },
         futures::StreamExt,
@@ -177,6 +177,8 @@ mod test {
         let mut string_entries = Vec::with_capacity(NUM_ENTRIES);
         let mut map_entries = Vec::with_capacity(NUM_ENTRIES);
 
+        let expiration = timestamp_secs() + 600;
+
         let string = src_db.column::<StringColumn>().unwrap();
         let map = src_db.column::<MapColumn>().unwrap();
         for _ in 0..NUM_ENTRIES {
@@ -185,13 +187,13 @@ mod test {
             let val = TestValue::new(rand::random::<u64>().to_string()).into();
 
             string
-                .set(&key, &val, None, timestamp_micros())
+                .set(&key, &val, expiration, timestamp_micros())
                 .await
                 .unwrap();
             string_entries.push((key.clone(), val.clone()));
 
             let pair = Pair::new(subkey, val);
-            map.hset(&key, &pair, None, timestamp_micros())
+            map.hset(&key, &pair, expiration, timestamp_micros())
                 .await
                 .unwrap();
             map_entries.push((key, pair));
@@ -234,13 +236,13 @@ mod test {
         let string = dest_db.column::<StringColumn>().unwrap();
         for (key, val) in string_entries {
             let got = string.get(&key).await.unwrap();
-            assert_eq!(got, Some(val));
+            assert_eq!(got, Some((val, expiration)));
         }
 
         let map = dest_db.column::<MapColumn>().unwrap();
         for (key, pair) in map_entries {
             let got = map.hget(&key, &pair.field).await.unwrap();
-            assert_eq!(got, Some(pair.value));
+            assert_eq!(got, Some((pair.value, expiration)));
         }
     }
 }

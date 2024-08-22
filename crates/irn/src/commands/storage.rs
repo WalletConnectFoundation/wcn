@@ -10,6 +10,7 @@ use {
 };
 
 const MIN_TTL: Duration = Duration::from_secs(30);
+const MAX_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60); // 30 days;
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -19,8 +20,8 @@ enum Error {
     #[error("Invalid TTL: {0}")]
     Ttl(humantime::DurationError),
 
-    #[error("Invalid TTL: Minimum TTL: {MIN_TTL:?}")]
-    TtlTooShort,
+    #[error("Invalid TTL: Minimum TTL: {MIN_TTL:?}, Maximum TTL: {MAX_TTL:?}")]
+    InvalidTtl,
 
     #[error("Failed to decode parameter: {0}")]
     Decoding(&'static str),
@@ -89,7 +90,7 @@ impl FromStr for Ttl {
             .map_err(Error::Ttl)
             .and_then(|ttl| {
                 if ttl < MIN_TTL {
-                    Err(Error::TtlTooShort)
+                    Err(Error::InvalidTtl)
                 } else {
                     Ok(Self(ttl))
                 }
@@ -118,7 +119,7 @@ struct SetCmd {
     value: String,
 
     #[clap(short, long)]
-    ttl: Option<Ttl>,
+    ttl: Ttl,
 }
 
 #[derive(Debug, clap::Args)]
@@ -143,7 +144,7 @@ struct HSetCmd {
     value: String,
 
     #[clap(short, long)]
-    ttl: Option<Ttl>,
+    ttl: Ttl,
 }
 
 #[derive(Debug, clap::Args)]
@@ -217,7 +218,7 @@ impl Storage {
         let value = self.decode(&args.value, "value")?;
 
         self.client
-            .set(self.key(key), value, ttl_to_timestamp(args.ttl))
+            .set(self.key(key), value, ttl_to_timestamp(args.ttl)?)
             .await?;
 
         Ok(())
@@ -249,7 +250,7 @@ impl Storage {
         let value = self.decode(&args.value, "value")?;
 
         self.client
-            .hset(self.key(key), field, value, ttl_to_timestamp(args.ttl))
+            .hset(self.key(key), field, value, ttl_to_timestamp(args.ttl)?)
             .await?;
 
         Ok(())
@@ -357,8 +358,8 @@ fn initialize_namespaces(cmd: &StorageCmd) -> Result<Vec<Auth>, Error> {
     Ok(result)
 }
 
-fn ttl_to_timestamp(ttl: Option<Ttl>) -> Option<u64> {
-    ttl.map(|ttl| ttl.0)
-        .and_then(|ttl| chrono::Duration::from_std(ttl).ok())
+fn ttl_to_timestamp(ttl: Ttl) -> Result<u64, Error> {
+    chrono::Duration::from_std(ttl.0)
+        .map_err(|_| Error::InvalidTtl)
         .map(|ttl| (chrono::Utc::now() + ttl).timestamp() as u64)
 }

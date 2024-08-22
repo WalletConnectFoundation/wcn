@@ -99,7 +99,7 @@ where
 }
 
 pub trait Merge<I> {
-    fn merge(&mut self, input: I);
+    fn merge(self, input: I) -> Self;
 }
 
 pub struct AsymmetricMerge<C, I, O>(PhantomData<(C, I, O)>);
@@ -132,7 +132,7 @@ where
         })?;
 
         for input in input {
-            output.merge(input);
+            output = output.merge(input);
         }
 
         serialize(&output)
@@ -155,7 +155,7 @@ where
                 .unwrap_or_default();
 
         for input in op_iter(input) {
-            output.merge(input);
+            output = output.merge(input);
         }
 
         serialize(&output)

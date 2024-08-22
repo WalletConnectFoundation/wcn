@@ -24,7 +24,7 @@ use {
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
     network::{Keypair, NoHandshake},
     rand::{seq::IteratorRandom as _, Rng},
-    relay_rocks::util::timestamp_micros,
+    relay_rocks::util::{timestamp_micros, timestamp_secs},
     std::{
         collections::HashMap,
         path::PathBuf,
@@ -95,6 +95,7 @@ impl NodeHandle {
             .await
             .unwrap()
             .unwrap()
+            .map(|out| out.0)
     }
 
     async fn replica_set(&self, mut operation: storage::Set, keyspace_version: u64) {
@@ -289,7 +290,7 @@ impl TestCluster {
             set: Set {
                 key: key.clone(),
                 value: value.clone(),
-                expiration: None,
+                expiration: timestamp_secs() + 600,
                 version: timestamp_micros(),
             },
             get: Get { key: key.clone() },
@@ -297,7 +298,7 @@ impl TestCluster {
             overwrite: Set {
                 key,
                 value: value2,
-                expiration: None,
+                expiration: timestamp_secs() + 600,
                 version: timestamp_micros(),
             },
         }
@@ -401,6 +402,8 @@ impl TestCluster {
     async fn test_namespaces(&self) {
         tracing::info!("Namespaces");
 
+        let expiration = timestamp_secs() + 600;
+
         let namespaces = (0..2)
             .map(|i| {
                 let auth = auth::Auth::from_secret(
@@ -446,7 +449,7 @@ impl TestCluster {
         // Add shared data without a namespace. Validate that it's accessible by both
         // clients.
         client0
-            .set(shared_key.clone(), shared_value.clone(), None)
+            .set(shared_key.clone(), shared_value.clone(), expiration)
             .await
             .unwrap();
         assert_eq!(
@@ -467,7 +470,10 @@ impl TestCluster {
             bytes: b"key1".to_vec(),
         };
         let value = b"value2".to_vec();
-        client0.set(key.clone(), value.clone(), None).await.unwrap();
+        client0
+            .set(key.clone(), value.clone(), expiration)
+            .await
+            .unwrap();
         assert_eq!(client0.get(key.clone()).await.unwrap(), Some(value.clone()));
         key.namespace = Some(namespace1);
         assert_eq!(client1.get(key.clone()).await.unwrap(), None);
@@ -495,7 +501,7 @@ impl TestCluster {
                     bytes: key.0.clone(),
                 };
                 client0
-                    .hset(key, field.0.clone(), value.0.clone(), None)
+                    .hset(key, field.0.clone(), value.0.clone(), expiration)
                     .await
                     .unwrap();
             }
@@ -509,7 +515,7 @@ impl TestCluster {
                     bytes: key.0.clone(),
                 };
                 client0
-                    .hset(key, field.0.clone(), value.0.clone(), None)
+                    .hset(key, field.0.clone(), value.0.clone(), expiration)
                     .await
                     .unwrap();
             }

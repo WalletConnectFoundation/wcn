@@ -5453,6 +5453,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "chrono",
+ "derive_more 1.0.0-beta.6",
  "env_logger 0.10.2",
  "futures",
  "futures-util",

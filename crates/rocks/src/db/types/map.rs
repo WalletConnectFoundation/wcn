@@ -31,14 +31,26 @@ impl<F, V> Pair<F, V> {
 
 /// Main interface for map data type.
 pub trait MapStorage<C: Column>: CommonStorage<C> {
-    /// Sets the specified `(field, value)` pair for the hash stored at `key`.
+    /// Sets the specified `(field, value)` pair for the hash stored at `key`
+    /// with the provided `expiration`.
     ///
     /// Time complexity: `O(1)`.
     fn hset(
         &self,
         key: &C::KeyType,
         pair: &Pair<C::SubKeyType, C::ValueType>,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+
+    /// Sets the specified `(field, value)` pair for the hash stored at `key`
+    /// (only if the value already exists).
+    ///
+    /// Time complexity: `O(1)`.
+    fn hset_val(
+        &self,
+        key: &C::KeyType,
+        pair: &Pair<C::SubKeyType, C::ValueType>,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
@@ -53,7 +65,7 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
         &self,
         key: &C::KeyType,
         pairs: &[&Pair<C::SubKeyType, C::ValueType>],
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
@@ -64,7 +76,7 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
-    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync;
 
     /// Returns if `field` is an existing field in the hash stored at `key`.
     ///
@@ -124,7 +136,7 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync;
 
     /// Set a time to live for a map value stored at the given key. After the
     /// timeout has expired, the value will automatically be deleted. Passing
@@ -133,7 +145,7 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 }
@@ -143,7 +155,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         pair: &Pair<C::SubKeyType, C::ValueType>,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
@@ -158,11 +170,25 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         }
     }
 
+    fn hset_val(
+        &self,
+        key: &C::KeyType,
+        pair: &Pair<C::SubKeyType, C::ValueType>,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
+        async move {
+            let key = C::ext_key(key, &pair.field)?;
+            let value = serialize(&context::MergeOp::set_val(&pair.value, update_timestamp))?;
+
+            self.backend.merge(C::NAME, key, value).await
+        }
+    }
+
     fn hmset(
         &self,
         key: &C::KeyType,
         pairs: &[&Pair<C::SubKeyType, C::ValueType>],
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
@@ -188,11 +214,16 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
-    ) -> impl Future<Output = Result<Option<C::ValueType>, Error>> + Send + Sync {
-        async move {
+    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync
+    {
+        async {
             let ext_key = C::ext_key(key, field)?;
-            let entry = self.backend.get::<C::ValueType>(C::NAME, ext_key).await?;
-            entry.map_or_else(|| Ok(None), |data| Ok(data.into_payload()))
+            let Some(data) = self.backend.get::<C::ValueType>(C::NAME, ext_key).await? else {
+                return Ok(None);
+            };
+
+            let exp = data.expiration_timestamp();
+            Ok(data.into_payload().map(|value| (value, exp)))
         }
     }
 
@@ -299,7 +330,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync {
         self.expiration(key, Some(subkey))
     }
 
@@ -307,7 +338,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         subkey: &C::SubKeyType,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync {
         async move {
@@ -364,25 +395,27 @@ mod tests {
         assert_eq!(db.hget(&key, &val2.field().into()).await.unwrap(), None);
         assert!(db.hvals(&key).await.unwrap().is_empty());
 
+        let expiration = timestamp_secs() + 600;
+
         // Add messages to the store.
-        db.hset(&key, &val1.clone().into(), None, timestamp_micros())
+        db.hset(&key, &val1.clone().into(), expiration, timestamp_micros())
             .await
             .unwrap();
 
         // Make sure messages saved correctly.
         assert_eq!(
             db.hget(&key, &val1.field().into()).await.unwrap(),
-            Some(val1.value().into())
+            Some((val1.value().into(), expiration))
         );
         assert_eq!(db.hget(&key, &val2.field().into()).await.unwrap(), None);
 
         // Only now second message is stored.
-        db.hset(&key, &val2.clone().into(), None, timestamp_micros())
+        db.hset(&key, &val2.clone().into(), expiration, timestamp_micros())
             .await
             .unwrap();
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
-            Some(val2.value().into())
+            Some((val2.value().into(), expiration))
         );
 
         // Check collection.
@@ -397,11 +430,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             db.hget(&key, &val1.field().into()).await.unwrap(),
-            Some(val1.value().into())
+            Some((val1.value().into(), expiration))
         );
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
-            Some(val2.value().into())
+            Some((val2.value().into(), expiration))
         );
 
         // Remove messages.
@@ -411,7 +444,7 @@ mod tests {
         assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
-            Some(val2.value().into())
+            Some((val2.value().into(), expiration))
         );
         db.hdel(&key, &val2.field().into(), timestamp_micros())
             .await
@@ -427,49 +460,33 @@ mod tests {
             let res = db.hexp(key, &val1.field().into()).await;
             assert!(matches!(res, Err(Error::EntryNotFound)));
 
-            // No TTL.
-            db.hset(key, &val1.clone().into(), None, timestamp_micros())
+            db.hset(key, &val1.clone().into(), expiration, timestamp_micros())
                 .await
                 .unwrap();
             let res = db.hexp(key, &val1.field().into()).await;
-            assert!(matches!(res, Ok(None)));
+            assert_eq!(res, Ok(expiration));
 
             // Set TTL to 5 sec.
             let expiration = timestamp(5);
-            db.hsetexp(
-                key,
-                &val1.field().into(),
-                Some(expiration),
-                timestamp_micros(),
-            )
-            .await
-            .unwrap();
+            db.hsetexp(key, &val1.field().into(), expiration, timestamp_micros())
+                .await
+                .unwrap();
             let ttl = db.hexp(key, &val1.field().into()).await.unwrap();
-            assert_eq!(ttl, Some(expiration));
+            assert_eq!(ttl, expiration);
 
             // Per-member TTLs.
             let expiration5s = timestamp(5);
-            db.hset(
-                key,
-                &val2.clone().into(),
-                Some(expiration5s),
-                timestamp_micros(),
-            )
-            .await
-            .unwrap();
+            db.hset(key, &val2.clone().into(), expiration5s, timestamp_micros())
+                .await
+                .unwrap();
             let expiration10s = timestamp(10);
-            db.hset(
-                key,
-                &val3.clone().into(),
-                Some(expiration10s),
-                timestamp_micros(),
-            )
-            .await
-            .unwrap();
+            db.hset(key, &val3.clone().into(), expiration10s, timestamp_micros())
+                .await
+                .unwrap();
             let ttl = db.hexp(key, &val2.field().into()).await.unwrap();
-            assert_eq!(ttl, Some(expiration5s));
+            assert_eq!(ttl, expiration5s);
             let ttl = db.hexp(key, &val3.field().into()).await.unwrap();
-            assert_eq!(ttl, Some(expiration10s));
+            assert_eq!(ttl, expiration10s);
         }
     }
 
@@ -493,31 +510,33 @@ mod tests {
             // Make sure that no data exists.
             assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
 
+            let expiration = timestamp_secs() + 600;
+
             // Add data.
-            db.hset(&key, &val1.clone().into(), None, timestamp1)
+            db.hset(&key, &val1.clone().into(), expiration, timestamp1)
                 .await
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some(val1.value().into())
+                Some((val1.value().into(), expiration))
             );
 
             // Update the data with higher timestamp value. It's expected to succeed.
-            db.hset(&key, &val2.clone().into(), None, timestamp2)
+            db.hset(&key, &val2.clone().into(), expiration, timestamp2)
                 .await
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some(val2.value().into())
+                Some((val2.value().into(), expiration))
             );
 
             // Update the data with lower timestamp value. It's expected to be ignored.
-            db.hset(&key, &val1.clone().into(), None, timestamp1)
+            db.hset(&key, &val1.clone().into(), expiration, timestamp1)
                 .await
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some(val2.value().into())
+                Some((val2.value().into(), expiration))
             );
 
             // Remove the data with lower timestamp value. It's expected to be ignored.
@@ -526,7 +545,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some(val2.value().into())
+                Some((val2.value().into(), expiration))
             );
         }
 
@@ -543,35 +562,26 @@ mod tests {
             assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
 
             // Add data.
-            db.hset(&key, &val1.clone().into(), Some(expiry1), timestamp1)
+            db.hset(&key, &val1.clone().into(), expiry1, timestamp1)
                 .await
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some(val1.value().into())
+                Some((val1.value().into(), expiry1))
             );
-            assert_eq!(
-                db.hexp(&key, &val1.field().into()).await.unwrap(),
-                Some(expiry1)
-            );
+            assert_eq!(db.hexp(&key, &val1.field().into()).await.unwrap(), expiry1);
 
             // Update the data with higher timestamp value. It's expected to succeed.
-            db.hsetexp(&key, &val1.field().into(), Some(expiry2), timestamp2)
+            db.hsetexp(&key, &val1.field().into(), expiry2, timestamp2)
                 .await
                 .unwrap();
-            assert_eq!(
-                db.hexp(&key, &val1.field().into()).await.unwrap(),
-                Some(expiry2)
-            );
+            assert_eq!(db.hexp(&key, &val1.field().into()).await.unwrap(), expiry2);
 
             // Update the data with lower timestamp value. It's expected to be ignored.
-            db.hsetexp(&key, &val1.field().into(), Some(expiry1), timestamp1)
+            db.hsetexp(&key, &val1.field().into(), expiry1, timestamp1)
                 .await
                 .unwrap();
-            assert_eq!(
-                db.hexp(&key, &val1.field().into()).await.unwrap(),
-                Some(expiry2)
-            );
+            assert_eq!(db.hexp(&key, &val1.field().into()).await.unwrap(), expiry2);
         }
     }
 
@@ -590,6 +600,8 @@ mod tests {
         let val3 = &TestMapValue::new(TestValue::new("data3"), TestValue::new("data3"));
 
         {
+            let expiration = timestamp_secs() + 600;
+
             let key = &TestKey::new(42).into();
             assert_eq!(db.hvals(key).await.unwrap(), Vec::<Vec<u8>>::new());
             let values = &[
@@ -601,10 +613,10 @@ mod tests {
                 &val3.clone().into(),
             ];
             // Duplicates are filtered out on addition.
-            db.hmset(key, values, None, timestamp_micros())
+            db.hmset(key, values, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            db.hmset(key, values, None, timestamp_micros())
+            db.hmset(key, values, expiration, timestamp_micros())
                 .await
                 .unwrap();
             let expected: Vec<Vec<u8>> = vec![
@@ -618,6 +630,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn expired_keys_removed() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("map_expired_keys_removed");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(MapColumn)
@@ -633,20 +647,20 @@ mod tests {
         let value_pair1 = msg1.clone().into();
         let value_pair2 = msg2.clone().into();
 
-        db.hset(&key2, &value_pair1, None, timestamp_micros())
+        db.hset(&key2, &value_pair1, expiration, timestamp_micros())
             .await
             .unwrap();
-        db.hset(&key2, &value_pair2, None, timestamp_micros())
+        db.hset(&key2, &value_pair2, expiration, timestamp_micros())
             .await
             .unwrap();
 
         {
             // Add some records with TTL, to be removed in compaction.
             let expiration = timestamp(1);
-            db.hset(&key1, &value_pair1, Some(expiration), timestamp_micros())
+            db.hset(&key1, &value_pair1, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            db.hset(&key1, &value_pair2, Some(expiration), timestamp_micros())
+            db.hset(&key1, &value_pair2, expiration, timestamp_micros())
                 .await
                 .unwrap();
             assert_eq!(
@@ -668,6 +682,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn multithreaded() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("map_multithreaded");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(MapColumn)
@@ -690,7 +706,9 @@ mod tests {
                     TestValue::new(i.to_string()),
                 )
                 .into();
-                db1.hset(key, val, None, timestamp_micros()).await.unwrap();
+                db1.hset(key, val, expiration, timestamp_micros())
+                    .await
+                    .unwrap();
             }
         });
         let h2 = tokio::spawn(async move {
@@ -701,7 +719,9 @@ mod tests {
                     TestValue::new(i.to_string()),
                 )
                 .into();
-                db2.hset(key, val, None, timestamp_micros()).await.unwrap();
+                db2.hset(key, val, expiration, timestamp_micros())
+                    .await
+                    .unwrap();
             }
         });
         let h3 = tokio::spawn(async move {
@@ -713,7 +733,9 @@ mod tests {
                     TestValue::new(i.to_string()),
                 )
                 .into();
-                db3.hset(key, val, None, timestamp_micros()).await.unwrap();
+                db3.hset(key, val, expiration, timestamp_micros())
+                    .await
+                    .unwrap();
             }
         });
         futures_util::future::join_all(vec![h1, h2, h3]).await;
@@ -727,6 +749,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn cardinality() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("map_cardinality");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(MapColumn)
@@ -742,14 +766,14 @@ mod tests {
 
         // Adding an element, should increase the cardinality.
         let msg = TestMapValue::generate();
-        db.hset(key, &msg.clone().into(), None, timestamp_micros())
+        db.hset(key, &msg.clone().into(), expiration, timestamp_micros())
             .await
             .unwrap();
         assert_eq!(db.hcard(key).await.unwrap(), 1);
 
         // Adding the same element again should not change the cardinality.
         for _ in 0..10 {
-            db.hset(key, &msg.clone().into(), None, timestamp_micros())
+            db.hset(key, &msg.clone().into(), expiration, timestamp_micros())
                 .await
                 .unwrap();
             assert_eq!(db.hcard(key).await.unwrap(), 1);
@@ -758,7 +782,7 @@ mod tests {
         // Adding a different element should increase the cardinality.
         for i in 0..5_usize {
             let msg = TestMapValue::generate();
-            db.hset(key, &msg.into(), Some(timestamp(1)), timestamp_micros())
+            db.hset(key, &msg.into(), timestamp(1), timestamp_micros())
                 .await
                 .unwrap();
             assert_eq!(db.hcard(key).await.unwrap(), i + 2);
@@ -784,6 +808,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn scan() {
+        let expiration = timestamp_secs() + 600;
+
         let path = DBPath::new("map_hscan");
         let rocks_db = RocksDatabaseBuilder::new(&path)
             .with_column_family(MapColumn)
@@ -806,12 +832,12 @@ mod tests {
         assert_eq!(db.hcard(&key1).await.unwrap(), 0);
         assert_eq!(db.hcard(&key2).await.unwrap(), 0);
         for msg in &data1 {
-            db.hset(&key1, &msg.clone().into(), None, timestamp_micros())
+            db.hset(&key1, &msg.clone().into(), expiration, timestamp_micros())
                 .await
                 .unwrap();
         }
         for msg in &data2 {
-            db.hset(&key2, &msg.clone().into(), None, timestamp_micros())
+            db.hset(&key2, &msg.clone().into(), expiration, timestamp_micros())
                 .await
                 .unwrap();
         }

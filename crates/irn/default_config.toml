@@ -5,7 +5,8 @@ bootstrap_nodes = []
 
 # [identity]
 # private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
-# group = 1
+# region = "eu"
+# organization = "WalletConnect"
 # eth_address = "0xeD380b8da6012c20856CEc076C348AC44fA50f63"
 
 [server]
@@ -17,7 +18,6 @@ warmup_delay = 45000
 
 # [[known_peers]]
 # id = "12D3KooWBHED7RfVicYMAkfypqcAX8rtQmirfKh91JJCUDTroPF9"
-# group = 1
 # address = ":3010"
 
 # [[bootstrap_nodes]]

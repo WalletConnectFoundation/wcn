@@ -7,6 +7,7 @@ use {
     },
     irn::fsm::ShutdownReason,
     irn_node::{
+        cluster::NodeRegion,
         network::{
             namespaced_key,
             rpc::{
@@ -810,6 +811,7 @@ impl TestCluster {
 }
 
 fn new_node_config() -> Config {
+    static COUNTER: AtomicU16 = AtomicU16::new(0);
     static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
 
     fn gen_multiaddr() -> Multiaddr {
@@ -823,8 +825,18 @@ fn new_node_config() -> Config {
     let id = PeerId::from_public_key(&keypair.public());
     let dir: PathBuf = format!("/tmp/irn/test-node/{}", id).parse().unwrap();
 
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let region = match n % 3 {
+        0 => NodeRegion::Eu,
+        1 => NodeRegion::Us,
+        2 => NodeRegion::Ap,
+        _ => unreachable!(),
+    };
+
     Config {
         id,
+        region,
+        organization: "WalletConnect".to_string(),
         is_raft_voter: false,
         raft_server_addr: gen_multiaddr(),
         replica_api_server_addr: gen_multiaddr(),

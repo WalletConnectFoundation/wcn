@@ -45,7 +45,6 @@ xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 wc = { workspace = true, features = ["future", "metrics"] }
 metrics = { workspace = true }
 itertools = "0.12"
-serde_with = "3.4"
 arc-swap = "1.7"
 
 [dev-dependencies]

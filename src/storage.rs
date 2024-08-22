@@ -53,20 +53,16 @@ pub struct Get {
 impl Operation for Get {
     const IS_WRITE: bool = false;
     type Key = Key;
-    type Output = Option<Value>;
+    type Output = Option<(Value, UnixTimestampSecs)>;
     type RepairOperation = Set;
 
-    fn repair_operation(&self, new_value: &Self::Output) -> Option<Self::RepairOperation> {
-        let new_value = new_value.as_ref()?;
+    fn repair_operation(&self, new: &Self::Output) -> Option<Self::RepairOperation> {
+        let (new_value, new_expiration) = new.as_ref()?;
 
         Some(Set {
             key: self.key.clone(),
             value: new_value.clone(),
-            // TODO: We should probably not be using `None` here. Even without querying the
-            // expiration time, we can set to some default value (and once the original quorum peers
-            // expire, this value will not affect the responses, and eventually will be garbage
-            // collected).
-            expiration: None,
+            expiration: *new_expiration,
             version: timestamp_micros(),
         })
     }
@@ -77,13 +73,30 @@ pub struct Set {
     #[as_ref]
     pub key: Key,
     pub value: Value,
-    pub expiration: Option<UnixTimestampSecs>,
+    pub expiration: UnixTimestampSecs,
 
     #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
 impl Operation for Set {
+    const IS_WRITE: bool = true;
+    type Key = Key;
+    type Output = ();
+    type RepairOperation = NoRepair;
+}
+
+#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
+pub struct SetVal {
+    #[as_ref]
+    pub key: Key,
+    pub value: Value,
+
+    #[serde(default)]
+    pub version: UnixTimestampMicros,
+}
+
+impl Operation for SetVal {
     const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
@@ -113,7 +126,7 @@ pub struct GetExp {
 impl Operation for GetExp {
     const IS_WRITE: bool = false;
     type Key = Key;
-    type Output = Option<UnixTimestampSecs>;
+    type Output = UnixTimestampSecs;
     type RepairOperation = NoRepair;
 }
 
@@ -121,7 +134,7 @@ impl Operation for GetExp {
 pub struct SetExp {
     #[as_ref]
     pub key: Key,
-    pub expiration: Option<UnixTimestampSecs>,
+    pub expiration: UnixTimestampSecs,
 
     #[serde(default)]
     pub version: UnixTimestampMicros,
@@ -144,7 +157,7 @@ pub struct HGet {
 impl Operation for HGet {
     const IS_WRITE: bool = false;
     type Key = Key;
-    type Output = Option<Value>;
+    type Output = Option<(Value, UnixTimestampSecs)>;
     type RepairOperation = NoRepair;
 }
 
@@ -154,13 +167,31 @@ pub struct HSet {
     pub key: Key,
     pub field: Field,
     pub value: Value,
-    pub expiration: Option<UnixTimestampSecs>,
+    pub expiration: UnixTimestampSecs,
 
     #[serde(default)]
     pub version: UnixTimestampMicros,
 }
 
 impl Operation for HSet {
+    const IS_WRITE: bool = true;
+    type Key = Key;
+    type Output = ();
+    type RepairOperation = NoRepair;
+}
+
+#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
+pub struct HSetVal {
+    #[as_ref]
+    pub key: Key,
+    pub field: Field,
+    pub value: Value,
+
+    #[serde(default)]
+    pub version: UnixTimestampMicros,
+}
+
+impl Operation for HSetVal {
     const IS_WRITE: bool = true;
     type Key = Key;
     type Output = ();
@@ -212,7 +243,7 @@ pub struct HGetExp {
 impl Operation for HGetExp {
     const IS_WRITE: bool = false;
     type Key = Key;
-    type Output = Option<UnixTimestampSecs>;
+    type Output = UnixTimestampSecs;
     type RepairOperation = NoRepair;
 }
 
@@ -221,7 +252,7 @@ pub struct HSetExp {
     #[as_ref]
     pub key: Key,
     pub field: Field,
-    pub expiration: Option<UnixTimestampSecs>,
+    pub expiration: UnixTimestampSecs,
 
     #[serde(default)]
     pub version: UnixTimestampMicros,
@@ -340,7 +371,7 @@ impl replication::Storage<Get> for Storage {
         &self,
         key_hash: u64,
         op: Get,
-    ) -> impl Future<Output = Result<Option<Value>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Option<(Value, UnixTimestampSecs)>, Self::Error>> + Send {
         async move {
             self.string
                 .get(&GenericKey::new(key_hash, op.key))
@@ -360,6 +391,25 @@ impl replication::Storage<Set> for Storage {
             self.string
                 .set(&key, &op.value, op.expiration, op.version)
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
+                .await
+                .map_err(map_err)
+        }
+    }
+}
+
+impl replication::Storage<SetVal> for Storage {
+    type Error = StorageError;
+
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: SetVal,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            self.string
+                .set_val(&key, &op.value, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "set_val"))
                 .await
                 .map_err(map_err)
         }
@@ -388,7 +438,7 @@ impl replication::Storage<GetExp> for Storage {
         &self,
         key_hash: u64,
         op: GetExp,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Self::Error>> + Send {
         async move {
             let key = GenericKey::new(key_hash, op.key);
             self.string
@@ -426,7 +476,7 @@ impl replication::Storage<HGet> for Storage {
         &self,
         key_hash: u64,
         op: HGet,
-    ) -> impl Future<Output = Result<Option<Value>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Option<(Value, UnixTimestampSecs)>, Self::Error>> + Send {
         async move {
             let key = GenericKey::new(key_hash, op.key);
             self.map
@@ -452,6 +502,26 @@ impl replication::Storage<HSet> for Storage {
             self.map
                 .hset(&key, &pair, op.expiration, op.version)
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
+                .await
+                .map_err(map_err)
+        }
+    }
+}
+
+impl replication::Storage<HSetVal> for Storage {
+    type Error = StorageError;
+
+    fn exec(
+        &self,
+        key_hash: u64,
+        op: HSetVal,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async move {
+            let key = GenericKey::new(key_hash, op.key);
+            let pair = Pair::new(op.field, op.value);
+            self.map
+                .hset_val(&key, &pair, op.version)
+                .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_val"))
                 .await
                 .map_err(map_err)
         }
@@ -504,7 +574,7 @@ impl replication::Storage<HGetExp> for Storage {
         &self,
         key_hash: u64,
         op: HGetExp,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Self::Error>> + Send {
         async move {
             let key = GenericKey::new(key_hash, op.key);
             self.map

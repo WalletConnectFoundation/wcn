@@ -37,7 +37,7 @@ pub trait CommonStorage<C: cf::Column>: 'static + Debug + Send + Sync {
         &self,
         key: &C::KeyType,
         subkey: Option<&C::SubKeyType>,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync;
 }
 
 #[async_trait]
@@ -66,7 +66,7 @@ impl<C: cf::Column> CommonStorage<C> for cf::DbColumn<C> {
         &self,
         key: &C::KeyType,
         subkey: Option<&C::SubKeyType>,
-    ) -> impl Future<Output = Result<Option<UnixTimestampSecs>, Error>> + Send + Sync {
+    ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync {
         async move {
             let key = if let Some(subkey) = subkey {
                 C::ext_key(key, subkey)?

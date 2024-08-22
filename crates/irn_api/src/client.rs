@@ -369,10 +369,12 @@ impl<K: Kind> Client<K> {
         self.exec(rpc::Del::send_owned, op).await
     }
 
-    pub async fn get_exp(&self, key: Key) -> Result<Option<UnixTimestampSecs>> {
+    pub async fn get_exp(&self, key: Key) -> Result<UnixTimestampSecs> {
         let op = super::GetExp { key };
 
-        self.exec(rpc::GetExp::send_owned, op).await
+        self.exec(rpc::GetExp::send_owned, op)
+            .await?
+            .ok_or_else(|| Error::Api(super::Error::NotFound))
     }
 
     pub async fn set_exp(&self, key: Key, expiration: Option<UnixTimestampSecs>) -> Result<()> {
@@ -416,10 +418,12 @@ impl<K: Kind> Client<K> {
         self.exec(rpc::HDel::send_owned, op).await
     }
 
-    pub async fn hget_exp(&self, key: Key, field: Field) -> Result<Option<UnixTimestampSecs>> {
+    pub async fn hget_exp(&self, key: Key, field: Field) -> Result<UnixTimestampSecs> {
         let op = super::HGetExp { key, field };
 
-        self.exec(rpc::HGetExp::send_owned, op).await
+        self.exec(rpc::HGetExp::send_owned, op)
+            .await?
+            .ok_or_else(|| Error::Api(super::Error::NotFound))
     }
 
     pub async fn hset_exp(

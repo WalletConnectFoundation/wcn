@@ -57,21 +57,18 @@ impl<C: cf::Column> ExpiredDataCompactionFilter<C> {
             if value.expired() || value.payload().is_none() {
                 Decision::Remove
             } else {
-                if let Some(expiration) = value.expiration_timestamp() {
-                    let expires_in = expiration.saturating_sub(crate::util::timestamp_secs());
+                let expires_in = value
+                    .expiration_timestamp()
+                    .saturating_sub(crate::util::timestamp_secs());
 
-                    // 30 days is max TTL we currently have in business logic.
-                    const MAX_TTL_SECS: u64 = 86400 * 30 + 120;
+                // 30 days is max TTL we currently have in business logic.
+                const MAX_TTL_SECS: u64 = 86400 * 30 + 120;
 
-                    if expires_in > MAX_TTL_SECS {
-                        metrics::counter!("rocksdb_invalid_ttl_entries", "cf" => C::NAME.as_str())
-                            .increment(1);
-
-                        return Decision::Remove;
-                    }
-                } else {
-                    metrics::counter!("rocksdb_persistent_entries", "cf" => C::NAME.as_str())
+                if expires_in > MAX_TTL_SECS {
+                    metrics::counter!("rocksdb_invalid_ttl_entries", "cf" => C::NAME.as_str())
                         .increment(1);
+
+                    return Decision::Remove;
                 }
 
                 let last_modified = value

@@ -23,7 +23,7 @@ use {
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
     network::{Keypair, NoHandshake},
     rand::{seq::IteratorRandom as _, Rng},
-    relay_rocks::util::timestamp_micros,
+    relay_rocks::util::{timestamp_micros, timestamp_secs},
     std::{
         collections::HashMap,
         path::PathBuf,
@@ -94,6 +94,7 @@ impl NodeHandle {
             .await
             .unwrap()
             .unwrap()
+            .map(|out| out.0)
     }
 
     async fn replica_set(&self, mut operation: storage::Set, keyspace_version: u64) {
@@ -288,7 +289,7 @@ impl TestCluster {
             set: Set {
                 key: key.clone(),
                 value: value.clone(),
-                expiration: None,
+                expiration: timestamp_secs() + 600,
                 version: timestamp_micros(),
             },
             get: Get { key: key.clone() },
@@ -296,7 +297,7 @@ impl TestCluster {
             overwrite: Set {
                 key,
                 value: value2,
-                expiration: None,
+                expiration: timestamp_secs() + 600,
                 version: timestamp_micros(),
             },
         }
@@ -646,7 +647,7 @@ impl TestCluster {
 
                 this.random_node()
                     .coordinator_api_client
-                    .set(key, set.value, set.expiration)
+                    .set(key, set.value, Some(set.expiration))
                     .await
                     .unwrap();
 
@@ -739,7 +740,7 @@ impl TestCluster {
 
                 self.random_node()
                     .coordinator_api_client
-                    .set(key, set.value, set.expiration)
+                    .set(key, set.value, Some(set.expiration))
                     .await
                     .unwrap();
 

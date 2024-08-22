@@ -3,6 +3,7 @@
 
 use {
     super::compaction::Merge,
+    crate::util::timestamp_secs,
     derive_more::From,
     serde::{Deserialize, Serialize},
 };
@@ -130,11 +131,11 @@ impl<T> MergeOp<T> {
         // For how long the mark of the deleted record should stay in the database.
         // We need it to properly merge concurrent updates/deletes during data
         // migrations.
-        const LINGER_SECS: UnixTimestampSecs = 24 * 60 * 60; // a day
+        const LINGER_SECS: u64 = 24 * 60 * 60; // a day
 
         Self::new(
             MergeDel {
-                expiration: LINGER_SECS,
+                expiration: timestamp_secs() + LINGER_SECS,
             },
             timestamp,
         )

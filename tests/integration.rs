@@ -154,7 +154,7 @@ impl TestCluster {
 
         for mut cfg in node_configs {
             cfg.known_peers = known_peers.clone();
-            cfg.bootstrap_nodes = Some(known_peers.keys().cloned().collect());
+            cfg.bootstrap_nodes = Some(known_peers.keys().copied().collect());
 
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }

@@ -7,6 +7,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt::Debug,
+        net::Ipv4Addr,
         path::PathBuf,
         str::FromStr,
     },
@@ -24,20 +25,26 @@ pub struct Config {
 
     pub is_raft_voter: bool,
 
-    /// [`network::Multiaddr`] of the Raft server.
-    pub raft_server_addr: network::Multiaddr,
+    /// [`Ipv4Addr`] to bind the servers to.
+    ///
+    /// If not specified the node will try to automatically detect its own
+    /// public address.
+    pub server_addr: Option<Ipv4Addr>,
 
-    /// [`network::Multiaddr`] of the replica API server.
-    pub replica_api_server_addr: network::Multiaddr,
+    /// Port of the Raft server.
+    pub raft_server_port: u16,
 
-    /// [`network::Multiaddr`] of the coordinator API server.
-    pub coordinator_api_server_addr: network::Multiaddr,
+    /// Port of the replica API server.
+    pub replica_api_server_port: u16,
 
-    /// [`network::Multiaddr`] of the admin API server.
-    pub admin_api_server_addr: network::Multiaddr,
+    /// Port of the coordinator API server.
+    pub coordinator_api_server_port: u16,
 
-    /// Service metrics HTTP address.
-    pub metrics_addr: String,
+    /// Port of the admin API server.
+    pub admin_api_server_port: u16,
+
+    /// Port of the Prometheus metrics server.
+    pub metrics_server_port: u16,
 
     /// List of known peers.
     pub known_peers: HashMap<PeerId, Multiaddr>,
@@ -46,7 +53,7 @@ pub struct Config {
     /// Each node in this list should also be in [`Config::known_peers`].
     ///
     /// Can be omitted if the cluster is already running.
-    pub bootstrap_nodes: Option<HashMap<PeerId, Multiaddr>>,
+    pub bootstrap_nodes: Option<Vec<PeerId>>,
 
     /// Path to the [`Raft`] directory.
     pub raft_dir: PathBuf,
@@ -120,18 +127,19 @@ impl Config {
 
         tracing::info!(config = ?rocksdb, "rocksdb configuration");
 
-        let mut cfg = Config {
+        Ok(Self {
             id: PeerId::from_public_key(&raw.keypair.public()),
             keypair: raw.keypair,
             region: raw.region,
             organization: raw.organization,
             is_raft_voter: raw.is_raft_voter.unwrap_or_default(),
-            raft_server_addr: raw.raft_server_addr,
-            replica_api_server_addr: raw.replica_api_server_addr,
-            coordinator_api_server_addr: raw.coordinator_api_server_addr,
-            admin_api_server_addr: raw.admin_api_server_addr,
-            metrics_addr: raw.metrics_addr,
-            bootstrap_nodes: None,
+            server_addr: raw.server_addr,
+            raft_server_port: raw.raft_server_port.unwrap_or(3010),
+            replica_api_server_port: raw.replica_api_server_port.unwrap_or(3011),
+            coordinator_api_server_port: raw.coordinator_api_server_port.unwrap_or(3012),
+            admin_api_server_port: raw.admin_api_server_port.unwrap_or(3013),
+            metrics_server_port: raw.metrics_server_port.unwrap_or(3014),
+            bootstrap_nodes: raw.bootstrap_nodes,
             known_peers: known_peers_from_env()?,
             raft_dir: raw.raft_dir,
             rocksdb_dir: raw.rocksdb_dir,
@@ -170,24 +178,7 @@ impl Config {
             } else {
                 None
             },
-        };
-
-        if let Some(nodes) = raw.bootstrap_nodes {
-            let map_fn = |id| {
-                if id == cfg.id {
-                    return Ok((id, cfg.replica_api_server_addr.clone()));
-                };
-
-                cfg.known_peers
-                    .get(&id)
-                    .map(|addr| (id, addr.clone()))
-                    .ok_or_else(|| envy::Error::custom(format!("Missing address for {id} peer")))
-            };
-
-            cfg.bootstrap_nodes = Some(nodes.into_iter().map(map_fn).collect::<Result<_, _>>()?);
-        }
-
-        Ok(cfg)
+        })
     }
 }
 
@@ -202,12 +193,13 @@ struct RawConfig {
 
     is_raft_voter: Option<bool>,
 
-    raft_server_addr: network::Multiaddr,
-    replica_api_server_addr: network::Multiaddr,
-    coordinator_api_server_addr: network::Multiaddr,
-    admin_api_server_addr: network::Multiaddr,
+    server_addr: Option<Ipv4Addr>,
+    raft_server_port: Option<u16>,
+    replica_api_server_port: Option<u16>,
+    coordinator_api_server_port: Option<u16>,
+    admin_api_server_port: Option<u16>,
+    metrics_server_port: Option<u16>,
 
-    metrics_addr: String,
     bootstrap_nodes: Option<Vec<PeerId>>,
     raft_dir: PathBuf,
     rocksdb_dir: PathBuf,

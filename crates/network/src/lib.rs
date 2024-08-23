@@ -380,8 +380,10 @@ fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultia
     try_multiaddr_to_socketaddr(addr).ok_or_else(|| InvalidMultiaddrError(addr.clone()))
 }
 
-pub fn socketaddr_to_multiaddr(addr: SocketAddr) -> Multiaddr {
+pub fn socketaddr_to_multiaddr(addr: impl Into<SocketAddr>) -> Multiaddr {
     use libp2p::multiaddr::Protocol;
+
+    let addr = addr.into();
 
     let mut result = Multiaddr::from(addr.ip());
     result.push(Protocol::Udp(addr.port()));

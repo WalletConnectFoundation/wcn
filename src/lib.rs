@@ -1,6 +1,7 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
+    ::network::socketaddr_to_multiaddr,
     anyhow::Context,
     futures::{
         future::{FusedFuture, OptionFuture},
@@ -13,7 +14,14 @@ use {
         PrometheusHandle,
     },
     serde::{Deserialize, Serialize},
-    std::{fmt::Debug, future::Future, pin::pin, time::Duration},
+    std::{
+        fmt::Debug,
+        future::Future,
+        io,
+        net::{IpAddr, Ipv4Addr},
+        pin::pin,
+        time::Duration,
+    },
     tap::Pipe,
     time::{macros::datetime, OffsetDateTime},
     xxhash_rust::xxh3::Xxh3Builder,
@@ -80,6 +88,12 @@ pub enum Error {
 
     #[error("Failed to initialize prometheus: {0:?}")]
     Prometheus(PrometheusBuildError),
+
+    #[error("Failed to read network interfaces: {0:?}")]
+    ReadNetworkInterfaces(io::Error),
+
+    #[error("Failed to find a public IP of this node")]
+    NoPublicIp,
 }
 
 #[global_allocator]
@@ -120,6 +134,19 @@ pub async fn run(
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
+    let server_addr = if let Some(addr) = cfg.server_addr {
+        addr
+    } else {
+        if_addrs::get_if_addrs()
+            .map_err(Error::ReadNetworkInterfaces)?
+            .iter()
+            .find_map(|interface| match interface.addr.ip() {
+                IpAddr::V4(ip) if is_global_ip(ip) => Some(ip),
+                _ => None,
+            })
+            .ok_or(Error::NoPublicIp)?
+    };
+
     let stake_validator = if let Some(c) = &cfg.smart_contract {
         let rpc_url = &c.eth_rpc_url;
         let addr = &c.config_address;
@@ -132,7 +159,7 @@ pub async fn run(
         None
     };
 
-    let consensus = Consensus::new(cfg, network.clone(), stake_validator)
+    let consensus = Consensus::new(cfg, server_addr, network.clone(), stake_validator)
         .await
         .map_err(Error::Consensus)?;
 
@@ -193,7 +220,7 @@ pub async fn run(
     let node = irn::Node::new(
         cluster::Node {
             id: cfg.id,
-            addr: cfg.replica_api_server_addr.clone(),
+            addr: socketaddr_to_multiaddr((server_addr, cfg.replica_api_server_port)),
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
@@ -205,9 +232,16 @@ pub async fn run(
         Xxh3Builder::new(),
     );
 
-    Network::spawn_servers(cfg, node.clone(), prometheus.clone(), status_reporter)?;
+    Network::spawn_servers(
+        cfg,
+        server_addr,
+        node.clone(),
+        prometheus.clone(),
+        status_reporter,
+    )?;
 
-    let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
+    let metrics_srv =
+        metrics::serve(cfg.clone(), server_addr, node.clone(), prometheus)?.pipe(tokio::spawn);
 
     let node_clone = node.clone();
     let node_fut = async move {
@@ -259,3 +293,21 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
+
+/// Copy-pasta of [`Ipv4Addr::is_global`] with unstable checks removed.
+///
+/// Should be good enough for our purposes.
+const fn is_global_ip(addr: Ipv4Addr) -> bool {
+    !(addr.octets()[0] == 0 // "This network"
+            || addr.is_private()
+            || addr.is_loopback()
+            || addr.is_link_local()
+            // addresses reserved for future protocols (`192.0.0.0/24`)
+            // .9 and .10 are documented as globally reachable so they're excluded
+            || (
+                addr.octets()[0] == 192 && addr.octets()[1] == 0 && addr.octets()[2] == 0
+                && addr.octets()[3] != 9 && addr.octets()[3] != 10
+            )
+            || addr.is_documentation()
+            || addr.is_broadcast())
+}

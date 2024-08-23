@@ -822,9 +822,6 @@ fn new_node_config() -> Config {
 
     fn next_port() -> u16 {
         NEXT_PORT.fetch_add(1, Ordering::Relaxed)
-        // format!("/ip4/127.0.0.1/udp/{port}/quic-v1")
-        //     .parse()
-        //     .unwrap()
     }
 
     let keypair = Keypair::generate_ed25519();

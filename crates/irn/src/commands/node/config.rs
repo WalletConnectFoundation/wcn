@@ -2,7 +2,7 @@ use {
     network::{Keypair, PeerId},
     node::cluster::NodeRegion,
     serde::{Deserialize, Serialize},
-    std::net::{IpAddr, SocketAddr},
+    std::net::{Ipv4Addr, SocketAddr},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,7 +34,7 @@ pub struct KnownPeer {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Server {
-    pub bind_address: IpAddr,
+    pub bind_address: Ipv4Addr,
     pub server_port: u16,
     pub client_port: u16,
     pub raft_port: u16,

@@ -63,9 +63,6 @@ enum Error {
     #[error("Invalid consensus directory")]
     InvalidConsensusDir,
 
-    #[error("Bootstrap node is not in the known peers list")]
-    PeerAddressMissing,
-
     #[error("Failed to lock working directory")]
     PidLock,
 

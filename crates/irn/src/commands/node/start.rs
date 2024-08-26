@@ -5,7 +5,6 @@ use {
     node::RocksdbDatabaseConfig,
     std::{
         collections::{HashMap, HashSet},
-        net::SocketAddr,
         path::PathBuf,
         process::{Command, Stdio},
     },
@@ -113,21 +112,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         .collect::<HashMap<_, _>>();
 
     let bootstrap_nodes = if !config.bootstrap_nodes.is_empty() {
-        let nodes = config
-            .bootstrap_nodes
-            .into_iter()
-            .map(|node| {
-                let id = PeerId::from(node);
-                let address = known_peers
-                    .get(&id)
-                    .cloned()
-                    .ok_or(Error::PeerAddressMissing)?;
-
-                Ok((id, address))
-            })
-            .collect::<Result<_, Error>>()?;
-
-        Some(nodes)
+        Some(config.bootstrap_nodes.iter().map(|node| node.id).collect())
     } else {
         None
     };
@@ -191,24 +176,12 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public()),
         keypair: config.identity.private_key,
-        replica_api_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
-            config.server.bind_address,
-            config.server.server_port,
-        )),
-        coordinator_api_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
-            config.server.bind_address,
-            config.server.client_port,
-        )),
-        raft_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
-            config.server.bind_address,
-            config.server.raft_port,
-        )),
-        admin_api_server_addr: network::socketaddr_to_multiaddr(SocketAddr::new(
-            config.server.bind_address,
-            config.server.admin_port,
-        )),
-        metrics_addr: SocketAddr::new(config.server.bind_address, config.server.metrics_port)
-            .to_string(),
+        server_addr: Some(config.server.bind_address),
+        replica_api_server_port: config.server.server_port,
+        coordinator_api_server_port: config.server.client_port,
+        raft_server_port: config.server.raft_port,
+        admin_api_server_port: config.server.admin_port,
+        metrics_server_port: config.server.metrics_port,
         is_raft_voter: false,
         bootstrap_nodes,
         known_peers,

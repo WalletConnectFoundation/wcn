@@ -147,6 +147,8 @@ pub async fn run(
             .ok_or(Error::NoPublicIp)?
     };
 
+    tracing::info!(%server_addr, node_id = %cfg.id, "Running");
+
     let stake_validator = if let Some(c) = &cfg.smart_contract {
         let rpc_url = &c.eth_rpc_url;
         let addr = &c.config_address;

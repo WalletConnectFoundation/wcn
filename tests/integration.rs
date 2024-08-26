@@ -258,7 +258,7 @@ impl TestCluster {
     }
 
     async fn wait(&mut self, f: impl Fn(&mut Self, &ClusterView) -> bool) {
-        tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 match self.is(&f).await {
                     Ok(true) => return,

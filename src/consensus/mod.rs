@@ -403,16 +403,15 @@ impl Raft {
         let membership = self.metrics().membership_config;
         let nodes: &HashMap<_, _> = &membership.nodes().collect();
 
-        match nodes.get(&NodeId(self.id)) {
-            // There are no other nodes in the membership, that means that this is a new node,
-            // and it needs to be added to the cluster.
-            _ if nodes.len() <= 1 => {}
+        let node = nodes.get(&NodeId(self.id));
 
-            // If this node is within the membership already and it's address hasn't
-            // been changed, we don't need to re-add it.
-            Some(node) if &node.0 == server_addr => return Ok(()),
-
-            _ => {}
+        // If there are no other nodes in the membership, that means that this is a new
+        // node, and it needs to be added to the cluster.
+        //
+        // If this node is within the membership already and it's address hasn't
+        // been changed, we don't need to re-add it.
+        if matches!(node, Some(node) if &node.0 == server_addr && nodes.len() > 1) {
+            return Ok(());
         }
 
         let backoff = ExponentialBackoff {
@@ -433,9 +432,10 @@ impl Raft {
             // It happens sometimes that a leader restarts quick enough, so a new leader doesn't get
             // elected. We just re-add the leader locally to update its address.
             if self.metrics().current_leader == Some(NodeId(self.id)) {
-                match self.inner.add_member(req.clone()).await {
-                    Ok(_) => return Ok(()),
-                    Err(err) => tracing::warn!(?err, "leader failed to update itself"),
+                if let Err(err) = self.inner.add_member(req.clone()).await {
+                    tracing::warn!(?err, "leader failed to update itself");
+                } else {
+                    return Ok(());
                 };
             }
 

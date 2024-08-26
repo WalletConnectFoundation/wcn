@@ -400,10 +400,19 @@ impl Consensus {
 
 impl Raft {
     async fn init(&self, cfg: &Config, server_addr: &Multiaddr) -> Result<(), InitializationError> {
-        // If it's a bootstrap launch or a subsequent launch of a bootnode we don't need
-        // to add a new member manually.
-        if cfg.bootstrap_nodes.is_some() {
-            return Ok(());
+        let membership = self.metrics().membership_config;
+        let nodes: &HashMap<_, _> = &membership.nodes().collect();
+
+        match nodes.get(&NodeId(self.id)) {
+            // There are no other nodes in the membership, that means that this is a new node,
+            // and it needs to be added to the cluster.
+            _ if nodes.len() <= 1 => {}
+
+            // If this node is within the membership already and it's address hasn't
+            // been changed, we don't need to re-add it.
+            Some(node) if &node.0 == server_addr => return Ok(()),
+
+            _ => {}
         }
 
         let backoff = ExponentialBackoff {
@@ -421,7 +430,20 @@ impl Raft {
                 }),
             };
 
-            for (peer_id, multiaddr) in &cfg.known_peers {
+            // It happens sometimes that a leader restarts quick enough, so a new leader doesn't get
+            // elected. We just re-add the leader locally to update its address.
+            if self.metrics().current_leader == Some(NodeId(self.id)) {
+                match self.inner.add_member(req.clone()).await {
+                    Ok(_) => return Ok(()),
+                    Err(err) => tracing::warn!(?err, "leader failed to update itself"),
+                };
+            }
+
+            let known_members = nodes
+                .iter()
+                .filter_map(|(NodeId(id), Node(addr))| (id != &self.id).then_some((id, addr)));
+
+            for (peer_id, multiaddr) in cfg.known_peers.iter().chain(known_members) {
                 let peer = self.network.get_peer(peer_id, multiaddr);
 
                 let res = async {
@@ -450,7 +472,7 @@ impl Raft {
                         return Ok(());
                     }
                     Err(err) => {
-                        tracing::warn!(?err, %peer_id, "failed to add a member via a remote peer")
+                        tracing::warn!(?err, %peer_id, %multiaddr, "failed to add a member via a remote peer")
                     }
                 }
             }

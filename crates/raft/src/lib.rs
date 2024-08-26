@@ -617,7 +617,15 @@ where
         let mut nodes = std::collections::BTreeMap::new();
         nodes.insert(req.node_id, req.node.clone());
 
-        let change_members = if req.learner_only {
+        let is_member = self
+            .metrics()
+            .membership_config
+            .nodes()
+            .any(|(id, _)| id == &req.node_id);
+
+        let change_members = if is_member {
+            openraft::ChangeMembers::SetNodes(nodes)
+        } else if req.learner_only {
             openraft::ChangeMembers::AddNodes(nodes)
         } else {
             openraft::ChangeMembers::AddVoters(nodes)

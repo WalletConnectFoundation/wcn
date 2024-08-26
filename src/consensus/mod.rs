@@ -553,7 +553,7 @@ impl Raft {
         }
 
         if let Some(nodes) = self.bootstrap_nodes.as_ref() {
-            if nodes.iter().any(|i| i == peer_id) {
+            if nodes.contains(peer_id) {
                 return true;
             }
         }

@@ -22,7 +22,7 @@ use {
     itertools::Itertools,
     libp2p::PeerId,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
-    network::{Keypair, NoHandshake},
+    network::{socketaddr_to_multiaddr, Keypair, NoHandshake},
     rand::{seq::IteratorRandom as _, Rng},
     relay_rocks::util::{timestamp_micros, timestamp_secs},
     std::{
@@ -70,6 +70,10 @@ struct NodeHandle {
     /// Replica API client to make replica requests _from_ this node to other
     /// nodes.
     replica_api_client: network::Client,
+
+    replica_api_server_addr: Multiaddr,
+    coordinator_api_server_addr: Multiaddr,
+    admin_api_server_addr: Multiaddr,
 }
 
 impl NodeHandle {
@@ -84,7 +88,7 @@ impl NodeHandle {
         });
 
         let id = &self.config.id;
-        let addr = &self.config.replica_api_server_addr;
+        let addr = &self.replica_api_server_addr;
 
         let req = rpc::replica::Request {
             operation,
@@ -105,7 +109,7 @@ impl NodeHandle {
         });
 
         let id = &self.config.id;
-        let addr = &self.config.replica_api_server_addr;
+        let addr = &self.replica_api_server_addr;
 
         let req = rpc::replica::Request {
             operation,
@@ -143,14 +147,14 @@ impl TestCluster {
         let node_configs: Vec<_> = (0..3).map(|_| new_node_config()).collect();
         let known_peers: HashMap<_, _> = node_configs
             .iter()
-            .map(|c| (c.id, c.raft_server_addr.clone()))
+            .map(|c| (c.id, local_multiaddr(c.raft_server_port)))
             .collect();
 
         let mut nodes = HashMap::new();
 
         for mut cfg in node_configs {
             cfg.known_peers = known_peers.clone();
-            cfg.bootstrap_nodes = Some(known_peers.clone());
+            cfg.bootstrap_nodes = Some(known_peers.keys().copied().collect());
 
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
@@ -203,7 +207,7 @@ impl TestCluster {
             .nodes
             .values()
             .take(1)
-            .map(|n| (n.config.id, n.config.raft_server_addr.clone()))
+            .map(|n| (n.config.id, local_multiaddr(n.config.raft_server_port)))
             .collect();
 
         f(&mut cfg);
@@ -271,9 +275,9 @@ impl TestCluster {
 
     async fn get_cluster_view(&self) -> Result<ClusterView, anyhow::Error> {
         let node = self.nodes.values().next().unwrap();
-        let calle = (&node.config.id, &node.config.admin_api_server_addr);
+        let callee = (&node.config.id, &node.admin_api_server_addr);
 
-        Ok(rpc::admin::GetClusterView::send(&self.admin_api_client, calle, ()).await??)
+        Ok(rpc::admin::GetClusterView::send(&self.admin_api_client, callee, ()).await??)
     }
 
     fn random_node(&self) -> &NodeHandle {
@@ -422,20 +426,16 @@ impl TestCluster {
 
         // Client, authorized for the first namespace.
         let client0 = new_coordinator_api_client(|c| {
-            c.nodes.insert(
-                node.config.id,
-                node.config.coordinator_api_server_addr.clone(),
-            );
+            c.nodes
+                .insert(node.config.id, node.coordinator_api_server_addr.clone());
             c.namespaces = vec![namespaces[0].0.clone()];
         });
         let namespace0 = namespaces[0].1;
 
         // Client, authorized for the second namespace.
         let client1 = new_coordinator_api_client(|c| {
-            c.nodes.insert(
-                node.config.id,
-                node.config.coordinator_api_server_addr.clone(),
-            );
+            c.nodes
+                .insert(node.config.id, node.coordinator_api_server_addr.clone());
             c.namespaces = vec![namespaces[1].0.clone()];
         });
         let namespace1 = namespaces[1].1;
@@ -617,7 +617,7 @@ impl TestCluster {
         let authorized_client = new_coordinator_api_client(|c| {
             c.key = signing_key;
             c.nodes
-                .insert(node_id, node.config.coordinator_api_server_addr.clone());
+                .insert(node_id, node.coordinator_api_server_addr.clone());
         });
 
         let resp = authorized_client
@@ -820,11 +820,8 @@ fn new_node_config() -> Config {
     static COUNTER: AtomicU16 = AtomicU16::new(0);
     static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
 
-    fn gen_multiaddr() -> Multiaddr {
-        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
-        format!("/ip4//udp/{port}/quic-v1")
-            .parse()
-            .unwrap()
+    fn next_port() -> u16 {
+        NEXT_PORT.fetch_add(1, Ordering::Relaxed)
     }
 
     let keypair = Keypair::generate_ed25519();
@@ -844,15 +841,16 @@ fn new_node_config() -> Config {
         region,
         organization: "WalletConnect".to_string(),
         is_raft_voter: false,
-        raft_server_addr: gen_multiaddr(),
-        replica_api_server_addr: gen_multiaddr(),
-        coordinator_api_server_addr: gen_multiaddr(),
-        admin_api_server_addr: gen_multiaddr(),
+        raft_server_port: next_port(),
+        replica_api_server_port: next_port(),
+        coordinator_api_server_port: next_port(),
+        admin_api_server_port: next_port(),
         known_peers: HashMap::default(),
         bootstrap_nodes: None,
         raft_dir: dir.join("raft"),
         keypair,
-        metrics_addr: format!(":{}", NEXT_PORT.fetch_add(1, Ordering::Relaxed)),
+        server_addr: Some([127, 0, 0, 1].into()),
+        metrics_server_port: next_port(),
         rocksdb_dir: dir.join("rocksdb"),
         rocksdb: RocksdbDatabaseConfig {
             num_batch_threads: 1,
@@ -895,9 +893,12 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
     let (tx, rx) = oneshot::channel();
     let rx = rx.map(|res| res.unwrap_or(ShutdownReason::Decommission));
 
+    let replica_api_server_addr = local_multiaddr(cfg.replica_api_server_port);
+    let coordinator_api_server_addr = local_multiaddr(cfg.coordinator_api_server_port);
+    let admin_api_server_addr = local_multiaddr(cfg.admin_api_server_port);
+
     let coordinator_api_client = new_coordinator_api_client(|c| {
-        c.nodes
-            .insert(cfg.id, cfg.coordinator_api_server_addr.clone());
+        c.nodes.insert(cfg.id, coordinator_api_server_addr.clone());
     });
 
     let client_config = network::ClientConfig {
@@ -935,6 +936,9 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
         shutdown_tx: tx,
         coordinator_api_client,
         replica_api_client,
+        replica_api_server_addr,
+        coordinator_api_server_addr,
+        admin_api_server_addr,
     }
 }
 
@@ -961,4 +965,8 @@ impl Data {
 fn sort_data(mut data: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     data.sort();
     data
+}
+
+fn local_multiaddr(port: u16) -> Multiaddr {
+    socketaddr_to_multiaddr(([127, 0, 0, 1], port))
 }

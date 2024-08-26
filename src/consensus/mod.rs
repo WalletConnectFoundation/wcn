@@ -17,6 +17,7 @@ use {
     futures::FutureExt as _,
     irn::fsm::ShutdownReason,
     libp2p::PeerId,
+    network::socketaddr_to_multiaddr,
     parking_lot::Mutex,
     raft::{
         storage::{Snapshot, SnapshotMeta},
@@ -30,6 +31,7 @@ use {
         fmt::Debug,
         future::Future,
         io::{self, Cursor},
+        net::Ipv4Addr,
         sync::Arc,
         time::Duration,
     },
@@ -224,7 +226,7 @@ pub struct Raft {
 
     initial_membership: Arc<Mutex<Option<raft::Membership<NodeId, Node>>>>,
 
-    bootstrap_nodes: Arc<Option<HashMap<PeerId, Multiaddr>>>,
+    bootstrap_nodes: Arc<Option<Vec<PeerId>>>,
     is_voter: bool,
 
     stake_validator: Option<contract::StakeValidator>,
@@ -257,7 +259,10 @@ pub enum InitializationError {
     SpawnServer(#[from] network::Error),
 
     #[error("Cluster needs to be bootstrapped, but no bootstrap nodes are provided")]
-    NotBootstrapNodes,
+    NoBootstrapNodes,
+
+    #[error("Missing address for bootstrap node {_0}")]
+    BootstrapNodeAddrMissing(PeerId),
 
     #[error(transparent)]
     Cluster(irn::cluster::Error),
@@ -267,6 +272,7 @@ impl Consensus {
     /// Spawns a new [`Consensus`] task and returns it's handle.
     pub async fn new(
         cfg: &Config,
+        server_addr: Ipv4Addr,
         network: Network,
         stake_validator: Option<contract::StakeValidator>,
     ) -> Result<Consensus, InitializationError> {
@@ -292,12 +298,31 @@ impl Consensus {
         let (tx, mut state) = watch::channel(None);
         let storage_adapter = storage::Adapter::new(cfg.raft_dir.clone(), tx);
 
+        let server_addr = socketaddr_to_multiaddr((server_addr, cfg.raft_server_port));
+
+        let bootstrap_nodes: Option<HashMap<_, _>> = cfg
+            .bootstrap_nodes
+            .clone()
+            .map(|nodes| {
+                let map_fn = |id| {
+                    if id == cfg.id {
+                        return Ok((NodeId(id), Node(server_addr.clone())));
+                    };
+
+                    cfg.known_peers
+                        .get(&id)
+                        .map(|addr| (NodeId(id), Node(addr.clone())))
+                        .ok_or_else(|| InitializationError::BootstrapNodeAddrMissing(id))
+                };
+
+                nodes.into_iter().map(map_fn).collect::<Result<_, _>>()
+            })
+            .transpose()?;
+
         let raft = raft::new(
             NodeId(cfg.id),
             raft_config,
-            cfg.bootstrap_nodes
-                .clone()
-                .map(|nodes| nodes.into_iter().map(|(id, addr)| (NodeId(id), Node(addr)))),
+            bootstrap_nodes.map(|nodes| nodes.into_iter()),
             network.clone(),
             storage_adapter,
         )
@@ -319,9 +344,9 @@ impl Consensus {
             stake_validator,
         };
 
-        Network::spawn_raft_server(cfg, raft.clone())?;
+        Network::spawn_raft_server(cfg, server_addr.clone(), raft.clone())?;
 
-        raft.init(cfg).await?;
+        raft.init(cfg, &server_addr).await?;
 
         let cluster_view = loop {
             state.changed().await.unwrap();
@@ -374,7 +399,7 @@ impl Consensus {
 }
 
 impl Raft {
-    async fn init(&self, cfg: &Config) -> Result<(), InitializationError> {
+    async fn init(&self, cfg: &Config, server_addr: &Multiaddr) -> Result<(), InitializationError> {
         // If it's a bootstrap launch or a subsequent launch of a bootnode we don't need
         // to add a new member manually.
         if cfg.bootstrap_nodes.is_some() {
@@ -389,7 +414,7 @@ impl Raft {
         retry(backoff, move || async {
             let req = AddMemberRequest {
                 node_id: NodeId(self.id),
-                node: Node(cfg.raft_server_addr.clone()),
+                node: Node(server_addr.clone()),
                 learner_only: !self.is_voter,
                 payload: cfg.eth_address.as_ref().map(|addr| AddMemberPayload {
                     operator_eth_address: addr.clone(),
@@ -528,7 +553,7 @@ impl Raft {
         }
 
         if let Some(nodes) = self.bootstrap_nodes.as_ref() {
-            if nodes.keys().any(|i| i == peer_id) {
+            if nodes.contains(peer_id) {
                 return true;
             }
         }

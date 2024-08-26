@@ -36,6 +36,12 @@ use {
     tracing_subscriber::EnvFilter,
 };
 
+static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
+
+fn next_port() -> u16 {
+    NEXT_PORT.fetch_add(1, Ordering::Relaxed)
+}
+
 #[tokio::test]
 async fn test_suite() {
     let mut cluster = TestCluster::bootstrap().await;
@@ -49,6 +55,8 @@ async fn test_suite() {
     // add 2 exta nodes, 5 total
     cluster.spawn_node().await;
     cluster.spawn_node().await;
+
+    cluster.test_addr_change().await;
 
     cluster.test_replication_and_read_repairs().await;
 
@@ -120,6 +128,11 @@ impl NodeHandle {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    fn change_addr(&mut self) {
+        self.config.raft_server_port = next_port();
+        self.config.replica_api_server_port = next_port();
     }
 }
 
@@ -245,7 +258,7 @@ impl TestCluster {
     }
 
     async fn wait(&mut self, f: impl Fn(&mut Self, &ClusterView) -> bool) {
-        tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 match self.is(&f).await {
                     Ok(true) => return,
@@ -633,6 +646,19 @@ impl TestCluster {
         self.decommission_node(&node_id).await;
     }
 
+    async fn test_addr_change(&mut self) {
+        tracing::info!("Address changes");
+
+        for id in self.nodes.keys().copied().collect_vec() {
+            self.nodes
+                .get_mut(&id)
+                .map(NodeHandle::change_addr)
+                .unwrap();
+
+            self.restart_node(&id).await;
+        }
+    }
+
     async fn test_replication_and_read_repairs(&self) {
         const REPLICATION_FACTOR: usize = 3;
         const RECORDS_NUM: usize = 10000;
@@ -818,11 +844,6 @@ impl TestCluster {
 
 fn new_node_config() -> Config {
     static COUNTER: AtomicU16 = AtomicU16::new(0);
-    static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
-
-    fn next_port() -> u16 {
-        NEXT_PORT.fetch_add(1, Ordering::Relaxed)
-    }
 
     let keypair = Keypair::generate_ed25519();
     let id = PeerId::from_public_key(&keypair.public());

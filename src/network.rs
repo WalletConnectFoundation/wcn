@@ -212,6 +212,7 @@ pub mod rpc {
 
     pub mod admin {
         use {
+            api::Multiaddr,
             libp2p::PeerId,
             network::rpc,
             serde::{Deserialize, Serialize},
@@ -229,6 +230,7 @@ pub mod rpc {
         pub struct Node {
             pub id: PeerId,
             pub state: NodeState,
+            pub addr: Multiaddr,
         }
 
         #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1023,14 +1025,18 @@ impl AdminRpcHandler {
 
         let nodes = cluster
             .nodes()
-            .filter_map(|n| {
-                let state = match cluster.node_state(&n.id)? {
+            .filter_map(|node| {
+                let state = match cluster.node_state(&node.id)? {
                     cluster::NodeState::Pulling(_) => NodeState::Pulling,
                     cluster::NodeState::Normal => NodeState::Normal,
                     cluster::NodeState::Restarting => NodeState::Restarting,
                     cluster::NodeState::Decommissioning => NodeState::Decommissioning,
                 };
-                let node = admin::Node { id: n.id, state };
+                let node = admin::Node {
+                    id: node.id,
+                    state,
+                    addr: node.addr.clone(),
+                };
                 Some((node.id, node))
             })
             .collect();

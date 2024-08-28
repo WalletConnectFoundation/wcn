@@ -38,21 +38,26 @@ services:
     ports:
       - "3010:3010/udp"
       - "3011:3011/udp"
-      - 3012:3012
+      - "3012:3012/tcp"
+      - "3013:3013/udp"
+      - "3014:3014/udp"
     environment:
-      - ADDR=/ip4/172.11.0.101/udp/3010/quic-v1
-      - API_ADDR=/ip4/172.11.0.101/udp/3011/quic-v1
-      - METRICS_ADDR=172.11.0.101:3012
-      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2
+      - SERVER_ADDR=172.11.0.101
+      - RAFT_SERVER_PORT=3010
+      - COORDINATOR_API_SERVER_PORT=3011
+      - METRICS_SERVER_PORT=3012
+      - REPLICA_API_SERVER_PORT=3013
+      - ADMIN_API_SERVER_PORT=3014
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
       - RAFT_DIR=/irn/raft
       - ROCKSDB_DIR=/irn/rocksdb
-      - REPLICATION_STRATEGY_FACTOR=3
-      - REPLICATION_STRATEGY_LEVEL=Quorum
       - LOG_LEVEL=info,tarpc=error
-      - GROUP=1
+      - REGION=eu
+      - ORGANIZATION=WalletConnect
+      - IS_RAFT_VOTER=true
       - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
-      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4/172.11.0.102/udp/3020/quic-v1
-      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4/172.11.0.103/udp/3030/quic-v1
+      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY=/ip4/172.11.0.102/udp/3020/quic-v1
+      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs=/ip4/172.11.0.103/udp/3030/quic-v1
 
   irn-node-2:
     image: irn:master
@@ -63,21 +68,26 @@ services:
     ports:
       - "3020:3020/udp"
       - "3021:3021/udp"
-      - 3022:3022
+      - "3022:3022/tcp"
+      - "3023:3023/udp"
+      - "3024:3024/udp"
     environment:
-      - ADDR=/ip4/172.11.0.102/udp/3020/quic-v1
-      - API_ADDR=/ip4/172.11.0.102/udp/3021/quic-v1
-      - METRICS_ADDR=172.11.0.102:3022
-      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2
+      - SERVER_ADDR=172.11.0.102
+      - RAFT_SERVER_PORT=3020
+      - COORDINATOR_API_SERVER_PORT=3021
+      - METRICS_SERVER_PORT=3022
+      - REPLICA_API_SERVER_PORT=3023
+      - ADMIN_API_SERVER_PORT=3024
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
       - RAFT_DIR=/irn/raft
       - ROCKSDB_DIR=/irn/rocksdb
-      - REPLICATION_STRATEGY_FACTOR=3
-      - REPLICATION_STRATEGY_LEVEL=Quorum
       - LOG_LEVEL=info,tarpc=error
-      - GROUP=2
+      - REGION=us
+      - ORGANIZATION=WalletConnect
+      - IS_RAFT_VOTER=true
       - SECRET_KEY=aAz8/3kOkdukRmWks9/QCgiKBAm+3FnqxXE35U44t/c=
-      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1=/ip4/172.11.0.101/udp/3010/quic-v1
-      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3=/ip4/172.11.0.103/udp/3030/quic-v1
+      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4/172.11.0.101/udp/3010/quic-v1
+      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs=/ip4/172.11.0.103/udp/3030/quic-v1
       - ETH_ADDRESS=0x70997970c51812dc3a010c7d01b50e0d17dc79c8
 
   irn-node-3:
@@ -89,21 +99,26 @@ services:
     ports:
       - "3030:3030/udp"
       - "3031:3031/udp"
-      - 3032:3032
+      - "3032:3032/tcp"
+      - "3033:3033/udp"
+      - "3034:3034/udp"
     environment:
-      - ADDR=/ip4/172.11.0.103/udp/3030/quic-v1
-      - API_ADDR=/ip4/172.11.0.103/udp/3031/quic-v1
-      - METRICS_ADDR=172.11.0.103:3032
-      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs_3,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2
+      - SERVER_ADDR=172.11.0.103
+      - RAFT_SERVER_PORT=3030
+      - COORDINATOR_API_SERVER_PORT=3031
+      - METRICS_SERVER_PORT=3032
+      - REPLICA_API_SERVER_PORT=3033
+      - ADMIN_API_SERVER_PORT=3034
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
       - RAFT_DIR=/irn/raft
       - ROCKSDB_DIR=/irn/rocksdb
-      - REPLICATION_STRATEGY_FACTOR=3
-      - REPLICATION_STRATEGY_LEVEL=Quorum
       - LOG_LEVEL=info,tarpc=error
-      - GROUP=3
+      - REGION=ap
+      - ORGANIZATION=WalletConnect
+      - IS_RAFT_VOTER=true
       - SECRET_KEY=Fn+92TJONBeB3ji6jd083wfPiRuZF5ScPSyhfCJy8C0=
-      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp_1=/ip4/172.11.0.101/udp/3010/quic-v1
-      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY_2=/ip4/172.11.0.102/udp/3020/quic-v1
+      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4/172.11.0.101/udp/3010/quic-v1
+      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY=/ip4/172.11.0.102/udp/3020/quic-v1
       - ETH_ADDRESS=0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc
 
 networks:

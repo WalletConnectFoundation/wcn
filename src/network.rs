@@ -49,7 +49,6 @@ use {
         collections::{HashMap, HashSet},
         fmt::{self, Debug},
         io,
-        net::Ipv4Addr,
         pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
@@ -1106,23 +1105,22 @@ impl Network {
 
     pub fn spawn_servers<S: StatusReporter>(
         cfg: &Config,
-        addr: Ipv4Addr,
         node: Node,
         prometheus: PrometheusHandle,
         status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let server_config = ::network::ServerConfig {
-            addr: socketaddr_to_multiaddr((addr, cfg.replica_api_server_port)),
+            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
         };
 
         let api_server_config = ::network::ServerConfig {
-            addr: socketaddr_to_multiaddr((addr, cfg.coordinator_api_server_port)),
+            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
             keypair: cfg.keypair.clone(),
         };
 
         let admin_api_server_config = ::network::ServerConfig {
-            addr: socketaddr_to_multiaddr((addr, cfg.admin_api_server_port)),
+            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.admin_api_server_port)),
             keypair: cfg.keypair.clone(),
         };
 

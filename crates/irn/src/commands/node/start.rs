@@ -176,7 +176,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     let config = node::Config {
         id: PeerId::from_public_key(&config.identity.private_key.public()),
         keypair: config.identity.private_key,
-        server_addr: Some(config.server.bind_address),
+        server_addr: config.server.bind_address,
         replica_api_server_port: config.server.server_port,
         coordinator_api_server_port: config.server.client_port,
         raft_server_port: config.server.raft_port,

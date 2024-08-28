@@ -26,10 +26,7 @@ pub struct Config {
     pub is_raft_voter: bool,
 
     /// [`Ipv4Addr`] to bind the servers to.
-    ///
-    /// If not specified the node will try to automatically detect its own
-    /// public address.
-    pub server_addr: Option<Ipv4Addr>,
+    pub server_addr: Ipv4Addr,
 
     /// Port of the Raft server.
     pub raft_server_port: u16,
@@ -193,7 +190,7 @@ struct RawConfig {
 
     is_raft_voter: Option<bool>,
 
-    server_addr: Option<Ipv4Addr>,
+    server_addr: Ipv4Addr,
     raft_server_port: Option<u16>,
     replica_api_server_port: Option<u16>,
     coordinator_api_server_port: Option<u16>,

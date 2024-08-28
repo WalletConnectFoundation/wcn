@@ -31,7 +31,6 @@ use {
         fmt::Debug,
         future::Future,
         io::{self, Cursor},
-        net::Ipv4Addr,
         sync::Arc,
         time::Duration,
     },
@@ -272,7 +271,6 @@ impl Consensus {
     /// Spawns a new [`Consensus`] task and returns it's handle.
     pub async fn new(
         cfg: &Config,
-        server_addr: Ipv4Addr,
         network: Network,
         stake_validator: Option<contract::StakeValidator>,
     ) -> Result<Consensus, InitializationError> {
@@ -298,7 +296,7 @@ impl Consensus {
         let (tx, mut state) = watch::channel(None);
         let storage_adapter = storage::Adapter::new(cfg.raft_dir.clone(), tx);
 
-        let server_addr = socketaddr_to_multiaddr((server_addr, cfg.raft_server_port));
+        let server_addr = socketaddr_to_multiaddr((cfg.server_addr, cfg.raft_server_port));
 
         let bootstrap_nodes: Option<HashMap<_, _>> = cfg
             .bootstrap_nodes

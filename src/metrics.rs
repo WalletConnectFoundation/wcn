@@ -2,12 +2,7 @@ use {
     crate::{config::Config, network::rpc, Error, Node},
     irn::cluster::Consensus,
     metrics_exporter_prometheus::PrometheusHandle,
-    std::{
-        future::Future,
-        net::{Ipv4Addr, SocketAddr},
-        path::Path,
-        time::Duration,
-    },
+    std::{future::Future, net::SocketAddr, path::Path, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
     tap::{TapFallible, TapOptional},
     tokio::sync::oneshot,
@@ -178,13 +173,12 @@ fn find_storage_mount_point(mut path: &Path) -> Option<&Path> {
 
 pub(crate) fn serve(
     cfg: Config,
-    server_addr: Ipv4Addr,
     node: Node,
     prometheus: PrometheusHandle,
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
     let prometheus_ = prometheus.clone();
 
-    let addr: SocketAddr = (server_addr, cfg.metrics_server_port).into();
+    let addr: SocketAddr = (cfg.server_addr, cfg.metrics_server_port).into();
 
     let (tx, rx) = oneshot::channel();
 

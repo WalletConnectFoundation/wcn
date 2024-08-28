@@ -870,7 +870,7 @@ fn new_node_config() -> Config {
         bootstrap_nodes: None,
         raft_dir: dir.join("raft"),
         keypair,
-        server_addr: Some([127, 0, 0, 1].into()),
+        server_addr: [127, 0, 0, 1].into(),
         metrics_server_port: next_port(),
         rocksdb_dir: dir.join("rocksdb"),
         rocksdb: RocksdbDatabaseConfig {

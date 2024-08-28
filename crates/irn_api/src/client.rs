@@ -372,8 +372,11 @@ impl<K: Kind> Client<K> {
             .ok_or_else(|| Error::Api(super::Error::NotFound))
     }
 
-    pub async fn set_exp(&self, key: Key, expiration: Option<UnixTimestampSecs>) -> Result<()> {
-        let op = super::SetExp { key, expiration };
+    pub async fn set_exp(&self, key: Key, expiration: UnixTimestampSecs) -> Result<()> {
+        let op = super::SetExp {
+            key,
+            expiration: Some(expiration),
+        };
 
         self.exec(rpc::SetExp::send_owned, op).await
     }
@@ -425,12 +428,12 @@ impl<K: Kind> Client<K> {
         &self,
         key: Key,
         field: Field,
-        expiration: Option<UnixTimestampSecs>,
+        expiration: UnixTimestampSecs,
     ) -> Result<()> {
         let op = super::HSetExp {
             key,
             field,
-            expiration,
+            expiration: Some(expiration),
         };
 
         self.exec(rpc::HSetExp::send_owned, op).await

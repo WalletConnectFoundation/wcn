@@ -13,15 +13,15 @@ on:
       - "build.rs"
 
   workflow_dispatch:
-    inputs:
-      push:
-        description: "Push to Docker Registry"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
+#    inputs:
+#      push:
+#        description: "Push to Docker Registry"
+#        required: false
+#        default: "false"
+#        type: choice
+#        options:
+#          - "false"
+#          - "true"
 
 permissions:
   contents: read
@@ -90,104 +90,50 @@ jobs:
         with:
           command: check license
 
-  build:
+  build-and-push:
     name: "Build image"
     runs-on:
       group: ubuntu-runners
-    strategy:
-      fail-fast: false
+    needs: [tests, cargo-deny]
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build, tag and cache the image
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          file: ./Dockerfile
-          tags: irn:tmp
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/image-irn.tar
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: image-irn
-          path: /tmp/image-irn.tar
-
-  publish_to_ghcr:
-    needs: [tests, build, cargo-deny]
-    name: "Publish image to GHCR"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Login to ghcr.io
-        uses: docker/login-action@v2
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker meta
-        id: meta_ghcr
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            ghcr.io/walletconnect/irn-node
-          flavor: |
-            latest=auto
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=sha
-
-      - name: Download artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: image-irn
-          path: /tmp
-
-      - name: Push image
-        run: |
-          docker load --input /tmp/image-irn.tar
-
-          readarray -t tags <<< "${{ steps.meta_ghcr.outputs.tags }}"
-          for tag in "${tags[@]}"; do
-              docker tag irn:tmp $tag
-          done
-
-          docker image push --all-tags ghcr.io/walletconnect/irn-node
-
-  publish_to_ecr:
-    needs: [tests, build, cargo-deny]
-    name: "Publish image to ECR"
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        images:
-          - repo_name: irn
-            aws-access-key-id: AWS_ACCESS_KEY_ID
-            aws-secret-access-key: AWS_SECRET_ACCESS_KEY
-          - repo_name: irn
-            aws-access-key-id: TESTNET_AWS_ACCESS_KEY_ID
-            aws-secret-access-key: TESTNET_AWS_SECRET_ACCESS_KEY
-    steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-access-key-id: ${{ secrets[matrix.images.aws-access-key-id] }}
-          aws-secret-access-key: ${{ secrets[matrix.images.aws-secret-access-key] }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
 
       - name: Login to Amazon ECR
-        id: login-ecr
+        id: login-ecr-prod
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Configure AWS Credentials (testnet)
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.TESTNET_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TESTNET_AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - name: Login to Amazon ECR (testnet)
+        id: login-ecr-testnet
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: Docker meta
@@ -195,28 +141,22 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
-          flavor: |
-            latest=auto
+            ${{ steps.login-ecr-prod.outputs.registry }}/irn
+            ${{ steps.login-ecr-testnet.outputs.registry }}/irn
+            ghcr.io/${{ github.repository }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha
 
-      - name: Download artifact
-        uses: actions/download-artifact@v3
+      - name: Build and push
+        uses: docker/build-push-action@v3
         with:
-          name: image-irn
-          path: /tmp
-
-      - name: Push image
-        run: |
-          docker load --input /tmp/image-irn.tar
-
-          readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
-          for tag in "${tags[@]}"; do
-              docker tag irn:tmp $tag
-          done
-
-          docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

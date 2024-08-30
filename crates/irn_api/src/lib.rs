@@ -64,6 +64,14 @@ pub struct Key {
     pub bytes: Vec<u8>,
 }
 
+impl Key {
+    pub fn set_default_namespace(&mut self, ns: &auth::PublicKey) {
+        if self.namespace.is_none() {
+            self.namespace = Some(*ns);
+        }
+    }
+}
+
 pub type Field = Vec<u8>;
 pub type Value = Vec<u8>;
 pub type Cursor = Vec<u8>;
@@ -106,6 +114,8 @@ pub type UnixTimestampSecs = u64;
 
 trait Operation {
     const NAME: &'static str;
+
+    fn key_mut(&mut self) -> Option<&mut Key>;
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -116,6 +126,10 @@ pub struct Get {
 
 impl Operation for Get {
     const NAME: &'static str = "get";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -128,6 +142,10 @@ pub struct Set {
 
 impl Operation for Set {
     const NAME: &'static str = "set";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -138,6 +156,10 @@ pub struct Del {
 
 impl Operation for Del {
     const NAME: &'static str = "del";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -148,6 +170,10 @@ pub struct GetExp {
 
 impl Operation for GetExp {
     const NAME: &'static str = "get_exp";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -159,6 +185,10 @@ pub struct SetExp {
 
 impl Operation for SetExp {
     const NAME: &'static str = "set_exp";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -170,6 +200,10 @@ pub struct HGet {
 
 impl Operation for HGet {
     const NAME: &'static str = "hget";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -183,6 +217,10 @@ pub struct HSet {
 
 impl Operation for HSet {
     const NAME: &'static str = "hset";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -194,6 +232,10 @@ pub struct HDel {
 
 impl Operation for HDel {
     const NAME: &'static str = "hdel";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -204,6 +246,10 @@ pub struct HCard {
 
 impl Operation for HCard {
     const NAME: &'static str = "hcard";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -215,6 +261,10 @@ pub struct HGetExp {
 
 impl Operation for HGetExp {
     const NAME: &'static str = "hget_exp";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -227,6 +277,10 @@ pub struct HSetExp {
 
 impl Operation for HSetExp {
     const NAME: &'static str = "hset_exp";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -237,6 +291,10 @@ pub struct HFields {
 
 impl Operation for HFields {
     const NAME: &'static str = "hfields";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -247,6 +305,10 @@ pub struct HVals {
 
 impl Operation for HVals {
     const NAME: &'static str = "hvals";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -259,6 +321,10 @@ pub struct HScan {
 
 impl Operation for HScan {
     const NAME: &'static str = "hscan";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        Some(&mut self.key)
+    }
 }
 
 #[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
@@ -266,6 +332,10 @@ pub struct Status;
 
 impl Operation for Status {
     const NAME: &'static str = "status";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -276,6 +346,10 @@ pub struct Publish {
 
 impl Operation for Publish {
     const NAME: &'static str = "publish";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -285,6 +359,10 @@ pub struct Subscribe {
 
 impl Operation for Subscribe {
     const NAME: &'static str = "subscribe";
+
+    fn key_mut(&mut self) -> Option<&mut Key> {
+        None
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

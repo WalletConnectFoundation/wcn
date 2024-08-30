@@ -32,8 +32,15 @@ struct GenerateCmd {
 #[derive(Debug, clap::Args)]
 /// Validates the provided private key and prints the corresponding public key
 /// (encoded with base64) and peer ID.
+///
+/// Alternatively, a string secret can be used instead of the key, which would
+/// be expanded into an ed25519 key.
 struct ValidateCmd {
-    /// Private key to validate. Must be encoded as base64.
+    #[clap(short, long, default_value_t = false)]
+    secret: bool,
+
+    /// Private key or secret to validate. Private key must be encoded as
+    /// base64, while secret can be any string data.
     key: String,
 }
 
@@ -92,9 +99,14 @@ fn generate(args: GenerateCmd) -> anyhow::Result<()> {
 }
 
 fn validate(args: ValidateCmd) -> anyhow::Result<()> {
-    let private_key =
-        irn_api::auth::client_key_from_bytes(args.key.as_bytes(), irn_api::auth::Encoding::Base64)
-            .context("Failed to decode key")?;
+    let data = args.key.as_bytes();
+
+    let private_key = if args.secret {
+        irn_api::auth::client_key_from_secret(data).context("Failed to expand secret into key")?
+    } else {
+        irn_api::auth::client_key_from_bytes(data, irn_api::auth::Encoding::Base64)
+            .context("Failed to decode key")?
+    };
 
     let public_key = private_key.verifying_key();
     let peer_id = irn_api::auth::peer_id(&public_key);

@@ -898,6 +898,7 @@ fn new_coordinator_api_client(f: impl FnOnce(&mut api::client::Config)) -> api::
         nodes: HashMap::new(),
         shadowing_nodes: HashMap::new(),
         shadowing_factor: 0.0,
+        shadowing_default_namespace: None,
         request_timeout: Duration::from_secs(5),
         max_operation_time: Duration::from_secs(10),
         connection_timeout: Duration::from_secs(3),

@@ -49,6 +49,7 @@ pub async fn exec(cmd: StatusCmd) -> anyhow::Result<()> {
         nodes: [address].into(),
         shadowing_nodes: Default::default(),
         shadowing_factor: 0.0,
+        shadowing_default_namespace: None,
         request_timeout: Duration::from_secs(1),
         max_operation_time: Duration::from_millis(2500),
         connection_timeout: Duration::from_secs(1),

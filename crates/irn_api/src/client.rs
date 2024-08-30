@@ -51,6 +51,10 @@ pub struct Config {
     /// [0.0, 1.0] representing 0-100% shadowing.
     pub shadowing_factor: f64,
 
+    /// The default namespace to use with the shadowing requests if no namespace
+    /// is specified.
+    pub shadowing_default_namespace: Option<auth::PublicKey>,
+
     /// Timeout of a single network request.
     pub request_timeout: Duration,
 
@@ -92,6 +96,7 @@ mod kind {
     #[derive(Clone)]
     pub struct Shadowing {
         pub(super) max_hash: u64,
+        pub(super) default_namespace: Option<super::auth::PublicKey>,
     }
 }
 
@@ -124,11 +129,16 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 impl Client {
     pub fn new(cfg: Config) -> Result<Self, network::Error> {
         let shadowing = if !cfg.shadowing_nodes.is_empty() {
+            let default_namespace = cfg.shadowing_default_namespace;
+
             let mut cfg = cfg.clone();
             cfg.nodes = std::mem::take(&mut cfg.shadowing_nodes);
 
             let max_hash = (u64::MAX as f64 * cfg.shadowing_factor) as u64;
-            Some(Client::new_inner(cfg, kind::Shadowing { max_hash })?)
+            Some(Client::new_inner(cfg, kind::Shadowing {
+                max_hash,
+                default_namespace,
+            })?)
         } else {
             None
         };
@@ -223,10 +233,15 @@ impl<K: Kind> Client<K> {
         T: Send + 'static,
         Fut: Future<Output = Result<super::Result<T>, outbound::Error>> + Send + 'static,
     {
-        if let Some(s) = Kind::requires_shadowing(self, op.as_ref()) {
+        if let Some(client) = Kind::requires_shadowing(self, op.as_ref()) {
             let rpc = rpc.clone();
-            let op = op.clone();
-            async move { s.retry(rpc, op).await }
+            let mut op = op.clone();
+
+            if let (Some(ns), Some(key)) = (&client.kind.default_namespace, op.key_mut()) {
+                key.set_default_namespace(ns);
+            }
+
+            async move { client.retry(rpc, op).await }
                 .with_metrics(future_metrics!("irn_api_shadowing"))
                 .pipe(tokio::spawn);
         }

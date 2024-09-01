@@ -178,7 +178,7 @@ pub(crate) fn serve(
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
     let prometheus_ = prometheus.clone();
 
-    let addr: SocketAddr = (cfg.server_addr, cfg.metrics_server_port).into();
+    let addr: SocketAddr = ([0, 0, 0, 0], cfg.metrics_server_port).into();
 
     let (tx, rx) = oneshot::channel();
 

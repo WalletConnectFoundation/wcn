@@ -634,4 +634,9 @@ fn cluster() {
 
     assert_eq!(cluster.version(), 11);
     assert_eq!(cluster.keyspace_version(), 2);
+
+    assert_eq!(
+        cluster.decommission_node(&4),
+        Err(cluster::Error::TooFewNodes)
+    );
 }

@@ -785,13 +785,16 @@ impl TestCluster {
         // There are some non-blocking requests being spawned, wait for them to finish.
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        for cfg in self.nodes.values().map(|n| n.config.clone()).collect_vec() {
-            let is_raft_voter = cfg.bootstrap_nodes.is_some() || cfg.is_raft_voter;
+        for config in self.nodes.values().map(|n| n.config.clone()).collect_vec() {
+            let is_raft_voter = config.bootstrap_nodes.is_some() || config.is_raft_voter;
 
-            self.configure_and_spawn_node(|c| c.is_raft_voter = is_raft_voter)
-                .await;
+            self.configure_and_spawn_node(|cfg| {
+                cfg.is_raft_voter = is_raft_voter;
+                cfg.region = config.region;
+            })
+            .await;
 
-            self.decommission_node(&cfg.id).await;
+            self.decommission_node(&config.id).await;
         }
 
         let node = &self.random_node();

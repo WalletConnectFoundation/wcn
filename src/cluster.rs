@@ -38,6 +38,13 @@ impl Node {
                 return None;
             }
 
+            if self.addr == node.addr {
+                return Some(NodeError::MultiAddressConflict {
+                    addr: self.addr.clone(),
+                    node_id: node.id,
+                });
+            }
+
             match (&self.eth_address, &node.eth_address) {
                 (Some(my_addr), Some(addr)) if my_addr == addr => {
                     Some(NodeError::EthAddressConflict {
@@ -84,6 +91,9 @@ enum NodeError {
 
     #[error("Eth address ({addr}) is already being used by {node_id}")]
     EthAddressConflict { addr: String, node_id: PeerId },
+
+    #[error("Multiaddress ({addr}) is already being used by {node_id}")]
+    MultiAddressConflict { addr: Multiaddr, node_id: PeerId },
 }
 
 pub type Keyspace = cluster::keyspace::Sharded<3, Xxh3Builder, ReplicationStrategy>;
@@ -134,6 +144,7 @@ mod test {
         super::*,
         cluster::{Keyspace as _, Node as _},
         sharding::ReplicationStrategy as _,
+        std::sync::atomic::{AtomicU16, Ordering},
     };
 
     fn new_node(
@@ -141,9 +152,16 @@ mod test {
         organization: &'static str,
         eth_addr: Option<&'static str>,
     ) -> Node {
+        static PORT: AtomicU16 = AtomicU16::new(3000);
+
         Node {
             id: PeerId::random(),
-            addr: "/ip4//udp/3000/quic-v1".parse().unwrap(),
+            addr: format!(
+                "/ip4//udp/{}/quic-v1",
+                PORT.fetch_add(1, Ordering::Relaxed)
+            )
+            .parse()
+            .unwrap(),
             region: match region {
                 "eu" => NodeRegion::Eu,
                 "us" => NodeRegion::Us,
@@ -159,6 +177,7 @@ mod test {
     fn node_constraints() {
         let addr1 = "0x4d0867CdD3228feC92dd877de74FfFe3c544e40B";
         let addr2 = "0x7d35CE48b2b056FAdB99dE718CBbbbf00f221E3c";
+        let addr3 = "0x5190b628e4C638F0DbA9b365F151E512AdBA08F0";
 
         let node1 = new_node("eu", "A", None);
         let node2 = new_node("us", "B", Some(addr1));
@@ -182,6 +201,17 @@ mod test {
             Err(NodeError::EthAddressConflict {
                 addr: addr1.to_string(),
                 node_id: node2.id
+            })
+        );
+
+        let mut node = new_node("eu", "A", Some(addr3));
+        node.addr = node1.addr.clone();
+
+        assert_eq!(
+            node.validate_constraints(&nodes),
+            Err(NodeError::MultiAddressConflict {
+                addr: node.addr,
+                node_id: node1.id
             })
         );
 

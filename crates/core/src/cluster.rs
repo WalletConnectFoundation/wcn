@@ -233,6 +233,10 @@ impl<N: Node, K: Keyspace<N>> Cluster<N, K> {
             return Err(Error::UnknownNode);
         }
 
+        if self.nodes.iter().count() <= K::REPLICATION_FACTOR {
+            return Err(Error::TooFewNodes);
+        }
+
         let mut new_nodes = self.nodes.clone();
         new_nodes.remove(id);
 

@@ -16,6 +16,9 @@ use {
 
 /// Keyspace functionality required by a [`Cluster`](super::Cluster).
 pub trait Keyspace<N: Node>: Clone + Send + Sync + 'static {
+    // Number of replicas in each replica set.
+    const REPLICATION_FACTOR: usize;
+
     /// Snapshot of the [`Keyspace`] state suitable for network transmission and
     /// persistent storage.
     type Snapshot<'a>: Serialize + DeserializeOwned;
@@ -301,6 +304,7 @@ where
     B: BuildHasher + Default + Clone + Send + Sync + 'static,
     S: sharding::ReplicationStrategy<N> + Default + Clone + Send + Sync + 'static,
 {
+    const REPLICATION_FACTOR: usize = RF;
     type Snapshot<'a> = ShardedSnapshot;
 
     fn new(nodes: &Nodes<N>) -> super::Result<Self> {

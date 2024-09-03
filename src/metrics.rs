@@ -8,7 +8,12 @@ use {
     tokio::sync::oneshot,
 };
 
-fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
+fn update_loop(
+    mut cancel: oneshot::Receiver<()>,
+    node: Node,
+    prometheus: PrometheusHandle,
+    cfg: Config,
+) {
     use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
 
     let mut sys = sysinfo::System::new_all();
@@ -75,6 +80,9 @@ fn update_loop(mut cancel: oneshot::Receiver<()>, node: Node, cfg: Config) {
         if cfg.rocksdb.enable_metrics {
             update_rocksdb_metrics(node.storage().db());
         }
+
+        // `metrics` crate leaks memory if not being polled.
+        prometheus.run_upkeep();
 
         std::thread::sleep(Duration::from_secs(15));
     }
@@ -176,15 +184,15 @@ pub(crate) fn serve(
     node: Node,
     prometheus: PrometheusHandle,
 ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
-    let prometheus_ = prometheus.clone();
-
     let addr: SocketAddr = ([0, 0, 0, 0], cfg.metrics_server_port).into();
 
     let (tx, rx) = oneshot::channel();
 
     let node_ = node.clone();
-    tokio::task::spawn_blocking(move || update_loop(rx, node_, cfg));
+    let prometheus_ = prometheus.clone();
+    tokio::task::spawn_blocking(move || update_loop(rx, node_, prometheus_, cfg));
 
+    let prometheus_ = prometheus.clone();
     let svc = axum::Router::new()
         .route(
             "/metrics",

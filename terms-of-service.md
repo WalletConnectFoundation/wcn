@@ -1,4 +1,4 @@
-# WALLETCONNECT NETWORK Node Operator Commitment Agreement Terms of Service
+# WALLETCONNECT NETWORK Node Operator Terms of Use
 
 *(last updated 2 September 2024)*
 

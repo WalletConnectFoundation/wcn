@@ -55,3 +55,7 @@ Licensed under [Apache License, Version 2.0](./LICENSE).
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
 be licensed as above, without any additional terms or conditions.
+
+## Terms of Service
+
+By using this software you agree to our [Terms of Service](./terms-of-service.md).

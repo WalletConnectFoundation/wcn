@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "alloc"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.0#af0464ed7274aec6c3f3acbcc128ecbb219dbfa4"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.1#bf8f50a711180afbf79b8c334c65b57886173d4b"
 dependencies = [
  "serde",
  "serde_json",
@@ -1443,7 +1443,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.0#af0464ed7274aec6c3f3acbcc128ecbb219dbfa4"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.1#bf8f50a711180afbf79b8c334c65b57886173d4b"
 
 [[package]]
 name = "colorchoice"
@@ -2263,7 +2263,7 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 [[package]]
 name = "future"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.0#af0464ed7274aec6c3f3acbcc128ecbb219dbfa4"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.1#bf8f50a711180afbf79b8c334c65b57886173d4b"
 dependencies = [
  "pin-project",
  "thiserror",
@@ -7138,7 +7138,7 @@ checksum = "af190c94f2773fdb3729c55b007a722abb5384da03bc0986df4c289bf5567e96"
 [[package]]
 name = "wc"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.0#af0464ed7274aec6c3f3acbcc128ecbb219dbfa4"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.1#bf8f50a711180afbf79b8c334c65b57886173d4b"
 dependencies = [
  "alloc",
  "collections",
@@ -7149,7 +7149,7 @@ dependencies = [
 [[package]]
 name = "wc_metrics"
 version = "0.1.0"
-source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.0#af0464ed7274aec6c3f3acbcc128ecbb219dbfa4"
+source = "git+https://github.com/WalletConnect/utils-rs.git?tag=v0.14.1#bf8f50a711180afbf79b8c334c65b57886173d4b"
 dependencies = [
  "arc-swap",
  "enum-ordinalize",

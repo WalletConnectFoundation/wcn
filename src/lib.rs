@@ -6,15 +6,16 @@ use {
     futures::{
         future::{FusedFuture, OptionFuture},
         FutureExt,
+        TryFutureExt,
     },
-    irn::fsm,
+    irn::{cluster::Consensus as _, fsm},
     metrics_exporter_prometheus::{
         BuildError as PrometheusBuildError,
         PrometheusBuilder,
         PrometheusHandle,
     },
     serde::{Deserialize, Serialize},
-    std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
+    std::{fmt::Debug, future::Future, io, pin::pin, str::FromStr, time::Duration},
     tap::Pipe,
     time::{macros::datetime, OffsetDateTime},
     xxhash_rust::xxh3::Xxh3Builder,
@@ -145,6 +146,11 @@ pub async fn run(
         .await
         .map_err(Error::Consensus)?;
 
+    tokio::spawn(
+        remove_old_1kx_node(consensus.clone())
+            .map_err(|err| tracing::error!("remove_old_1kx_node: {err:?}")),
+    );
+
     let (performance_tracker, status_reporter) = if let Some(c) = &cfg.smart_contract {
         let rpc_url = &c.eth_rpc_url;
         let addr = &c.config_address;
@@ -268,3 +274,39 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
+
+async fn remove_old_1kx_node(consensus: Consensus) -> anyhow::Result<()> {
+    use raft::Raft as _;
+
+    let peer_id = libp2p::PeerId::from_str("12D3KooWBgSDq57F8fPZ8dVpzfEhZHFDEuRmFeemR4b1w6wNynHq")
+        .context("peer_id")?;
+
+    consensus
+        .startup_node(&cluster::Node {
+            id: peer_id,
+            addr: "/ip4/54.218.52.51/udp/3011/quic-v1"
+                .parse()
+                .context("multiaddr")?,
+            region: cluster::NodeRegion::Us,
+            organization: "1kx".to_string(),
+            eth_address: None,
+        })
+        .await
+        .context("startup node")?;
+
+    consensus
+        .decommission_node(&peer_id)
+        .await
+        .context("decommission node")?;
+
+    consensus
+        .inner
+        .inner
+        .remove_member(consensus::RemoveMemberRequest {
+            node_id: consensus::NodeId(peer_id),
+            is_learner: true,
+        })
+        .await?;
+
+    Ok(())
+}

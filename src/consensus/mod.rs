@@ -217,7 +217,7 @@ pub struct Raft {
     id: PeerId,
 
     #[deref]
-    inner: raft::RaftImpl<TypeConfig, Network>,
+    pub inner: raft::RaftImpl<TypeConfig, Network>,
 
     network: Network,
 
@@ -234,7 +234,7 @@ pub struct Raft {
 #[derive(Clone, Deref)]
 pub struct Consensus {
     #[deref]
-    inner: Raft,
+    pub inner: Raft,
     cluster_view: cluster::View,
 }
 
@@ -768,7 +768,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 #[derive(
     Clone, Copy, Debug, Display, Hash, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq,
 )]
-pub struct NodeId(PeerId);
+pub struct NodeId(pub PeerId);
 
 impl Default for NodeId {
     fn default() -> Self {

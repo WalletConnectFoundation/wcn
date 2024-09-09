@@ -281,23 +281,10 @@ async fn remove_old_1kx_node(consensus: Consensus) -> anyhow::Result<()> {
     let peer_id = libp2p::PeerId::from_str("12D3KooWBgSDq57F8fPZ8dVpzfEhZHFDEuRmFeemR4b1w6wNynHq")
         .context("peer_id")?;
 
-    consensus
-        .startup_node(&cluster::Node {
-            id: peer_id,
-            addr: "/ip4/54.218.52.51/udp/3011/quic-v1"
-                .parse()
-                .context("multiaddr")?,
-            region: cluster::NodeRegion::Us,
-            organization: "1kx".to_string(),
-            eth_address: None,
-        })
-        .await
-        .context("startup node")?;
-
-    consensus
+    let _ = consensus
         .decommission_node(&peer_id)
         .await
-        .context("decommission node")?;
+        .map_err(|err| tracing::error!("decommission_node: {err:?}"));
 
     consensus
         .inner

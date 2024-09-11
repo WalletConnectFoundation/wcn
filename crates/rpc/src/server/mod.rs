@@ -13,7 +13,7 @@ pub mod middleware;
 
 /// Server config.
 #[derive(Clone)]
-pub struct ServerConfig<H = NoHandshake> {
+pub struct Config<H = NoHandshake> {
     /// [`Multiaddr`] of the server.
     pub addr: Multiaddr,
 

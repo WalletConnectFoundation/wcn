@@ -1,7 +1,7 @@
 use {
     super::Error,
     crate::{
-        server::{ConnectionInfo, ServerConfig},
+        server::{Config, ConnectionInfo},
         transport::{BiDirectionalStream, Handshake, PendingConnection},
         Server,
     },
@@ -15,7 +15,7 @@ use {
 /// Runs the [`rpc::Server`].
 pub fn run<H: Handshake>(
     server: impl Server<H>,
-    cfg: ServerConfig<H>,
+    cfg: Config<H>,
 ) -> Result<impl Future<Output = ()>, Error> {
     let transport_config = super::new_quinn_transport_config();
 

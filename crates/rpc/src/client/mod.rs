@@ -43,7 +43,7 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
 /// the middleware extension traits.
 pub trait Marker {}
 
-#[derive(Clone, Debug, thiserror::Error, From)]
+#[derive(Clone, Debug, thiserror::Error, From, Eq, PartialEq)]
 pub enum Error {
     /// Transport error.
     #[error(transparent)]
@@ -61,7 +61,7 @@ impl Error {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RpcError {
     pub code: Cow<'static, str>,
     pub description: Option<Cow<'static, str>>,
@@ -84,7 +84,7 @@ impl RpcError {
 }
 
 /// The source of an [`RpcError`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RpcErrorSource {
     /// Client-side error.
     Client,

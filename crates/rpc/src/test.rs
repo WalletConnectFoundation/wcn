@@ -2,11 +2,11 @@ use {
     crate::{
         client::{self, AnyPeer},
         id as rpc_id,
+        identity::Keypair,
         quic,
         server::{self, ConnectionInfo},
         transport::{BiDirectionalStream, NoHandshake},
         Id as RpcId,
-        Keypair,
         Multiaddr,
         PeerId,
     },
@@ -109,7 +109,6 @@ async fn suite() {
         let server_config = server::Config {
             addr: addr.clone(),
             keypair: keypair.clone(),
-            handshake: NoHandshake,
         };
 
         clients.push(client.clone());
@@ -119,7 +118,7 @@ async fn suite() {
         };
         nodes.push(node.clone());
 
-        quic::server::run(node, server_config)
+        quic::server::run(node, server_config, NoHandshake)
             .expect("run_server")
             .pipe(tokio::spawn);
     }

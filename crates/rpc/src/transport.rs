@@ -111,10 +111,10 @@ where
     T: for<'de> Deserialize<'de> + Unpin,
 {
     /// Tries to receive the next message from this [`RecvStream`].
-    pub async fn recv_message(&mut self) -> TransportResult<T> {
+    pub async fn recv_message(&mut self) -> Result<T> {
         self.next()
             .await
-            .ok_or_else(|| Error::StreamFinished)?
+            .ok_or(Error::StreamFinished)?
             .map_err(Into::into)
     }
 
@@ -151,7 +151,7 @@ impl From<quinn::ConnectionError> for Error {
     }
 }
 
-pub type TransportResult<T> = Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Connection state before the [`Handshake`].
 pub struct PendingConnection(pub(crate) quinn::Connection);
@@ -160,15 +160,13 @@ impl PendingConnection {
     /// Initiates the [`Handshake`].
     pub async fn initiate_handshake<Req, Resp>(
         &self,
-    ) -> TransportResult<(RecvStream<Resp>, SendStream<Req>)> {
+    ) -> Result<(RecvStream<Resp>, SendStream<Req>)> {
         let (tx, rx) = self.0.open_bi().await?;
         Ok(BiDirectionalStream::new(tx, rx).upgrade())
     }
 
     /// Accepts the [`Handshake`].
-    pub async fn accept_handshake<Req, Resp>(
-        &self,
-    ) -> TransportResult<(RecvStream<Req>, SendStream<Resp>)> {
+    pub async fn accept_handshake<Req, Resp>(&self) -> Result<(RecvStream<Req>, SendStream<Resp>)> {
         let (tx, rx) = self.0.accept_bi().await?;
         Ok(BiDirectionalStream::new(tx, rx).upgrade())
     }

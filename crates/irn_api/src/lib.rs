@@ -3,11 +3,11 @@
 use {
     derive_more::AsRef,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, collections::HashSet, io},
+    std::{borrow::Cow, collections::HashSet},
 };
 pub use {
     ed25519_dalek::SigningKey,
-    network::{Multiaddr, PeerId as NodeId},
+    irn_rpc::{Multiaddr, PeerId as NodeId},
 };
 
 #[cfg(feature = "client")]
@@ -22,7 +22,7 @@ pub mod rpc {
     use {
         super::{Cardinality, Field, PubsubEventPayload, UnixTimestampSecs, Value},
         crate::Cursor,
-        network::rpc,
+        irn_rpc as rpc,
         serde::{Deserialize, Serialize},
     };
 
@@ -385,19 +385,4 @@ pub struct HandshakeRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HandshakeResponse {
     pub namespaces: Vec<NamespaceAuth>,
-}
-
-#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
-enum HandshakeError {
-    #[error(transparent)]
-    Connection(#[from] network::ConnectionError),
-
-    #[error(transparent)]
-    Rpc(#[from] network::rpc::Error),
-}
-
-impl From<io::Error> for HandshakeError {
-    fn from(e: io::Error) -> Self {
-        network::rpc::Error::from(e).into()
-    }
 }

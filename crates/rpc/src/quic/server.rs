@@ -15,7 +15,8 @@ use {
 /// Runs the [`rpc::Server`].
 pub fn run<H: Handshake>(
     server: impl Server<H>,
-    cfg: Config<H>,
+    cfg: Config,
+    handshake: H,
 ) -> Result<impl Future<Output = ()>, Error> {
     let transport_config = super::new_quinn_transport_config();
 
@@ -36,7 +37,7 @@ pub fn run<H: Handshake>(
         Some(server_config),
     )?;
 
-    Ok(handle_connections(server, endpoint, cfg.handshake))
+    Ok(handle_connections(server, endpoint, handshake))
 }
 
 pub(super) async fn handle_connections<H: Handshake>(
@@ -94,6 +95,7 @@ where
             .unwrap();
 
         let conn_info = ConnectionInfo {
+            peer_id,
             remote_address,
             handshake_data: self
                 .handshake

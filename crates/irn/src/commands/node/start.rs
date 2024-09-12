@@ -1,7 +1,7 @@
 use {
     super::{Error, Lockfile, LogFormat},
+    irn_rpc::{quic, PeerId},
     metrics_exporter_prometheus::PrometheusBuilder,
-    network::PeerId,
     node::RocksdbDatabaseConfig,
     std::{
         collections::{HashMap, HashSet},
@@ -106,7 +106,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         .map(|node| {
             (
                 PeerId::from(node.peer),
-                network::socketaddr_to_multiaddr(node.address),
+                quic::socketaddr_to_multiaddr(node.address),
             )
         })
         .collect::<HashMap<_, _>>();

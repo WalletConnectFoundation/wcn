@@ -45,7 +45,7 @@ where
     }
 }
 
-impl<C> super::Marker for Metered<C> {}
+impl<C: super::Marker> super::Marker for Metered<C> {}
 
 /// Extension trait wrapping [`Client`]s with [`WithTimeouts`] middleware.
 pub trait WithTimeoutsExt: Sized {
@@ -85,4 +85,4 @@ where
     }
 }
 
-impl<C> super::Marker for WithTimeouts<C> {}
+impl<C: super::Marker> super::Marker for WithTimeouts<C> {}

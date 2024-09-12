@@ -1,8 +1,10 @@
 use {
     crate::{
+        kind,
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Id as RpcId,
         Message,
+        Rpc,
     },
     derive_more::From,
     futures::{Future, SinkExt as _},
@@ -37,6 +39,47 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         rpc_id: RpcId,
         f: impl FnOnce(BiDirectionalStream) -> Fut + Send,
     ) -> impl Future<Output = Result<Ok>> + Send;
+
+    /// Sends an unary RPC.
+    fn send_unary<RPC: Rpc<Kind = kind::Unary>>(
+        &self,
+        addr: &A,
+        request: RPC::Request,
+    ) -> impl Future<Output = Result<RPC::Response>> + Send {
+        self.send_rpc(addr, RPC::ID, |stream| async {
+            let (mut rx, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+            tx.send(request).await?;
+            Ok(rx.recv_message().await?)
+        })
+    }
+
+    /// Sends a streaming RPC.
+    fn send_streaming<RPC: Rpc<Kind = kind::Streaming>, Fut, Ok>(
+        &self,
+        addr: &A,
+        f: impl FnOnce(SendStream<RPC::Request>, RecvStream<RPC::Response>) -> Fut + Send,
+    ) -> impl Future<Output = Result<Ok>> + Send
+    where
+        Fut: Future<Output = Result<Ok>> + Send,
+    {
+        self.send_rpc(addr, RPC::ID, |stream| async {
+            let (rx, tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+            f(tx, rx).await.map_err(Into::into)
+        })
+    }
+
+    /// Sends a oneshot RPC.
+    fn send_oneshot<RPC: Rpc<Kind = kind::Oneshot>>(
+        &self,
+        addr: &A,
+        msg: RPC::Request,
+    ) -> impl Future<Output = Result<()>> {
+        self.send_rpc(addr, RPC::ID, |stream| async {
+            let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+            tx.send(msg).await?;
+            Ok(())
+        })
+    }
 }
 
 /// Marker trait that should accompany [`Client`] impls in order to blanket impl
@@ -107,13 +150,7 @@ where
     Resp: Message,
 {
     pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, req: Req) -> Result<Resp> {
-        client
-            .send_rpc(addr, ID, |stream| async {
-                let (mut rx, mut tx) = stream.upgrade::<Resp, Req>();
-                tx.send(req).await?;
-                Ok(rx.recv_message().await?)
-            })
-            .await
+        client.send_unary::<Self>(addr, req).await
     }
 }
 
@@ -127,12 +164,7 @@ where
         F: FnOnce(SendStream<Req>, RecvStream<Resp>) -> Fut + Send,
         Fut: Future<Output = Result<Ok>> + Send,
     {
-        client
-            .send_rpc(addr, ID, |stream| async {
-                let (rx, tx) = stream.upgrade::<Resp, Req>();
-                f(tx, rx).await.map_err(Into::into)
-            })
-            .await
+        client.send_streaming::<Self, _, _>(addr, f).await
     }
 }
 
@@ -141,13 +173,7 @@ where
     Msg: Message,
 {
     pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, msg: Msg) -> Result<()> {
-        client
-            .send_rpc(addr, ID, |stream| async {
-                let (_, mut tx) = stream.upgrade::<(), Msg>();
-                tx.send(msg).await?;
-                Ok(())
-            })
-            .await
+        client.send_oneshot::<Self>(addr, msg).await
     }
 }
 

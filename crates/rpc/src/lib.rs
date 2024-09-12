@@ -1,7 +1,7 @@
 #![allow(async_fn_in_trait)]
 #![allow(clippy::manual_async_fn)]
 
-pub use libp2p::{identity::Keypair, Multiaddr, PeerId};
+pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
@@ -18,7 +18,7 @@ pub mod server;
 #[cfg(feature = "server")]
 pub use server::Server;
 
-mod middleware;
+pub mod middleware;
 
 pub mod quic;
 pub mod transport;
@@ -28,6 +28,34 @@ mod test;
 
 /// RPC identifier derived from a UTF-8 string of up to 16 bytes.
 pub type Id = u128;
+
+/// Remote procedure call.
+pub trait Rpc {
+    /// [`Id`] of this [`Rpc`].
+    const ID: Id;
+
+    /// [`Rpc`] [`kind`].
+    type Kind;
+
+    /// Request type of this [`Rpc`].
+    type Request: Message;
+
+    /// Response type of this [`Rpc`].
+    type Response: Message;
+}
+
+/// [`Rpc`] kinds.
+pub mod kind {
+    /// Unary (request-response) RPC.
+    pub struct Unary;
+
+    /// RPC with bi-directional streaming.
+    pub struct Streaming;
+
+    /// "Fire and forget" RPC, which sends a request and doesn't wait for any
+    /// response.
+    pub struct Oneshot;
+}
 
 /// Builds [`Id`] from a byte slice.
 ///
@@ -86,11 +114,27 @@ impl<const ID: Id, Req, Resp> Unary<ID, Req, Resp> {
     pub const ID: Id = ID;
 }
 
+impl<const ID: Id, Req: Message, Resp: Message> Rpc for Unary<ID, Req, Resp> {
+    const ID: Id = ID;
+
+    type Kind = kind::Unary;
+    type Request = Req;
+    type Response = Resp;
+}
+
 /// RPC with bi-directional streaming.
 pub struct Streaming<const ID: Id, Req, Resp>(PhantomData<(Req, Resp)>);
 
 impl<const ID: Id, Req, Resp> Streaming<ID, Req, Resp> {
     pub const ID: Id = ID;
+}
+
+impl<const ID: Id, Req: Message, Resp: Message> Rpc for Streaming<ID, Req, Resp> {
+    const ID: Id = ID;
+
+    type Kind = kind::Streaming;
+    type Request = Req;
+    type Response = Resp;
 }
 
 /// "Fire and forget" RPC, which sends a request and doesn't wait for any
@@ -99,4 +143,12 @@ pub struct Oneshot<const ID: Id, Msg>(PhantomData<Msg>);
 
 impl<const ID: Id, Msg> Oneshot<ID, Msg> {
     pub const ID: Id = ID;
+}
+
+impl<const ID: Id, Msg: Message> Rpc for Oneshot<ID, Msg> {
+    const ID: Id = ID;
+
+    type Kind = kind::Oneshot;
+    type Request = Msg;
+    type Response = ();
 }

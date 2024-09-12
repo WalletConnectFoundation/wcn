@@ -235,7 +235,7 @@ async fn scrape_prometheus(
         return String::new();
     };
 
-    rpc::Send::<rpc::Metrics, _, _>::send(&node.network().client, (&peer_id, addr), ())
+    rpc::Metrics::send(&node.network().client, addr, ())
         .await
         .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrape prometheus metrics"))
         .unwrap_or_default()

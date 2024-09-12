@@ -48,7 +48,7 @@ where
     }
 }
 
-impl<S> super::Marker for Metered<S> {}
+impl<S: super::Marker> super::Marker for Metered<S> {}
 
 /// Extension trait wrapping [`Server`]s with [`WithTimeouts`] middleware.
 pub trait WithTimeoutsExt: Sized {
@@ -89,4 +89,4 @@ where
     }
 }
 
-impl<S> super::Marker for WithTimeouts<S> {}
+impl<S: super::Marker> super::Marker for WithTimeouts<S> {}

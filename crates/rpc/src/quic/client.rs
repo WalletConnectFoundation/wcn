@@ -37,6 +37,8 @@ pub struct Client<H = NoHandshake> {
     connection_timeout: Duration,
 }
 
+impl<H> client::Marker for Client<H> {}
+
 impl<H: Handshake> crate::Client for Client<H> {
     fn send_rpc<Fut: Future<Output = Result<Ok>> + Send, Ok>(
         &self,

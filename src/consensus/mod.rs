@@ -1,23 +1,17 @@
 use {
-    crate::{
-        cluster,
-        contract,
-        network::rpc,
-        Cluster,
-        Config,
-        Multiaddr,
-        Network,
-        RemoteNode,
-        TypeConfig,
-    },
+    crate::{cluster, contract, network::rpc, Cluster, Config, Network, RemoteNode, TypeConfig},
     anyhow::Context,
     async_trait::async_trait,
     backoff::{future::retry, ExponentialBackoff},
     derive_more::{AsRef, Deref, Display},
     futures::FutureExt as _,
     irn::fsm::ShutdownReason,
+    irn_rpc::{
+        quic::{self, socketaddr_to_multiaddr},
+        Client as _,
+        Multiaddr,
+    },
     libp2p::PeerId,
-    network::socketaddr_to_multiaddr,
     parking_lot::Mutex,
     raft::{
         storage::{Snapshot, SnapshotMeta},
@@ -255,7 +249,7 @@ pub enum InitializationError {
     Join,
 
     #[error("Failed to spawn Raft server")]
-    SpawnServer(#[from] network::Error),
+    SpawnServer(#[from] quic::Error),
 
     #[error("Cluster needs to be bootstrapped, but no bootstrap nodes are provided")]
     NoBootstrapNodes,
@@ -445,7 +439,7 @@ impl Raft {
                 let peer = self.network.get_peer(peer_id, multiaddr);
 
                 let res = async {
-                    peer.send_rpc::<rpc::raft::AddMember, _>(req.clone())
+                    rpc::raft::AddMember::send(&peer.client, peer.multiaddr.as_ref(), req.clone())
                         .await
                         .context("outbound::Error")??
                         .pipe(Ok::<_, anyhow::Error>)
@@ -723,42 +717,48 @@ impl raft::Network<TypeConfig> for Network {
 #[async_trait]
 impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
     async fn add_member(&self, req: AddMemberRequest) -> AddMemberRpcResult {
-        self.send_rpc::<rpc::raft::AddMember, _>(req)
+        self.client
+            .send_unary::<rpc::raft::AddMember>(self.multiaddr.as_ref(), req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn remove_member(&self, req: RemoveMemberRequest) -> RemoveMemberRpcResult {
-        self.send_rpc::<rpc::raft::RemoveMember, _>(req)
+        self.client
+            .send_unary::<rpc::raft::RemoveMember>(self.multiaddr.as_ref(), req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn propose_change(&self, req: ProposeChangeRequest) -> ProposeChangeRpcResult {
-        self.send_rpc::<rpc::raft::ProposeChange, _>(req)
+        self.client
+            .send_unary::<rpc::raft::ProposeChange>(self.multiaddr.as_ref(), req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn append_entries(&self, req: AppendEntriesRequest) -> AppendEntriesRpcResult {
-        self.send_rpc::<rpc::raft::AppendEntries, _>(req)
+        self.client
+            .send_unary::<rpc::raft::AppendEntries>(self.multiaddr.as_ref(), req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn install_snapshot(&self, req: InstallSnapshotRequest) -> InstallSnapshotRpcResult {
-        self.send_rpc::<rpc::raft::InstallSnapshot, _>(req)
+        self.client
+            .send_unary::<rpc::raft::InstallSnapshot>(self.multiaddr.as_ref(), req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
     }
 
     async fn vote(&self, req: VoteRequest) -> VoteRpcResult {
-        self.send_rpc::<rpc::raft::Vote, _>(req)
+        self.client
+            .send_unary::<rpc::raft::Vote>(self.multiaddr.as_ref(), req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())

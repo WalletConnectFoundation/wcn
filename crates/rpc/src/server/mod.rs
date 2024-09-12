@@ -5,7 +5,7 @@ use {
         Message,
     },
     futures::{Future, SinkExt as _},
-    libp2p::{identity::Keypair, Multiaddr},
+    libp2p::{identity::Keypair, Multiaddr, PeerId},
     std::io,
 };
 
@@ -13,20 +13,20 @@ pub mod middleware;
 
 /// Server config.
 #[derive(Clone)]
-pub struct Config<H = NoHandshake> {
+pub struct Config {
     /// [`Multiaddr`] of the server.
     pub addr: Multiaddr,
 
     /// [`Keypair`] of the server.
     pub keypair: Keypair,
-
-    /// [`Handshake`] implementation to use for connection establishment.
-    pub handshake: H,
 }
 
 /// Info about an inbound connection.
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo<H = ()> {
+    /// [`PeerId`] of the remote peer.
+    pub peer_id: PeerId,
+
     /// [`Multiaddr`] of the remote peer.
     pub remote_address: Multiaddr,
 

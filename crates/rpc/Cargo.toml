@@ -1,5 +1,5 @@
 [package]
-name = "network"
+name = "irn_rpc"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -7,8 +7,12 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+client = []
+server = []
+
 [dependencies]
-derive_more = { version = "0.99" } # can't switch this to the workspace version, because #[from(forward)] doesn't work for some reason
+derive_more = { workspace = true } 
 derivative = "2.2"
 futures = "0.3"
 indexmap = "2"

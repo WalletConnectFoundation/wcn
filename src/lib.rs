@@ -1,13 +1,13 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
-    ::network::socketaddr_to_multiaddr,
     anyhow::Context,
     futures::{
         future::{FusedFuture, OptionFuture},
         FutureExt,
     },
     irn::fsm,
+    irn_rpc::quic::{self, socketaddr_to_multiaddr},
     metrics_exporter_prometheus::{
         BuildError as PrometheusBuildError,
         PrometheusBuilder,
@@ -24,7 +24,7 @@ pub use {
     config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
     logger::Logger,
-    network::{Multiaddr, Multihash, Network, RemoteNode},
+    network::{Network, RemoteNode},
     storage::Storage,
 };
 
@@ -62,7 +62,7 @@ pub enum Error {
     ApiServer(#[from] api::Error),
 
     #[error("Failed to initialize networking: {0:?}")]
-    Network(#[from] ::network::Error),
+    Network(#[from] quic::Error),
 
     #[error("Failed to initialize storage: {0:?}")]
     Storage(storage::Error),

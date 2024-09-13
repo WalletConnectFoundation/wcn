@@ -1,5 +1,5 @@
 use {
-    network::{Keypair, PeerId},
+    irn_rpc::{identity::Keypair, PeerId},
     node::cluster::NodeRegion,
     serde::{Deserialize, Serialize},
     std::net::{Ipv4Addr, SocketAddr},
@@ -126,7 +126,7 @@ impl Config {
 
 mod keypair_as_base64 {
     use {
-        network::Keypair,
+        irn_rpc::identity::Keypair,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
     };
 
@@ -159,7 +159,7 @@ mod keypair_as_base64 {
             .decode(key_str.as_bytes())
             .map_err(|_| D::Error::custom("invalid key encoding: must be base64"))?;
 
-        network::Keypair::ed25519_from_bytes(decoded)
+        irn_rpc::identity::Keypair::ed25519_from_bytes(decoded)
             .map_err(|_| D::Error::custom("invalid key length: must be 32 bytes"))
     }
 }

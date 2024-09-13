@@ -1,35 +1,39 @@
-pub use network::{inbound::RpcHandler, ServerConfig as Config};
 use {
     crate::{auth, HandshakeRequest, HandshakeResponse},
     futures_util::{Future, SinkExt},
+    irn_rpc::{
+        quic,
+        server,
+        transport::{self, PendingConnection},
+    },
     std::{collections::HashSet, io, sync::Arc, time::Duration},
     wc::future::FutureExt,
 };
 
 /// Runs an RPC server using the provided [`RpcHandler`].
 pub fn run(
-    cfg: Config,
-    rpc_handler: impl RpcHandler<HandshakeData>,
-) -> Result<impl Future<Output = ()>, network::Error> {
-    network::run_server(cfg, Handshake, rpc_handler)
+    server: impl irn_rpc::Server<Handshake>,
+    cfg: server::Config,
+) -> Result<impl Future<Output = ()>, quic::Error> {
+    quic::server::run(server, cfg, Handshake)
 }
 
 /// Server part of the [`network::Handshake`].
 #[derive(Clone)]
-struct Handshake;
+pub struct Handshake;
 
 #[derive(Clone, Debug)]
 pub struct HandshakeData {
     pub namespaces: Arc<HashSet<auth::PublicKey>>,
 }
 
-impl network::Handshake for Handshake {
+impl transport::Handshake for Handshake {
     type Ok = HandshakeData;
-    type Err = super::HandshakeError;
+    type Err = transport::Error;
 
     fn handle(
         &self,
-        conn: network::PendingConnection,
+        conn: PendingConnection,
     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
         async move {
             let (mut rx, mut tx) = conn

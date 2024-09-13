@@ -1,4 +1,4 @@
-use {anyhow::Context, rand_chacha::rand_core::SeedableRng as _};
+use {anyhow::Context, irn_rpc::identity::Keypair, rand_chacha::rand_core::SeedableRng as _};
 
 #[derive(Debug, clap::Args)]
 pub struct KeyCmd {
@@ -81,7 +81,7 @@ fn generate(args: GenerateCmd) -> anyhow::Result<()> {
         let public_key = *private_key.verifying_key().as_bytes();
         let private_key = *private_key.as_bytes();
 
-        let peer_id = network::Keypair::ed25519_from_bytes(private_key)
+        let peer_id = Keypair::ed25519_from_bytes(private_key)
             .unwrap()
             .public()
             .to_peer_id();

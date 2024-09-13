@@ -19,12 +19,11 @@ use {
     irn_rpc::{
         client::{
             self,
-            middleware::{Metered, MeteredExt as _, WithTimeouts, WithTimeoutsExt as _},
+            middleware::{Metered, MeteredExt as _, Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
         },
         identity::Keypair,
         quic,
-        server::middleware::Timeouts,
         transport::{self, PendingConnection},
         Client as _,
         Multiaddr,

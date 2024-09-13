@@ -1,0 +1,136 @@
+use {
+    libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
+    libp2p_tls::certificate,
+    quinn::VarInt,
+    std::{
+        io,
+        net::{SocketAddr, UdpSocket},
+        sync::Arc,
+        time::Duration,
+    },
+};
+
+#[cfg(feature = "client")]
+pub mod client;
+#[cfg(feature = "client")]
+pub use client::Client;
+
+#[cfg(feature = "server")]
+pub mod server;
+
+#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
+#[error("{0}: invalid QUIC Multiaddr")]
+pub struct InvalidMultiaddrError(Multiaddr);
+
+fn new_quinn_transport_config() -> Arc<quinn::TransportConfig> {
+    const STREAM_WINDOW: u32 = 16 * 1024 * 1024; // 16 MiB
+
+    // Our tests are too slow and connections get dropped because of missing keep
+    // alive messages. Setting idle timeout higher for debug builds.
+    let max_idle_timeout_ms = if cfg!(debug_assertions) { 5000 } else { 200 };
+
+    let mut transport = quinn::TransportConfig::default();
+    // Disable uni-directional streams and datagrams.
+    transport
+        .max_concurrent_uni_streams(0u32.into())
+        .max_concurrent_bidi_streams((128u32 * 1024).into())
+        .datagram_receive_buffer_size(None)
+        .keep_alive_interval(Some(Duration::from_millis(100)))
+        .max_idle_timeout(Some(VarInt::from_u32(max_idle_timeout_ms).into()))
+        .allow_spin(false)
+        .receive_window(VarInt::MAX)
+        .stream_receive_window(STREAM_WINDOW.into())
+        .send_window(8 * STREAM_WINDOW as u64);
+
+    Arc::new(transport)
+}
+
+fn new_quinn_endpoint(
+    socket_addr: SocketAddr,
+    keypair: &Keypair,
+    transport_config: Arc<quinn::TransportConfig>,
+    server_config: Option<quinn::ServerConfig>,
+) -> Result<quinn::Endpoint, Error> {
+    let client_tls_config = libp2p_tls::make_client_config(keypair, None)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(client_tls_config));
+    client_config.transport_config(transport_config);
+
+    let socket = new_udp_socket(socket_addr).map_err(Error::Socket)?;
+
+    let mut endpoint = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        server_config,
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )?;
+    endpoint.set_default_client_config(client_config);
+
+    Ok(endpoint)
+}
+
+fn new_udp_socket(addr: SocketAddr) -> io::Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    tracing::info!(udp_send_buffer_size = socket.send_buffer_size()?);
+    tracing::info!(udp_recv_buffer_size = socket.recv_buffer_size()?);
+    socket.bind(&addr.into())?;
+    Ok(socket.into())
+}
+
+fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
+    try_multiaddr_to_socketaddr(addr).ok_or_else(|| InvalidMultiaddrError(addr.clone()))
+}
+
+pub fn socketaddr_to_multiaddr(addr: impl Into<SocketAddr>) -> Multiaddr {
+    use libp2p::multiaddr::Protocol;
+
+    let addr = addr.into();
+
+    let mut result = Multiaddr::from(addr.ip());
+    result.push(Protocol::Udp(addr.port()));
+    result.push(Protocol::QuicV1);
+    result
+}
+
+/// Tries to turn a QUIC multiaddress into a UDP [`SocketAddr`]. Returns None if
+/// the format of the multiaddr is wrong.
+fn try_multiaddr_to_socketaddr(addr: &Multiaddr) -> Option<SocketAddr> {
+    use libp2p::multiaddr::Protocol;
+
+    let mut iter = addr.iter();
+    let proto1 = iter.next()?;
+    let proto2 = iter.next()?;
+    let proto3 = iter.next()?;
+
+    match proto3 {
+        Protocol::Quic | Protocol::QuicV1 => {}
+        _ => return None,
+    };
+
+    Some(match (proto1, proto2) {
+        (Protocol::Ip4(ip), Protocol::Udp(port)) => SocketAddr::new(ip.into(), port),
+        (Protocol::Ip6(ip), Protocol::Udp(port)) => SocketAddr::new(ip.into(), port),
+        _ => return None,
+    })
+}
+
+/// Tries to extract [`PeerId`] from a [`Multiaddr`].
+pub fn try_peer_id_from_multiaddr(addr: &Multiaddr) -> Option<PeerId> {
+    addr.iter().last().and_then(|proto| match proto {
+        Protocol::P2p(peer_id) => Some(peer_id),
+        _ => None,
+    })
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("failed to generate a TLS certificate: {0}")]
+    Tls(#[from] certificate::GenError),
+
+    #[error("failed to create, configure or bind a UDP socket")]
+    Socket(#[from] io::Error),
+
+    #[error(transparent)]
+    InvalidMultiaddr(#[from] InvalidMultiaddrError),
+}

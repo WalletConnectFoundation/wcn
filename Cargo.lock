@@ -3531,8 +3531,8 @@ dependencies = [
  "irn_api",
  "irn_core",
  "irn_node",
+ "irn_rpc",
  "metrics-exporter-prometheus",
- "network",
  "nix 0.28.0",
  "pidlock",
  "rand_chacha 0.3.1",
@@ -3554,8 +3554,8 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "futures-util",
+ "irn_rpc",
  "metrics",
- "network",
  "postcard",
  "rand 0.8.5",
  "ring 0.17.8",
@@ -3644,11 +3644,11 @@ dependencies = [
  "if-addrs 0.13.3",
  "irn_api",
  "irn_core",
+ "irn_rpc",
  "itertools 0.11.0",
  "libp2p",
  "metrics",
  "metrics-exporter-prometheus",
- "network",
  "nix 0.28.0",
  "once_cell",
  "parking_lot",
@@ -3680,6 +3680,37 @@ dependencies = [
  "vergen-pretty",
  "wc",
  "xxhash-rust",
+]
+
+[[package]]
+name = "irn_rpc"
+version = "0.1.0"
+dependencies = [
+ "backoff",
+ "derivative",
+ "derive_more 1.0.0-beta.6",
+ "futures",
+ "indexmap",
+ "libp2p",
+ "libp2p-tls",
+ "metrics",
+ "pin-project",
+ "quinn",
+ "quinn-proto",
+ "rand 0.8.5",
+ "rustls",
+ "serde",
+ "socket2",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tokio-serde",
+ "tokio-serde-postcard",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "wc",
 ]
 
 [[package]]
@@ -4493,37 +4524,6 @@ dependencies = [
  "libc",
  "log",
  "tokio",
-]
-
-[[package]]
-name = "network"
-version = "0.1.0"
-dependencies = [
- "backoff",
- "derivative",
- "derive_more 0.99.17",
- "futures",
- "indexmap",
- "libp2p",
- "libp2p-tls",
- "metrics",
- "pin-project",
- "quinn",
- "quinn-proto",
- "rand 0.8.5",
- "rustls",
- "serde",
- "socket2",
- "tap",
- "thiserror",
- "tokio",
- "tokio-serde",
- "tokio-serde-postcard",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "wc",
 ]
 
 [[package]]

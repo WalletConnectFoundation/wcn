@@ -1,6 +1,7 @@
 use {
     irn::PrivateKey,
     irn_api::{client, Client},
+    irn_rpc::{identity::Keypair, quic},
     std::{net::SocketAddr, time::Duration},
 };
 
@@ -41,8 +42,8 @@ pub async fn exec(cmd: StatusCmd) -> anyhow::Result<()> {
     // TODO: consider figuring out a way to map addresses to peer IDs and have the
     // CLI read that mapping when constructing the client.
     //
-    let peer_id = network::Keypair::generate_ed25519().public().to_peer_id();
-    let address = (peer_id, network::socketaddr_to_multiaddr(cmd.address));
+    let peer_id = Keypair::generate_ed25519().public().to_peer_id();
+    let address = (peer_id, quic::socketaddr_to_multiaddr(cmd.address));
 
     let api_client = Client::new(client::Config {
         key: cmd.private_key.0,

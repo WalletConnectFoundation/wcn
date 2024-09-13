@@ -61,7 +61,7 @@ derive_more = { version = "=1.0.0-beta.6", features = [
 core = { package = "irn_core", path = "crates/core" }
 api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 raft = { path = "crates/raft" }
-network = { path = "crates/network" }
+irn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
 metrics = "0.23"
 time = "0.3"
@@ -71,7 +71,7 @@ irn = { package = "irn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
 api = { workspace = true }
 raft = { workspace = true }
-network = { workspace = true }
+irn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }
 wc = { workspace = true, features = ["alloc", "future", "metrics"] }
 metrics = { workspace = true }

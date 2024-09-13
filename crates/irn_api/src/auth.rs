@@ -1,5 +1,9 @@
 use {
     derive_more::AsRef,
+    irn_rpc::{
+        identity::{self, ed25519},
+        PeerId,
+    },
     ring::{
         aead,
         hkdf,
@@ -252,11 +256,11 @@ pub fn client_key_from_bytes(
 }
 
 /// Converts an ed25519 public key into [`network::PeerId`].
-pub fn peer_id(public_key: &ed25519_dalek::VerifyingKey) -> network::PeerId {
+pub fn peer_id(public_key: &ed25519_dalek::VerifyingKey) -> PeerId {
     // Safe, as the key is guaranteed to be valid.
-    let public_key = network::ed25519::PublicKey::try_from_bytes(public_key.as_bytes()).unwrap();
+    let public_key = ed25519::PublicKey::try_from_bytes(public_key.as_bytes()).unwrap();
 
-    network::PublicKey::from(public_key).to_peer_id()
+    identity::PublicKey::from(public_key).to_peer_id()
 }
 
 #[cfg(test)]

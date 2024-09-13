@@ -19,12 +19,11 @@ use {
     irn_rpc::{
         client::{
             self,
-            middleware::{Metered, MeteredExt as _, WithTimeouts, WithTimeoutsExt as _},
+            middleware::{Metered, MeteredExt as _, Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
         },
         identity::Keypair,
         quic,
-        server::middleware::Timeouts,
         transport::{self, PendingConnection},
         Client as _,
         Multiaddr,
@@ -104,7 +103,7 @@ mod kind {
     }
 }
 
-pub trait Kind: Sized + Clone + 'static {
+pub trait Kind: Sized + Clone + Send + 'static {
     const METRICS_TAG: &'static str;
 
     /// Checks whether the provided key requires shadowing, if so returns the
@@ -497,18 +496,18 @@ impl<K: Kind> Client<K> {
     pub async fn subscribe(
         &self,
         channels: HashSet<Vec<u8>>,
-    ) -> impl Stream<Item = PubsubEventPayload> + 'static {
+    ) -> impl Stream<Item = PubsubEventPayload> + Send + 'static {
         let this = self.clone();
 
         Self::meter_operation_result::<super::Subscribe, _>(&Ok(()));
 
         async_stream::stream! {
-            let op = &super::Subscribe { channels };
-
             loop {
+                let op = super::Subscribe { channels: channels.clone() };
+
                 let subscribe =
                     rpc::Subscribe::send(this.random_client(), &AnyPeer, |mut tx, rx| async move {
-                        tx.send(op.clone()).await?;
+                        tx.send(op).await?;
                         Ok(rx)
                     });
 

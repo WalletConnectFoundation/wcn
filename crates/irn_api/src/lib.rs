@@ -1,13 +1,10 @@
 #![allow(clippy::manual_async_fn)]
 
+pub use irn_rpc::{Multiaddr, PeerId as NodeId};
 use {
     derive_more::AsRef,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, collections::HashSet, io},
-};
-pub use {
-    ed25519_dalek::SigningKey,
-    network::{Multiaddr, PeerId as NodeId},
+    std::{borrow::Cow, collections::HashSet},
 };
 
 #[cfg(feature = "client")]
@@ -22,16 +19,8 @@ pub mod rpc {
     use {
         super::{Cardinality, Field, PubsubEventPayload, UnixTimestampSecs, Value},
         crate::Cursor,
-        network::rpc,
-        serde::{Deserialize, Serialize},
+        irn_rpc as rpc,
     };
-
-    #[derive(Clone, Debug, Serialize, Deserialize)]
-    pub struct StatusResponse {
-        pub node_version: u64,
-        pub eth_address: Option<String>,
-        pub stake_amount: f64,
-    }
 
     type Rpc<const ID: rpc::Id, Op, Out> = rpc::Unary<ID, Op, super::Result<Out>>;
 
@@ -55,7 +44,6 @@ pub mod rpc {
     pub type Publish = rpc::Oneshot<{ rpc::id(b"publish") }, super::Publish>;
     pub type Subscribe =
         rpc::Streaming<{ rpc::id(b"subscribe") }, super::Subscribe, PubsubEventPayload>;
-    pub type Status = Rpc<{ rpc::id(b"status") }, super::Status, StatusResponse>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -385,19 +373,4 @@ pub struct HandshakeRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HandshakeResponse {
     pub namespaces: Vec<NamespaceAuth>,
-}
-
-#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
-enum HandshakeError {
-    #[error(transparent)]
-    Connection(#[from] network::ConnectionError),
-
-    #[error(transparent)]
-    Rpc(#[from] network::rpc::Error),
-}
-
-impl From<io::Error> for HandshakeError {
-    fn from(e: io::Error) -> Self {
-        network::rpc::Error::from(e).into()
-    }
 }

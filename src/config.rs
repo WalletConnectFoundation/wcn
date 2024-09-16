@@ -1,8 +1,8 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
     crate::cluster::NodeRegion,
+    irn_rpc::{identity::Keypair, Multiaddr},
     libp2p::PeerId,
-    network::Multiaddr,
     serde::{de::Error, Deserialize, Deserializer},
     std::{
         collections::{HashMap, HashSet},
@@ -20,8 +20,8 @@ pub struct Config {
     /// [`PeerId`] of the local [`Node`].
     pub id: PeerId,
 
-    /// [`network::Keypair`] of the local [`Node`].
-    pub keypair: network::Keypair,
+    /// [`Keypair`] of the local [`Node`].
+    pub keypair: Keypair,
 
     pub is_raft_voter: bool,
 
@@ -183,7 +183,7 @@ impl Config {
 struct RawConfig {
     #[serde(deserialize_with = "deserialize_keypair")]
     #[serde(rename = "secret_key")]
-    keypair: network::Keypair,
+    keypair: Keypair,
 
     region: NodeRegion,
     organization: String,
@@ -260,7 +260,7 @@ fn parse_known_peer(id: &str, addr: &str) -> Result<(PeerId, Multiaddr), PeerPar
     Ok((id, addr))
 }
 
-fn deserialize_keypair<'de, D>(deserializer: D) -> Result<network::Keypair, D::Error>
+fn deserialize_keypair<'de, D>(deserializer: D) -> Result<Keypair, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -268,7 +268,7 @@ where
 
     String::deserialize(deserializer)
         .and_then(|s| base64::decode(s).map_err(D::Error::custom))
-        .and_then(|bytes| network::Keypair::ed25519_from_bytes(bytes).map_err(D::Error::custom))
+        .and_then(|bytes| Keypair::ed25519_from_bytes(bytes).map_err(D::Error::custom))
 }
 
 fn create_rocksdb_config(raw: &RawConfig) -> RocksdbDatabaseConfig {

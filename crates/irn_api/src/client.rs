@@ -1,7 +1,8 @@
+pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
     crate::{
         auth,
-        rpc::{self, StatusResponse},
+        rpc,
         Cursor,
         Field,
         HandshakeRequest,
@@ -13,19 +14,18 @@ use {
         UnixTimestampSecs,
         Value,
     },
-    ed25519_dalek::SigningKey,
-    futures::{FutureExt, TryFutureExt},
+    futures::FutureExt,
     futures_util::{SinkExt, Stream},
-    network::{
-        outbound,
-        rpc::AnyPeer,
-        Keypair,
-        Metered,
-        MeteredExt,
-        Multiaddr,
-        PeerId,
-        WithTimeouts,
-        WithTimeoutsExt,
+    irn_rpc::{
+        client::{
+            self,
+            middleware::{Metered, MeteredExt as _, Timeouts, WithTimeouts, WithTimeoutsExt as _},
+            AnyPeer,
+        },
+        quic,
+        transport::{self, PendingConnection},
+        Client as _,
+        Rpc,
     },
     rand::seq::SliceRandom,
     std::{
@@ -40,7 +40,7 @@ use {
 
 #[derive(Clone)]
 pub struct Config {
-    pub key: SigningKey,
+    pub keypair: identity::Keypair,
 
     /// The list of nodes to be used for executing operations.
     pub nodes: HashMap<PeerId, Multiaddr>,
@@ -76,7 +76,7 @@ pub struct Client<Kind = kind::Basic> {
     /// multiple of them because our current infrastructure doesn't support
     /// UDP buffer size configuration, so in order to be able to sustain high
     /// throughput we need to spread the load across multiple UDP sockets.
-    inner: Arc<[NetworkClient]>,
+    inner: Arc<[RpcClient]>,
     namespaces: Arc<HashMap<auth::PublicKey, auth::Auth>>,
 
     request_timeout: Duration,
@@ -100,7 +100,7 @@ mod kind {
     }
 }
 
-pub trait Kind: Sized + Clone + 'static {
+pub trait Kind: Sized + Clone + Send + 'static {
     const METRICS_TAG: &'static str;
 
     /// Checks whether the provided key requires shadowing, if so returns the
@@ -110,12 +110,12 @@ pub trait Kind: Sized + Clone + 'static {
     }
 }
 
-type NetworkClient = Metered<WithTimeouts<network::Client<Handshake>>>;
+type RpcClient = Metered<WithTimeouts<quic::Client<Handshake>>>;
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error, Clone)]
 pub enum Error {
-    #[error("Network: {0:?}")]
-    Network(#[from] outbound::Error),
+    #[error("RPC client: {0:?}")]
+    RpcClient(#[from] irn_rpc::client::Error),
 
     #[error("API: {0:?}")]
     Api(super::Error),
@@ -127,7 +127,7 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl Client {
-    pub fn new(cfg: Config) -> Result<Self, network::Error> {
+    pub fn new(cfg: Config) -> Result<Self, quic::Error> {
         let shadowing = if !cfg.shadowing_nodes.is_empty() {
             let default_namespace = cfg.shadowing_default_namespace;
 
@@ -170,10 +170,7 @@ impl Kind for kind::Shadowing {
 }
 
 impl<K: Kind> Client<K> {
-    fn new_inner(mut cfg: Config, kind: K) -> Result<Self, network::Error> {
-        // Safe unwrap, as we know that the bytes are a valid ed25519 key.
-        let keypair = Keypair::ed25519_from_bytes(cfg.key.to_bytes()).unwrap();
-
+    fn new_inner(mut cfg: Config, kind: K) -> Result<Self, quic::Error> {
         // 0 is not valid, let's just make it 1
         if cfg.udp_socket_count == 0 {
             cfg.udp_socket_count = 1;
@@ -186,24 +183,22 @@ impl<K: Kind> Client<K> {
             .collect::<HashMap<_, _>>();
         let namespaces = Arc::new(namespaces);
 
-        let timeouts = network::rpc::Timeouts {
-            unary: Some(cfg.request_timeout),
-            streaming: Some(cfg.request_timeout),
-            oneshot: Some(cfg.request_timeout),
-        };
+        let timeouts = Timeouts::new()
+            .with_default(cfg.request_timeout)
+            .with::<{ rpc::Subscribe::ID }>(None);
 
         Ok(Self {
             inner: (0..cfg.udp_socket_count)
                 .map(|_| {
-                    network::Client::new(network::ClientConfig {
-                        keypair: keypair.clone(),
-                        known_peers: cfg.nodes.clone(),
+                    quic::Client::new(irn_rpc::client::Config {
+                        keypair: cfg.keypair.clone(),
+                        known_peers: cfg.nodes.values().cloned().collect(),
                         connection_timeout: cfg.connection_timeout,
                         handshake: Handshake {
                             namespaces: namespaces.clone(),
                         },
                     })
-                    .map(|c| c.with_timeouts(timeouts).metered())
+                    .map(|c| c.with_timeouts(timeouts.clone()).metered())
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .into(),
@@ -218,45 +213,36 @@ impl<K: Kind> Client<K> {
         &self.namespaces
     }
 
-    fn random_client(&self) -> &NetworkClient {
+    fn random_client(&self) -> &RpcClient {
         // This vector can't be empty, we checked it in the constructor.
         self.inner.choose(&mut rand::thread_rng()).unwrap()
     }
 
-    async fn exec<Op, Fut, T>(
-        &self,
-        rpc: impl Fn(NetworkClient, AnyPeer, Op) -> Fut + Clone + Send + Sync + 'static,
-        op: Op,
-    ) -> Result<T>
+    fn exec<RPC, Op, T>(&self, op: Op) -> impl Future<Output = Result<T>> + '_
     where
+        RPC: Rpc<Kind = irn_rpc::kind::Unary, Request = Op, Response = super::Result<T>> + 'static,
         Op: Operation + AsRef<Key> + Clone + Send + Sync + 'static,
         T: Send + 'static,
-        Fut: Future<Output = Result<super::Result<T>, outbound::Error>> + Send + 'static,
     {
         if let Some(client) = Kind::requires_shadowing(self, op.as_ref()) {
-            let rpc = rpc.clone();
             let mut op = op.clone();
 
             if let (Some(ns), Some(key)) = (&client.kind.default_namespace, op.key_mut()) {
                 key.set_default_namespace(ns);
             }
 
-            async move { client.retry(rpc, op).await }
+            async move { client.retry::<RPC, _, _>(op).await }
                 .with_metrics(future_metrics!("irn_api_shadowing"))
                 .pipe(tokio::spawn);
-        }
+        };
 
-        self.retry(rpc, op).await
+        self.retry::<RPC, _, _>(op)
     }
 
-    async fn retry<'a, Op, Fut, T>(
-        &'a self,
-        rpc: impl Fn(NetworkClient, AnyPeer, Op) -> Fut,
-        op: Op,
-    ) -> Result<T>
+    async fn retry<RPC, Op, T>(&self, op: Op) -> Result<T>
     where
-        Op: Operation + Clone,
-        Fut: Future<Output = Result<super::Result<T>, outbound::Error>> + 'a,
+        RPC: Rpc<Kind = irn_rpc::kind::Unary, Request = Op, Response = super::Result<T>> + 'static,
+        Op: Operation + Clone + 'static,
     {
         use {super::Error as ApiError, tryhard::RetryPolicy};
 
@@ -267,15 +253,17 @@ impl<K: Kind> Client<K> {
         // `u32::MAX`.
         let retries = u32::MAX;
 
-        tryhard::retry_fn(|| {
-            rpc(self.random_client().clone(), AnyPeer, op.clone()).map(|res| match res {
-                Ok(Ok(out)) => Ok(out),
-                Ok(Err(api)) => Err(Error::Api(api)),
-                Err(net) => Err(Error::Network(net)),
-            })
+        tryhard::retry_fn(move || {
+            self.random_client()
+                .send_unary::<RPC>(&AnyPeer, op.clone())
+                .map(|res| match res {
+                    Ok(Ok(out)) => Ok(out),
+                    Ok(Err(api)) => Err(Error::Api(api)),
+                    Err(rpc) => Err(Error::RpcClient(rpc)),
+                })
         })
         .retries(retries)
-        .custom_backoff(|attempt, err: &_| {
+        .custom_backoff(move |attempt, err: &_| {
             let delay = match err {
                 Error::Api(ApiError::NotFound | ApiError::Unauthorized) | Error::Encryption(_) => {
                     return RetryPolicy::Break;
@@ -285,7 +273,7 @@ impl<K: Kind> Client<K> {
                 // On the first attempt retry immediately.
                 _ if attempt == 1 => Duration::ZERO,
                 Error::Api(ApiError::Internal(_)) => Duration::from_millis(100),
-                Error::Network(_) => Duration::from_millis(50),
+                Error::RpcClient(_) => Duration::from_millis(50),
             };
 
             // Make sure that the operation won't take more time than allowed.
@@ -355,7 +343,7 @@ impl<K: Kind> Client<K> {
         let ns = key.namespace;
         let op = super::Get { key };
 
-        self.exec(rpc::Get::send_owned, op)
+        self.exec::<rpc::Get, _, _>(op)
             .await?
             .map(|value| self.try_open(&ns, value))
             .transpose()
@@ -370,21 +358,21 @@ impl<K: Kind> Client<K> {
             expiration: Some(expiration),
         };
 
-        self.exec(rpc::Set::send_owned, op).await
+        self.exec::<rpc::Set, _, _>(op).await
     }
 
     pub async fn del(&self, key: Key) -> Result<()> {
         let op = super::Del { key };
 
-        self.exec(rpc::Del::send_owned, op).await
+        self.exec::<rpc::Del, _, _>(op).await
     }
 
     pub async fn get_exp(&self, key: Key) -> Result<UnixTimestampSecs> {
         let op = super::GetExp { key };
 
-        self.exec(rpc::GetExp::send_owned, op)
+        self.exec::<rpc::GetExp, _, _>(op)
             .await?
-            .ok_or_else(|| Error::Api(super::Error::NotFound))
+            .ok_or(Error::Api(super::Error::NotFound))
     }
 
     pub async fn set_exp(&self, key: Key, expiration: UnixTimestampSecs) -> Result<()> {
@@ -393,14 +381,14 @@ impl<K: Kind> Client<K> {
             expiration: Some(expiration),
         };
 
-        self.exec(rpc::SetExp::send_owned, op).await
+        self.exec::<rpc::SetExp, _, _>(op).await
     }
 
     pub async fn hget(&self, key: Key, field: Field) -> Result<Option<Value>> {
         let ns = key.namespace;
         let op = super::HGet { key, field };
 
-        self.exec(rpc::HGet::send_owned, op)
+        self.exec::<rpc::HGet, _, _>(op)
             .await?
             .map(|value| self.try_open(&ns, value))
             .transpose()
@@ -422,21 +410,21 @@ impl<K: Kind> Client<K> {
             expiration: Some(expiration),
         };
 
-        self.exec(rpc::HSet::send_owned, op).await
+        self.exec::<rpc::HSet, _, _>(op).await
     }
 
     pub async fn hdel(&self, key: Key, field: Field) -> Result<()> {
         let op = super::HDel { key, field };
 
-        self.exec(rpc::HDel::send_owned, op).await
+        self.exec::<rpc::HDel, _, _>(op).await
     }
 
     pub async fn hget_exp(&self, key: Key, field: Field) -> Result<UnixTimestampSecs> {
         let op = super::HGetExp { key, field };
 
-        self.exec(rpc::HGetExp::send_owned, op)
+        self.exec::<rpc::HGetExp, _, _>(op)
             .await?
-            .ok_or_else(|| Error::Api(super::Error::NotFound))
+            .ok_or(Error::Api(super::Error::NotFound))
     }
 
     pub async fn hset_exp(
@@ -451,25 +439,25 @@ impl<K: Kind> Client<K> {
             expiration: Some(expiration),
         };
 
-        self.exec(rpc::HSetExp::send_owned, op).await
+        self.exec::<rpc::HSetExp, _, _>(op).await
     }
 
     pub async fn hcard(&self, key: Key) -> Result<u64> {
         let op = super::HCard { key };
 
-        self.exec(rpc::HCard::send_owned, op).await
+        self.exec::<rpc::HCard, _, _>(op).await
     }
 
     pub async fn hfields(&self, key: Key) -> Result<Vec<Field>> {
         let op = super::HFields { key };
 
-        self.exec(rpc::HFields::send_owned, op).await
+        self.exec::<rpc::HFields, _, _>(op).await
     }
 
     pub async fn hvals(&self, key: Key) -> Result<Vec<Value>> {
         let ns = key.namespace;
         let op = super::HVals { key };
-        let values = self.exec(rpc::HVals::send_owned, op).await?;
+        let values = self.exec::<rpc::HVals, _, _>(op).await?;
 
         self.try_open_collection(&ns, values)
     }
@@ -482,42 +470,34 @@ impl<K: Kind> Client<K> {
     ) -> Result<(Vec<Value>, Option<Cursor>)> {
         let ns = key.namespace;
         let op = super::HScan { key, count, cursor };
-        let (values, cursor) = self.exec(rpc::HScan::send_owned, op).await?;
+        let (values, cursor) = self.exec::<rpc::HScan, _, _>(op).await?;
 
         self.try_open_collection(&ns, values)
             .map(|values| (values, cursor))
     }
 
-    pub async fn status(&self) -> Result<StatusResponse> {
-        let op = super::Status;
-        self.retry(rpc::Status::send_owned, op).await
-    }
-
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
-        let op = super::Publish { channel, message };
-
-        self.retry(
-            |client, to, op| rpc::Publish::send_owned(client, to, op).map_ok(Ok),
-            op,
-        )
-        .await
+        self.random_client()
+            .send_oneshot::<rpc::Publish>(&AnyPeer, super::Publish { channel, message })
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn subscribe(
         &self,
         channels: HashSet<Vec<u8>>,
-    ) -> impl Stream<Item = PubsubEventPayload> + 'static {
+    ) -> impl Stream<Item = PubsubEventPayload> + Send + 'static {
         let this = self.clone();
 
         Self::meter_operation_result::<super::Subscribe, _>(&Ok(()));
 
         async_stream::stream! {
-            let op = &super::Subscribe { channels };
-
             loop {
+                let op = super::Subscribe { channels: channels.clone() };
+
                 let subscribe =
-                    rpc::Subscribe::send(this.random_client(), AnyPeer, |mut tx, rx| async move {
-                        tx.send(op.clone()).await?;
+                    rpc::Subscribe::send(this.random_client(), &AnyPeer, |mut tx, rx| async move {
+                        tx.send(op).await?;
                         Ok(rx)
                     });
 
@@ -552,13 +532,13 @@ struct Handshake {
     namespaces: Arc<HashMap<auth::PublicKey, auth::Auth>>,
 }
 
-impl network::Handshake for Handshake {
+impl transport::Handshake for Handshake {
     type Ok = ();
-    type Err = super::HandshakeError;
+    type Err = transport::Error;
 
     fn handle(
         &self,
-        conn: network::PendingConnection,
+        conn: PendingConnection,
     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
         async move {
             let (mut rx, mut tx) = conn
@@ -585,16 +565,10 @@ impl network::Handshake for Handshake {
 
 impl<K: Kind> Client<K> {
     fn meter_operation_result<Op: Operation, T>(res: &Result<T>) {
-        use network::{outbound::Error as NetworkError, rpc::Error as RpcError};
-
         let err = res.as_ref().err().and_then(|e| {
             Some(match e {
-                Error::Network(NetworkError::ConnectionHandler(_)) => "connection_handler".into(),
-                Error::Network(NetworkError::Rpc(RpcError::IO(e))) => e.to_string().into(),
-                Error::Network(NetworkError::Rpc(RpcError::StreamFinished)) => {
-                    "stream_finished".into()
-                }
-                Error::Network(NetworkError::Rpc(RpcError::Timeout)) => "timeout".into(),
+                Error::RpcClient(client::Error::Transport(_)) => "transport".into(),
+                Error::RpcClient(client::Error::Rpc(err)) => err.code.clone(),
                 Error::Api(super::Error::Unauthorized) => "unauthorized".into(),
                 Error::Api(super::Error::NotFound) => return None,
                 Error::Api(super::Error::Throttled) => "throttled".into(),

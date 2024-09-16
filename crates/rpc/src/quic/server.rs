@@ -1,39 +1,53 @@
 use {
-    crate::{rpc, BiDirectionalStream, Handshake, PendingConnection},
-    futures::{Future, TryFutureExt},
-    libp2p::PeerId,
-    std::{convert::Infallible, io, net::SocketAddr},
-    tap::Pipe,
-    tokio::io::AsyncReadExt,
-    wc::metrics::{future_metrics, FutureExt},
+    super::Error,
+    crate::{
+        server::{Config, ConnectionInfo},
+        transport::{BiDirectionalStream, Handshake, PendingConnection},
+        Server,
+    },
+    futures::TryFutureExt as _,
+    std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc},
+    tap::Pipe as _,
+    tokio::io::AsyncReadExt as _,
+    wc::metrics::{future_metrics, FutureExt as _},
 };
 
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo<H = ()> {
-    pub remote_address: SocketAddr,
-    pub peer_id: PeerId,
-    pub handshake_data: H,
-}
+/// Runs the [`rpc::Server`].
+pub fn run<H: Handshake>(
+    server: impl Server<H>,
+    cfg: Config,
+    handshake: H,
+) -> Result<impl Future<Output = ()>, Error> {
+    let transport_config = super::new_quinn_transport_config();
 
-/// Handler of inbound RPCs.
-pub trait RpcHandler<H = ()>: Clone + Send + Sync + 'static {
-    /// Handles an inbound RPC.
-    fn handle_rpc(
-        &self,
-        id: rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo<H>,
-    ) -> impl Future<Output = ()> + Send;
+    let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_tls_config));
+    server_config.transport = transport_config.clone();
+    server_config.migration(false);
+
+    let socket_addr = match super::multiaddr_to_socketaddr(&cfg.addr)? {
+        SocketAddr::V4(v4) => SocketAddr::new([0, 0, 0, 0].into(), v4.port()),
+        SocketAddr::V6(v6) => SocketAddr::new([0, 0, 0, 0, 0, 0, 0, 0].into(), v6.port()),
+    };
+
+    let endpoint = super::new_quinn_endpoint(
+        socket_addr,
+        &cfg.keypair,
+        transport_config,
+        Some(server_config),
+    )?;
+
+    Ok(handle_connections(server, endpoint, handshake))
 }
 
 pub(super) async fn handle_connections<H: Handshake>(
+    server: impl Server<H>,
     endpoint: quinn::Endpoint,
     handshake: H,
-    rpc_handler: impl RpcHandler<H::Ok>,
 ) {
     while let Some(connecting) = endpoint.accept().await {
         ConnectionHandler {
-            rpc_handler: rpc_handler.clone(),
+            server: server.clone(),
             handshake: handshake.clone(),
         }
         .handle(connecting)
@@ -45,13 +59,13 @@ pub(super) async fn handle_connections<H: Handshake>(
 
 #[derive(Debug)]
 struct ConnectionHandler<S, H> {
-    rpc_handler: S,
+    server: S,
     handshake: H,
 }
 
 impl<S, H> ConnectionHandler<S, H>
 where
-    S: RpcHandler<H::Ok>,
+    S: Server<H>,
     H: Handshake,
 {
     async fn handle(
@@ -70,11 +84,19 @@ where
             .next()
             .ok_or(Error::MissingTlsCertificate)?;
 
+        let peer_id = libp2p_tls::certificate::parse(&certificate)
+            .map_err(Error::ParseTlsCertificate)?
+            .peer_id();
+
+        // Unwrap is safe here, addr doesn't contain another `PeerId` as we've just
+        // built it from `SocketAddr`.
+        let remote_address = super::socketaddr_to_multiaddr(conn.remote_address())
+            .with_p2p(peer_id)
+            .unwrap();
+
         let conn_info = ConnectionInfo {
-            remote_address: conn.remote_address(),
-            peer_id: libp2p_tls::certificate::parse(&certificate)
-                .map_err(Error::ParseTlsCertificate)?
-                .peer_id(),
+            peer_id,
+            remote_address,
             handshake_data: self
                 .handshake
                 .handle(PendingConnection(conn.clone()))
@@ -88,7 +110,7 @@ where
                 .with_metrics(future_metrics!("quic_accept_bi"))
                 .await?;
 
-            let local_peer = self.rpc_handler.clone();
+            let local_peer = self.server.clone();
             let conn_info = conn_info.clone();
             async move {
                 let rpc_id = match rx.read_u128().await {

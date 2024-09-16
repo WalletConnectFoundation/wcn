@@ -1,5 +1,6 @@
 use {
-    api::{auth, Multiaddr, SigningKey},
+    admin_api::{ClusterView, NodeState},
+    api::{auth, Multiaddr},
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,
@@ -8,25 +9,19 @@ use {
     irn::fsm::ShutdownReason,
     irn_node::{
         cluster::NodeRegion,
-        network::{
-            namespaced_key,
-            rpc::{
-                self,
-                admin::{ClusterView, NodeState},
-            },
-        },
+        network::{namespaced_key, rpc},
         storage::{self, Get, Set, Value},
         Config,
         RocksdbDatabaseConfig,
     },
+    irn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr, transport::NoHandshake},
     itertools::Itertools,
     libp2p::PeerId,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
-    network::{socketaddr_to_multiaddr, Keypair, NoHandshake},
     rand::{seq::IteratorRandom as _, Rng},
     relay_rocks::util::{timestamp_micros, timestamp_secs},
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         path::PathBuf,
         sync::atomic::{AtomicU16, Ordering},
         thread,
@@ -77,7 +72,7 @@ struct NodeHandle {
 
     /// Replica API client to make replica requests _from_ this node to other
     /// nodes.
-    replica_api_client: network::Client,
+    replica_api_client: irn_rpc::quic::Client,
 
     replica_api_server_addr: Multiaddr,
     coordinator_api_server_addr: Multiaddr,
@@ -95,7 +90,6 @@ impl NodeHandle {
             bytes: operation.key,
         });
 
-        let id = &self.config.id;
         let addr = &self.replica_api_server_addr;
 
         let req = rpc::replica::Request {
@@ -103,7 +97,7 @@ impl NodeHandle {
             keyspace_version,
         };
 
-        rpc::replica::Get::send(&self.replica_api_client, (id, addr), req)
+        rpc::replica::Get::send(&self.replica_api_client, addr, req)
             .await
             .unwrap()
             .unwrap()
@@ -116,7 +110,6 @@ impl NodeHandle {
             bytes: operation.key,
         });
 
-        let id = &self.config.id;
         let addr = &self.replica_api_server_addr;
 
         let req = rpc::replica::Request {
@@ -124,7 +117,7 @@ impl NodeHandle {
             keyspace_version,
         };
 
-        rpc::replica::Set::send(&self.replica_api_client, (id, addr), req)
+        rpc::replica::Set::send(&self.replica_api_client, addr, req)
             .await
             .unwrap()
             .unwrap()
@@ -140,7 +133,7 @@ struct TestCluster {
     nodes: HashMap<PeerId, NodeHandle>,
     prometheus: PrometheusHandle,
 
-    admin_api_client: network::Client,
+    admin_api_client: admin_api::Client,
 
     keyspace_version: u64,
 }
@@ -172,13 +165,8 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
-        let client = network::Client::new(network::ClientConfig {
-            keypair: Keypair::generate_ed25519(),
-            known_peers: HashMap::new(),
-            handshake: NoHandshake,
-            connection_timeout: Duration::from_secs(5),
-        })
-        .unwrap();
+        let client =
+            admin_api::Client::new(admin_api::client::Config::new(local_multiaddr(0))).unwrap();
 
         let mut cluster = Self {
             nodes,
@@ -288,9 +276,11 @@ impl TestCluster {
 
     async fn get_cluster_view(&self) -> Result<ClusterView, anyhow::Error> {
         let node = self.nodes.values().next().unwrap();
-        let callee = (&node.config.id, &node.admin_api_server_addr);
 
-        Ok(rpc::admin::GetClusterView::send(&self.admin_api_client, callee, ()).await??)
+        let mut client = self.admin_api_client.clone();
+        client.set_server_addr(node.admin_api_server_addr.clone());
+
+        Ok(client.get_cluster_view().await?)
     }
 
     fn random_node(&self) -> &NodeHandle {
@@ -337,18 +327,16 @@ impl TestCluster {
 
         // Subscribe 2 groups of clients to different channels.
         let mut subscriptions1 = stream::iter(&clients)
-            .then(|c| async move {
+            .then(|c| {
                 c.subscribe([channel1.to_vec()].into_iter().collect())
-                    .await
-                    .boxed()
+                    .map(Box::pin)
             })
             .collect::<Vec<_>>()
             .await;
         let mut subscriptions2 = stream::iter(&clients)
-            .then(|c| async move {
+            .then(|c| {
                 c.subscribe([channel2.to_vec()].into_iter().collect())
-                    .await
-                    .boxed()
+                    .map(Box::pin)
             })
             .collect::<Vec<_>>()
             .await;
@@ -594,9 +582,7 @@ impl TestCluster {
 
         let ops = self.gen_test_ops();
 
-        let signing_key = auth::client_key_from_secret(&rand::random::<[u8; 32]>()).unwrap();
-
-        let client_keypair = Keypair::ed25519_from_bytes(signing_key.to_bytes()).unwrap();
+        let client_keypair = Keypair::generate_ed25519();
         let client_id = PeerId::from_public_key(&client_keypair.public());
 
         // bootup a new node with authorization enabled
@@ -628,7 +614,7 @@ impl TestCluster {
         );
 
         let authorized_client = new_coordinator_api_client(|c| {
-            c.key = signing_key;
+            c.keypair = client_keypair;
             c.nodes
                 .insert(node_id, node.coordinator_api_server_addr.clone());
         });
@@ -897,7 +883,7 @@ fn new_node_config() -> Config {
 
 fn new_coordinator_api_client(f: impl FnOnce(&mut api::client::Config)) -> api::Client {
     let mut client_config = api::client::Config {
-        key: SigningKey::generate(&mut rand::thread_rng()),
+        keypair: Keypair::generate_ed25519(),
         nodes: HashMap::new(),
         shadowing_nodes: HashMap::new(),
         shadowing_factor: 0.0,
@@ -926,14 +912,14 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
         c.nodes.insert(cfg.id, coordinator_api_server_addr.clone());
     });
 
-    let client_config = network::ClientConfig {
+    let client_config = irn_rpc::client::Config {
         keypair: cfg.keypair.clone(),
-        known_peers: HashMap::new(),
+        known_peers: HashSet::new(),
         handshake: NoHandshake,
         connection_timeout: Duration::from_secs(5),
     };
 
-    let replica_api_client = network::Client::new(client_config).unwrap();
+    let replica_api_client = irn_rpc::quic::Client::new(client_config).unwrap();
 
     let config = cfg.clone();
     let thread_handle = thread::spawn(move || {

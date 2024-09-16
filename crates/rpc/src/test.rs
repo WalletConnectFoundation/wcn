@@ -1,33 +1,33 @@
 use {
-    super::{identity::Keypair, Multiaddr, PeerId},
     crate::{
-        inbound::{self, ConnectionInfo},
-        rpc::{self, AnyPeer},
-        BiDirectionalStream,
-        Client,
-        ClientConfig,
-        NoHandshake,
-        Rpc,
-        ServerConfig,
+        client::{self, AnyPeer},
+        id as rpc_id,
+        identity::Keypair,
+        quic,
+        server::{self, ConnectionInfo},
+        transport::{BiDirectionalStream, NoHandshake},
+        Id as RpcId,
+        Multiaddr,
+        PeerId,
     },
     futures::{lock::Mutex, Future, SinkExt, StreamExt},
     std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration},
     tap::Pipe,
 };
 
-type UnaryRpc = rpc::Unary<{ rpc::id(b"test_unary") }, String, String>;
-type StreamingRpc = rpc::Streaming<{ rpc::id(b"test_streaming") }, String, String>;
-type OneshotRpc = rpc::Oneshot<{ rpc::id(b"test_oneshot") }, u8>;
+type UnaryRpc = crate::Unary<{ rpc_id(b"test_unary") }, String, String>;
+type StreamingRpc = crate::Streaming<{ rpc_id(b"test_streaming") }, String, String>;
+type OneshotRpc = crate::Oneshot<{ rpc_id(b"test_oneshot") }, u8>;
 
 #[derive(Clone, Debug)]
 pub struct Node {
     received_messages: Arc<Mutex<HashSet<u8>>>,
 }
 
-impl inbound::RpcHandler for Node {
+impl crate::Server for Node {
     fn handle_rpc(
         &self,
-        id: rpc::Id,
+        id: RpcId,
         stream: BiDirectionalStream,
         _: &ConnectionInfo,
     ) -> impl Future<Output = ()> + Send {
@@ -94,19 +94,19 @@ async fn suite() {
     let mut nodes = Vec::new();
 
     for (id, addr, keypair) in &peers {
-        let client_config = ClientConfig {
+        let client_config = client::Config {
             keypair: keypair.clone(),
             known_peers: peers
                 .iter()
-                .filter_map(|p| (&p.0 != id).then_some((p.0, p.1.clone())))
+                .filter_map(|p| (&p.0 != id).then_some(p.1.clone()))
                 .collect(),
             handshake: NoHandshake,
             connection_timeout: Duration::from_secs(15),
         };
 
-        let client = Client::new(client_config).expect("Client::new");
+        let client = quic::Client::new(client_config).expect("Client::new");
 
-        let server_config = ServerConfig {
+        let server_config = server::Config {
             addr: addr.clone(),
             keypair: keypair.clone(),
         };
@@ -118,7 +118,7 @@ async fn suite() {
         };
         nodes.push(node.clone());
 
-        crate::run_server(server_config, NoHandshake, node)
+        quic::server::run(node, server_config, NoHandshake)
             .expect("run_server")
             .pipe(tokio::spawn);
     }
@@ -132,14 +132,14 @@ async fn suite() {
                 continue;
             }
 
-            let to = (remote_id, remote_addr);
+            let to = remote_addr;
 
             // unary
 
             let res = UnaryRpc::send(client, to, "ping".to_string()).await;
             assert_eq!(res, Ok("pong".to_string()));
 
-            let res = UnaryRpc::send(client, AnyPeer, "ping".to_string()).await;
+            let res = UnaryRpc::send(client, &AnyPeer, "ping".to_string()).await;
             assert_eq!(res, Ok("pong".to_string()));
 
             // streaming
@@ -154,17 +154,17 @@ async fn suite() {
             })
             .await
             .unwrap();
+
+            // oneshot
+
+            OneshotRpc::send(client, to, i as u8).await.unwrap();
         }
-
-        // pubsub broadcast
-
-        OneshotRpc::broadcast(client, i as u8).await;
     }
 
     // wait a bit for peers to receive the broadcast
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // assert that all broadcasted messages have reached all peers
+    // assert that all oneshot messages have reached all peers
 
     for (i, peer) in nodes.iter().enumerate() {
         let expected: HashSet<u8> = (0..=(nodes.len() - 1) as u8)

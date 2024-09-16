@@ -8,11 +8,11 @@ publish = false
 workspace = true
 
 [features]
-client = []
-server = []
+client = ["irn_rpc/client"]
+server = ["irn_rpc/server"]
 
 [dependencies]
-network = { workspace = true }
+irn_rpc = { workspace = true}
 wc = { workspace = true, features = ["metrics", "future"] }
 metrics = { workspace = true }
 

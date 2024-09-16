@@ -108,7 +108,7 @@ pub struct Auth {
 
 /// Extension trait wrapping [`Server`]s with [`WithAuth`] middleware.
 pub trait WithAuthExt: Sized {
-    /// Wraps `Self` with [`WithTimeouts`].
+    /// Wraps `Self` with [`WithAuth`].
     fn with_auth(self, auth: Auth) -> WithAuth<Self> {
         WithAuth { server: self, auth }
     }

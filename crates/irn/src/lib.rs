@@ -1,7 +1,4 @@
-use {
-    irn_api::{client, SigningKey},
-    std::str::FromStr,
-};
+use {derive_more::Deref, irn_api::client, std::str::FromStr};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -27,19 +24,20 @@ pub enum CliError {
     TextEncoding,
 }
 
-#[derive(Debug, Clone)]
-pub struct PrivateKey(pub SigningKey);
+#[derive(Clone, Debug, Deref)]
+pub struct Keypair(pub irn_rpc::identity::Keypair);
 
-impl FromStr for PrivateKey {
+impl FromStr for Keypair {
     type Err = CliError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE64
+        let bytes: Vec<u8> = data_encoding::BASE64
             .decode(s.as_bytes())
             .map_err(|_| CliError::KeyEncoding)?[..]
-            .try_into()
-            .map_err(|_| CliError::KeyLength)?;
+            .into();
 
-        Ok(Self(irn_api::SigningKey::from_bytes(&bytes)))
+        irn_rpc::identity::Keypair::ed25519_from_bytes(bytes)
+            .map_err(|_| CliError::KeyLength)
+            .map(Self)
     }
 }

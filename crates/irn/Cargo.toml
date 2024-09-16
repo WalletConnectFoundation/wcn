@@ -11,7 +11,10 @@ path = "src/main.rs"
 [dependencies]
 irn_rpc = { path = "../rpc" }
 irn_api = { path = "../irn_api" }
+irn_admin_api = { path = "../admin_api" }
 irn_core = { path = "../core" }
+
+derive_more = { workspace = true, features = ["deref"] }
 
 clap = { version = "4", features = ["derive"] }
 eyre = "0.6"

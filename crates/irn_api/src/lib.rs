@@ -1,13 +1,10 @@
 #![allow(clippy::manual_async_fn)]
 
+pub use irn_rpc::{Multiaddr, PeerId as NodeId};
 use {
     derive_more::AsRef,
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, collections::HashSet},
-};
-pub use {
-    ed25519_dalek::SigningKey,
-    irn_rpc::{Multiaddr, PeerId as NodeId},
 };
 
 #[cfg(feature = "client")]
@@ -23,15 +20,7 @@ pub mod rpc {
         super::{Cardinality, Field, PubsubEventPayload, UnixTimestampSecs, Value},
         crate::Cursor,
         irn_rpc as rpc,
-        serde::{Deserialize, Serialize},
     };
-
-    #[derive(Clone, Debug, Serialize, Deserialize)]
-    pub struct StatusResponse {
-        pub node_version: u64,
-        pub eth_address: Option<String>,
-        pub stake_amount: f64,
-    }
 
     type Rpc<const ID: rpc::Id, Op, Out> = rpc::Unary<ID, Op, super::Result<Out>>;
 
@@ -55,7 +44,6 @@ pub mod rpc {
     pub type Publish = rpc::Oneshot<{ rpc::id(b"publish") }, super::Publish>;
     pub type Subscribe =
         rpc::Streaming<{ rpc::id(b"subscribe") }, super::Subscribe, PubsubEventPayload>;
-    pub type Status = Rpc<{ rpc::id(b"status") }, super::Status, StatusResponse>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

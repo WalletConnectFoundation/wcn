@@ -1,7 +1,8 @@
+pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
     crate::{
         auth,
-        rpc::{self, StatusResponse},
+        rpc,
         Cursor,
         Field,
         HandshakeRequest,
@@ -13,7 +14,6 @@ use {
         UnixTimestampSecs,
         Value,
     },
-    ed25519_dalek::SigningKey,
     futures::FutureExt,
     futures_util::{SinkExt, Stream},
     irn_rpc::{
@@ -22,12 +22,9 @@ use {
             middleware::{Metered, MeteredExt as _, Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
         },
-        identity::Keypair,
         quic,
         transport::{self, PendingConnection},
         Client as _,
-        Multiaddr,
-        PeerId,
         Rpc,
     },
     rand::seq::SliceRandom,
@@ -43,7 +40,7 @@ use {
 
 #[derive(Clone)]
 pub struct Config {
-    pub key: SigningKey,
+    pub keypair: identity::Keypair,
 
     /// The list of nodes to be used for executing operations.
     pub nodes: HashMap<PeerId, Multiaddr>,
@@ -174,9 +171,6 @@ impl Kind for kind::Shadowing {
 
 impl<K: Kind> Client<K> {
     fn new_inner(mut cfg: Config, kind: K) -> Result<Self, quic::Error> {
-        // Safe unwrap, as we know that the bytes are a valid ed25519 key.
-        let keypair = Keypair::ed25519_from_bytes(cfg.key.to_bytes()).unwrap();
-
         // 0 is not valid, let's just make it 1
         if cfg.udp_socket_count == 0 {
             cfg.udp_socket_count = 1;
@@ -197,7 +191,7 @@ impl<K: Kind> Client<K> {
             inner: (0..cfg.udp_socket_count)
                 .map(|_| {
                     quic::Client::new(irn_rpc::client::Config {
-                        keypair: keypair.clone(),
+                        keypair: cfg.keypair.clone(),
                         known_peers: cfg.nodes.values().cloned().collect(),
                         connection_timeout: cfg.connection_timeout,
                         handshake: Handshake {
@@ -480,10 +474,6 @@ impl<K: Kind> Client<K> {
 
         self.try_open_collection(&ns, values)
             .map(|values| (values, cursor))
-    }
-
-    pub async fn status(&self) -> Result<StatusResponse> {
-        self.retry::<rpc::Status, _, _>(super::Status).await
     }
 
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {

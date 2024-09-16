@@ -1,12 +1,12 @@
 use {
-    irn::PrivateKey,
+    irn::Keypair,
     irn_api::{
         auth::{Auth, PublicKey},
         client,
         Client,
         Key,
     },
-    irn_rpc::{identity::Keypair, quic},
+    irn_rpc::quic,
     std::{net::SocketAddr, str::FromStr, time::Duration},
 };
 
@@ -57,7 +57,7 @@ pub struct StorageCmd {
 
     #[clap(long, env = "IRN_STORAGE_PRIVATE_KEY")]
     /// Client private key used for authorization.
-    private_key: PrivateKey,
+    private_key: Keypair,
 
     #[clap(long, env = "IRN_STORAGE_NAMESPACE_SECRET")]
     /// Secret key to initialize namespaces.
@@ -310,11 +310,13 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
 
     // Currently, the client doesn't use or verify the peer ID of the provided node
     // address. So we can use any peer ID and not require it as an input parameter.
-    let peer_id = Keypair::generate_ed25519().public().to_peer_id();
+    let peer_id = irn_rpc::identity::Keypair::generate_ed25519()
+        .public()
+        .to_peer_id();
     let address = (peer_id, quic::socketaddr_to_multiaddr(cmd.address));
 
     let client = Client::new(client::Config {
-        key: cmd.private_key.0,
+        keypair: cmd.private_key.0,
         nodes: [address].into(),
         shadowing_nodes: Default::default(),
         shadowing_factor: 0.0,

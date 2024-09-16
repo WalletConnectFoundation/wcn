@@ -3524,10 +3524,12 @@ dependencies = [
  "clap 4.5.4",
  "config",
  "data-encoding",
+ "derive_more 1.0.0-beta.6",
  "ed25519-dalek",
  "eyre",
  "fork",
  "humantime",
+ "irn_admin_api",
  "irn_api",
  "irn_core",
  "irn_node",
@@ -3542,6 +3544,17 @@ dependencies = [
  "tokio",
  "tracing",
  "vergen-pretty",
+]
+
+[[package]]
+name = "irn_admin_api"
+version = "0.1.0"
+dependencies = [
+ "irn_rpc",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -3642,6 +3655,7 @@ dependencies = [
  "futures",
  "hyper 0.14.28",
  "if-addrs 0.13.3",
+ "irn_admin_api",
  "irn_api",
  "irn_core",
  "irn_rpc",

@@ -8,10 +8,10 @@ use {
         Error,
         Node,
     },
+    admin_api::Server as _,
     anyerror::AnyError,
     api::{
         auth,
-        rpc::StatusResponse,
         server::{Handshake, HandshakeData},
     },
     derive_more::AsRef,
@@ -201,15 +201,6 @@ pub mod rpc {
         pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, HealthResponse>;
     }
 
-    pub use status::Status;
-    pub mod status {
-        use {api::rpc::StatusResponse, irn_rpc as rpc};
-
-        pub type Request = ();
-
-        pub type Status = rpc::Unary<{ rpc::id(b"status") }, Request, StatusResponse>;
-    }
-
     pub use metrics::Metrics;
     pub mod metrics {
         use irn_rpc as rpc;
@@ -220,70 +211,19 @@ pub mod rpc {
 
         pub type Metrics = rpc::Unary<{ rpc::id(b"metrics") }, Request, Response>;
     }
-
-    pub mod admin {
-        use {
-            api::Multiaddr,
-            irn_rpc as rpc,
-            libp2p::PeerId,
-            serde::{Deserialize, Serialize},
-            std::collections::HashMap,
-        };
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct ClusterView {
-            pub nodes: HashMap<PeerId, Node>,
-            pub cluster_version: u128,
-            pub keyspace_version: u64,
-        }
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct Node {
-            pub id: PeerId,
-            pub state: NodeState,
-            pub addr: Multiaddr,
-        }
-
-        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-        pub enum NodeState {
-            Pulling,
-            Normal,
-            Restarting,
-            Decommissioning,
-        }
-
-        #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
-        pub enum GetClusterViewError {
-            #[error("Unauthorized")]
-            Unauthorized,
-        }
-
-        pub type GetClusterViewResponse = Result<ClusterView, GetClusterViewError>;
-
-        pub type GetClusterView =
-            rpc::Unary<{ rpc::id(b"get_cluster_view") }, (), GetClusterViewResponse>;
-    }
 }
 
 #[derive(AsRef, Clone)]
-struct ApiServer<S> {
+struct ApiServer {
     #[as_ref]
     node: Arc<Node>,
 
     pubsub: Pubsub,
 
-    eth_address: Option<Arc<str>>,
     prometheus: PrometheusHandle,
-    status_reporter: Option<S>,
 }
 
-impl<S: StatusReporter> ApiServer<S> {
-    fn status_reporter(&self) -> Option<&S> {
-        self.status_reporter.as_ref()
-    }
-}
-
-impl<S: StatusReporter> irn_rpc::Server<Handshake> for ApiServer<S> {
+impl irn_rpc::Server<Handshake> for ApiServer {
     fn handle_rpc(
         &self,
         id: irn_rpc::Id,
@@ -294,7 +234,7 @@ impl<S: StatusReporter> irn_rpc::Server<Handshake> for ApiServer<S> {
     }
 }
 
-impl<S: StatusReporter> irn_rpc::Server for ApiServer<S> {
+impl irn_rpc::Server for ApiServer {
     fn handle_rpc(
         &self,
         id: irn_rpc::Id,
@@ -305,7 +245,7 @@ impl<S: StatusReporter> irn_rpc::Server for ApiServer<S> {
     }
 }
 
-impl<S> irn_rpc::server::Marker for ApiServer<S> {}
+impl irn_rpc::server::Marker for ApiServer {}
 
 fn prepare_key(key: api::Key, conn_info: &ConnectionInfo<HandshakeData>) -> api::Result<Vec<u8>> {
     if let Some(namespace) = &key.namespace {
@@ -345,7 +285,7 @@ pub fn namespaced_key(key: api::Key) -> storage::Key {
     data
 }
 
-impl<S: StatusReporter> ApiServer<S> {
+impl ApiServer {
     async fn handle_coordinator_rpc(
         &self,
         id: irn_rpc::Id,
@@ -589,10 +529,6 @@ impl<S: StatusReporter> ApiServer<S> {
                 .await
             }
 
-            api::rpc::Status::ID => {
-                api::rpc::Status::handle(stream, |_req| self.handle_status()).await
-            }
-
             id => {
                 return tracing::warn!(
                     name = irn_rpc::Name::new(id).as_str(),
@@ -607,25 +543,6 @@ impl<S: StatusReporter> ApiServer<S> {
                 "Failed to handle coordinator RPC"
             )
         });
-    }
-
-    async fn handle_status(&self) -> api::Result<StatusResponse> {
-        let reporter = self.status_reporter().ok_or_else(|| {
-            api::Error::Internal(api::InternalError::new(
-                "other",
-                "status reporter not available".to_string(),
-            ))
-        })?;
-
-        let report = reporter.report_status().await.map_err(|err| {
-            api::Error::Internal(api::InternalError::new("other", format!("{err:?}")))
-        })?;
-
-        Ok(StatusResponse {
-            node_version: crate::NODE_VERSION,
-            eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
-            stake_amount: report.stake,
-        })
     }
 
     async fn handle_internal_rpc(
@@ -984,54 +901,15 @@ impl RaftRpcServer {
 }
 
 #[derive(Clone)]
-struct AdminApiRpcServer {
+struct AdminApiServer<S> {
     node: Arc<Node>,
+    status_reporter: Option<S>,
+    eth_address: Option<Arc<str>>,
 }
 
-impl irn_rpc::Server for AdminApiRpcServer {
-    fn handle_rpc(
-        &self,
-        id: irn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo,
-    ) -> impl Future<Output = ()> + Send {
-        Self::handle_rpc(self, id, stream, conn_info)
-    }
-}
-
-impl irn_rpc::server::Marker for AdminApiRpcServer {}
-
-impl AdminApiRpcServer {
-    async fn handle_rpc(
-        &self,
-        id: irn_rpc::Id,
-        stream: BiDirectionalStream,
-        _conn_info: &ConnectionInfo,
-    ) {
-        let _ = match id {
-            // TODO: auth
-            rpc::admin::GetClusterView::ID => {
-                rpc::admin::GetClusterView::handle(stream, |_| {
-                    future::ready(Ok(self.get_cluster_view()))
-                })
-                .await
-            }
-
-            id => {
-                return tracing::warn!("Unexpected admin RPC: {}", irn_rpc::Name::new(id).as_str())
-            }
-        }
-        .map_err(|err| {
-            tracing::debug!(
-                name = irn_rpc::Name::new(id).as_str(),
-                ?err,
-                "Failed to handle admin RPC"
-            )
-        });
-    }
-
-    fn get_cluster_view(&self) -> rpc::admin::ClusterView {
-        use rpc::admin::{self, NodeState};
+impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
+    fn get_cluster_view(&self) -> impl Future<Output = admin_api::ClusterView> + Send {
+        use admin_api::NodeState;
 
         let cluster = self.node.consensus().cluster();
 
@@ -1044,7 +922,7 @@ impl AdminApiRpcServer {
                     cluster::NodeState::Restarting => NodeState::Restarting,
                     cluster::NodeState::Decommissioning => NodeState::Decommissioning,
                 };
-                let node = admin::Node {
+                let node = admin_api::Node {
                     id: node.id,
                     state,
                     addr: node.addr.clone(),
@@ -1053,10 +931,31 @@ impl AdminApiRpcServer {
             })
             .collect();
 
-        admin::ClusterView {
+        future::ready(admin_api::ClusterView {
             nodes,
             cluster_version: cluster.version(),
             keyspace_version: cluster.keyspace_version(),
+        })
+    }
+
+    fn get_node_status(
+        &self,
+    ) -> impl Future<Output = admin_api::server::GetNodeStatusResult> + Send {
+        use admin_api::GetNodeStatusError as Error;
+
+        async {
+            let reporter = self.status_reporter.as_ref().ok_or(Error::NotAvailable)?;
+
+            let report = reporter
+                .report_status()
+                .await
+                .map_err(|err| Error::Internal(format!("{err:?}")))?;
+
+            Ok(admin_api::NodeStatus {
+                node_version: crate::NODE_VERSION,
+                eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
+                stake_amount: report.stake,
+            })
         }
     }
 }
@@ -1123,12 +1022,13 @@ impl Network {
             keypair: cfg.keypair.clone(),
         };
 
-        let admin_api_server_config = irn_rpc::server::Config {
+        let default_timeout = Duration::from_millis(cfg.network_request_timeout);
+
+        let admin_api_server_config = admin_api::server::Config {
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.admin_api_server_port)),
             keypair: cfg.keypair.clone(),
+            operation_timeout: default_timeout,
         };
-
-        let default_timeout = Duration::from_millis(cfg.network_request_timeout);
 
         let rpc_timeouts = Timeouts::new()
             .with_default(default_timeout)
@@ -1140,22 +1040,21 @@ impl Network {
         let server = ApiServer {
             node: node.clone(),
             pubsub: Pubsub::new(),
-            eth_address: cfg.eth_address.clone().map(Into::into),
             prometheus,
-            status_reporter,
         }
         .with_timeouts(rpc_timeouts)
         .metered();
 
-        let admin_api_server = AdminApiRpcServer { node }
-            .with_timeouts(Timeouts::new().with_default(default_timeout))
-            .metered();
+        let admin_api_server = AdminApiServer {
+            node,
+            status_reporter,
+            eth_address: cfg.eth_address.clone().map(Into::into),
+        }
+        .serve(admin_api_server_config)?;
 
         let replica_api_server =
             irn_rpc::quic::server::run(server.clone(), replica_api_server_config, NoHandshake)?;
         let coordinator_api_server = ::api::server::run(server, coordinator_api_server_config)?;
-        let admin_api_server =
-            irn_rpc::quic::server::run(admin_api_server, admin_api_server_config, NoHandshake)?;
 
         Ok(
             async move { tokio::join!(replica_api_server, coordinator_api_server, admin_api_server) }

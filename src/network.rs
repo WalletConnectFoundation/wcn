@@ -1028,6 +1028,7 @@ impl Network {
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.admin_api_server_port)),
             keypair: cfg.keypair.clone(),
             operation_timeout: default_timeout,
+            authorized_clients: cfg.authorized_admin_api_clients.clone(),
         };
 
         let rpc_timeouts = Timeouts::new()

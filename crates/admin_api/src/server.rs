@@ -4,12 +4,12 @@ use {
         identity::Keypair,
         middleware::Timeouts,
         server::{
-            middleware::{MeteredExt as _, WithTimeoutsExt as _},
+            middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ConnectionInfo,
         },
         transport::{BiDirectionalStream, NoHandshake},
     },
-    std::{future::Future, time::Duration},
+    std::{collections::HashSet, future::Future, time::Duration},
 };
 
 /// [`Server`] config.
@@ -22,6 +22,9 @@ pub struct Config {
 
     /// Timeout of a [`Server`] operation.
     pub operation_timeout: Duration,
+
+    /// A list of clients authorized to use the Admin API.
+    pub authorized_clients: HashSet<PeerId>,
 }
 
 /// Admin API server.
@@ -35,6 +38,9 @@ pub trait Server: Clone + Send + Sync + 'static {
     /// Runs this [`Server`] using the provided [`Config`].
     fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
         let rpc_server = Adapter { server: self }
+            .with_auth(Auth {
+                authorized_clients: cfg.authorized_clients,
+            })
             .with_timeouts(Timeouts::new().with_default(cfg.operation_timeout))
             .metered();
 

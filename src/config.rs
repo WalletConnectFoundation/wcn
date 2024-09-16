@@ -87,6 +87,9 @@ pub struct Config {
     /// If `None` the client authorization is going to be disabled.
     pub authorized_clients: Option<HashSet<libp2p::PeerId>>,
 
+    /// List of authorized client ids for Admin API.
+    pub authorized_admin_api_clients: HashSet<libp2p::PeerId>,
+
     /// List of authorized Raft candidates.
     /// If `None` the Raft authorization is going to be disabled.
     pub authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
@@ -148,6 +151,7 @@ impl Config {
             replication_request_timeout: raw.replication_request_timeout.unwrap_or(1000),
             warmup_delay: raw.warmup_delay.unwrap_or(30_000),
             authorized_clients: raw.authorized_clients,
+            authorized_admin_api_clients: raw.authorized_admin_api_clients.unwrap_or_default(),
             authorized_raft_candidates: raw.authorized_raft_candidates,
             eth_address: raw.eth_address,
             smart_contract: if let Some(address) = raw.config_smart_contract_address {
@@ -209,6 +213,7 @@ struct RawConfig {
     replication_request_timeout: Option<u64>,
     warmup_delay: Option<u64>,
     authorized_clients: Option<HashSet<libp2p::PeerId>>,
+    authorized_admin_api_clients: Option<HashSet<libp2p::PeerId>>,
     authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
 
     eth_address: Option<String>,

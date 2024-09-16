@@ -195,6 +195,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         replication_request_timeout: config.network.replication_request_timeout,
         warmup_delay: config.server.warmup_delay,
         authorized_clients,
+        authorized_admin_api_clients: HashSet::new(),
         authorized_raft_candidates,
         organization: config.identity.organization,
         region: config.identity.region,

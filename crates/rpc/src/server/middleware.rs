@@ -5,7 +5,8 @@ use {
         Id as RpcId,
         Name as RpcName,
     },
-    std::{future::Future, sync::Arc},
+    libp2p::PeerId,
+    std::{collections::HashSet, future::Future, sync::Arc},
     wc::{
         future::FutureExt as _,
         metrics::{future_metrics, FutureExt as _, StringLabel},
@@ -90,3 +91,51 @@ where
 }
 
 impl<S: super::Marker> super::Marker for WithTimeouts<S> {}
+
+/// RPC server with configured RPC authorization.
+#[derive(Clone, Debug)]
+pub struct WithAuth<S> {
+    server: S,
+    auth: Auth,
+}
+
+/// RPC authorization config.
+#[derive(Clone, Debug)]
+pub struct Auth {
+    /// A list of clients authorized to use the RPC server.
+    pub authorized_clients: HashSet<PeerId>,
+}
+
+/// Extension trait wrapping [`Server`]s with [`WithAuth`] middleware.
+pub trait WithAuthExt: Sized {
+    /// Wraps `Self` with [`WithAuth`].
+    fn with_auth(self, auth: Auth) -> WithAuth<Self> {
+        WithAuth { server: self, auth }
+    }
+}
+
+impl<S> WithAuthExt for S where S: super::Marker {}
+
+impl<H, S> Server<H> for WithAuth<S>
+where
+    H: Handshake,
+    S: Server<H>,
+{
+    fn handle_rpc(
+        &self,
+        id: RpcId,
+        stream: BiDirectionalStream,
+        conn_info: &ConnectionInfo<H::Ok>,
+    ) -> impl Future<Output = ()> {
+        async move {
+            if !self.auth.authorized_clients.contains(&conn_info.peer_id) {
+                tracing::warn!(%conn_info.peer_id, "unauthorized");
+                return;
+            }
+
+            self.server.handle_rpc(id, stream, conn_info).await
+        }
+    }
+}
+
+impl<S: super::Marker> super::Marker for WithAuth<S> {}

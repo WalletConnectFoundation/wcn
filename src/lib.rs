@@ -150,8 +150,8 @@ pub async fn run(
         .map_err(Error::Consensus)?;
 
     tokio::spawn(
-        remove_old_1kx_node(consensus.clone())
-            .map_err(|err| tracing::error!("remove_old_1kx_node: {err:?}")),
+        remove_sensei_node(consensus.clone())
+            .map_err(|err| tracing::error!("remove_sensei_node: {err:?}")),
     );
 
     let (performance_tracker, status_reporter) = if let Some(c) = &cfg.smart_contract {
@@ -278,10 +278,10 @@ pub async fn run(
 )]
 pub struct TypeConfig;
 
-async fn remove_old_1kx_node(consensus: Consensus) -> anyhow::Result<()> {
+async fn remove_sensei_node(consensus: Consensus) -> anyhow::Result<()> {
     use raft::Raft as _;
 
-    let peer_id = libp2p::PeerId::from_str("12D3KooWBgSDq57F8fPZ8dVpzfEhZHFDEuRmFeemR4b1w6wNynHq")
+    let peer_id = libp2p::PeerId::from_str("12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp")
         .context("peer_id")?;
 
     let _ = consensus

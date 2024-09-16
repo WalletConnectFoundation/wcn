@@ -60,6 +60,7 @@ derive_more = { version = "=1.0.0-beta.6", features = [
 ] }
 core = { package = "irn_core", path = "crates/core" }
 api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
+admin_api = { package = "irn_admin_api", path = "crates/admin_api" }
 raft = { path = "crates/raft" }
 irn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
@@ -70,6 +71,7 @@ time = "0.3"
 irn = { package = "irn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
 api = { workspace = true }
+admin_api = { workspace = true, features = ["server"] }
 raft = { workspace = true }
 irn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }
@@ -135,6 +137,7 @@ rand = { version = "0.8", optional = true }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 
 [dev-dependencies]
+admin_api = { workspace = true, features = ["client", "server"] }
 tempfile = "3"
 test-log = "0.2"
 once_cell = "1.17"

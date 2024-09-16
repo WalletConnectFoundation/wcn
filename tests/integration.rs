@@ -1,5 +1,6 @@
 use {
-    api::{auth, Multiaddr, SigningKey},
+    admin_api::{ClusterView, NodeState},
+    api::{auth, Multiaddr},
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,
@@ -8,13 +9,7 @@ use {
     irn::fsm::ShutdownReason,
     irn_node::{
         cluster::NodeRegion,
-        network::{
-            namespaced_key,
-            rpc::{
-                self,
-                admin::{ClusterView, NodeState},
-            },
-        },
+        network::{namespaced_key, rpc},
         storage::{self, Get, Set, Value},
         Config,
         RocksdbDatabaseConfig,
@@ -138,7 +133,7 @@ struct TestCluster {
     nodes: HashMap<PeerId, NodeHandle>,
     prometheus: PrometheusHandle,
 
-    admin_api_client: irn_rpc::quic::Client,
+    admin_api_client: admin_api::Client,
 
     keyspace_version: u64,
 }
@@ -170,13 +165,8 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
-        let client = irn_rpc::quic::Client::new(irn_rpc::client::Config {
-            keypair: Keypair::generate_ed25519(),
-            known_peers: HashSet::new(),
-            handshake: NoHandshake,
-            connection_timeout: Duration::from_secs(5),
-        })
-        .unwrap();
+        let client =
+            admin_api::Client::new(admin_api::client::Config::new(local_multiaddr(0))).unwrap();
 
         let mut cluster = Self {
             nodes,
@@ -286,9 +276,11 @@ impl TestCluster {
 
     async fn get_cluster_view(&self) -> Result<ClusterView, anyhow::Error> {
         let node = self.nodes.values().next().unwrap();
-        let callee = &node.admin_api_server_addr;
 
-        Ok(rpc::admin::GetClusterView::send(&self.admin_api_client, callee, ()).await??)
+        let mut client = self.admin_api_client.clone();
+        client.set_server_addr(node.admin_api_server_addr.clone());
+
+        Ok(client.get_cluster_view().await?)
     }
 
     fn random_node(&self) -> &NodeHandle {
@@ -590,9 +582,7 @@ impl TestCluster {
 
         let ops = self.gen_test_ops();
 
-        let signing_key = auth::client_key_from_secret(&rand::random::<[u8; 32]>()).unwrap();
-
-        let client_keypair = Keypair::ed25519_from_bytes(signing_key.to_bytes()).unwrap();
+        let client_keypair = Keypair::generate_ed25519();
         let client_id = PeerId::from_public_key(&client_keypair.public());
 
         // bootup a new node with authorization enabled
@@ -624,7 +614,7 @@ impl TestCluster {
         );
 
         let authorized_client = new_coordinator_api_client(|c| {
-            c.key = signing_key;
+            c.keypair = client_keypair;
             c.nodes
                 .insert(node_id, node.coordinator_api_server_addr.clone());
         });
@@ -893,7 +883,7 @@ fn new_node_config() -> Config {
 
 fn new_coordinator_api_client(f: impl FnOnce(&mut api::client::Config)) -> api::Client {
     let mut client_config = api::client::Config {
-        key: SigningKey::generate(&mut rand::thread_rng()),
+        keypair: Keypair::generate_ed25519(),
         nodes: HashMap::new(),
         shadowing_nodes: HashMap::new(),
         shadowing_factor: 0.0,

@@ -61,6 +61,9 @@ pub enum Error {
     #[error("Failed to start API server: {0:?}")]
     ApiServer(#[from] api::Error),
 
+    #[error("Failed to start Admin API server: {0:?}")]
+    AdminApiServer(#[from] admin_api::server::Error),
+
     #[error("Failed to initialize networking: {0:?}")]
     Network(#[from] quic::Error),
 

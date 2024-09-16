@@ -37,6 +37,13 @@ fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::Relaxed)
 }
 
+fn authorized_client_keypair() -> Keypair {
+    Keypair::ed25519_from_bytes(
+        base64::decode("N++7piqpE9cGyaMZmNXKeTwhL5Uk89XsUyCGKQP3TcA=").unwrap(),
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn test_suite() {
     let mut cluster = TestCluster::bootstrap().await;
@@ -165,8 +172,11 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
-        let client =
-            admin_api::Client::new(admin_api::client::Config::new(local_multiaddr(0))).unwrap();
+        let client = admin_api::Client::new(
+            admin_api::client::Config::new(local_multiaddr(0))
+                .with_keypair(authorized_client_keypair()),
+        )
+        .unwrap();
 
         let mut cluster = Self {
             nodes,
@@ -846,6 +856,8 @@ fn new_node_config() -> Config {
         _ => unreachable!(),
     };
 
+    let authorized_admin_api_client = authorized_client_keypair().public().to_peer_id();
+
     Config {
         id,
         region,
@@ -875,6 +887,7 @@ fn new_node_config() -> Config {
         replication_request_timeout: 5000,
         warmup_delay: 5000,
         authorized_clients: None,
+        authorized_admin_api_clients: [authorized_admin_api_client].into_iter().collect(),
         authorized_raft_candidates: None,
         eth_address: None,
         smart_contract: None,

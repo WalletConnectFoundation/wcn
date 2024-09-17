@@ -21,6 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.commands {
+        commands::SubCmd::Cluster(args) => commands::cluster::exec(args).await,
         commands::SubCmd::Node(args) => commands::node::exec(args).await,
         // commands::SubCmd::Config(args) => commands::config::exec(args),
         commands::SubCmd::Key(args) => commands::key::exec(args),

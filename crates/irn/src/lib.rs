@@ -1,4 +1,10 @@
-use {derive_more::Deref, irn_api::client, std::str::FromStr};
+use {
+    anyhow::Context as _,
+    derive_more::Deref,
+    irn_api::client,
+    irn_rpc::Multiaddr,
+    std::str::FromStr,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -39,5 +45,27 @@ impl FromStr for Keypair {
         irn_rpc::identity::Keypair::ed25519_from_bytes(bytes)
             .map_err(|_| CliError::KeyLength)
             .map(Self)
+    }
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AdminApiArgs {
+    /// Admin API address.
+    #[clap(short, long, env = "IRN_ADMIN_API_ADDRESS")]
+    address: Multiaddr,
+
+    #[clap(
+        short = 'k',
+        long = "private_key",
+        env = "IRN_ADMIN_API_CLIENT_PRIVATE_KEY"
+    )]
+    /// Admin API client private key.
+    keypair: Keypair,
+}
+
+impl AdminApiArgs {
+    pub fn new_client(self) -> anyhow::Result<irn_admin_api::Client> {
+        let cfg = irn_admin_api::client::Config::new(self.address).with_keypair(self.keypair.0);
+        irn_admin_api::Client::new(cfg).context("irn_admin_api::Client::new")
     }
 }

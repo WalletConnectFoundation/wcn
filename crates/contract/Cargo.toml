@@ -1,0 +1,34 @@
+[package]
+name = "contract"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "contract"
+path = "src/lib.rs"
+
+[dependencies]
+alloy = { version = "0.2.1", features = [
+    "contract",
+    "network",
+    "providers",
+    "provider-http",
+    "signer-mnemonic",
+    "node-bindings",
+    "signer-aws",
+] }
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false }
+thiserror = "1"
+tracing = "0.1"
+futures = "0.3"
+tokio = "1.39.2"
+metrics = "0.23"
+aws-config = { version = "1.5", default-features = false }
+aws-sdk-kms = { version = "1.36", default-features = false }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+metrics-exporter-prometheus = "0.15"

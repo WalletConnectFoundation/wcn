@@ -88,6 +88,23 @@ impl Client {
             .map_err(Error::from)?
             .map_err(Error::Api)
     }
+
+    /// Decommissions a node.
+    ///
+    /// If `force` is true the node will be decommissioned even if it's not in
+    /// the `Normal` state.
+    pub async fn decommission_node(
+        &self,
+        id: PeerId,
+        force: bool,
+    ) -> Result<(), DecommissionNodeError> {
+        let req = DecommissionNodeRequest { id, force };
+
+        DecommissionNode::send(&self.rpc_client, &self.server_addr, req)
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::Api)
+    }
 }
 
 /// Error of [`Client::new`].

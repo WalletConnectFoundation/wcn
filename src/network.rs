@@ -926,6 +926,13 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
                     id: node.id,
                     state,
                     addr: node.addr.clone(),
+                    region: match node.region {
+                        cluster::NodeRegion::Eu => admin_api::NodeRegion::Eu,
+                        cluster::NodeRegion::Us => admin_api::NodeRegion::Us,
+                        cluster::NodeRegion::Ap => admin_api::NodeRegion::Ap,
+                    },
+                    organization: node.organization.clone(),
+                    eth_address: node.eth_address.clone(),
                 };
                 Some((node.id, node))
             })
@@ -956,6 +963,48 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
                 eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
                 stake_amount: report.stake,
             })
+        }
+    }
+
+    fn decommission_node(
+        &self,
+        id: PeerId,
+        force: bool,
+    ) -> impl Future<Output = admin_api::server::DecommissionNodeResult> + Send {
+        use {admin_api::DecommissionNodeError as Error, cluster::NodeState};
+
+        let consensus = self.node.consensus();
+        let cluster = consensus.cluster();
+
+        async move {
+            let node = cluster.node(&id).ok_or(Error::UnknownNode)?;
+            let node_state = cluster.node_state(&id).ok_or(Error::UnknownNode)?;
+
+            // If node is stuck in some intermediate state, restore it to `Normal`, then
+            // decommission.
+
+            match node_state {
+                NodeState::Pulling(_) if force => {
+                    consensus
+                        .complete_pull(&node.id, cluster.keyspace_version())
+                        .await
+                }
+                NodeState::Restarting if force => consensus.startup_node(&node).await,
+
+                NodeState::Pulling(_) => return Err(Error::Pulling),
+                NodeState::Restarting => return Err(Error::Restarting),
+                NodeState::Decommissioning => return Err(Error::Decommissioning),
+
+                NodeState::Normal => Ok(()),
+            }
+            .map_err(|err| Error::Consensus(err.to_string()))?;
+
+            consensus
+                .decommission_node(&id)
+                .await
+                .map_err(|err| Error::Consensus(err.to_string()))?;
+
+            Ok(())
         }
     }
 }

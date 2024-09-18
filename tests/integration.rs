@@ -206,8 +206,13 @@ impl TestCluster {
 
     async fn decommission_node(&mut self, id: &PeerId) {
         let node = self.nodes.remove(id).unwrap();
-        node.shutdown_tx.send(ShutdownReason::Decommission).unwrap();
-        node.thread_handle.join().unwrap();
+        self.admin_api_client
+            .set_server_addr(node.admin_api_server_addr);
+
+        self.admin_api_client
+            .decommission_node(*id, false)
+            .await
+            .unwrap();
 
         self.wait_normal().await;
     }

@@ -35,6 +35,16 @@ pub trait Server: Clone + Send + Sync + 'static {
     /// Gets [`NodeStatus`].
     fn get_node_status(&self) -> impl Future<Output = GetNodeStatusResult> + Send;
 
+    /// Decommissions a node.
+    ///
+    /// If `force` is true the node must be decommissioned even if it's not in
+    /// the `Normal` state.
+    fn decommission_node(
+        &self,
+        id: PeerId,
+        force: bool,
+    ) -> impl Future<Output = DecommissionNodeResult> + Send;
+
     /// Runs this [`Server`] using the provided [`Config`].
     fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
         let rpc_server = Adapter { server: self }
@@ -54,6 +64,7 @@ pub trait Server: Clone + Send + Sync + 'static {
 }
 
 pub type GetNodeStatusResult = Result<NodeStatus, GetNodeStatusError>;
+pub type DecommissionNodeResult = Result<(), DecommissionNodeError>;
 
 #[derive(Clone, Debug)]
 struct Adapter<S> {
@@ -77,6 +88,12 @@ where
                 }
                 GetNodeStatus::ID => {
                     GetNodeStatus::handle(stream, |()| self.server.get_node_status()).await
+                }
+                DecommissionNode::ID => {
+                    DecommissionNode::handle(stream, |req| {
+                        self.server.decommission_node(req.id, req.force)
+                    })
+                    .await
                 }
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),

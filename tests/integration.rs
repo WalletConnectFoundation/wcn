@@ -142,6 +142,7 @@ struct TestCluster {
 
     admin_api_client: admin_api::Client,
 
+    version: u128,
     keyspace_version: u64,
 }
 
@@ -182,6 +183,7 @@ impl TestCluster {
             nodes,
             prometheus,
             admin_api_client: client,
+            version: 0,
             keyspace_version: 0,
         };
 
@@ -282,6 +284,13 @@ impl TestCluster {
     ) -> anyhow::Result<bool> {
         let cluster_view = self.get_cluster_view().await?;
         tracing::info!(?cluster_view);
+
+        if cluster_view.cluster_version <= self.version {
+            return Ok(false);
+        }
+
+        self.version = cluster_view.cluster_version;
+
         if cluster_view.keyspace_version > self.keyspace_version {
             self.keyspace_version = cluster_view.keyspace_version;
         }

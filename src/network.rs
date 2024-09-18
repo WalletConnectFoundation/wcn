@@ -989,7 +989,7 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
                         .complete_pull(&node.id, cluster.keyspace_version())
                         .await
                 }
-                NodeState::Restarting if force => consensus.startup_node(&node).await,
+                NodeState::Restarting if force => consensus.startup_node(node).await,
 
                 NodeState::Pulling(_) => return Err(Error::Pulling),
                 NodeState::Restarting => return Err(Error::Restarting),

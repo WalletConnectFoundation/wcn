@@ -1,6 +1,7 @@
 use metrics_exporter_prometheus::BuildError;
 
 mod config;
+mod decommission;
 mod start;
 mod status;
 mod stop;
@@ -47,6 +48,9 @@ pub enum NodeSub {
     /// directory, and sends it a termination signal, waiting for the node
     /// process to terminate.
     Stop(stop::StopCmd),
+
+    /// Decommissions an IRN node.
+    Decommission(decommission::Cmd),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,6 +91,7 @@ pub async fn exec(cmd: NodeCmd) -> anyhow::Result<()> {
         NodeSub::Start(args) => start::exec(args).await,
         NodeSub::Stop(args) => stop::exec(args).await,
         NodeSub::Status(args) => status::exec(args).await,
+        NodeSub::Decommission(args) => decommission::exec(args).await,
     }
 }
 

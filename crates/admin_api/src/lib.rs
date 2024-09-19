@@ -83,12 +83,6 @@ pub struct DecommissionNodeRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DecommissionNodeError {
-    /// Specified node is not in the cluster.
-    UnknownNode,
-
-    /// Node is already decommissioning.
-    Decommissioning,
-
     /// Node is pulling data and can not be decommissioned yet.
     Pulling,
 

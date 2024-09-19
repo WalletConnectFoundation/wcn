@@ -773,7 +773,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 #[derive(
     Clone, Copy, Debug, Display, Hash, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq,
 )]
-pub struct NodeId(PeerId);
+pub struct NodeId(pub PeerId);
 
 impl Default for NodeId {
     fn default() -> Self {

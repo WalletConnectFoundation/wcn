@@ -976,7 +976,7 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
         let consensus = self.node.consensus();
         let cluster = consensus.cluster();
 
-        async move {
+        let decommission_fut = async move {
             // Regular nodes are only allowed to decommission themselves, voter nodes can
             // decommission any node.
             let is_allowed = &id == self.node.id() || consensus.is_voter(self.node.id());
@@ -984,8 +984,10 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
                 return Err(Error::NotAllowed);
             }
 
-            let node = cluster.node(&id).ok_or(Error::UnknownNode)?;
-            let node_state = cluster.node_state(&id).ok_or(Error::UnknownNode)?;
+            let (Some(node), Some(node_state)) = (cluster.node(&id), cluster.node_state(&id))
+            else {
+                return Ok(());
+            };
 
             // If node is stuck in some intermediate state, restore it to `Normal`, then
             // decommission.
@@ -1000,7 +1002,7 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
 
                 NodeState::Pulling(_) => return Err(Error::Pulling),
                 NodeState::Restarting => return Err(Error::Restarting),
-                NodeState::Decommissioning => return Err(Error::Decommissioning),
+                NodeState::Decommissioning => return Ok(()),
 
                 NodeState::Normal => Ok(()),
             }
@@ -1012,7 +1014,26 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
                 .map_err(|err| Error::Consensus(err.to_string()))?;
 
             Ok(())
-        }
+        };
+
+        let consensus = self.node.consensus();
+
+        let remove_raft_member_fut = async move {
+            if !consensus.is_member(&id) {
+                return Ok(());
+            }
+
+            consensus
+                .remove_member(&id, consensus::RemoveMemberRequest {
+                    node_id: consensus::NodeId(id),
+                    is_learner: !consensus.is_voter(&id),
+                })
+                .await
+                .map(drop)
+                .map_err(|err| Error::Consensus(err.to_string()))
+        };
+
+        decommission_fut.and_then(|_| remove_raft_member_fut)
     }
 }
 

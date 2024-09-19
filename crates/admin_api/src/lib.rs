@@ -98,4 +98,8 @@ pub enum DecommissionNodeError {
 
     /// Consensus error.
     Consensus(String),
+
+    /// The node serving the Admin API is not allowed to decommission the
+    /// requested node.
+    NotAllowed,
 }

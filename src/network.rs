@@ -977,6 +977,13 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
         let cluster = consensus.cluster();
 
         async move {
+            // Regular nodes are only allowed to decommission themselves, voter nodes can
+            // decommission any node.
+            let is_allowed = &id == self.node.id() || consensus.is_voter(self.node.id());
+            if !is_allowed {
+                return Err(Error::NotAllowed);
+            }
+
             let node = cluster.node(&id).ok_or(Error::UnknownNode)?;
             let node_state = cluster.node_state(&id).ok_or(Error::UnknownNode)?;
 

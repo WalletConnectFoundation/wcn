@@ -585,6 +585,11 @@ impl Raft {
 
         false
     }
+
+    pub fn is_voter(&self, peer_id: &libp2p::PeerId) -> bool {
+        let membership = self.inner.metrics().membership_config;
+        membership.voter_ids().any(|id| &id.0 == peer_id)
+    }
 }
 
 fn unauthorized_error() -> Error<raft::ClientWriteFail<TypeConfig>> {

@@ -38,6 +38,7 @@ use {
         io::Cursor,
         result::Result as StdResult,
         sync::Arc,
+        time::Duration,
     },
     tokio_stream::wrappers::WatchStream,
 };
@@ -600,6 +601,18 @@ where
         if let Err(err) = self.raft.shutdown().await {
             tracing::warn!(?err, "failed to join Raft task");
         }
+    }
+
+    /// Waits for [`Raft`] to initialize.
+    pub async fn wait_init(&self) {
+        let _ = self
+            .raft
+            .wait(Some(Duration::from_secs(5)))
+            .metrics(
+                |metrics| metrics.membership_config.nodes().count() > 0,
+                "init",
+            )
+            .await;
     }
 
     pub fn metrics(&self) -> RaftMetrics<C::NodeId, C::Node> {

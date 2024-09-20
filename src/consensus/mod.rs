@@ -392,8 +392,12 @@ impl Consensus {
 
 impl Raft {
     async fn init(&self, cfg: &Config, server_addr: &Multiaddr) -> Result<(), InitializationError> {
+        self.wait_init().await;
+
         let membership = self.metrics().membership_config;
         let nodes: &HashMap<_, _> = &membership.nodes().collect();
+
+        tracing::info!(%server_addr, ?nodes, "init");
 
         let node = nodes.get(&NodeId(self.id));
 

@@ -479,65 +479,70 @@ impl Raft {
         peer_id: &libp2p::PeerId,
         req: AddMemberRequest,
     ) -> AddMemberResult {
-        // Skip authorization if not configured.
-        if let Some(auth) = &self.authorization {
-            // Adding new voters is forbidden for clusters with enabled authorization.
-            if !req.learner_only {
-                return Err(unauthorized_error());
-            }
-
-            let membership = self.inner.metrics().membership_config;
-
-            // if local node is a voter, do the whitelist-based authorization.
-            if membership.voter_ids().any(|i| i.0 == self.id) {
-                // if this is a proxy request - a learner node trying to promote
-                // a candidate via this voter node - check that
-                // the requestor is a member of the cluster.
-                if peer_id != &req.node_id.0 && !membership.nodes().any(|(i, _)| &i.0 == peer_id) {
+        // Skip authorization if not configured or requestor is already a member.
+        match &self.authorization {
+            Some(auth) if !self.is_member(peer_id) => {
+                // Adding new voters is forbidden for clusters with enabled authorization.
+                if !req.learner_only {
                     return Err(unauthorized_error());
                 }
 
-                if !auth.allowed_candidates.contains(&req.node_id.0) {
-                    return Err(unauthorized_error());
-                }
+                let membership = self.inner.metrics().membership_config;
 
-                if let Some(validator) = self.stake_validator.as_ref() {
-                    let Some(operator_eth_address) =
-                        req.payload.as_ref().map(|p| &p.operator_eth_address)
-                    else {
-                        tracing::warn!(id = %req.node_id, "Operator didn't provide ETH address");
-                        return Err(unauthorized_error());
-                    };
-                    if let Err(err) = validator.validate_stake(operator_eth_address).await {
-                        tracing::warn!(id = %req.node_id, ?err, "Stake validation failed");
+                // if local node is a voter, do the whitelist-based authorization.
+                if membership.voter_ids().any(|i| i.0 == self.id) {
+                    // if this is a proxy request - a learner node trying to promote
+                    // a candidate via this voter node - check that
+                    // the requestor is a member of the cluster.
+                    if peer_id != &req.node_id.0
+                        && !membership.nodes().any(|(i, _)| &i.0 == peer_id)
+                    {
                         return Err(unauthorized_error());
                     }
+
+                    if !auth.allowed_candidates.contains(&req.node_id.0) {
+                        return Err(unauthorized_error());
+                    }
+
+                    if let Some(validator) = self.stake_validator.as_ref() {
+                        let Some(operator_eth_address) =
+                            req.payload.as_ref().map(|p| &p.operator_eth_address)
+                        else {
+                            tracing::warn!(id = %req.node_id, "Operator didn't provide ETH address");
+                            return Err(unauthorized_error());
+                        };
+                        if let Err(err) = validator.validate_stake(operator_eth_address).await {
+                            tracing::warn!(id = %req.node_id, ?err, "Stake validation failed");
+                            return Err(unauthorized_error());
+                        }
+                    }
+                }
+                // otherwise forward the request to a voter.
+                else {
+                    let voter_ids: HashSet<_> = membership.voter_ids().collect();
+                    let Some((voter_id, voter_addr)) = membership
+                        .nodes()
+                        .find_map(|(id, n)| voter_ids.contains(id).then_some((id.0, n.0.clone())))
+                    else {
+                        return Err(unauthorized_error());
+                    };
+
+                    return self
+                        .network
+                        .get_peer(&voter_id, &voter_addr)
+                        .into_owned()
+                        .add_member(req)
+                        .await
+                        .map_err(|err| {
+                            Error::APIError(raft::ClientWriteFail::Local(
+                                raft::LocalClientWriteFail::Other(format!(
+                                    "Failed to delegate authorization to a voter: {err}"
+                                )),
+                            ))
+                        });
                 }
             }
-            // otherwise forward the request to a voter.
-            else {
-                let voter_ids: HashSet<_> = membership.voter_ids().collect();
-                let Some((voter_id, voter_addr)) = membership
-                    .nodes()
-                    .find_map(|(id, n)| voter_ids.contains(id).then_some((id.0, n.0.clone())))
-                else {
-                    return Err(unauthorized_error());
-                };
-
-                return self
-                    .network
-                    .get_peer(&voter_id, &voter_addr)
-                    .into_owned()
-                    .add_member(req)
-                    .await
-                    .map_err(|err| {
-                        Error::APIError(raft::ClientWriteFail::Local(
-                            raft::LocalClientWriteFail::Other(format!(
-                                "Failed to delegate authorization to a voter: {err}"
-                            )),
-                        ))
-                    });
-            }
+            _ => {}
         }
 
         self.inner.add_member(req).await

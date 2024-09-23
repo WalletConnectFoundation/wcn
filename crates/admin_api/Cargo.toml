@@ -18,6 +18,6 @@ postcard = { version = "1.0", default-features = false, features = [
     "alloc",
     "use-std",
 ] }
-
+snap = "1.1"
 thiserror = "1"
 tracing = "0.1"

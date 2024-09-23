@@ -60,9 +60,15 @@ impl Client {
             connection_timeout: config.connection_timeout,
         };
 
+        let timeouts = Timeouts::new()
+            .with_default(config.operation_timeout)
+            .with::<{ GetMemoryProfile::ID }>(
+                MEMORY_PROFILE_MAX_DURATION + config.operation_timeout,
+            );
+
         let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
-            .with_timeouts(Timeouts::new().with_default(config.operation_timeout));
+            .with_timeouts(timeouts);
 
         Ok(Self {
             rpc_client,
@@ -101,6 +107,20 @@ impl Client {
         let req = DecommissionNodeRequest { id, force };
 
         DecommissionNode::send(&self.rpc_client, &self.server_addr, req)
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::Api)
+    }
+
+    /// Runs the memory profiler for a specified duration and returns the
+    /// compressed profile data.
+    pub async fn memory_profile(
+        &self,
+        duration: Duration,
+    ) -> Result<MemoryProfile, MemoryProfileError> {
+        let req = MemoryProfileRequest { duration };
+
+        GetMemoryProfile::send(&self.rpc_client, &self.server_addr, req)
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)

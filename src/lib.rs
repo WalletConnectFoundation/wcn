@@ -92,8 +92,17 @@ pub enum Error {
     NoPublicIp,
 }
 
+use wc::alloc::{self, profiler};
+
 #[global_allocator]
-static GLOBAL: wc::alloc::Jemalloc = wc::alloc::Jemalloc;
+static GLOBAL: profiler::Alloc<alloc::Jemalloc, profiler::JemallocSingleBinFilter> =
+    profiler::Alloc::new(
+        alloc::Jemalloc,
+        profiler::JemallocSingleBinFilter::new(2048),
+    );
+
+// #[global_allocator]
+// static GLOBAL: wc::alloc::Jemalloc = wc::alloc::Jemalloc;
 
 pub fn exec() -> anyhow::Result<()> {
     let _logger = Logger::init(logger::LogFormat::Json, None, None);

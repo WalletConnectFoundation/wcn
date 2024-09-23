@@ -44,7 +44,19 @@ pub fn run<H: Handshake>(
     )?;
 
     Ok(async move {
+        let conn_permits = Arc::new(Semaphore::new(50));
+
         while let Some(connecting) = endpoint.accept().await {
+            let Ok(permit) = conn_permits.clone().try_acquire_owned() else {
+                metrics::counter!("irn_rpc_server_connections_dropped", StringLabel<"server_name"> => cfg.name)
+                    .increment(1);
+
+                continue;
+            };
+
+            metrics::counter!("irn_rpc_server_connections", StringLabel<"server_name"> => cfg.name)
+                .increment(1);
+
             ConnectionHandler {
                 server_name: cfg.name,
                 server: server.clone(),
@@ -52,6 +64,7 @@ pub fn run<H: Handshake>(
                 stream_concurrency_limiter: Arc::new(Semaphore::new(
                     cfg.max_concurrent_rpcs as usize,
                 )),
+                _connection_permit: permit,
             }
             .handle(connecting)
             .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
@@ -68,6 +81,7 @@ struct ConnectionHandler<S, H> {
     handshake: H,
 
     stream_concurrency_limiter: Arc<Semaphore>,
+    _connection_permit: OwnedSemaphorePermit,
 }
 
 impl<S, H> ConnectionHandler<S, H>
@@ -81,7 +95,15 @@ where
     ) -> Result<(), ConnectionHandlerError<H::Err>> {
         use ConnectionHandlerError as Error;
 
-        let conn = connecting.await?;
+        let conn = connecting
+            .with_timeout(Duration::from_millis(1000))
+            .await
+            .map_err(|_| {
+                metrics::counter!("irn_rpc_server_connection_timeout", StringLabel<"server_name"> => self.server_name)
+                    .increment(1);
+
+                Error::ConnectionTimeout
+            })??;
 
         let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
         let certificate = identity
@@ -107,7 +129,14 @@ where
             handshake_data: self
                 .handshake
                 .handle(PendingConnection(conn.clone()))
+                .with_timeout(Duration::from_millis(1000))
                 .await
+                .map_err(|_| {
+                    metrics::counter!("irn_rpc_server_handshake_timeout", StringLabel<"server_name"> => self.server_name)
+                        .increment(1);
+
+                    Error::ConnectionTimeout
+                })?
                 .map_err(Error::Handshake)?,
         };
 
@@ -201,4 +230,7 @@ pub enum ConnectionHandlerError<H = Infallible> {
 
     #[error("Failed to read RpcId: {0:?}")]
     ReadRpcId(#[from] io::Error),
+
+    #[error("Connection timeout")]
+    ConnectionTimeout,
 }

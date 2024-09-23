@@ -75,7 +75,7 @@ admin_api = { workspace = true, features = ["server"] }
 raft = { workspace = true }
 irn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }
-wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+wc = { workspace = true, features = ["alloc", "future", "metrics", "profiler"] }
 metrics = { workspace = true }
 time = { workspace = true }
 

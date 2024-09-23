@@ -52,7 +52,7 @@ use {
         borrow::Cow,
         collections::{HashMap, HashSet},
         fmt::{self, Debug},
-        io,
+        io::{self, Write},
         pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
@@ -1034,6 +1034,32 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
         };
 
         decommission_fut.and_then(|_| remove_raft_member_fut)
+    }
+
+    fn memory_profile(
+        &self,
+        duration: Duration,
+    ) -> impl Future<Output = admin_api::server::MemoryProfileResult> + Send {
+        use admin_api::{snap, MemoryProfile, MemoryProfileError as Error};
+
+        async move {
+            if duration.is_zero() || duration > admin_api::MEMORY_PROFILE_MAX_DURATION {
+                return Err(Error::Duration);
+            }
+
+            let profile = wc::alloc::profiler::record(duration)
+                .await
+                .map_err(|_| Error::AlreadyProfiling)?;
+
+            let mut writer = snap::write::FrameEncoder::new(Vec::new());
+            writer
+                .write(profile.as_bytes())
+                .map_err(|_| Error::Compression)?;
+
+            Ok(MemoryProfile {
+                dhat: writer.into_inner().map_err(|_| Error::Compression)?,
+            })
+        }
     }
 }
 

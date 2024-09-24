@@ -20,18 +20,20 @@ pub struct MeteredConnection {
 
 impl MeteredConnection {
     fn new(conn: quinn::Connection, conn_type: ConnectionType) -> Self {
-        let conn_ = conn.clone();
         let stats = Arc::new(Mutex::new(ConnectionStats::default()));
-        let stats_ = stats.clone();
 
-        let task_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(15));
-            loop {
-                interval.tick().await;
-                let mut stats = stats_.lock().await;
-                let new_stats = conn_.stats();
-                produce_connection_metrics(conn_type, Local(new_stats) - *stats).await;
-                *stats = new_stats;
+        let task_handle = tokio::spawn({
+            let stats = stats.clone();
+            let conn = conn.clone();
+            async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(15));
+                loop {
+                    interval.tick().await;
+                    let mut stats = stats.lock().await;
+                    let new_stats = conn.stats();
+                    produce_connection_metrics(conn_type, Local(new_stats) - *stats).await;
+                    *stats = new_stats;
+                }
             }
         });
 

@@ -18,6 +18,8 @@ pub use client::Client;
 #[cfg(feature = "server")]
 pub mod server;
 
+mod metrics;
+
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 #[error("{0}: invalid QUIC Multiaddr")]
 pub struct InvalidMultiaddrError(Multiaddr);

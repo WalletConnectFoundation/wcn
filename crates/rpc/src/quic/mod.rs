@@ -24,7 +24,7 @@ mod metrics;
 #[error("{0}: invalid QUIC Multiaddr")]
 pub struct InvalidMultiaddrError(Multiaddr);
 
-fn new_quinn_transport_config() -> Arc<quinn::TransportConfig> {
+fn new_quinn_transport_config(max_concurrent_streams: u32) -> Arc<quinn::TransportConfig> {
     const STREAM_WINDOW: u32 = 16 * 1024 * 1024; // 16 MiB
 
     // Our tests are too slow and connections get dropped because of missing keep
@@ -35,7 +35,7 @@ fn new_quinn_transport_config() -> Arc<quinn::TransportConfig> {
     // Disable uni-directional streams and datagrams.
     transport
         .max_concurrent_uni_streams(0u32.into())
-        .max_concurrent_bidi_streams((128u32 * 1024).into())
+        .max_concurrent_bidi_streams(max_concurrent_streams.into())
         .datagram_receive_buffer_size(None)
         .keep_alive_interval(Some(Duration::from_millis(100)))
         .max_idle_timeout(Some(VarInt::from_u32(max_idle_timeout_ms).into()))

@@ -7,10 +7,13 @@ use {
         Server,
     },
     futures::TryFutureExt as _,
-    std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc},
+    std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
     tap::Pipe as _,
     tokio::io::AsyncReadExt as _,
-    wc::metrics::{future_metrics, FutureExt as _},
+    wc::{
+        future::FutureExt as _,
+        metrics::{future_metrics, FutureExt as _},
+    },
 };
 
 /// Runs the [`rpc::Server`].
@@ -114,9 +117,9 @@ where
             let local_peer = self.server.clone();
             let conn_info = conn_info.clone();
             async move {
-                let rpc_id = match rx.read_u128().await {
+                let rpc_id = match read_rpc_id(&mut rx).await {
                     Ok(id) => id,
-                    Err(err) => return tracing::warn!(?err, "Failed to read inbound RPC ID"),
+                    Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
                 };
 
                 let stream = BiDirectionalStream::new(tx, rx);
@@ -126,6 +129,14 @@ where
             .pipe(tokio::spawn);
         }
     }
+}
+
+async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {
+    rx.read_u128()
+        .with_timeout(Duration::from_millis(500))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| format!("{err:?}"))
 }
 
 #[derive(Debug, thiserror::Error)]

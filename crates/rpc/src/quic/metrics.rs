@@ -180,7 +180,7 @@ impl std::ops::Sub<ConnectionStats> for Local<ConnectionStats> {
     type Output = ConnectionStats;
 
     fn sub(self, rhs: ConnectionStats) -> Self::Output {
-        let mut stats = ConnectionStats::default();
+        let mut stats = self.0;
 
         stats.udp_tx = Local(stats.udp_tx) - rhs.udp_tx;
         stats.udp_rx = Local(stats.udp_rx) - rhs.udp_rx;
@@ -196,7 +196,7 @@ impl std::ops::Sub<UdpStats> for Local<UdpStats> {
     type Output = UdpStats;
 
     fn sub(self, rhs: UdpStats) -> Self::Output {
-        let mut stats = UdpStats::default();
+        let mut stats = self.0;
 
         stats.datagrams -= rhs.datagrams;
         stats.bytes -= rhs.bytes;
@@ -210,7 +210,7 @@ impl std::ops::Sub<FrameStats> for Local<FrameStats> {
     type Output = FrameStats;
 
     fn sub(self, rhs: FrameStats) -> Self::Output {
-        let mut stats = FrameStats::default();
+        let mut stats = self.0;
 
         stats.acks -= rhs.acks;
         stats.crypto -= rhs.crypto;
@@ -243,7 +243,7 @@ impl std::ops::Sub<PathStats> for Local<PathStats> {
     type Output = PathStats;
 
     fn sub(self, rhs: PathStats) -> Self::Output {
-        let mut stats = PathStats::default();
+        let mut stats = self.0;
 
         stats.congestion_events -= rhs.congestion_events;
         stats.lost_packets -= rhs.lost_packets;

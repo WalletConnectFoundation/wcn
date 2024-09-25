@@ -1,5 +1,5 @@
 use {
-    super::{metrics::MeteredConnection, InvalidMultiaddrError},
+    super::InvalidMultiaddrError,
     crate::{
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
@@ -133,7 +133,7 @@ struct ConnectionHandlerInner {
     connection_timeout: Duration,
 }
 
-type Connection = Shared<BoxFuture<'static, MeteredConnection>>;
+type Connection = Shared<BoxFuture<'static, quinn::Connection>>;
 
 fn new_connection<H: Handshake>(
     addr: SocketAddr,
@@ -168,7 +168,7 @@ fn new_connection<H: Handshake>(
                 .await
                 .map_err(|e| format!("handshake error: {e:?}"))?;
 
-            Ok(MeteredConnection::outbound(conn))
+            Ok(conn)
         }
         .map_err(backoff::Error::transient)
     };

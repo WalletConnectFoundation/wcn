@@ -7,11 +7,14 @@ use {
     },
     futures::TryFutureExt as _,
     std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
-    tap::Pipe as _,
-    tokio::io::AsyncReadExt as _,
+    tap::{Pipe as _, TapFallible},
+    tokio::{
+        io::AsyncReadExt as _,
+        sync::{OwnedSemaphorePermit, Semaphore},
+    },
     wc::{
         future::FutureExt as _,
-        metrics::{future_metrics, FutureExt as _},
+        metrics::{self, future_metrics, FutureExt as _, StringLabel},
     },
 };
 
@@ -40,30 +43,31 @@ pub fn run<H: Handshake>(
         Some(server_config),
     )?;
 
-    Ok(handle_connections(server, endpoint, handshake))
-}
-
-pub(super) async fn handle_connections<H: Handshake>(
-    server: impl Server<H>,
-    endpoint: quinn::Endpoint,
-    handshake: H,
-) {
-    while let Some(connecting) = endpoint.accept().await {
-        ConnectionHandler {
-            server: server.clone(),
-            handshake: handshake.clone(),
+    Ok(async move {
+        while let Some(connecting) = endpoint.accept().await {
+            ConnectionHandler {
+                server_name: cfg.name,
+                server: server.clone(),
+                handshake: handshake.clone(),
+                stream_concurrency_limiter: Arc::new(Semaphore::new(
+                    cfg.max_concurrent_rpcs as usize,
+                )),
+            }
+            .handle(connecting)
+            .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
+            .with_metrics(future_metrics!("quic_inbound_connection_handler"))
+            .pipe(tokio::spawn);
         }
-        .handle(connecting)
-        .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
-        .with_metrics(future_metrics!("quic_inbound_connection_handler"))
-        .pipe(tokio::spawn);
-    }
+    })
 }
 
 #[derive(Debug)]
 struct ConnectionHandler<S, H> {
+    server_name: &'static str,
     server: S,
     handshake: H,
+
+    stream_concurrency_limiter: Arc<Semaphore>,
 }
 
 impl<S, H> ConnectionHandler<S, H>
@@ -108,6 +112,8 @@ where
         };
 
         loop {
+            let stream_permit = self.acquire_stream_permit().await;
+
             let (tx, mut rx) = conn
                 .accept_bi()
                 .with_metrics(future_metrics!("quic_accept_bi"))
@@ -121,12 +127,28 @@ where
                     Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
                 };
 
+                let _stream_permit = stream_permit;
                 let stream = BiDirectionalStream::new(tx, rx);
                 local_peer.handle_rpc(rpc_id, stream, &conn_info).await
             }
             .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
             .pipe(tokio::spawn);
         }
+    }
+
+    async fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.stream_concurrency_limiter
+            .clone()
+            .acquire_owned()
+            .await
+            .tap_ok(|_| {
+                metrics::gauge!("quic_server_stream_concurrency_available_permits",
+                    StringLabel<"server_name"> => self.server_name
+                )
+                .set(self.stream_concurrency_limiter.available_permits() as f64)
+            })
+            .map_err(|_| tracing::warn!("Semaphore closed"))
+            .ok()
     }
 }
 

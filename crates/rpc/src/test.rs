@@ -107,6 +107,7 @@ async fn suite() {
         let client = quic::Client::new(client_config).expect("Client::new");
 
         let server_config = server::Config {
+            name: "test_server",
             addr: addr.clone(),
             keypair: keypair.clone(),
             max_concurrent_rpcs: 10000,

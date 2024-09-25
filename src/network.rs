@@ -1072,6 +1072,7 @@ impl Network {
         raft: consensus::Raft,
     ) -> Result<tokio::task::JoinHandle<()>, quic::Error> {
         let server_config = irn_rpc::server::Config {
+            name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
             max_concurrent_rpcs: 1000,
@@ -1091,12 +1092,14 @@ impl Network {
         status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let replica_api_server_config = irn_rpc::server::Config {
+            name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
             max_concurrent_rpcs: cfg.replica_api_max_concurrent_rpcs,
         };
 
         let coordinator_api_server_config = irn_rpc::server::Config {
+            name: "coordinator_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
             keypair: cfg.keypair.clone(),
             max_concurrent_rpcs: cfg.coordinator_api_max_concurrent_rpcs,

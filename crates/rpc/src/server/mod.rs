@@ -14,6 +14,9 @@ pub mod middleware;
 /// Server config.
 #[derive(Clone)]
 pub struct Config {
+    /// Server name. For metric purposes.
+    pub name: &'static str,
+
     /// [`Multiaddr`] of the server.
     pub addr: Multiaddr,
 

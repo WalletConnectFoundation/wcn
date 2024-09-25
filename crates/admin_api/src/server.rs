@@ -55,6 +55,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             .metered();
 
         let rpc_server_config = irn_rpc::server::Config {
+            name: "admin_api",
             addr: cfg.addr,
             keypair: cfg.keypair,
             max_concurrent_rpcs: 100,

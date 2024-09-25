@@ -1,7 +1,6 @@
 use {
     super::Error,
     crate::{
-        quic::metrics::MeteredConnection,
         server::{Config, ConnectionInfo},
         transport::{BiDirectionalStream, Handshake, PendingConnection},
         Server,
@@ -78,7 +77,7 @@ where
     ) -> Result<(), ConnectionHandlerError<H::Err>> {
         use ConnectionHandlerError as Error;
 
-        let conn = MeteredConnection::inbound(connecting.await?);
+        let conn = connecting.await?;
 
         let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
         let certificate = identity
@@ -103,7 +102,7 @@ where
             remote_address,
             handshake_data: self
                 .handshake
-                .handle(PendingConnection((*conn).clone()))
+                .handle(PendingConnection(conn.clone()))
                 .await
                 .map_err(Error::Handshake)?,
         };

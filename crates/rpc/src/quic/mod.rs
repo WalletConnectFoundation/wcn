@@ -18,6 +18,8 @@ pub use client::Client;
 #[cfg(feature = "server")]
 pub mod server;
 
+// TODO: Consider re-enabling
+#[allow(dead_code)]
 mod metrics;
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]

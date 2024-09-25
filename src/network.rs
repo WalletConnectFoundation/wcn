@@ -1074,6 +1074,7 @@ impl Network {
         let server_config = irn_rpc::server::Config {
             addr: server_addr,
             keypair: cfg.keypair.clone(),
+            max_concurrent_rpcs: 1000,
         };
 
         let server = RaftRpcServer { raft }
@@ -1092,11 +1093,13 @@ impl Network {
         let replica_api_server_config = irn_rpc::server::Config {
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_rpcs: cfg.replica_api_max_concurrent_rpcs,
         };
 
         let coordinator_api_server_config = irn_rpc::server::Config {
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_rpcs: cfg.coordinator_api_max_concurrent_rpcs,
         };
 
         let default_timeout = Duration::from_millis(cfg.network_request_timeout);

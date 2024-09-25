@@ -78,7 +78,7 @@ type OutboundConnectionHandlers<H> = IndexMap<Multiaddr, ConnectionHandler<H>>;
 impl<H: Handshake> Client<H> {
     /// Builds a new [`Client`] using the provided [`Config`].
     pub fn new(cfg: Config<H>) -> Result<Client<H>, super::Error> {
-        let transport_config = super::new_quinn_transport_config();
+        let transport_config = super::new_quinn_transport_config(64u32 * 1024);
         let socket_addr = SocketAddr::new(std::net::Ipv4Addr::new(0, 0, 0, 0).into(), 0);
         let endpoint =
             super::new_quinn_endpoint(socket_addr, &cfg.keypair, transport_config, None)?;

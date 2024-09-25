@@ -182,6 +182,8 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         raft_server_port: config.server.raft_port,
         admin_api_server_port: config.server.admin_port,
         metrics_server_port: config.server.metrics_port,
+        coordinator_api_max_concurrent_rpcs: 30000,
+        replica_api_max_concurrent_rpcs: 30000,
         is_raft_voter: false,
         bootstrap_nodes,
         known_peers,

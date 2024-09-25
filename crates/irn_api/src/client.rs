@@ -256,10 +256,15 @@ impl<K: Kind> Client<K> {
         tryhard::retry_fn(move || {
             self.random_client()
                 .send_unary::<RPC>(&AnyPeer, op.clone())
-                .map(|res| match res {
-                    Ok(Ok(out)) => Ok(out),
-                    Ok(Err(api)) => Err(Error::Api(api)),
-                    Err(rpc) => Err(Error::RpcClient(rpc)),
+                .map(|res| {
+                    match res {
+                        Ok(Ok(out)) => Ok(out),
+                        Ok(Err(api)) => Err(Error::Api(api)),
+                        Err(rpc) => Err(Error::RpcClient(rpc)),
+                    }
+                    .tap(|res| {
+                        Self::meter_operation_result::<Op, _>(res, ResultKind::Attempt);
+                    })
                 })
         })
         .retries(retries)
@@ -289,7 +294,7 @@ impl<K: Kind> Client<K> {
             StringLabel<"client_tag"> => K::METRICS_TAG
         ))
         .await
-        .tap(|res| Self::meter_operation_result::<Op, _>(res))
+        .tap(|res| Self::meter_operation_result::<Op, _>(res, ResultKind::Final))
     }
 
     #[inline]
@@ -489,7 +494,7 @@ impl<K: Kind> Client<K> {
     ) -> impl Stream<Item = PubsubEventPayload> + Send + 'static {
         let this = self.clone();
 
-        Self::meter_operation_result::<super::Subscribe, _>(&Ok(()));
+        Self::meter_operation_result::<super::Subscribe, _>(&Ok(()), ResultKind::Final);
 
         async_stream::stream! {
             loop {
@@ -563,8 +568,13 @@ impl transport::Handshake for Handshake {
     }
 }
 
+enum ResultKind {
+    Attempt,
+    Final,
+}
+
 impl<K: Kind> Client<K> {
-    fn meter_operation_result<Op: Operation, T>(res: &Result<T>) {
+    fn meter_operation_result<Op: Operation, T>(res: &Result<T>, kind: ResultKind) {
         let err = res.as_ref().err().and_then(|e| {
             Some(match e {
                 Error::RpcClient(client::Error::Transport(_)) => "transport".into(),
@@ -577,9 +587,15 @@ impl<K: Kind> Client<K> {
             })
         });
 
+        let kind = match kind {
+            ResultKind::Attempt => "attempt",
+            ResultKind::Final => "final",
+        };
+
         metrics::counter!("irn_api_client_operation_results",
             "client_tag" => K::METRICS_TAG,
             "operation" => Op::NAME,
+            "kind" => kind,
             "err" => err.unwrap_or_default()
         )
         .increment(1);

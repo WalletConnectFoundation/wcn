@@ -881,6 +881,8 @@ fn new_node_config() -> Config {
         replica_api_server_port: next_port(),
         coordinator_api_server_port: next_port(),
         admin_api_server_port: next_port(),
+        replica_api_max_concurrent_rpcs: 10000,
+        coordinator_api_max_concurrent_rpcs: 10000,
         known_peers: HashMap::default(),
         bootstrap_nodes: None,
         raft_dir: dir.join("raft"),

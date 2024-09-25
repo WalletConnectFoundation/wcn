@@ -57,6 +57,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         let rpc_server_config = irn_rpc::server::Config {
             addr: cfg.addr,
             keypair: cfg.keypair,
+            max_concurrent_rpcs: 100,
         };
 
         irn_rpc::quic::server::run(rpc_server, rpc_server_config, NoHandshake).map_err(Error)

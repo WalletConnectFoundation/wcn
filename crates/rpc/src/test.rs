@@ -109,6 +109,7 @@ async fn suite() {
         let server_config = server::Config {
             addr: addr.clone(),
             keypair: keypair.clone(),
+            max_concurrent_rpcs: 10000,
         };
 
         clients.push(client.clone());

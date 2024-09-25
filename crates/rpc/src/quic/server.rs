@@ -22,7 +22,7 @@ pub fn run<H: Handshake>(
     cfg: Config,
     handshake: H,
 ) -> Result<impl Future<Output = ()>, Error> {
-    let transport_config = super::new_quinn_transport_config();
+    let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_rpcs);
 
     let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_tls_config));

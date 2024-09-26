@@ -127,9 +127,10 @@ where
                     Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
                 };
 
-                let _stream_permit = stream_permit;
                 let stream = BiDirectionalStream::new(tx, rx);
-                local_peer.handle_rpc(rpc_id, stream, &conn_info).await
+                let res = local_peer.handle_rpc(rpc_id, stream, &conn_info).await;
+                drop(stream_permit);
+                res
             }
             .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
             .pipe(tokio::spawn);
@@ -137,18 +138,36 @@ where
     }
 
     async fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
+        let permit = self.stream_concurrency_limiter.clone().try_acquire_owned();
+        self.meter_available_permits();
+
+        if let Ok(permit) = permit {
+            return Some(permit);
+        } else {
+            self.meter_throttled_stream();
+        }
+
         self.stream_concurrency_limiter
             .clone()
             .acquire_owned()
             .await
-            .tap_ok(|_| {
-                metrics::gauge!("quic_server_stream_concurrency_available_permits",
-                    StringLabel<"server_name"> => self.server_name
-                )
-                .set(self.stream_concurrency_limiter.available_permits() as f64)
-            })
+            .tap_ok(|_| self.meter_available_permits())
             .map_err(|_| tracing::warn!("Semaphore closed"))
             .ok()
+    }
+
+    fn meter_available_permits(&self) {
+        metrics::gauge!("quic_server_stream_concurrency_available_permits",
+            StringLabel<"server_name"> => self.server_name
+        )
+        .set(self.stream_concurrency_limiter.available_permits() as f64)
+    }
+
+    fn meter_throttled_stream(&self) {
+        metrics::counter!("quic_server_throttled_streams",
+            StringLabel<"server_name"> => self.server_name
+        )
+        .increment(1)
     }
 }
 

@@ -127,9 +127,10 @@ where
                     Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
                 };
 
-                let _stream_permit = stream_permit;
                 let stream = BiDirectionalStream::new(tx, rx);
-                local_peer.handle_rpc(rpc_id, stream, &conn_info).await
+                let res = local_peer.handle_rpc(rpc_id, stream, &conn_info).await;
+                drop(stream_permit);
+                res
             }
             .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
             .pipe(tokio::spawn);

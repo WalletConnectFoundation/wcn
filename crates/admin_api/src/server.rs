@@ -67,6 +67,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             name: "admin_api",
             addr: cfg.addr,
             keypair: cfg.keypair,
+            max_concurrent_connections: 10,
             max_concurrent_rpcs: 100,
         };
 

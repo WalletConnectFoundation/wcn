@@ -44,7 +44,7 @@ pub fn run<H: Handshake>(
     )?;
 
     Ok(async move {
-        let conn_permits = Arc::new(Semaphore::new(500));
+        let conn_permits = Arc::new(Semaphore::new(cfg.max_concurrent_connections as usize));
         let stream_permits = Arc::new(Semaphore::new(cfg.max_concurrent_rpcs as usize));
 
         while let Some(connecting) = endpoint.accept().await {

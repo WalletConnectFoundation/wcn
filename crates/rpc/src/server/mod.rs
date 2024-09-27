@@ -23,6 +23,9 @@ pub struct Config {
     /// [`Keypair`] of the server.
     pub keypair: Keypair,
 
+    /// Maximum allowed amount of concurrent connections.
+    pub max_concurrent_connections: u32,
+
     /// Maximum allowed amount of concurrent RPCs.
     pub max_concurrent_rpcs: u32,
 }

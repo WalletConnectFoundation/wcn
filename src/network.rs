@@ -1115,6 +1115,7 @@ impl Network {
             name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
+            max_concurrent_connections: 500,
             max_concurrent_rpcs: 1000,
         };
 
@@ -1135,6 +1136,7 @@ impl Network {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
             max_concurrent_rpcs: cfg.replica_api_max_concurrent_rpcs,
         };
 
@@ -1142,6 +1144,7 @@ impl Network {
             name: "coordinator_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_connections: cfg.coordinator_api_max_concurrent_connections,
             max_concurrent_rpcs: cfg.coordinator_api_max_concurrent_rpcs,
         };
 

@@ -45,19 +45,29 @@ pub trait Server: Clone + Send + Sync + 'static {
         force: bool,
     ) -> impl Future<Output = DecommissionNodeResult> + Send;
 
+    fn memory_profile(
+        &self,
+        duration: Duration,
+    ) -> impl Future<Output = MemoryProfileResult> + Send;
+
     /// Runs this [`Server`] using the provided [`Config`].
     fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
+        let timeouts = Timeouts::new()
+            .with::<{ GetMemoryProfile::ID }>(MEMORY_PROFILE_MAX_DURATION)
+            .with_default(cfg.operation_timeout);
+
         let rpc_server = Adapter { server: self }
             .with_auth(Auth {
                 authorized_clients: cfg.authorized_clients,
             })
-            .with_timeouts(Timeouts::new().with_default(cfg.operation_timeout))
+            .with_timeouts(timeouts)
             .metered();
 
         let rpc_server_config = irn_rpc::server::Config {
             name: "admin_api",
             addr: cfg.addr,
             keypair: cfg.keypair,
+            max_concurrent_connections: 10,
             max_concurrent_rpcs: 100,
         };
 
@@ -67,6 +77,7 @@ pub trait Server: Clone + Send + Sync + 'static {
 
 pub type GetNodeStatusResult = Result<NodeStatus, GetNodeStatusError>;
 pub type DecommissionNodeResult = Result<(), DecommissionNodeError>;
+pub type MemoryProfileResult = Result<MemoryProfile, MemoryProfileError>;
 
 #[derive(Clone, Debug)]
 struct Adapter<S> {
@@ -96,6 +107,10 @@ where
                         self.server.decommission_node(req.id, req.force)
                     })
                     .await
+                }
+                GetMemoryProfile::ID => {
+                    GetMemoryProfile::handle(stream, |req| self.server.memory_profile(req.duration))
+                        .await
                 }
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),

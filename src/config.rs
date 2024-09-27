@@ -43,8 +43,14 @@ pub struct Config {
     /// Port of the Prometheus metrics server.
     pub metrics_server_port: u16,
 
+    /// Maximum number of concurrent Replica API connections.
+    pub replica_api_max_concurrent_connections: u32,
+
     /// Maximum number of concurrent Replica API RPCs.
     pub replica_api_max_concurrent_rpcs: u32,
+
+    /// Maximum number of concurrent Coordinator API connections.
+    pub coordinator_api_max_concurrent_connections: u32,
 
     /// Maximum number of concurrent Coordinator API RPCs.
     pub coordinator_api_max_concurrent_rpcs: u32,
@@ -145,10 +151,16 @@ impl Config {
             coordinator_api_server_port: raw.coordinator_api_server_port.unwrap_or(3012),
             admin_api_server_port: raw.admin_api_server_port.unwrap_or(3013),
             metrics_server_port: raw.metrics_server_port.unwrap_or(3014),
-            replica_api_max_concurrent_rpcs: raw.replica_api_max_concurrent_rpcs.unwrap_or(30000),
+            replica_api_max_concurrent_connections: raw
+                .replica_api_max_concurrent_connections
+                .unwrap_or(500),
+            replica_api_max_concurrent_rpcs: raw.replica_api_max_concurrent_rpcs.unwrap_or(4500),
+            coordinator_api_max_concurrent_connections: raw
+                .coordinator_api_max_concurrent_connections
+                .unwrap_or(500),
             coordinator_api_max_concurrent_rpcs: raw
                 .coordinator_api_max_concurrent_rpcs
-                .unwrap_or(30000),
+                .unwrap_or(4500),
             bootstrap_nodes: raw.bootstrap_nodes,
             known_peers: known_peers_from_env()?,
             raft_dir: raw.raft_dir,
@@ -211,7 +223,9 @@ struct RawConfig {
     admin_api_server_port: Option<u16>,
     metrics_server_port: Option<u16>,
 
+    replica_api_max_concurrent_connections: Option<u32>,
     replica_api_max_concurrent_rpcs: Option<u32>,
+    coordinator_api_max_concurrent_connections: Option<u32>,
     coordinator_api_max_concurrent_rpcs: Option<u32>,
 
     bootstrap_nodes: Option<Vec<PeerId>>,

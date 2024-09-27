@@ -43,6 +43,7 @@ testing = [
     "irn/testing",
     "api/client",
 ]
+memory_profiler = ["wc/profiler"]
 
 [lints]
 workspace = true

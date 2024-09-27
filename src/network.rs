@@ -1035,6 +1035,46 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
 
         decommission_fut.and_then(|_| remove_raft_member_fut)
     }
+
+    #[allow(unused)]
+    fn memory_profile(
+        &self,
+        duration: Duration,
+    ) -> impl Future<Output = admin_api::server::MemoryProfileResult> + Send {
+        use admin_api::MemoryProfileError as Error;
+
+        async move {
+            #[cfg(feature = "memory_profiler")]
+            {
+                use {
+                    admin_api::{snap, MemoryProfile},
+                    io::Write,
+                };
+
+                if duration.is_zero() || duration > admin_api::MEMORY_PROFILE_MAX_DURATION {
+                    return Err(Error::Duration);
+                }
+
+                let profile = wc::alloc::profiler::record(duration)
+                    .await
+                    .map_err(|_| Error::AlreadyProfiling)?;
+
+                let mut writer = snap::write::FrameEncoder::new(Vec::new());
+                writer
+                    .write(profile.as_bytes())
+                    .map_err(|_| Error::Compression)?;
+
+                Ok(MemoryProfile {
+                    dhat: writer.into_inner().map_err(|_| Error::Compression)?,
+                })
+            }
+
+            #[cfg(not(feature = "memory_profiler"))]
+            {
+                Err(Error::ProfilerNotAvailable)
+            }
+        }
+    }
 }
 
 pub type Client = Metered<WithTimeouts<quic::Client>>;
@@ -1075,6 +1115,7 @@ impl Network {
             name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
+            max_concurrent_connections: 500,
             max_concurrent_rpcs: 1000,
         };
 
@@ -1095,6 +1136,7 @@ impl Network {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
             max_concurrent_rpcs: cfg.replica_api_max_concurrent_rpcs,
         };
 
@@ -1102,6 +1144,7 @@ impl Network {
             name: "coordinator_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_connections: cfg.coordinator_api_max_concurrent_connections,
             max_concurrent_rpcs: cfg.coordinator_api_max_concurrent_rpcs,
         };
 

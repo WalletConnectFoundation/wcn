@@ -98,10 +98,7 @@ mod alloc {
 
     #[global_allocator]
     static GLOBAL: profiler::Alloc<alloc::Jemalloc, profiler::JemallocSingleBinFilter> =
-        profiler::Alloc::new(
-            alloc::Jemalloc,
-            profiler::JemallocSingleBinFilter::new(2048),
-        );
+        profiler::Alloc::new(alloc::Jemalloc, profiler::JemallocSingleBinFilter::new(160));
 }
 
 #[cfg(not(feature = "memory_profiler"))]

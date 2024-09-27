@@ -270,14 +270,21 @@ impl<K: Kind> Client<K> {
         .retries(retries)
         .custom_backoff(move |attempt, err: &_| {
             let delay = match err {
-                Error::Api(ApiError::NotFound | ApiError::Unauthorized) | Error::Encryption(_) => {
+                // Note: Because of the way errors are implemented in the current RPC, the
+                // `StreamFinished` error here means the same as `Throttled`.
+                Error::Api(ApiError::NotFound | ApiError::Unauthorized | ApiError::Throttled)
+                | Error::Encryption(_)
+                | Error::RpcClient(irn_rpc::client::Error::Transport(
+                    irn_rpc::transport::Error::StreamFinished,
+                )) => {
                     return RetryPolicy::Break;
                 }
-                Error::Api(ApiError::Throttled) => Duration::from_millis(200),
 
                 // On the first attempt retry immediately.
                 _ if attempt == 1 => Duration::ZERO,
+
                 Error::Api(ApiError::Internal(_)) => Duration::from_millis(100),
+
                 Error::RpcClient(_) => Duration::from_millis(50),
             };
 

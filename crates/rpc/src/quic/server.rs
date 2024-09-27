@@ -45,6 +45,7 @@ pub fn run<H: Handshake>(
 
     Ok(async move {
         let conn_permits = Arc::new(Semaphore::new(500));
+        let stream_permits = Arc::new(Semaphore::new(cfg.max_concurrent_rpcs as usize));
 
         while let Some(connecting) = endpoint.accept().await {
             let Ok(permit) = conn_permits.clone().try_acquire_owned() else {
@@ -61,9 +62,7 @@ pub fn run<H: Handshake>(
                 server_name: cfg.name,
                 server: server.clone(),
                 handshake: handshake.clone(),
-                stream_concurrency_limiter: Arc::new(Semaphore::new(
-                    cfg.max_concurrent_rpcs as usize,
-                )),
+                stream_concurrency_limiter: stream_permits.clone(),
                 _connection_permit: permit,
             }
             .handle(connecting)

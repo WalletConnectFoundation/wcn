@@ -44,7 +44,7 @@ pub fn run<H: Handshake>(
     )?;
 
     Ok(async move {
-        let conn_permits = Arc::new(Semaphore::new(50));
+        let conn_permits = Arc::new(Semaphore::new(500));
 
         while let Some(connecting) = endpoint.accept().await {
             let Ok(permit) = conn_permits.clone().try_acquire_owned() else {

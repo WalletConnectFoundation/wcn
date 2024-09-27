@@ -1,10 +1,13 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
     irn_rpc as rpc,
     serde::{Deserialize, Serialize},
-    std::collections::HashMap,
+    std::{collections::HashMap, time::Duration},
+};
+pub use {
+    irn_rpc::{identity, Multiaddr, PeerId},
+    snap,
 };
 
 #[cfg(feature = "client")]
@@ -25,6 +28,14 @@ type DecommissionNode = rpc::Unary<
     DecommissionNodeRequest,
     Result<(), DecommissionNodeError>,
 >;
+
+type GetMemoryProfile = rpc::Unary<
+    { rpc::id(b"mem_profile") },
+    MemoryProfileRequest,
+    Result<MemoryProfile, MemoryProfileError>,
+>;
+
+pub const MEMORY_PROFILE_MAX_DURATION: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterView {
@@ -96,4 +107,29 @@ pub enum DecommissionNodeError {
     /// The node serving the Admin API is not allowed to decommission the
     /// requested node.
     NotAllowed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MemoryProfileRequest {
+    pub duration: Duration,
+}
+
+#[derive(thiserror::Error, Clone, Debug, Serialize, Deserialize)]
+pub enum MemoryProfileError {
+    #[error("Memory profiler is already running")]
+    AlreadyProfiling,
+
+    #[error("Memory profiling is not available")]
+    ProfilerNotAvailable,
+
+    #[error("Failed to compress memory profile")]
+    Compression,
+
+    #[error("Invalid memory profile duration")]
+    Duration,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MemoryProfile {
+    pub dhat: Vec<u8>,
 }

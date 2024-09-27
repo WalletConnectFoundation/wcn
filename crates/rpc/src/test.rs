@@ -110,6 +110,7 @@ async fn suite() {
             name: "test_server",
             addr: addr.clone(),
             keypair: keypair.clone(),
+            max_concurrent_connections: 500,
             max_concurrent_rpcs: 10000,
         };
 

@@ -2,6 +2,7 @@ use metrics_exporter_prometheus::BuildError;
 
 mod config;
 mod decommission;
+mod profile;
 mod start;
 mod status;
 mod stop;
@@ -51,6 +52,9 @@ pub enum NodeSub {
 
     /// Decommissions an IRN node.
     Decommission(decommission::Cmd),
+
+    /// Run memory profiler on an IRN node.
+    Profile(profile::Cmd),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +96,7 @@ pub async fn exec(cmd: NodeCmd) -> anyhow::Result<()> {
         NodeSub::Stop(args) => stop::exec(args).await,
         NodeSub::Status(args) => status::exec(args).await,
         NodeSub::Decommission(args) => decommission::exec(args).await,
+        NodeSub::Profile(args) => profile::exec(args).await,
     }
 }
 

@@ -13,6 +13,9 @@ use {
 pub struct BiDirectionalStream {
     rx: RawRecvStream,
     tx: RawSendStream,
+
+    // TODO: remove after migration
+    pub(crate) wrap_result: bool,
 }
 
 type RawSendStream = FramedWrite<quinn::SendStream, LengthDelimitedCodec>;
@@ -23,20 +26,37 @@ impl BiDirectionalStream {
         Self {
             tx: FramedWrite::new(tx, LengthDelimitedCodec::new()),
             rx: FramedRead::new(rx, LengthDelimitedCodec::new()),
+            wrap_result: false,
         }
     }
 
     pub fn upgrade<I, O>(self) -> (RecvStream<I>, SendStream<O>) {
         (
             RecvStream(Framed::new(self.rx, SymmetricalPostcard::default())),
-            SendStream(Framed::new(self.tx, SymmetricalPostcard::default())),
+            if self.wrap_result {
+                SendStream::WrapResult(Framed::new(self.tx, SymmetricalPostcard::default()))
+            } else {
+                SendStream::Regular(Framed::new(self.tx, SymmetricalPostcard::default()))
+            },
         )
     }
 }
 
 /// [`Stream`] of outbound [`Message`]s.
-#[pin_project]
-pub struct SendStream<T>(#[pin] Framed<RawSendStream, T, T, SymmetricalPostcard<T>>);
+// TODO: Simplify after migration
+#[pin_project(project = SendStreamProj)]
+pub enum SendStream<T> {
+    Regular(#[pin] Framed<RawSendStream, T, T, SymmetricalPostcard<T>>),
+    WrapResult(
+        #[pin]
+        Framed<
+            RawSendStream,
+            crate::Result<T>,
+            crate::Result<T>,
+            SymmetricalPostcard<crate::Result<T>>,
+        >,
+    ),
+}
 
 impl<T: Serialize> Sink<T> for SendStream<T> {
     type Error = io::Error;
@@ -45,47 +65,51 @@ impl<T: Serialize> Sink<T> for SendStream<T> {
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().0.poll_ready(cx)
+        match self.project() {
+            SendStreamProj::Regular(stream) => stream.poll_ready(cx),
+            SendStreamProj::WrapResult(stream) => stream.poll_ready(cx),
+        }
     }
 
     fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        self.project().0.start_send(item)
+        match self.project() {
+            SendStreamProj::Regular(stream) => stream.start_send(item),
+            SendStreamProj::WrapResult(stream) => stream.start_send(Ok(item)),
+        }
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().0.poll_flush(cx)
+        match self.project() {
+            SendStreamProj::Regular(stream) => stream.poll_flush(cx),
+            SendStreamProj::WrapResult(stream) => stream.poll_flush(cx),
+        }
     }
 
     fn poll_close(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().0.poll_close(cx)
+        match self.project() {
+            SendStreamProj::Regular(stream) => stream.poll_close(cx),
+            SendStreamProj::WrapResult(stream) => stream.poll_close(cx),
+        }
     }
 }
 
-impl<T: Serialize + Unpin> SendStream<T> {
-    /// Changes the type of this [`SendStream`].
-    pub fn transmute<M>(self) -> SendStream<M> {
-        SendStream(Framed::new(
-            self.0.into_inner(),
-            SymmetricalPostcard::default(),
-        ))
-    }
-
-    /// Shut down the send stream gracefully.
-    /// Completes when the peer has acknowledged all sent data.
-    ///
-    /// It's only required to call this if the [`RecvStream`] counterpart on the
-    /// other side expects the [`Stream`] to be finished -- meaning to
-    /// return `Poll::Ready(None)`.
-    pub async fn finish(self) {
-        let _ = self.0.into_inner().into_inner().finish().await;
-    }
-}
+// impl<T: Serialize + Unpin> SendStream<T> {
+//     /// Shut down the send stream gracefully.
+//     /// Completes when the peer has acknowledged all sent data.
+//     ///
+//     /// It's only required to call this if the [`RecvStream`] counterpart on
+// the     /// other side expects the [`Stream`] to be finished -- meaning to
+//     /// return `Poll::Ready(None)`.
+//     pub async fn finish(self) {
+//         let _ = self.inner.into_inner().into_inner().finish().await;
+//     }
+// }
 
 /// [`Stream`] of inbound [`Message`]s.
 #[pin_project]

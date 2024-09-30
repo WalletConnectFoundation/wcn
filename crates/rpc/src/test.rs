@@ -152,7 +152,6 @@ async fn suite() {
                     tx.send("ping".to_string()).await?;
                     assert_eq!(rx.recv_message().await?, "pong".to_string());
                 }
-                tx.finish().await;
                 Ok(())
             })
             .await

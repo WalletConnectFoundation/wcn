@@ -5,7 +5,7 @@ pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
-    std::marker::PhantomData,
+    std::{borrow::Cow, marker::PhantomData},
 };
 
 #[cfg(feature = "client")]
@@ -152,3 +152,16 @@ impl<const ID: Id, Msg: Message> Rpc for Oneshot<ID, Msg> {
     type Request = Msg;
     type Response = ();
 }
+
+/// RPC error.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Error {
+    /// Error code.
+    pub code: Cow<'static, str>,
+
+    /// Error description.
+    pub description: Option<Cow<'static, str>>,
+}
+
+/// RPC result.
+pub type Result<T, E = Error> = std::result::Result<T, E>;

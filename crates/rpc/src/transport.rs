@@ -99,18 +99,6 @@ impl<T: Serialize> Sink<T> for SendStream<T> {
     }
 }
 
-// impl<T: Serialize + Unpin> SendStream<T> {
-//     /// Shut down the send stream gracefully.
-//     /// Completes when the peer has acknowledged all sent data.
-//     ///
-//     /// It's only required to call this if the [`RecvStream`] counterpart on
-// the     /// other side expects the [`Stream`] to be finished -- meaning to
-//     /// return `Poll::Ready(None)`.
-//     pub async fn finish(self) {
-//         let _ = self.inner.into_inner().into_inner().finish().await;
-//     }
-// }
-
 /// [`Stream`] of inbound [`Message`]s.
 #[pin_project]
 pub struct RecvStream<T>(#[pin] Framed<RawRecvStream, T, T, SymmetricalPostcard<T>>);

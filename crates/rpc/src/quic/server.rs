@@ -124,7 +124,11 @@ where
 
         // Wait for the client to send a protocol version being used, if it timeouts
         // then client doesn't support versioning yet.
-        let protocol_version = match read_protocol_version::<H::Err>(&conn)
+        let protocol_version = read_protocol_version::<H::Err>(&conn)
+            .with_timeout(Duration::from_millis(200))
+            .await
+            .ok()
+            .transpose()?;
             .with_timeout(Duration::from_millis(200))
             .await
         {

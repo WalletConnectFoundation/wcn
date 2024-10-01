@@ -3,6 +3,7 @@ use {
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, RecvStream, SendStream},
         Id as RpcId,
         Message,
+        Result as RpcResult,
     },
     futures::{Future, SinkExt as _},
     libp2p::{identity::Keypair, Multiaddr, PeerId},
@@ -83,9 +84,9 @@ where
     pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
     where
         F: FnOnce(Req) -> Fut,
-        Fut: Future<Output = Resp>,
+        Fut: Future<Output = RpcResult<Resp>>,
     {
-        let (mut rx, mut tx) = stream.upgrade::<Req, Resp>();
+        let (mut rx, mut tx) = stream.upgrade::<Req, RpcResult<Resp>>();
         let req = rx.recv_message().await?;
         let resp = f(req).await;
         tx.send(resp).await?;
@@ -100,7 +101,7 @@ where
 {
     pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
     where
-        F: FnOnce(RecvStream<Req>, SendStream<Resp>) -> Fut,
+        F: FnOnce(RecvStream<Req>, SendStream<RpcResult<Resp>>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
         let (rx, tx) = stream.upgrade();

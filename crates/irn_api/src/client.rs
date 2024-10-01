@@ -95,6 +95,7 @@ mod kind {
 
     #[derive(Clone)]
     pub struct Shadowing {
+        pub(super) extra_requests: usize,
         pub(super) max_hash: u64,
         pub(super) default_namespace: Option<super::auth::PublicKey>,
     }
@@ -105,7 +106,7 @@ pub trait Kind: Sized + Clone + Send + 'static {
 
     /// Checks whether the provided key requires shadowing, if so returns the
     /// shadowing client.
-    fn requires_shadowing(_client: &Client<Self>, _key: &Key) -> Option<ShadowingClient> {
+    fn requires_shadowing(_client: &Client<Self>, _key: &Key) -> Option<(ShadowingClient, usize)> {
         None
     }
 }
@@ -130,12 +131,15 @@ impl Client {
     pub fn new(cfg: Config) -> Result<Self, quic::Error> {
         let shadowing = if !cfg.shadowing_nodes.is_empty() {
             let default_namespace = cfg.shadowing_default_namespace;
+            let factor = cfg.shadowing_factor;
+            let extra_requests = factor.floor() as usize;
 
             let mut cfg = cfg.clone();
             cfg.nodes = std::mem::take(&mut cfg.shadowing_nodes);
 
-            let max_hash = (u64::MAX as f64 * cfg.shadowing_factor) as u64;
+            let max_hash = (u64::MAX as f64 * factor) as u64;
             Some(Client::new_inner(cfg, kind::Shadowing {
+                extra_requests,
                 max_hash,
                 default_namespace,
             })?)
@@ -150,18 +154,23 @@ impl Client {
 impl Kind for kind::Basic {
     const METRICS_TAG: &'static str = "";
 
-    fn requires_shadowing(client: &Client<Self>, key: &Key) -> Option<ShadowingClient> {
+    fn requires_shadowing(client: &Client<Self>, key: &Key) -> Option<(ShadowingClient, usize)> {
         use {std::hash::BuildHasher, xxhash_rust::xxh3::Xxh3Builder};
 
         static HASHER: Xxh3Builder = Xxh3Builder::new();
 
         let shadowing = client.kind.shadowing.as_ref()?;
+        let mut num_requests = shadowing.kind.extra_requests;
 
-        if HASHER.hash_one(&key.bytes) > shadowing.kind.max_hash {
-            return None;
+        if HASHER.hash_one(&key.bytes) <= shadowing.kind.max_hash {
+            num_requests += 1;
         }
 
-        Some((*shadowing).clone())
+        if num_requests > 0 {
+            Some((shadowing.clone(), num_requests))
+        } else {
+            None
+        }
     }
 }
 
@@ -224,16 +233,19 @@ impl<K: Kind> Client<K> {
         Op: Operation + AsRef<Key> + Clone + Send + Sync + 'static,
         T: Send + 'static,
     {
-        if let Some(client) = Kind::requires_shadowing(self, op.as_ref()) {
-            let mut op = op.clone();
+        if let Some((client, num_requests)) = Kind::requires_shadowing(self, op.as_ref()) {
+            for _ in 0..num_requests {
+                let client = client.clone();
+                let mut op = op.clone();
 
-            if let (Some(ns), Some(key)) = (&client.kind.default_namespace, op.key_mut()) {
-                key.set_default_namespace(ns);
+                if let (Some(ns), Some(key)) = (&client.kind.default_namespace, op.key_mut()) {
+                    key.set_default_namespace(ns);
+                }
+
+                async move { client.retry::<RPC, _, _>(op).await }
+                    .with_metrics(future_metrics!("irn_api_shadowing"))
+                    .pipe(tokio::spawn);
             }
-
-            async move { client.retry::<RPC, _, _>(op).await }
-                .with_metrics(future_metrics!("irn_api_shadowing"))
-                .pipe(tokio::spawn);
         };
 
         self.retry::<RPC, _, _>(op)

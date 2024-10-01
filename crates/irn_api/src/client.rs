@@ -137,7 +137,7 @@ impl Client {
             let mut cfg = cfg.clone();
             cfg.nodes = std::mem::take(&mut cfg.shadowing_nodes);
 
-            let max_hash = (u64::MAX as f64 * factor) as u64;
+            let max_hash = (u64::MAX as f64 * factor.fract()) as u64;
             Some(Client::new_inner(cfg, kind::Shadowing {
                 extra_requests,
                 max_hash,

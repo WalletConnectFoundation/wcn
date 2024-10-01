@@ -14,7 +14,7 @@ use {
     tokio::sync::oneshot,
 };
 
-const CHANNEL_CAPACITY: usize = 65535;
+const CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid number of reader threads")]
@@ -127,20 +127,22 @@ impl Reader {
     fn send_request(&self, req: ReadRequest) -> Result<(), Error> {
         let idx = self.batch_worker_idx.fetch_add(1, Ordering::Relaxed) % self.batch_workers.len();
 
-        self.batch_workers[idx]
-            .0
-            .try_send(req)
-            .map_err(|_| Error::WorkerQueueOverrun)
+        self.batch_workers[idx].0.try_send(req).map_err(|_| {
+            metrics::counter!("rocksdb_batch_read_queue_overrun").increment(1);
+
+            Error::WorkerQueueOverrun
+        })
     }
 
     fn send_raw_callback(&self, req: RawCallbackRequest) -> Result<(), Error> {
         let idx =
             self.raw_cb_worker_idx.fetch_add(1, Ordering::Relaxed) % self.raw_cb_workers.len();
 
-        self.raw_cb_workers[idx]
-            .0
-            .try_send(req)
-            .map_err(|_| Error::WorkerQueueOverrun)
+        self.raw_cb_workers[idx].0.try_send(req).map_err(|_| {
+            metrics::counter!("rocksdb_callback_queue_overrun").increment(1);
+
+            Error::WorkerQueueOverrun
+        })
     }
 }
 

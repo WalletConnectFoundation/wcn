@@ -7,7 +7,7 @@ use {
     },
     futures::TryFutureExt as _,
     std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
-    tap::{Pipe as _, TapFallible},
+    tap::{Pipe as _, TapOptional},
     tokio::{
         io::AsyncReadExt as _,
         sync::{OwnedSemaphorePermit, Semaphore},
@@ -150,16 +150,21 @@ where
         };
 
         loop {
-            let stream_permit = self.acquire_stream_permit().await;
+            let (tx, mut rx) = conn.accept_bi().await?;
 
-            let (tx, mut rx) = conn
-                .accept_bi()
-                .with_metrics(future_metrics!("quic_accept_bi"))
-                .await?;
+            let Some(stream_permit) = self.acquire_stream_permit().await else {
+                // Over the allowed capacity, so just drop the stream. Do this instead of
+                // awaiting a permit to become available, so that the server doesn't lag behind
+                // the client, and also to keep streams from accumulating in quic internals.
+                continue;
+            };
 
             let local_peer = self.server.clone();
             let conn_info = conn_info.clone();
+
             async move {
+                let _permit = stream_permit;
+
                 let rpc_id = match read_rpc_id(&mut rx).await {
                     Ok(id) => id,
                     Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
@@ -167,9 +172,7 @@ where
 
                 let mut stream = BiDirectionalStream::new(tx, rx);
                 stream.wrap_result = protocol_version.is_some();
-                let res = local_peer.handle_rpc(rpc_id, stream, &conn_info).await;
-                drop(stream_permit);
-                res
+                local_peer.handle_rpc(rpc_id, stream, &conn_info).await
             }
             .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
             .pipe(tokio::spawn);
@@ -177,36 +180,17 @@ where
     }
 
     async fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
-        let permit = self.stream_concurrency_limiter.clone().try_acquire_owned();
-        self.meter_available_permits();
-
-        if let Ok(permit) = permit {
-            return Some(permit);
-        } else {
-            self.meter_throttled_stream();
-        }
+        metrics::gauge!("irn_rpc_server_available_permits", StringLabel<"server_name"> => self.server_name)
+            .set(self.stream_concurrency_limiter.available_permits() as f64);
 
         self.stream_concurrency_limiter
             .clone()
-            .acquire_owned()
-            .await
-            .tap_ok(|_| self.meter_available_permits())
-            .map_err(|_| tracing::warn!("Semaphore closed"))
+            .try_acquire_owned()
             .ok()
-    }
-
-    fn meter_available_permits(&self) {
-        metrics::gauge!("quic_server_stream_concurrency_available_permits",
-            StringLabel<"server_name"> => self.server_name
-        )
-        .set(self.stream_concurrency_limiter.available_permits() as f64)
-    }
-
-    fn meter_throttled_stream(&self) {
-        metrics::counter!("quic_server_throttled_streams",
-            StringLabel<"server_name"> => self.server_name
-        )
-        .increment(1)
+            .tap_none(|| {
+                metrics::counter!("irn_rpc_server_throttled_streams", StringLabel<"server_name"> => self.server_name)
+                    .increment(1);
+            })
     }
 }
 

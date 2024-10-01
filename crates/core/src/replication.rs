@@ -6,7 +6,10 @@ use {
         AuthorizationOpts,
     },
     derive_more::Into,
-    futures::stream::{FuturesUnordered, StreamExt},
+    futures::{
+        future,
+        stream::{FuturesUnordered, StreamExt},
+    },
     serde::{Deserialize, Serialize},
     smallvec::{smallvec, SmallVec},
     std::{
@@ -14,20 +17,16 @@ use {
         convert::Infallible,
         error::Error as StdError,
         fmt::{self, Debug},
-        future::{self, Future},
+        future::Future,
         hash::{BuildHasher, Hash},
         sync::Arc,
         time::Duration,
     },
-    tokio::sync::{OwnedSemaphorePermit, Semaphore},
-    wc::future::FutureExt,
+    tokio::sync::Semaphore,
 };
 
 #[cfg(test)]
 mod tests;
-
-/// Maximum time a request can spend in queue awaiting the execution permit.
-const REQUEST_QUEUE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 pub trait Network<Node, S: Storage<Op>, Op: StorageOperation>:
     Clone + Send + Sync + 'static
@@ -128,12 +127,6 @@ where
                 return Err(CoordinatorError::Unauthorized);
             }
         }
-
-        let _permit = self
-            .replica
-            .try_acquire_replication_permit()
-            .await
-            .ok_or(CoordinatorError::Throttled)?;
 
         let key = operation.as_ref();
         let key_hash = self.replica.hasher_builder.hash_one(key);
@@ -265,11 +258,6 @@ impl<C: Consensus, S, H> Replica<C, S, H> {
         S: Storage<Op>,
         Op: StorageOperation,
     {
-        let _permit = self
-            .try_acquire_replication_permit()
-            .await
-            .ok_or(ReplicaError::Throttled)?;
-
         self.consensus.cluster_view().peek(|cluster| {
             if !cluster.contains_node(coordinator_id) {
                 return Err(ReplicaError::NotClusterMember);
@@ -293,40 +281,6 @@ impl<C: Consensus, S, H> Replica<C, S, H> {
 
     pub fn node(&self) -> &C::Node {
         &self.node
-    }
-}
-
-impl<C: Consensus, S, H> Replica<C, S, H> {
-    async fn try_acquire_replication_permit(&self) -> Option<OwnedSemaphorePermit> {
-        metrics::gauge!("irn_network_request_permits_available")
-            .set(self.throttling.request_limiter.available_permits() as f64);
-
-        metrics::gauge!("irn_network_request_queue_permits_available")
-            .set(self.throttling.request_limiter_queue.available_permits() as f64);
-
-        if let Ok(permit) = self.throttling.request_limiter.clone().try_acquire_owned() {
-            // If we're below the concurrency limit, return the permit immediately.
-            Some(permit)
-        } else {
-            // If no permits are available, join the queue.
-            let Ok(_queue_permit) = self.throttling.request_limiter_queue.try_acquire() else {
-                // Request queue is also full. Nothing we can do.
-                return None;
-            };
-
-            // Await until the request permit is available, while holding the queue permit.
-            self.throttling
-                .request_limiter
-                .clone()
-                .acquire_owned()
-                .with_timeout(REQUEST_QUEUE_TIMEOUT)
-                .await
-                .map_err(|_| {
-                    metrics::counter!("irn_network_request_queue_timeout").increment(1);
-                })
-                .ok()?
-                .ok()
-        }
     }
 }
 
@@ -590,6 +544,7 @@ async fn match_values<K: Clone + 'static, V: Eq + Clone + 'static>(
                     // Wait for the handle to complete, or timeout.
                     let _ = tokio::time::timeout(ttl, handle).await;
                 });
+
                 return MatchResult::Ok(res.value, results);
             }
         }

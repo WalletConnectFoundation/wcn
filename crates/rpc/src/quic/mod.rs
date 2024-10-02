@@ -36,7 +36,7 @@ fn new_quinn_transport_config(max_concurrent_streams: u32) -> Arc<quinn::Transpo
     let mut transport = quinn::TransportConfig::default();
     // Disable uni-directional streams and datagrams.
     transport
-        .max_concurrent_uni_streams(0u32.into())
+        .max_concurrent_uni_streams(1u32.into())
         .max_concurrent_bidi_streams(max_concurrent_streams.into())
         .datagram_receive_buffer_size(None)
         .keep_alive_interval(Some(Duration::from_millis(100)))

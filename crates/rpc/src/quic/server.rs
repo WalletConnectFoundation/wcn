@@ -122,6 +122,14 @@ where
             .with_p2p(peer_id)
             .unwrap();
 
+        // Wait for the client to send a protocol version being used, if it timeouts
+        // then client doesn't support versioning yet.
+        let protocol_version = read_protocol_version::<H::Err>(&conn)
+            .with_timeout(Duration::from_millis(500))
+            .await
+            .ok()
+            .transpose()?;
+
         let conn_info = ConnectionInfo {
             peer_id,
             remote_address,
@@ -160,8 +168,8 @@ where
                     Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
                 };
 
-                let stream = BiDirectionalStream::new(tx, rx);
-
+                let mut stream = BiDirectionalStream::new(tx, rx);
+                stream.wrap_result = protocol_version.is_some();
                 local_peer.handle_rpc(rpc_id, stream, &conn_info).await
             }
             .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
@@ -182,6 +190,13 @@ where
                     .increment(1);
             })
     }
+}
+
+async fn read_protocol_version<H>(
+    conn: &quinn::Connection,
+) -> Result<u32, ConnectionHandlerError<H>> {
+    let mut rx = conn.accept_uni().await?;
+    Ok(rx.read_u32().await?)
 }
 
 async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {

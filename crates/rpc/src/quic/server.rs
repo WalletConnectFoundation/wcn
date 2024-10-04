@@ -150,7 +150,7 @@ where
         loop {
             let (tx, mut rx) = conn.accept_bi().await?;
 
-            let Some(stream_permit) = self.acquire_stream_permit().await else {
+            let Some(stream_permit) = self.acquire_stream_permit() else {
                 // Over the allowed capacity, so just drop the stream. Do this instead of
                 // awaiting a permit to become available, so that the server doesn't lag behind
                 // the client, and also to keep streams from accumulating in quic internals.
@@ -165,7 +165,10 @@ where
 
                 let rpc_id = match read_rpc_id(&mut rx).await {
                     Ok(id) => id,
-                    Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
+                    Err(err) => {
+                        metrics::counter!("quic_server_read_rpc_id_errors").increment(1);
+                        return tracing::warn!(%err, "Failed to read inbound RPC ID");
+                    }
                 };
 
                 let mut stream = BiDirectionalStream::new(tx, rx);
@@ -177,7 +180,7 @@ where
         }
     }
 
-    async fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
+    fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
         metrics::gauge!("irn_rpc_server_available_permits", StringLabel<"server_name"> => self.server_name)
             .set(self.stream_concurrency_limiter.available_permits() as f64);
 
@@ -202,6 +205,7 @@ async fn read_protocol_version<H>(
 async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {
     rx.read_u128()
         .with_timeout(Duration::from_millis(500))
+        .with_metrics(future_metrics!("quic_server_read_rpc_id"))
         .await
         .map_err(|err| err.to_string())?
         .map_err(|err| format!("{err:?}"))

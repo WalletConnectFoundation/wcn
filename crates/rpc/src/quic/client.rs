@@ -22,8 +22,12 @@ use {
         sync::{Arc, PoisonError},
         time::Duration,
     },
+    tap::TapFallible,
     tokio::{io::AsyncWriteExt as _, sync::RwLock},
-    wc::future::FutureExt as _,
+    wc::{
+        future::FutureExt as _,
+        metrics::{self, future_metrics, FutureExt as _},
+    },
 };
 
 /// QUIC RPC client.
@@ -213,19 +217,13 @@ impl<H: Handshake> ConnectionHandler<H> {
         let fut = self.inner.write()?.connection.clone();
         let conn = fut.await;
 
-        let (mut tx, rx) = match conn.open_bi().await {
-            Ok(bi) => bi,
-            Err(_) => self
-                .reconnect(conn.stable_id())?
-                .await
-                .open_bi()
-                .await
-                .map_err(|err| ConnectionHandlerError::Connection(err.into()))?,
-        };
-
-        tx.write_u128(rpc_id).await.map_err(|e| e.kind())?;
-
-        Ok(BiDirectionalStream::new(tx, rx))
+        match establish_stream(&conn, rpc_id).await {
+            Ok(bi) => Ok(bi),
+            Err(_) => {
+                let conn = self.reconnect(conn.stable_id())?.await;
+                establish_stream(&conn, rpc_id).await
+            }
+        }
     }
 
     async fn try_establish_stream(&self, rpc_id: RpcId) -> Option<BiDirectionalStream> {
@@ -237,18 +235,14 @@ impl<H: Handshake> ConnectionHandler<H> {
             .clone()
             .now_or_never()?;
 
-        let (mut tx, rx) = match conn.open_bi().await {
-            Ok(bi) => bi,
+        match establish_stream(&conn, rpc_id).await {
+            Ok(bi) => Some(bi),
             Err(_) => {
                 // we don't need to await this future, it's shared
                 drop(self.reconnect(conn.stable_id()));
-                return None;
+                None
             }
-        };
-
-        tx.write_u128(rpc_id).await.map_err(|e| e.kind()).ok()?;
-
-        Some(BiDirectionalStream::new(tx, rx))
+        }
     }
 
     /// Replaces the current connection with a new one.
@@ -275,6 +269,25 @@ impl<H: Handshake> ConnectionHandler<H> {
 
         Ok(this.connection.clone())
     }
+}
+
+async fn establish_stream(
+    conn: &quinn::Connection,
+    rpc_id: RpcId,
+) -> Result<BiDirectionalStream, ConnectionHandlerError> {
+    let (mut tx, rx) = conn
+        .open_bi()
+        .with_metrics(future_metrics!("quic_client_open_bi"))
+        .await
+        .map_err(|err| ConnectionHandlerError::Connection(err.into()))?;
+
+    tx.write_u128(rpc_id)
+        .with_metrics(future_metrics!("quic_client_write_rpc_id"))
+        .await
+        .tap_err(|_| metrics::counter!("quic_client_write_rpc_id_errors").increment(1))
+        .map_err(|e| e.kind())?;
+
+    Ok(BiDirectionalStream::new(tx, rx))
 }
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]

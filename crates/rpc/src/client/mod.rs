@@ -10,6 +10,7 @@ use {
     futures::{Future, SinkExt as _},
     libp2p::{identity, Multiaddr},
     std::{borrow::Cow, collections::HashSet, io, time::Duration},
+    wc::metrics::{future_metrics, FutureExt},
 };
 
 pub mod middleware;
@@ -48,8 +49,17 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     ) -> impl Future<Output = Result<RPC::Response>> + Send {
         self.send_rpc(addr, RPC::ID, |stream| async {
             let (mut rx, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
-            tx.send(request).await?;
-            Ok(rx.recv_message().await?)
+
+            tx.send(request)
+                .with_metrics(future_metrics!("rpc_client_send_request"))
+                .await?;
+
+            let resp = rx
+                .recv_message()
+                .with_metrics(future_metrics!("rpc_client_recv_response"))
+                .await?;
+
+            Ok(resp)
         })
     }
 

@@ -7,6 +7,7 @@ use {
     futures::{Future, SinkExt as _},
     libp2p::{identity::Keypair, Multiaddr, PeerId},
     std::io,
+    wc::metrics::{future_metrics, FutureExt},
 };
 
 pub mod middleware;
@@ -86,9 +87,18 @@ where
         Fut: Future<Output = Resp>,
     {
         let (mut rx, mut tx) = stream.upgrade::<Req, Resp>();
-        let req = rx.recv_message().await?;
+
+        let req = rx
+            .recv_message()
+            .with_metrics(future_metrics!("rpc_server_recv_request"))
+            .await?;
+
         let resp = f(req).await;
-        tx.send(resp).await?;
+
+        tx.send(resp)
+            .with_metrics(future_metrics!("rpc_server_send_response"))
+            .await?;
+
         Ok(())
     }
 }

@@ -41,8 +41,6 @@ env:
 jobs:
   tests:
     name: "${{ matrix.cargo.name }}"
-    runs-on:
-      group: ubuntu-runners
     strategy:
       fail-fast: false
       matrix:
@@ -92,8 +90,6 @@ jobs:
 
   build:
     name: "Build image"
-    runs-on:
-      group: ubuntu-runners
     strategy:
       fail-fast: false
     steps:

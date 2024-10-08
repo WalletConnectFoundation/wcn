@@ -1,0 +1,21 @@
+[package]
+name = "irn_client_api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+client = ["irn_rpc/client"]
+server = ["irn_rpc/server"]
+
+[dependencies]
+irn_rpc = { workspace = true }
+serde = "1"
+thiserror = "1"
+tracing = "0.1"
+chrono = { version = "0.4", default-features = false }
+data-encoding = "2.6"
+serde_json = "1.0.128"

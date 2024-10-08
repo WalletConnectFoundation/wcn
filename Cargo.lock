@@ -3614,6 +3614,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "irn_client_api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "irn_rpc",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "irn_core"
 version = "0.1.0"
 dependencies = [
@@ -3686,6 +3699,7 @@ dependencies = [
  "if-addrs 0.13.3",
  "irn_admin_api",
  "irn_api",
+ "irn_client_api",
  "irn_core",
  "irn_rpc",
  "itertools 0.11.0",
@@ -6041,11 +6055,12 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.115"
+version = "1.0.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
+checksum = "6ff5456707a1de34e7e37f2a6fd3d3f808c318259cbd01ab6377795054b483d8"
 dependencies = [
  "itoa",
+ "memchr",
  "ryu",
  "serde",
 ]

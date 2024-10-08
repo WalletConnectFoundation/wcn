@@ -42,7 +42,7 @@ mod performance;
 
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
-const NODE_VERSION: u64 = 1;
+const NODE_VERSION: u64 = 0;
 
 /// Deadline after which operator nodes that haven't switched to the updated
 /// [`NODE_VERSION`] are going to receive reduced rewards.

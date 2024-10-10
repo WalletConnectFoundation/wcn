@@ -25,8 +25,9 @@ Public key: eMTmrtqEJKIUDvVgRx6igMJrxMJfTx6VE6KFdhsqZKo=
 Peer ID: 12D3KooWHwoETeshEo4sNSLHv1Hoppq7au87kkDyzhQtgvSjacCR
 ```
 
-You will need `Private key` in the following configuration section. Store it a secure place, and make sure you won't lose it.   
-You may be asked to provide your `Peer ID` by other members of the network, it's similar to `Public key` and is a public information which may be freely shared.
+You will need `Private key` in the following configuration section. Store it in a secure place, and make sure you won't lose it.  
+Your `Peer ID` needs to be provided to the WalletConnectFoundation and to be whitelisted in order for your node to be able to join the network.
+`Peer ID` is similar to `Public key` and is a public information which may be freely shared.
 
 ### Configure the node
 

@@ -1,4 +1,4 @@
-## IRN Testnet onboarding 
+## IRN onboarding 
 
 ### Get `irn_node` binary
 
@@ -55,3 +55,62 @@ export ROCKSDB_DIR=$rocksdb_dir
 # It MUST be persistent.
 export RAFT_DIR=$raft_dir
 ```
+
+For the initial launch of your node (bootstrap) you also need to specify a list of peers to connect to.   
+
+**Make sure to select the correct peer list for the network you're connecting to.**
+
+<details>
+  <summary>Mainnet</summary>
+  
+  ```bash
+  export PEER_12D3KooWFJpHSpFCoHqFJsHyc9JA7C9XPTVhyXsiTRucU6TikGWe=/ip4/35.157.165.56/udp/3010/quic-v1
+  export PEER_12D3KooWDdSQWrrkcxs6JGcWYHygwQ4zyoK4SR6Y58f7dsmXsXyp=/ip4/18.210.232.235/udp/3010/quic-v1
+  export PEER_12D3KooWNhADaVPZFcRLxvbfp8abbuPLFz9NGxkh75aHivPHnjyP=/ip4/18.139.66.197/udp/3010/quic-v1
+  ```
+</details>
+<details>
+  <summary>Testnet</summary>
+  
+  ```bash
+  export PEER_12D3KooWDBZx6LibN1Lxvtb45yFNBfons96bn79AokA2amcJpcZd=/ip4/35.157.219.93/udp/3010/quic-v1
+  export PEER_12D3KooWDfseE1zdkdPjhwHYfdSUSRZ5mGJoUTNUbiyehWrMDhDM=/ip4/3.211.214.115/udp/3010/quic-v1
+  export PEER_12D3KooWJTtT7wUsqWtcGufQrYCcPm8s5vHib9cCVZWiVUKMJz5a=/ip4/18.136.236.182/udp/3010/quic-v1
+  ```
+</details>
+
+Optional configuration variables you may also be interested in:
+```bash
+# Port of the Raft API server.
+export RAFT_SERVER_PORT=3010
+
+# Port of the Raft API server.
+export REPLICA_API_SERVER_PORT=3011
+
+# Port of the Coordinator API server.
+export COORDINATOR_API_SERVER_PORT=3012
+
+# Port of the Admin API server.
+export ADMIN_API_SERVER_PORT=3013
+
+# Port of the Prometheus metrics server.
+export METRICS_SERVER_PORT=3014
+```
+
+### Prepare your infrastructure
+
+#### Firewall
+
+`Raft API` and `Replica API` server ports need to be open for all connections in your firewall settings.  
+Default ports are `3010` and `3011`, however you can change them as described in the previous section.
+
+#### Graceful shutdown
+
+IRN nodes require large graceful shutdown timeout to be configured, depending on the network condition the node may refuse to shutdown after `SIGINT`/`SIGTERM` for quite some time.  
+Node orchestration is being managed internally by the network itself, if there's an ongoing data migration your node may be forbidden from shutting down. Also, there's a limit on how many nodes can be offline at the same time.   
+
+This is required to achieve high availability.
+
+So, you need to make sure that your infrastructure won't `SIGKILL` the IRN node prematurely.  
+WalletConnectFoundation nodes are configured to have `12h` graceful shutdown timeout. But we expect other operator nodes to have at least `1h` of graceful shutdown window.
+

@@ -1,4 +1,4 @@
-## IRN onboarding 
+## IRN Node Operator onboarding 
 
 ### Get `irn_node` binary
 

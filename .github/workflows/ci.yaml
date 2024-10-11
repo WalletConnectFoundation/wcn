@@ -41,8 +41,7 @@ env:
 jobs:
   tests:
     name: "${{ matrix.cargo.name }}"
-    runs-on:
-      group: ubuntu-runners
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -92,8 +91,7 @@ jobs:
 
   build:
     name: "Build image"
-    runs-on:
-      group: ubuntu-runners
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
     steps:
@@ -138,7 +136,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ghcr.io/walletconnect/irn-node
+            ghcr.io/walletconnectfoundation/irn-node
           flavor: |
             latest=auto
           tags: |
@@ -162,7 +160,7 @@ jobs:
               docker tag irn:tmp $tag
           done
 
-          docker image push --all-tags ghcr.io/walletconnect/irn-node
+          docker image push --all-tags ghcr.io/walletconnectfoundation/irn-node
 
   publish_to_ecr:
     needs: [tests, build, cargo-deny]

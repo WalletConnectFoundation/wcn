@@ -13,6 +13,7 @@ use {
 pub struct Client {
     rpc_client: RpcClient,
     server_addr: Multiaddr,
+    namespaces: Vec<ns_auth::Auth>,
 }
 
 type RpcClient = WithTimeouts<irn_rpc::quic::Client>;
@@ -31,6 +32,8 @@ pub struct Config {
 
     /// [`Multiaddr`] of the API server.
     pub server_addr: Multiaddr,
+
+    pub namespaces: Vec<ns_auth::Auth>,
 }
 
 impl Config {
@@ -40,12 +43,18 @@ impl Config {
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             server_addr,
+            namespaces: Default::default(),
         }
     }
 
     /// Overwrites [`Config::keypair`].
     pub fn with_keypair(mut self, keypair: Keypair) -> Self {
         self.keypair = keypair;
+        self
+    }
+
+    pub fn with_namespaces(mut self, namespaces: Vec<ns_auth::Auth>) -> Self {
+        self.namespaces = namespaces;
         self
     }
 }
@@ -67,6 +76,7 @@ impl Client {
         Ok(Self {
             rpc_client,
             server_addr: config.server_addr,
+            namespaces: config.namespaces,
         })
     }
 
@@ -75,9 +85,24 @@ impl Client {
     }
 
     pub async fn create_auth_token(&self) -> Result<auth::Token, auth::Error> {
+        let nonce = CreateAuthNonce::send(&self.rpc_client, &self.server_addr, ())
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::Api)?;
+
+        let namespaces = self
+            .namespaces
+            .iter()
+            .map(|auth| auth::NamespaceAuth {
+                namespace: auth.public_key(),
+                signature: auth.sign(nonce.as_ref()),
+            })
+            .collect();
+
         let req = auth::TokenConfig {
-            namespace: auth::ApiNamespace::Storage,
+            api: auth::Api::Storage,
             duration: None,
+            namespaces,
         };
 
         CreateAuthToken::send(&self.rpc_client, &self.server_addr, req)

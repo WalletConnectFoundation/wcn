@@ -27,7 +27,7 @@ mod metrics;
 pub struct InvalidMultiaddrError(Multiaddr);
 
 fn new_quinn_transport_config(max_concurrent_streams: u32) -> Arc<quinn::TransportConfig> {
-    const STREAM_WINDOW: u32 = 16 * 1024 * 1024; // 16 MiB
+    const STREAM_WINDOW: u32 = 4 * 1024 * 1024; // 4 MiB
 
     // Our tests are too slow and connections get dropped because of missing keep
     // alive messages. Setting idle timeout higher for debug builds.
@@ -42,9 +42,9 @@ fn new_quinn_transport_config(max_concurrent_streams: u32) -> Arc<quinn::Transpo
         .keep_alive_interval(Some(Duration::from_millis(100)))
         .max_idle_timeout(Some(VarInt::from_u32(max_idle_timeout_ms).into()))
         .allow_spin(false)
-        .receive_window(VarInt::MAX)
+        .receive_window((2 * STREAM_WINDOW).into())
         .stream_receive_window(STREAM_WINDOW.into())
-        .send_window(8 * STREAM_WINDOW as u64);
+        .send_window(2 * STREAM_WINDOW as u64);
 
     Arc::new(transport)
 }

@@ -3619,6 +3619,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "data-encoding",
+ "irn_api",
  "irn_rpc",
  "serde",
  "serde_json",

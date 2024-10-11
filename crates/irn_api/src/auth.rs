@@ -149,7 +149,7 @@ impl Auth {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, AsRef)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, AsRef, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct Nonce([u8; aead::NONCE_LEN]);
 
@@ -186,6 +186,16 @@ impl PublicKey {
         signature::UnparsedPublicKey::new(&signature::ED25519, &self.0)
             .verify(data, sig.as_ref())
             .map_err(|_| Error::Signature)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; signature::ED25519_PUBLIC_KEY_LEN] {
+        &self.0
+    }
+}
+
+impl From<[u8; signature::ED25519_PUBLIC_KEY_LEN]> for PublicKey {
+    fn from(value: [u8; signature::ED25519_PUBLIC_KEY_LEN]) -> Self {
+        Self(value)
     }
 }
 

@@ -13,9 +13,10 @@ server = ["irn_rpc/server"]
 
 [dependencies]
 irn_rpc = { workspace = true }
+api = { workspace = true }
 serde = "1"
 thiserror = "1"
 tracing = "0.1"
-chrono = { version = "0.4", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["now"] }
 data-encoding = "2.6"
 serde_json = "1.0.128"

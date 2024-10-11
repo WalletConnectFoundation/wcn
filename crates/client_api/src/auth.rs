@@ -1,4 +1,5 @@
 use {
+    super::*,
     irn_rpc::{
         identity::ed25519::{Keypair as Ed25519Keypair, PublicKey as Ed25519PublicKey},
         PeerId,
@@ -25,17 +26,27 @@ pub enum Error {
 
     #[error("Invalid JWT signature")]
     Signature,
+
+    #[error("Invalid namespace signature")]
+    NamespaceSignature,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NamespaceAuth {
+    pub namespace: ns_auth::PublicKey,
+    pub signature: ns_auth::Signature,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TokenConfig {
-    pub namespace: ApiNamespace,
+    pub api: Api,
     pub duration: Option<Duration>,
+    pub namespaces: Vec<NamespaceAuth>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ApiNamespace {
+pub enum Api {
     Storage,
 }
 
@@ -44,14 +55,14 @@ pub enum ApiNamespace {
 pub struct Token(String);
 
 impl Token {
-    pub fn decode(token: &Token) -> Result<TokenClaims, Error> {
-        let mut split_iter = token.0.rsplitn(2, '.');
+    pub fn decode(&self) -> Result<TokenClaims, Error> {
+        let mut split_iter = self.0.rsplitn(2, '.');
 
         let (Some(signature), Some(message)) = (split_iter.next(), split_iter.next()) else {
             return Err(Error::Decoding);
         };
 
-        let mut split_iter = token.0.split('.');
+        let mut split_iter = self.0.split('.');
 
         let (Some(header), Some(claims), None) =
             (split_iter.next(), split_iter.next(), split_iter.next())
@@ -80,9 +91,22 @@ impl Token {
 #[derive(Clone, Debug)]
 pub struct PublicKey(Ed25519PublicKey);
 
+impl From<ns_auth::PublicKey> for PublicKey {
+    fn from(value: ns_auth::PublicKey) -> Self {
+        // Safe unwrap, since the keys are the same length.
+        Self(Ed25519PublicKey::try_from_bytes(value.as_bytes()).unwrap())
+    }
+}
+
 impl From<Ed25519PublicKey> for PublicKey {
     fn from(value: Ed25519PublicKey) -> Self {
         Self(value)
+    }
+}
+
+impl From<PublicKey> for ns_auth::PublicKey {
+    fn from(value: PublicKey) -> Self {
+        value.inner().to_bytes().into()
     }
 }
 
@@ -124,9 +148,10 @@ pub struct TokenClaims {
     pub aud: String,
     pub sub: PeerId,
     pub iss: PublicKey,
-    pub api: ApiNamespace,
+    pub api: Api,
     pub iat: i64,
     pub exp: Option<i64>,
+    pub nsp: Vec<PublicKey>,
 }
 
 impl TokenClaims {
@@ -142,7 +167,7 @@ impl TokenClaims {
         self.sub
     }
 
-    pub fn api_namespace(&self) -> ApiNamespace {
+    pub fn api(&self) -> Api {
         self.api
     }
 
@@ -155,6 +180,13 @@ impl TokenClaims {
         } else {
             now + time_leeway < self.iat
         }
+    }
+
+    pub fn namespaces(&self) -> Vec<ns_auth::PublicKey> {
+        self.nsp
+            .iter()
+            .map(|key| key.inner().to_bytes().into())
+            .collect()
     }
 
     pub fn encode(&self, keypair: &Ed25519Keypair) -> Result<Token, Error> {

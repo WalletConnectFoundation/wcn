@@ -162,7 +162,7 @@ impl<A> From<irn_rpc::client::Error> for Error<A> {
 
         let rpc_err = match err {
             irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
-            irn_rpc::client::Error::Rpc(err) => err,
+            irn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {

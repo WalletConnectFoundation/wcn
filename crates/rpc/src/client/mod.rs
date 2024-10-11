@@ -2,14 +2,15 @@ use {
     crate::{
         kind,
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        Error as RpcError,
         Id as RpcId,
         Message,
         Rpc,
     },
-    derive_more::From,
+    derive_more::{derive::Display, From},
     futures::{Future, SinkExt as _},
     libp2p::{identity, Multiaddr},
-    std::{borrow::Cow, collections::HashSet, io, time::Duration},
+    std::{collections::HashSet, io, time::Duration},
 };
 
 pub mod middleware;
@@ -47,9 +48,9 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         request: RPC::Request,
     ) -> impl Future<Output = Result<RPC::Response>> + Send {
         self.send_rpc(addr, RPC::ID, |stream| async {
-            let (mut rx, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+            let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
             tx.send(request).await?;
-            Ok(rx.recv_message().await?)
+            Ok(rx.recv_message().await??)
         })
     }
 
@@ -57,13 +58,13 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     fn send_streaming<RPC: Rpc<Kind = kind::Streaming>, Fut, Ok>(
         &self,
         addr: &A,
-        f: impl FnOnce(SendStream<RPC::Request>, RecvStream<RPC::Response>) -> Fut + Send,
+        f: impl FnOnce(SendStream<RPC::Request>, RecvStream<RpcResult<RPC>>) -> Fut + Send,
     ) -> impl Future<Output = Result<Ok>> + Send
     where
         Fut: Future<Output = Result<Ok>> + Send,
     {
         self.send_rpc(addr, RPC::ID, |stream| async {
-            let (rx, tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+            let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
             f(tx, rx).await.map_err(Into::into)
         })
     }
@@ -93,8 +94,21 @@ pub enum Error {
     Transport(transport::Error),
 
     /// RPC error.
-    #[error("RPC: {_0:?}")]
-    Rpc(RpcError),
+    #[error("{source} RPC: {error:?}")]
+    Rpc {
+        #[source]
+        error: RpcError,
+        source: RpcErrorSource,
+    },
+}
+
+impl From<crate::Error> for Error {
+    fn from(error: crate::Error) -> Self {
+        Self::Rpc {
+            error,
+            source: RpcErrorSource::Server,
+        }
+    }
 }
 
 impl Error {
@@ -104,30 +118,8 @@ impl Error {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RpcError {
-    pub code: Cow<'static, str>,
-    pub description: Option<Cow<'static, str>>,
-    source: RpcErrorSource,
-}
-
-impl RpcError {
-    /// Creates a new client-side RPC error with the provided error code.
-    pub fn new(code: &'static str) -> Self {
-        Self {
-            code: code.into(),
-            description: None,
-            source: RpcErrorSource::Client,
-        }
-    }
-
-    pub fn source(&self) -> RpcErrorSource {
-        self.source
-    }
-}
-
 /// The source of an [`RpcError`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Display)]
 pub enum RpcErrorSource {
     /// Client-side error.
     Client,
@@ -143,6 +135,8 @@ impl From<io::Error> for Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+type RpcResult<RPC> = Result<<RPC as Rpc>::Response, crate::Error>;
 
 impl<const ID: RpcId, Req, Resp> super::Unary<ID, Req, Resp>
 where
@@ -161,7 +155,7 @@ where
 {
     pub async fn send<A: Sync, F, Fut, Ok>(client: &impl Client<A>, addr: &A, f: F) -> Result<Ok>
     where
-        F: FnOnce(SendStream<Req>, RecvStream<Resp>) -> Fut + Send,
+        F: FnOnce(SendStream<Req>, RecvStream<RpcResult<Self>>) -> Fut + Send,
         Fut: Future<Output = Result<Ok>> + Send,
     {
         client.send_streaming::<Self, _, _>(addr, f).await

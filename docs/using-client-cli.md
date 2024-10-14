@@ -77,7 +77,7 @@ cargo run -p irn
 ```bash
 irn key generate
 ```
-You should see an output as follows
+You should see output like this:
 
 ```bash
 Key 0
@@ -165,7 +165,7 @@ irn storage \
 ```
 
 ### Running a node using the CLI
-Please be advised, running a node via the CLI is intended for development purposes only and subject to change in the future.
+Please be advised, running a node via the CLI is intended for development purposes only and subject to change in the future. In production environments, please run either the irn_node binary or one of the docker images our team provides and configure them via environment variables instead.
 
 ```bash
 irn node start -w ./working-dir -c ./config.toml

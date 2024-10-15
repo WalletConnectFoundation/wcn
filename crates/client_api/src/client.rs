@@ -69,8 +69,8 @@ struct Inner {
     rpc_client: WithTimeouts<irn_rpc::quic::Client>,
     namespaces: Vec<ns_auth::Auth>,
     auth_ttl: Duration,
-    auth_token: ArcSwap<auth::Token>,
-    cluster: ArcSwap<domain::Cluster>,
+    auth_token: Arc<ArcSwap<auth::Token>>,
+    cluster: Arc<ArcSwap<domain::Cluster>>,
 }
 
 impl Inner {
@@ -235,8 +235,8 @@ impl Client {
             rpc_client,
             namespaces: config.namespaces,
             auth_ttl: config.auth_ttl,
-            auth_token: ArcSwap::from_pointee(auth::Token::default()),
-            cluster: ArcSwap::from_pointee(domain::Cluster::new()),
+            auth_token: Arc::new(ArcSwap::from_pointee(auth::Token::default())),
+            cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
         });
 
         // Preload the client with initial auth token and cluster state.
@@ -255,16 +255,16 @@ impl Client {
         })
     }
 
-    pub fn cluster(&self) -> Arc<domain::Cluster> {
-        self.inner.cluster.load_full()
+    pub fn cluster(&self) -> Arc<ArcSwap<domain::Cluster>> {
+        self.inner.cluster.clone()
     }
 
     pub fn peek_cluster(&self) -> arc_swap::Guard<Arc<domain::Cluster>> {
         self.inner.cluster.load()
     }
 
-    pub fn auth_token(&self) -> Arc<auth::Token> {
-        self.inner.auth_token.load_full()
+    pub fn auth_token(&self) -> Arc<ArcSwap<auth::Token>> {
+        self.inner.auth_token.clone()
     }
 
     pub fn peek_auth_token(&self) -> arc_swap::Guard<Arc<auth::Token>> {

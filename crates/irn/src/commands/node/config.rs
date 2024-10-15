@@ -38,6 +38,7 @@ pub struct Server {
     pub server_port: u16,
     pub client_port: u16,
     pub raft_port: u16,
+    pub auth_port: u16,
     pub admin_port: u16,
     pub metrics_port: u16,
     pub warmup_delay: u64,

@@ -14,6 +14,7 @@ use {
         auth,
         server::{Handshake, HandshakeData},
     },
+    client_api::Server,
     derive_more::AsRef,
     futures::{
         future,
@@ -755,6 +756,11 @@ impl ApiServer {
     }
 }
 
+#[derive(Clone)]
+struct ClientApiServer;
+
+impl client_api::server::Server for ClientApiServer {}
+
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum PullDataError {
     #[error(transparent)]
@@ -1172,6 +1178,17 @@ impl Network {
         .with_timeouts(rpc_timeouts)
         .metered();
 
+        let client_api_cfg = client_api::server::Config {
+            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.client_api_server_port)),
+            keypair: cfg.keypair.clone(),
+            operation_timeout: default_timeout,
+            authorized_clients: cfg.authorized_clients.clone(),
+            network_id: "irn_mainnet".to_owned(),
+            cluster_view: node.consensus().cluster_view().clone(),
+        };
+
+        let client_api_server = ClientApiServer.serve(client_api_cfg)?;
+
         let admin_api_server = AdminApiServer {
             node,
             status_reporter,
@@ -1183,11 +1200,16 @@ impl Network {
             irn_rpc::quic::server::run(server.clone(), replica_api_server_config, NoHandshake)?;
         let coordinator_api_server = ::api::server::run(server, coordinator_api_server_config)?;
 
-        Ok(
-            async move { tokio::join!(replica_api_server, coordinator_api_server, admin_api_server) }
-                .map(drop)
-                .pipe(tokio::spawn),
-        )
+        Ok(async move {
+            tokio::join!(
+                replica_api_server,
+                coordinator_api_server,
+                client_api_server,
+                admin_api_server
+            )
+        }
+        .map(drop)
+        .pipe(tokio::spawn))
     }
 
     pub(crate) fn get_peer<'a>(

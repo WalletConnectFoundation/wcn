@@ -880,6 +880,7 @@ fn new_node_config() -> Config {
         raft_server_port: next_port(),
         replica_api_server_port: next_port(),
         coordinator_api_server_port: next_port(),
+        client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
         replica_api_max_concurrent_connections: 500,
         replica_api_max_concurrent_rpcs: 10000,

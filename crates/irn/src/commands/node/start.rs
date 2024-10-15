@@ -180,6 +180,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         replica_api_server_port: config.server.server_port,
         coordinator_api_server_port: config.server.client_port,
         raft_server_port: config.server.raft_port,
+        client_api_server_port: config.server.auth_port,
         admin_api_server_port: config.server.admin_port,
         metrics_server_port: config.server.metrics_port,
         coordinator_api_max_concurrent_connections: 500,

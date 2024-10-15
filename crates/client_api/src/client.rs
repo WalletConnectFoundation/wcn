@@ -1,20 +1,14 @@
 use {
     super::*,
+    arc_swap::ArcSwap,
+    futures_util::Stream,
     irn_rpc::{
         client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
         identity::Keypair,
         transport::NoHandshake,
     },
-    std::{collections::HashSet, convert::Infallible, result::Result as StdResult, time::Duration},
+    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
 };
-
-/// API client.
-#[derive(Clone)]
-pub struct Client {
-    rpc_client: RpcClient,
-    server_addr: Multiaddr,
-    namespaces: Vec<ns_auth::Auth>,
-}
 
 type RpcClient = WithTimeouts<irn_rpc::quic::Client>;
 
@@ -59,9 +53,19 @@ impl Config {
     }
 }
 
+/// API client.
+#[derive(Clone)]
+pub struct Client {
+    rpc_client: RpcClient,
+    server_addr: Multiaddr,
+    namespaces: Arc<Vec<ns_auth::Auth>>,
+    cluster: Arc<ArcSwap<domain::Cluster>>,
+}
+
 impl Client {
+    // TODO: Support multiple endpoints.
     /// Creates a new [`Client`].
-    pub fn new(config: Config) -> StdResult<Self, CreationError> {
+    pub async fn new(config: Config) -> Result<Self, super::Error> {
         let rpc_client_config = irn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: HashSet::new(),
@@ -69,15 +73,24 @@ impl Client {
             connection_timeout: config.connection_timeout,
         };
 
-        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
-            .map_err(|err| CreationError(err.to_string()))?
-            .with_timeouts(Timeouts::new().with_default(config.operation_timeout));
+        let timeouts = Timeouts::new()
+            .with_default(config.operation_timeout)
+            .with::<{ KeyspaceUpdates::ID }>(None);
 
-        Ok(Self {
+        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
+            .map_err(|err| Error::Other(err.to_string()))?
+            .with_timeouts(timeouts);
+
+        let client = Self {
             rpc_client,
             server_addr: config.server_addr,
-            namespaces: config.namespaces,
-        })
+            namespaces: Arc::new(config.namespaces),
+            cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
+        };
+
+        client.update_keyspace().await?;
+
+        Ok(client)
     }
 
     pub fn set_server_addr(&mut self, addr: Multiaddr) {
@@ -110,12 +123,81 @@ impl Client {
             .map_err(Error::from)?
             .map_err(Error::Api)
     }
-}
 
-/// Error of [`Client::new`].
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("{_0}")]
-pub struct CreationError(String);
+    pub fn cluster(&self) -> Arc<domain::Cluster> {
+        self.cluster.load_full()
+    }
+
+    pub async fn keyspace_updates(
+        &self,
+    ) -> impl Stream<Item = Arc<domain::Cluster>> + Send + 'static {
+        let this = self.clone();
+
+        async_stream::stream! {
+            loop {
+                let subscribe =
+                    KeyspaceUpdates::send(&this.rpc_client, &this.server_addr, |_, rx| async move {
+                        Ok(rx)
+                    });
+
+                let mut rx = match subscribe.await {
+                    Ok(rx) => rx,
+
+                    Err(err) => {
+                        tracing::error!(?err, "failed to subscribe to any peer");
+                        // TODO: Metrics.
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+
+                loop {
+                    match rx.recv_message().await {
+                        Ok(update) => {
+                            let _ = this.apply_keyspace_update(update).await.map_err(|err| {
+                                tracing::warn!(?err, "failed to apply keyspace update");
+                            });
+
+                            yield this.cluster();
+                        }
+
+                        Err(err) => {
+                            tracing::warn!(?err, "failed to receive keyspace update frame, resubscribing...");
+                            // TODO: Metrics.
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn update_keyspace(&self) -> Result<(), super::Error> {
+        let update = GetKeyspace::send(&self.rpc_client, &self.server_addr, ())
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::Api)?;
+
+        self.apply_keyspace_update(update).await?;
+
+        Ok(())
+    }
+
+    async fn apply_keyspace_update(&self, update: KeyspaceUpdate) -> Result<(), super::Error> {
+        let cluster = tokio::task::spawn_blocking(move || {
+            let snapshot = postcard::from_bytes(&update.0).map_err(|_| Error::Serialization)?;
+            let cluster = domain::Cluster::from_snapshot(snapshot).map_err(Error::Cluster)?;
+            Ok::<_, Error<super::Error>>(cluster)
+        })
+        .await
+        .map_err(|err| Error::Other(err.to_string()))??;
+
+        self.cluster.store(Arc::new(cluster));
+
+        Ok(())
+    }
+}
 
 /// Error of a [`Client`] operation.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -135,6 +217,12 @@ pub enum Error<A = Infallible> {
     /// Operation timed out.
     #[error("Operation timed out")]
     Timeout,
+
+    #[error("Serialization failed")]
+    Serialization,
+
+    #[error("Cluster view error: {0}")]
+    Cluster(#[from] irn_core::cluster::Error),
 
     /// Other error.
     #[error("Other: {0}")]

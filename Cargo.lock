@@ -3617,14 +3617,22 @@ dependencies = [
 name = "irn_client_api"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
+ "async-stream",
  "chrono",
  "data-encoding",
+ "futures-util",
  "irn_api",
+ "irn_core",
  "irn_rpc",
+ "postcard",
  "serde",
  "serde_json",
+ "sharding",
  "thiserror",
+ "tokio",
  "tracing",
+ "xxhash-rust",
 ]
 
 [[package]]

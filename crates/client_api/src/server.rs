@@ -1,5 +1,6 @@
 use {
     super::*,
+    futures_util::{SinkExt, StreamExt},
     irn_rpc::{
         identity::{ed25519::Keypair as Ed25519Keypair, Keypair},
         middleware::Timeouts,
@@ -7,7 +8,7 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake},
+        transport::{BiDirectionalStream, NoHandshake, SendStream},
     },
     std::{collections::HashSet, future::Future, sync::Mutex, time::Duration},
 };
@@ -24,16 +25,22 @@ pub struct Config {
     pub operation_timeout: Duration,
 
     /// A list of clients authorized to use the API.
-    pub authorized_clients: HashSet<PeerId>,
+    pub authorized_clients: Option<HashSet<PeerId>>,
 
     /// Network ID to use for auth tokens.
     pub network_id: String,
+
+    pub cluster_view: domain::ClusterView,
 }
 
 /// API server.
 pub trait Server: Clone + Send + Sync + 'static {
     /// Runs this [`Server`] using the provided [`Config`].
     fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
+        let timeouts = Timeouts::new()
+            .with_default(cfg.operation_timeout)
+            .with::<{ KeyspaceUpdates::ID }>(None);
+
         let rpc_server = Adapter {
             keypair: cfg
                 .keypair
@@ -43,11 +50,13 @@ pub trait Server: Clone + Send + Sync + 'static {
             network_id: cfg.network_id,
             ns_nonce: Default::default(),
             server: self,
+            cluster_view: cfg.cluster_view,
         }
         .with_auth(Auth {
-            authorized_clients: cfg.authorized_clients,
+            // TODO: Decide what to do with auth.
+            authorized_clients: cfg.authorized_clients.unwrap_or_default(),
         })
-        .with_timeouts(Timeouts::new().with_default(cfg.operation_timeout))
+        .with_timeouts(timeouts)
         .metered();
 
         let rpc_server_config = irn_rpc::server::Config {
@@ -68,6 +77,7 @@ struct Adapter<S> {
     network_id: String,
     ns_nonce: Mutex<Option<ns_auth::Nonce>>,
     server: S,
+    cluster_view: domain::ClusterView,
 }
 
 // Adapter is cloned per connection, so it's important to have a unique
@@ -82,6 +92,7 @@ where
             network_id: self.network_id.clone(),
             ns_nonce: Default::default(),
             server: self.server.clone(),
+            cluster_view: self.cluster_view.clone(),
         }
     }
 }
@@ -135,6 +146,33 @@ impl<S> Adapter<S> {
 
         claims.encode(&self.keypair)
     }
+
+    fn keyspace_snapshot(&self) -> Result<KeyspaceUpdate, super::Error> {
+        let cluster = self.cluster_view.cluster();
+
+        postcard::to_allocvec(&cluster.snapshot())
+            .map(KeyspaceUpdate)
+            .map_err(|_| super::Error::Serialization)
+    }
+
+    async fn handle_keyspace_updates(
+        &self,
+        mut tx: SendStream<KeyspaceUpdate>,
+    ) -> Result<(), irn_rpc::server::Error> {
+        let mut updates = std::pin::pin!(self.cluster_view.updates());
+
+        while updates.next().await.is_some() {
+            let snapshot = self
+                .keyspace_snapshot()
+                .map_err(|err| irn_rpc::transport::Error::Other(err.to_string()))?;
+
+            tx.send(snapshot)
+                .await
+                .map_err(|err| irn_rpc::transport::Error::IO(err.kind()))?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<S> rpc::Server for Adapter<S>
@@ -160,6 +198,14 @@ where
                     .await
                 }
 
+                GetKeyspace::ID => {
+                    GetKeyspace::handle(stream, |_| async { self.keyspace_snapshot() }).await
+                }
+
+                KeyspaceUpdates::ID => {
+                    KeyspaceUpdates::handle(stream, |_, rx| self.handle_keyspace_updates(rx)).await
+                }
+
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),
             }
             .map_err(|err| {
@@ -173,11 +219,14 @@ impl<S> rpc::server::Marker for Adapter<S> {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("")]
+    #[error("{0:?}")]
     Quic(irn_rpc::quic::Error),
 
     #[error("Invalid server keypair")]
     Key,
+
+    #[error("Serialization failed")]
+    Serialization,
 }
 
 fn create_timestamp(offset: Option<Duration>) -> i64 {
@@ -192,16 +241,18 @@ fn create_timestamp(offset: Option<Duration>) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, auth::TokenConfig};
+    use {super::*, auth::TokenConfig, irn_core::Cluster};
 
     #[test]
     #[allow(clippy::redundant_clone)]
     fn nonce() {
+        let cluster_view = Cluster::new().into_viewable().view();
         let adapter1 = Adapter {
             keypair: Ed25519Keypair::generate(),
             network_id: "test_network".to_owned(),
             ns_nonce: Default::default(),
             server: (),
+            cluster_view,
         };
 
         let nonce1 = adapter1.create_auth_nonce().unwrap();
@@ -217,6 +268,7 @@ mod tests {
 
     #[test]
     fn auth_token() {
+        let cluster_view = Cluster::new().into_viewable().view();
         let adapter_keypair = Ed25519Keypair::generate();
         let adapter_peer_id = Keypair::from(adapter_keypair.clone()).public().to_peer_id();
 
@@ -225,6 +277,7 @@ mod tests {
             network_id: "test_network".to_owned(),
             ns_nonce: Default::default(),
             server: (),
+            cluster_view,
         };
 
         let client_peer_id = Keypair::from(Ed25519Keypair::generate())

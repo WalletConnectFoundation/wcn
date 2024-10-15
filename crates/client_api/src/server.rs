@@ -39,7 +39,7 @@ pub trait Server: Clone + Send + Sync + 'static {
     fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
         let timeouts = Timeouts::new()
             .with_default(cfg.operation_timeout)
-            .with::<{ KeyspaceUpdates::ID }>(None);
+            .with::<{ ClusterUpdates::ID }>(None);
 
         let rpc_server = Adapter {
             keypair: cfg
@@ -147,23 +147,23 @@ impl<S> Adapter<S> {
         claims.encode(&self.keypair)
     }
 
-    fn keyspace_snapshot(&self) -> Result<KeyspaceUpdate, super::Error> {
+    fn cluster_snapshot(&self) -> Result<ClusterUpdate, super::Error> {
         let cluster = self.cluster_view.cluster();
 
         postcard::to_allocvec(&cluster.snapshot())
-            .map(KeyspaceUpdate)
+            .map(ClusterUpdate)
             .map_err(|_| super::Error::Serialization)
     }
 
-    async fn handle_keyspace_updates(
+    async fn handle_cluster_updates(
         &self,
-        mut tx: SendStream<KeyspaceUpdate>,
+        mut tx: SendStream<ClusterUpdate>,
     ) -> Result<(), irn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.cluster_view.updates());
 
         while updates.next().await.is_some() {
             let snapshot = self
-                .keyspace_snapshot()
+                .cluster_snapshot()
                 .map_err(|err| irn_rpc::transport::Error::Other(err.to_string()))?;
 
             tx.send(snapshot)
@@ -198,12 +198,12 @@ where
                     .await
                 }
 
-                GetKeyspace::ID => {
-                    GetKeyspace::handle(stream, |_| async { self.keyspace_snapshot() }).await
+                GetCluster::ID => {
+                    GetCluster::handle(stream, |_| async { self.cluster_snapshot() }).await
                 }
 
-                KeyspaceUpdates::ID => {
-                    KeyspaceUpdates::handle(stream, |_, rx| self.handle_keyspace_updates(rx)).await
+                ClusterUpdates::ID => {
+                    ClusterUpdates::handle(stream, |_, rx| self.handle_cluster_updates(rx)).await
                 }
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),

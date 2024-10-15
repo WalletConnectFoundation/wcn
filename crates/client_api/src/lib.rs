@@ -22,14 +22,14 @@ pub use server::Server;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct KeyspaceUpdate(Vec<u8>);
+pub struct ClusterUpdate(Vec<u8>);
 
 type CreateAuthNonce =
     rpc::Unary<{ rpc::id(b"create_nonce") }, (), Result<ns_auth::Nonce, auth::Error>>;
 type CreateAuthToken =
     rpc::Unary<{ rpc::id(b"create_auth") }, auth::TokenConfig, Result<auth::Token, auth::Error>>;
-type GetKeyspace = rpc::Unary<{ rpc::id(b"get_keyspace") }, (), Result<KeyspaceUpdate, Error>>;
-type KeyspaceUpdates = rpc::Streaming<{ rpc::id(b"keyspace_updates") }, (), KeyspaceUpdate>;
+type GetCluster = rpc::Unary<{ rpc::id(b"get_cluster") }, (), Result<ClusterUpdate, Error>>;
+type ClusterUpdates = rpc::Streaming<{ rpc::id(b"cluster_updates") }, (), ClusterUpdate>;
 
 #[derive(Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum Error {

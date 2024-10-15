@@ -1,16 +1,20 @@
 use {
     super::*,
     arc_swap::ArcSwap,
-    futures_util::Stream,
     irn_rpc::{
-        client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
+        client::{
+            middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
+            AnyPeer,
+        },
         identity::Keypair,
         transport::NoHandshake,
     },
     std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
+    tokio::sync::oneshot,
 };
 
-type RpcClient = WithTimeouts<irn_rpc::quic::Client>;
+const DEFAULT_AUTH_TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
+const MIN_AUTH_TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// [`Client`] config.
 #[derive(Clone)]
@@ -24,19 +28,22 @@ pub struct Config {
     /// Timeout of a [`Client`] operation.
     pub operation_timeout: Duration,
 
-    /// [`Multiaddr`] of the API server.
-    pub server_addr: Multiaddr,
+    /// [`Multiaddr`] of the API servers.
+    pub known_peers: HashSet<Multiaddr>,
+
+    pub auth_ttl: Duration,
 
     pub namespaces: Vec<ns_auth::Auth>,
 }
 
 impl Config {
-    pub fn new(server_addr: Multiaddr) -> Self {
+    pub fn new(known_peers: impl Into<HashSet<Multiaddr>>) -> Self {
         Self {
             keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
-            server_addr,
+            known_peers: known_peers.into(),
+            auth_ttl: DEFAULT_AUTH_TOKEN_TTL,
             namespaces: Default::default(),
         }
     }
@@ -47,58 +54,28 @@ impl Config {
         self
     }
 
-    pub fn with_namespaces(mut self, namespaces: Vec<ns_auth::Auth>) -> Self {
-        self.namespaces = namespaces;
+    pub fn with_namespaces(mut self, namespaces: impl Into<Vec<ns_auth::Auth>>) -> Self {
+        self.namespaces = namespaces.into();
+        self
+    }
+
+    pub fn with_auth_ttl(mut self, ttl: Duration) -> Self {
+        self.auth_ttl = ttl;
         self
     }
 }
 
-/// API client.
-#[derive(Clone)]
-pub struct Client {
-    rpc_client: RpcClient,
-    server_addr: Multiaddr,
-    namespaces: Arc<Vec<ns_auth::Auth>>,
-    cluster: Arc<ArcSwap<domain::Cluster>>,
+struct Inner {
+    rpc_client: WithTimeouts<irn_rpc::quic::Client>,
+    namespaces: Vec<ns_auth::Auth>,
+    auth_ttl: Duration,
+    auth_token: ArcSwap<auth::Token>,
+    cluster: ArcSwap<domain::Cluster>,
 }
 
-impl Client {
-    // TODO: Support multiple endpoints.
-    /// Creates a new [`Client`].
-    pub async fn new(config: Config) -> Result<Self, super::Error> {
-        let rpc_client_config = irn_rpc::client::Config {
-            keypair: config.keypair,
-            known_peers: HashSet::new(),
-            handshake: NoHandshake,
-            connection_timeout: config.connection_timeout,
-        };
-
-        let timeouts = Timeouts::new()
-            .with_default(config.operation_timeout)
-            .with::<{ KeyspaceUpdates::ID }>(None);
-
-        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
-            .map_err(|err| Error::Other(err.to_string()))?
-            .with_timeouts(timeouts);
-
-        let client = Self {
-            rpc_client,
-            server_addr: config.server_addr,
-            namespaces: Arc::new(config.namespaces),
-            cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
-        };
-
-        client.update_keyspace().await?;
-
-        Ok(client)
-    }
-
-    pub fn set_server_addr(&mut self, addr: Multiaddr) {
-        self.server_addr = addr;
-    }
-
-    pub async fn create_auth_token(&self) -> Result<auth::Token, auth::Error> {
-        let nonce = CreateAuthNonce::send(&self.rpc_client, &self.server_addr, ())
+impl Inner {
+    async fn refresh_auth_token(&self) -> Result<(), auth::Error> {
+        let nonce = CreateAuthNonce::send(&self.rpc_client, &AnyPeer, ())
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
@@ -114,77 +91,32 @@ impl Client {
 
         let req = auth::TokenConfig {
             api: auth::Api::Storage,
-            duration: None,
+            duration: Some(self.auth_ttl),
             namespaces,
         };
 
-        CreateAuthToken::send(&self.rpc_client, &self.server_addr, req)
-            .await
-            .map_err(Error::from)?
-            .map_err(Error::Api)
-    }
-
-    pub fn cluster(&self) -> Arc<domain::Cluster> {
-        self.cluster.load_full()
-    }
-
-    pub async fn keyspace_updates(
-        &self,
-    ) -> impl Stream<Item = Arc<domain::Cluster>> + Send + 'static {
-        let this = self.clone();
-
-        async_stream::stream! {
-            loop {
-                let subscribe =
-                    KeyspaceUpdates::send(&this.rpc_client, &this.server_addr, |_, rx| async move {
-                        Ok(rx)
-                    });
-
-                let mut rx = match subscribe.await {
-                    Ok(rx) => rx,
-
-                    Err(err) => {
-                        tracing::error!(?err, "failed to subscribe to any peer");
-                        // TODO: Metrics.
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
-
-                loop {
-                    match rx.recv_message().await {
-                        Ok(update) => {
-                            let _ = this.apply_keyspace_update(update).await.map_err(|err| {
-                                tracing::warn!(?err, "failed to apply keyspace update");
-                            });
-
-                            yield this.cluster();
-                        }
-
-                        Err(err) => {
-                            tracing::warn!(?err, "failed to receive keyspace update frame, resubscribing...");
-                            // TODO: Metrics.
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    async fn update_keyspace(&self) -> Result<(), super::Error> {
-        let update = GetKeyspace::send(&self.rpc_client, &self.server_addr, ())
+        let token = CreateAuthToken::send(&self.rpc_client, &AnyPeer, req)
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
 
-        self.apply_keyspace_update(update).await?;
+        self.auth_token.store(Arc::new(token));
 
         Ok(())
     }
 
-    async fn apply_keyspace_update(&self, update: KeyspaceUpdate) -> Result<(), super::Error> {
+    async fn update_cluster(&self) -> Result<(), super::Error> {
+        let update = GetCluster::send(&self.rpc_client, &AnyPeer, ())
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::Api)?;
+
+        self.apply_cluster_update(update).await?;
+
+        Ok(())
+    }
+
+    async fn apply_cluster_update(&self, update: ClusterUpdate) -> Result<(), super::Error> {
         let cluster = tokio::task::spawn_blocking(move || {
             let snapshot = postcard::from_bytes(&update.0).map_err(|_| Error::Serialization)?;
             let cluster = domain::Cluster::from_snapshot(snapshot).map_err(Error::Cluster)?;
@@ -196,6 +128,147 @@ impl Client {
         self.cluster.store(Arc::new(cluster));
 
         Ok(())
+    }
+}
+
+async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
+    tokio::select! {
+        _ = cluster_update(inner.clone()) => {},
+        _ = auth_token_update(inner) => {},
+        _ = shutdown_rx => {}
+    }
+}
+
+async fn cluster_update(inner: Arc<Inner>) {
+    loop {
+        let stream =
+            ClusterUpdates::send(&inner.rpc_client, &AnyPeer, |_, rx| async move { Ok(rx) }).await;
+
+        let mut rx = match stream {
+            Ok(rx) => rx,
+
+            Err(err) => {
+                tracing::error!(?err, "failed to subscribe to any peer");
+                // TODO: Metrics.
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
+        loop {
+            match rx.recv_message().await {
+                Ok(update) => {
+                    if let Err(err) = inner.apply_cluster_update(update).await {
+                        tracing::warn!(?err, "failed to apply cluster update");
+                    }
+                }
+
+                Err(err) => {
+                    tracing::warn!(
+                        ?err,
+                        "failed to receive cluster update frame, resubscribing..."
+                    );
+                    // TODO: Metrics.
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn auth_token_update(inner: Arc<Inner>) {
+    // Subtract 2 minutes from the token duration to refresh it before it expires.
+    let normal_delay = inner
+        .auth_ttl
+        .checked_sub(Duration::from_secs(2 * 60))
+        .unwrap_or(Duration::from_secs(30));
+
+    let mut next_delay = normal_delay;
+
+    // Delay the initial refresh, since we assume the token has just been created.
+    loop {
+        tokio::time::sleep(next_delay).await;
+
+        if let Err(err) = inner.refresh_auth_token().await {
+            tracing::warn!(?err, "failed to apply cluster update");
+
+            next_delay = Duration::from_secs(1);
+        } else {
+            next_delay = normal_delay;
+        }
+    }
+}
+
+/// API client.
+#[derive(Clone)]
+pub struct Client {
+    inner: Arc<Inner>,
+    _shutdown_tx: Arc<oneshot::Sender<()>>,
+}
+
+impl Client {
+    /// Creates a new [`Client`].
+    pub async fn new(config: Config) -> Result<Self, super::Error> {
+        if config.auth_ttl < MIN_AUTH_TOKEN_TTL {
+            return Err(Error::TokenTtl);
+        }
+
+        let rpc_client_config = irn_rpc::client::Config {
+            keypair: config.keypair,
+            known_peers: config.known_peers,
+            handshake: NoHandshake,
+            connection_timeout: config.connection_timeout,
+        };
+
+        let timeouts = Timeouts::new()
+            .with_default(config.operation_timeout)
+            .with::<{ ClusterUpdates::ID }>(None);
+
+        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
+            .map_err(|err| Error::Other(err.to_string()))?
+            .with_timeouts(timeouts);
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        let inner = Arc::new(Inner {
+            rpc_client,
+            namespaces: config.namespaces,
+            auth_ttl: config.auth_ttl,
+            auth_token: ArcSwap::from_pointee(auth::Token::default()),
+            cluster: ArcSwap::from_pointee(domain::Cluster::new()),
+        });
+
+        // Preload the client with initial auth token and cluster state.
+        let (token_res, cluster_res) =
+            tokio::join!(inner.refresh_auth_token(), inner.update_cluster());
+
+        token_res.map_err(|err| Error::TokenUpdate(err.to_string()))?;
+        cluster_res.map_err(|err| Error::ClusterUpdate(err.to_string()))?;
+
+        // Run a task that will periodically refresh auth token and cluster state.
+        tokio::spawn(updater(inner.clone(), shutdown_rx));
+
+        Ok(Self {
+            inner,
+            _shutdown_tx: Arc::new(shutdown_tx),
+        })
+    }
+
+    pub fn cluster(&self) -> Arc<domain::Cluster> {
+        self.inner.cluster.load_full()
+    }
+
+    pub fn peek_cluster(&self) -> arc_swap::Guard<Arc<domain::Cluster>> {
+        self.inner.cluster.load()
+    }
+
+    pub fn auth_token(&self) -> Arc<auth::Token> {
+        self.inner.auth_token.load_full()
+    }
+
+    pub fn peek_auth_token(&self) -> arc_swap::Guard<Arc<auth::Token>> {
+        self.inner.auth_token.load()
     }
 }
 
@@ -220,6 +293,15 @@ pub enum Error<A = Infallible> {
 
     #[error("Serialization failed")]
     Serialization,
+
+    #[error("Invalid auth token TTL")]
+    TokenTtl,
+
+    #[error("Failed to update auth token: {0}")]
+    TokenUpdate(String),
+
+    #[error("Failed to update cluster: {0}")]
+    ClusterUpdate(String),
 
     #[error("Cluster view error: {0}")]
     Cluster(#[from] irn_core::cluster::Error),

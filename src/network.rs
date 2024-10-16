@@ -15,7 +15,7 @@ use {
     derive_more::AsRef,
     futures::{
         future,
-        stream::{self, Map, Peekable},
+        stream::{self, Map},
         Future,
         FutureExt,
         SinkExt,
@@ -51,7 +51,6 @@ use {
         collections::{HashMap, HashSet},
         fmt::{self, Debug},
         io,
-        pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
     },
@@ -769,8 +768,8 @@ pub enum PullDataError {
 
 impl irn::migration::Network<cluster::Node> for Network {
     type DataStream = Map<
-        Peekable<RecvStream<rpc::migration::PullDataResponse>>,
-        fn(io::Result<rpc::migration::PullDataResponse>) -> io::Result<ExportItem>,
+        RecvStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
+        fn(io::Result<irn_rpc::Result<rpc::migration::PullDataResponse>>) -> io::Result<ExportItem>,
     >;
 
     fn pull_keyrange(
@@ -789,36 +788,22 @@ impl irn::migration::Network<cluster::Node> for Network {
                 })
                 .await?;
 
-                let mut rx = rx.peekable();
-
-                // if the first response message is an error, return the error
-                let err_item = Pin::new(&mut rx)
-                    .next_if(|item| matches!(item, Err(_) | Ok(Err(_))))
-                    .await;
-                if let Some(item) = err_item {
-                    if let Err(e) = item? {
-                        return Ok(Err(e));
-                    }
-                };
-
-                // flatten error by converting the inner one into the outer `io::Error`
+                // flatten error by converting the inner ones into the outer `io::Error`
                 let map_fn = |res| match res {
-                    Ok(Ok(item)) => Ok(item),
-                    Ok(Err(e)) => Err(io::Error::other(irn::migration::PullKeyrangeError::from(e))),
-                    Err(e) => Err(e),
+                    Ok(Ok(Ok(item))) => Ok(item),
+                    Ok(Ok(Err(err))) => Err(io::Error::other(
+                        irn::migration::PullKeyrangeError::from(err),
+                    )),
+                    Ok(Err(err)) => Err(io::Error::other(err)),
+                    Err(err) => Err(err),
                 };
                 let rx = rx.map(map_fn as fn(_) -> _);
 
-                Ok(Ok(rx))
+                Ok(rx)
             },
         );
 
-        async move {
-            rpc_fut
-                .await
-                .map_err(|e| AnyError::new(&e))?
-                .map_err(|e| AnyError::new(&e))
-        }
+        async move { rpc_fut.await.map_err(|e| AnyError::new(&e)) }
     }
 }
 

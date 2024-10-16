@@ -22,6 +22,8 @@ pub mod server;
 #[allow(dead_code)]
 mod metrics;
 
+const PROTOCOL_VERSION: u32 = 0;
+
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 #[error("{0}: invalid QUIC Multiaddr")]
 pub struct InvalidMultiaddrError(Multiaddr);

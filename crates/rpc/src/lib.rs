@@ -154,13 +154,24 @@ impl<const ID: Id, Msg: Message> Rpc for Oneshot<ID, Msg> {
 }
 
 /// RPC error.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, thiserror::Error)]
+#[error("code: {code}, description: {description:?}")]
 pub struct Error {
     /// Error code.
     pub code: Cow<'static, str>,
 
     /// Error description.
     pub description: Option<Cow<'static, str>>,
+}
+
+impl Error {
+    /// Creates a new RPC error with the provided error code.
+    pub fn new(code: &'static str) -> Self {
+        Self {
+            code: code.into(),
+            description: None,
+        }
+    }
 }
 
 /// RPC result.

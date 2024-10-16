@@ -150,7 +150,7 @@ async fn suite() {
             StreamingRpc::send(client, to, |mut tx, mut rx| async move {
                 for _ in 0..3 {
                     tx.send("ping".to_string()).await?;
-                    assert_eq!(rx.recv_message().await?, "pong".to_string());
+                    assert_eq!(rx.recv_message().await?, Ok("pong".to_string()));
                 }
                 Ok(())
             })

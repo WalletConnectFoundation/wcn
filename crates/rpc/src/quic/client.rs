@@ -1,5 +1,5 @@
 use {
-    super::InvalidMultiaddrError,
+    super::{InvalidMultiaddrError, PROTOCOL_VERSION},
     crate::{
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
@@ -162,6 +162,8 @@ fn new_connection<H: Handshake>(
                 .await
                 .map_err(|_| "timeout".to_owned())?
                 .map_err(|e| e.to_string())?;
+
+            write_protocol_version(&conn).await?;
 
             handshake
                 .handle(PendingConnection(conn.clone()))
@@ -392,4 +394,11 @@ impl<H: Handshake> Client<H> {
 
         Err(ConnectionHandlerError::NoAvailablePeers)
     }
+}
+
+async fn write_protocol_version(conn: &quinn::Connection) -> Result<(), String> {
+    let mut tx = conn.open_uni().await.map_err(|err| err.to_string())?;
+    tx.write_u32(PROTOCOL_VERSION)
+        .await
+        .map_err(|err| err.to_string())
 }

@@ -535,9 +535,9 @@ impl<K: Kind> Client<K> {
 
                 loop {
                     match rx.recv_message().await {
-                        Ok(msg) => yield msg,
-                        Err(err) => {
-                            tracing::warn!(?err, "Failed to receive pubsub message, resubscribing...");
+                        Ok(Ok(msg)) => yield msg,
+                        res @ (Err(_) | Ok(Err(_))) => {
+                            tracing::warn!(?res, "Failed to receive pubsub message, resubscribing...");
                             metrics::counter!("irn_api_client_subscription_failures", "client_tag" => K::METRICS_TAG).increment(1);
                             break;
                         }
@@ -595,7 +595,7 @@ impl<K: Kind> Client<K> {
         let err = res.as_ref().err().and_then(|e| {
             Some(match e {
                 Error::RpcClient(client::Error::Transport(_)) => "transport".into(),
-                Error::RpcClient(client::Error::Rpc(err)) => err.code.clone(),
+                Error::RpcClient(client::Error::Rpc { error, .. }) => error.code.clone(),
                 Error::Api(super::Error::Unauthorized) => "unauthorized".into(),
                 Error::Api(super::Error::NotFound) => return None,
                 Error::Api(super::Error::Throttled) => "throttled".into(),

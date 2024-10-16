@@ -1,5 +1,7 @@
 Inter-Relay-Network Node. Implemented in Rust.
 
+Node operators, see [Node Operator onboarding](docs/node-operator-onboarding.md) doc before joining the network.
+
 ## Running Locally
 
 Setup:

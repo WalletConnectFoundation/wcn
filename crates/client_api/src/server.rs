@@ -75,7 +75,7 @@ pub trait Server: Clone + Send + Sync + 'static {
 struct Adapter<S> {
     keypair: Ed25519Keypair,
     network_id: String,
-    ns_nonce: Mutex<Option<ns_auth::Nonce>>,
+    ns_nonce: Mutex<Option<auth::Nonce>>,
     server: S,
     cluster_view: domain::ClusterView,
 }
@@ -98,15 +98,15 @@ where
 }
 
 impl<S> Adapter<S> {
-    fn create_auth_nonce(&self) -> Result<ns_auth::Nonce, auth::Error> {
-        let nonce = ns_auth::Nonce::generate();
+    fn create_auth_nonce(&self) -> auth::Nonce {
+        let nonce = auth::Nonce::generate();
         // Safe unwrap, as this lock can't be poisoned.
         let mut lock = self.ns_nonce.lock().unwrap();
         *lock = Some(nonce);
-        Ok(nonce)
+        nonce
     }
 
-    fn take_auth_nonce(&self) -> Option<ns_auth::Nonce> {
+    fn take_auth_nonce(&self) -> Option<auth::Nonce> {
         // Safe unwrap, as this lock can't be poisoned.
         let mut lock = self.ns_nonce.lock().unwrap();
         lock.take()
@@ -115,15 +115,15 @@ impl<S> Adapter<S> {
     fn create_auth_token(
         &self,
         peer_id: PeerId,
-        req: auth::TokenConfig,
-    ) -> Result<auth::Token, auth::Error> {
-        let mut claims = auth::TokenClaims {
+        req: token::Config,
+    ) -> Result<token::Token, token::Error> {
+        let mut claims = token::TokenClaims {
             aud: self.network_id.clone(),
             iss: self.keypair.public().into(),
             sub: peer_id,
             api: req.api,
-            iat: create_timestamp(None),
-            exp: req.duration.map(|dur| create_timestamp(Some(dur))),
+            iat: token::create_timestamp(None),
+            exp: req.duration.map(|dur| token::create_timestamp(Some(dur))),
             nsp: Default::default(),
         };
 
@@ -138,9 +138,9 @@ impl<S> Adapter<S> {
                             .map(|_| auth.namespace.into())
                     })
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|_| auth::Error::NamespaceSignature)?;
+                    .map_err(|_| token::Error::NamespaceSignature)?;
             } else {
-                return Err(auth::Error::NamespaceSignature);
+                return Err(token::Error::NamespaceSignature);
             }
         }
 
@@ -229,19 +229,9 @@ pub enum Error {
     Serialization,
 }
 
-fn create_timestamp(offset: Option<Duration>) -> i64 {
-    let now = chrono::Utc::now().timestamp();
-
-    if let Some(offset) = offset {
-        now + offset.as_secs().try_into().unwrap_or(0)
-    } else {
-        now
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use {super::*, auth::TokenConfig, irn_core::Cluster};
+    use {super::*, irn_core::Cluster, token::Config};
 
     #[test]
     #[allow(clippy::redundant_clone)]
@@ -255,7 +245,7 @@ mod tests {
             cluster_view,
         };
 
-        let nonce1 = adapter1.create_auth_nonce().unwrap();
+        let nonce1 = adapter1.create_auth_nonce();
         let adapter2 = adapter1.clone();
         let nonce1_verify = adapter1.take_auth_nonce();
         let nonce2_verify = adapter2.take_auth_nonce();
@@ -285,8 +275,8 @@ mod tests {
             .to_peer_id();
 
         let token = adapter
-            .create_auth_token(client_peer_id, TokenConfig {
-                api: auth::Api::Storage,
+            .create_auth_token(client_peer_id, Config {
+                api: token::Api::Storage,
                 duration: None,
                 namespaces: Vec::new(),
             })
@@ -297,6 +287,6 @@ mod tests {
         assert_eq!(claims.network_id(), "test_network");
         assert_eq!(claims.issuer_peer_id(), adapter_peer_id);
         assert_eq!(claims.client_peer_id(), client_peer_id);
-        assert_eq!(claims.api(), auth::Api::Storage);
+        assert_eq!(claims.api(), token::Api::Storage);
     }
 }

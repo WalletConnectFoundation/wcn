@@ -1,15 +1,12 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use {
-    api::auth as ns_auth,
-    irn_rpc::{identity, Multiaddr, PeerId},
-};
+pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
+    auth::token,
     irn_rpc as rpc,
     serde::{Deserialize, Serialize},
 };
 
-pub mod auth;
 #[cfg(feature = "client")]
 pub mod client;
 pub mod domain;
@@ -24,10 +21,9 @@ pub use server::Server;
 #[serde(transparent)]
 pub struct ClusterUpdate(Vec<u8>);
 
-type CreateAuthNonce =
-    rpc::Unary<{ rpc::id(b"create_nonce") }, (), Result<ns_auth::Nonce, auth::Error>>;
+type CreateAuthNonce = rpc::Unary<{ rpc::id(b"create_nonce") }, (), auth::Nonce>;
 type CreateAuthToken =
-    rpc::Unary<{ rpc::id(b"create_auth") }, auth::TokenConfig, Result<auth::Token, auth::Error>>;
+    rpc::Unary<{ rpc::id(b"create_auth") }, token::Config, Result<token::Token, token::Error>>;
 type GetCluster = rpc::Unary<{ rpc::id(b"get_cluster") }, (), Result<ClusterUpdate, Error>>;
 type ClusterUpdates = rpc::Streaming<{ rpc::id(b"cluster_updates") }, (), ClusterUpdate>;
 

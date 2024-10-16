@@ -1,6 +1,6 @@
 use {
     admin_api::{ClusterView, NodeState},
-    api::{auth, Multiaddr},
+    api::Multiaddr,
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,

@@ -3558,6 +3558,7 @@ dependencies = [
  "humantime",
  "irn_admin_api",
  "irn_api",
+ "irn_auth",
  "irn_core",
  "irn_node",
  "irn_rpc",
@@ -3591,18 +3592,15 @@ name = "irn_api"
 version = "0.1.0"
 dependencies = [
  "async-stream",
- "data-encoding",
  "derive_more 1.0.0",
- "ed25519-dalek",
  "futures",
  "futures-util",
+ "irn_auth",
  "irn_rpc",
  "metrics",
  "postcard",
  "rand 0.8.5",
- "ring 0.17.8",
  "serde",
- "serde-big-array",
  "static_assertions",
  "tap",
  "thiserror",
@@ -3614,20 +3612,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "irn_auth"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "derive_more 1.0.0",
+ "ed25519-dalek",
+ "irn_rpc",
+ "rand 0.8.5",
+ "ring 0.17.8",
+ "serde",
+ "serde-big-array",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "irn_client_api"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
- "async-stream",
- "chrono",
- "data-encoding",
  "futures-util",
  "irn_api",
+ "irn_auth",
  "irn_core",
  "irn_rpc",
  "postcard",
  "serde",
- "serde_json",
  "sharding",
  "thiserror",
  "tokio",
@@ -3708,6 +3720,7 @@ dependencies = [
  "if-addrs 0.13.3",
  "irn_admin_api",
  "irn_api",
+ "irn_auth",
  "irn_client_api",
  "irn_core",
  "irn_rpc",

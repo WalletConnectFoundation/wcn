@@ -33,7 +33,7 @@ pub struct Config {
 
     pub auth_ttl: Duration,
 
-    pub namespaces: Vec<ns_auth::Auth>,
+    pub namespaces: Vec<auth::Auth>,
 }
 
 impl Config {
@@ -54,7 +54,7 @@ impl Config {
         self
     }
 
-    pub fn with_namespaces(mut self, namespaces: impl Into<Vec<ns_auth::Auth>>) -> Self {
+    pub fn with_namespaces(mut self, namespaces: impl Into<Vec<auth::Auth>>) -> Self {
         self.namespaces = namespaces.into();
         self
     }
@@ -67,30 +67,29 @@ impl Config {
 
 struct Inner {
     rpc_client: WithTimeouts<irn_rpc::quic::Client>,
-    namespaces: Vec<ns_auth::Auth>,
+    namespaces: Vec<auth::Auth>,
     auth_ttl: Duration,
-    auth_token: Arc<ArcSwap<auth::Token>>,
+    auth_token: Arc<ArcSwap<token::Token>>,
     cluster: Arc<ArcSwap<domain::Cluster>>,
 }
 
 impl Inner {
-    async fn refresh_auth_token(&self) -> Result<(), auth::Error> {
+    async fn refresh_auth_token(&self) -> Result<(), token::Error> {
         let nonce = CreateAuthNonce::send(&self.rpc_client, &AnyPeer, ())
             .await
-            .map_err(Error::from)?
-            .map_err(Error::Api)?;
+            .map_err(Error::from)?;
 
         let namespaces = self
             .namespaces
             .iter()
-            .map(|auth| auth::NamespaceAuth {
+            .map(|auth| token::NamespaceAuth {
                 namespace: auth.public_key(),
                 signature: auth.sign(nonce.as_ref()),
             })
             .collect();
 
-        let req = auth::TokenConfig {
-            api: auth::Api::Storage,
+        let req = token::Config {
+            api: token::Api::Storage,
             duration: Some(self.auth_ttl),
             namespaces,
         };
@@ -133,13 +132,13 @@ impl Inner {
 
 async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
     tokio::select! {
-        _ = cluster_update(inner.clone()) => {},
-        _ = auth_token_update(inner) => {},
+        _ = cluster_update(&inner) => {},
+        _ = auth_token_update(&inner) => {},
         _ = shutdown_rx => {}
     }
 }
 
-async fn cluster_update(inner: Arc<Inner>) {
+async fn cluster_update(inner: &Inner) {
     loop {
         let stream =
             ClusterUpdates::send(&inner.rpc_client, &AnyPeer, |_, rx| async move { Ok(rx) }).await;
@@ -177,7 +176,7 @@ async fn cluster_update(inner: Arc<Inner>) {
     }
 }
 
-async fn auth_token_update(inner: Arc<Inner>) {
+async fn auth_token_update(inner: &Inner) {
     // Subtract 2 minutes from the token duration to refresh it before it expires.
     let normal_delay = inner
         .auth_ttl
@@ -186,12 +185,13 @@ async fn auth_token_update(inner: Arc<Inner>) {
 
     let mut next_delay = normal_delay;
 
-    // Delay the initial refresh, since we assume the token has just been created.
+    // Delay the initial refresh, since we assume the token has just been created in
+    // the constructor.
     loop {
         tokio::time::sleep(next_delay).await;
 
         if let Err(err) = inner.refresh_auth_token().await {
-            tracing::warn!(?err, "failed to apply cluster update");
+            tracing::warn!(?err, "failed to refresh auth token");
 
             next_delay = Duration::from_secs(1);
         } else {
@@ -235,7 +235,7 @@ impl Client {
             rpc_client,
             namespaces: config.namespaces,
             auth_ttl: config.auth_ttl,
-            auth_token: Arc::new(ArcSwap::from_pointee(auth::Token::default())),
+            auth_token: Arc::new(ArcSwap::from_pointee(token::Token::default())),
             cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
         });
 
@@ -263,11 +263,11 @@ impl Client {
         self.inner.cluster.load()
     }
 
-    pub fn auth_token(&self) -> Arc<ArcSwap<auth::Token>> {
+    pub fn auth_token(&self) -> Arc<ArcSwap<token::Token>> {
         self.inner.auth_token.clone()
     }
 
-    pub fn peek_auth_token(&self) -> arc_swap::Guard<Arc<auth::Token>> {
+    pub fn peek_auth_token(&self) -> arc_swap::Guard<Arc<token::Token>> {
         self.inner.auth_token.load()
     }
 }

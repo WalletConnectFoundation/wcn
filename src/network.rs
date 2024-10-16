@@ -10,10 +10,7 @@ use {
     },
     admin_api::Server as _,
     anyerror::AnyError,
-    api::{
-        auth,
-        server::{Handshake, HandshakeData},
-    },
+    api::server::{Handshake, HandshakeData},
     client_api::Server,
     derive_more::AsRef,
     futures::{

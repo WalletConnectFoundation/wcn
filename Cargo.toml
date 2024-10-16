@@ -60,6 +60,7 @@ derive_more = { version = "1.0.0", features = [
     "deref",
 ] }
 core = { package = "irn_core", path = "crates/core" }
+auth = { package = "irn_auth", path = "crates/auth" }
 api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 admin_api = { package = "irn_admin_api", path = "crates/admin_api" }
 client_api = { package = "irn_client_api", path = "crates/client_api" }
@@ -72,6 +73,7 @@ time = "0.3"
 [dependencies]
 irn = { package = "irn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
+auth = { workspace = true }
 api = { workspace = true }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }

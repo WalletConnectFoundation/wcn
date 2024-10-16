@@ -16,13 +16,11 @@ irn_rpc = { workspace = true }
 api = { workspace = true }
 irn_core = { package = "irn_core", path = "../core" }
 sharding = { path = "../sharding" }
+auth = { workspace = true }
+
 serde = "1"
 thiserror = "1"
 tracing = "0.1"
-chrono = { version = "0.4", default-features = false, features = ["now"] }
-data-encoding = "2.6"
-serde_json = "1.0"
-async-stream = "0.3"
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync"] }
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }

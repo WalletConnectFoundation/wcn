@@ -1,5 +1,4 @@
 use {
-    super::*,
     irn_rpc::{
         identity::ed25519::{Keypair as Ed25519Keypair, PublicKey as Ed25519PublicKey},
         PeerId,
@@ -33,12 +32,12 @@ pub enum Error {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NamespaceAuth {
-    pub namespace: ns_auth::PublicKey,
-    pub signature: ns_auth::Signature,
+    pub namespace: super::PublicKey,
+    pub signature: super::Signature,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TokenConfig {
+pub struct Config {
     pub api: Api,
     pub duration: Option<Duration>,
     pub namespaces: Vec<NamespaceAuth>,
@@ -55,6 +54,10 @@ pub enum Api {
 pub struct Token(String);
 
 impl Token {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
     pub fn decode(&self) -> Result<TokenClaims, Error> {
         let mut split_iter = self.0.rsplitn(2, '.');
 
@@ -88,11 +91,13 @@ impl Token {
     }
 }
 
+/// Wrapper for [`Ed25519Keypair`] to serialize it as base64-encoded string for
+/// use in JSON token.
 #[derive(Clone, Debug)]
 pub struct PublicKey(Ed25519PublicKey);
 
-impl From<ns_auth::PublicKey> for PublicKey {
-    fn from(value: ns_auth::PublicKey) -> Self {
+impl From<super::PublicKey> for PublicKey {
+    fn from(value: super::PublicKey) -> Self {
         // Safe unwrap, since the keys are the same length.
         Self(Ed25519PublicKey::try_from_bytes(value.as_bytes()).unwrap())
     }
@@ -104,7 +109,7 @@ impl From<Ed25519PublicKey> for PublicKey {
     }
 }
 
-impl From<PublicKey> for ns_auth::PublicKey {
+impl From<PublicKey> for super::PublicKey {
     fn from(value: PublicKey) -> Self {
         value.inner().to_bytes().into()
     }
@@ -182,7 +187,7 @@ impl TokenClaims {
         }
     }
 
-    pub fn namespaces(&self) -> Vec<ns_auth::PublicKey> {
+    pub fn namespaces(&self) -> Vec<super::PublicKey> {
         self.nsp
             .iter()
             .map(|key| key.inner().to_bytes().into())
@@ -236,4 +241,14 @@ fn decode<T: DeserializeOwned>(data: &[u8]) -> Result<T, Error> {
         .map_err(|_| Error::Decoding)?;
 
     serde_json::from_slice(&data).map_err(|_| Error::Decoding)
+}
+
+pub fn create_timestamp(offset: Option<Duration>) -> i64 {
+    let now = chrono::Utc::now().timestamp();
+
+    if let Some(offset) = offset {
+        now + offset.as_secs().try_into().unwrap_or(0)
+    } else {
+        now
+    }
 }

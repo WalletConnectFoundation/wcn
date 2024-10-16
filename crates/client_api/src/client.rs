@@ -160,10 +160,20 @@ async fn cluster_update(inner: &Inner) {
 
         loop {
             match rx.recv_message().await {
-                Ok(update) => {
+                Ok(Ok(update)) => {
                     if let Err(err) = inner.apply_cluster_update(update).await {
                         tracing::warn!(?err, "failed to apply cluster update");
                     }
+                }
+
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        ?err,
+                        "failed to receive cluster update frame, resubscribing..."
+                    );
+                    // TODO: Metrics.
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    break;
                 }
 
                 Err(err) => {
@@ -321,7 +331,7 @@ impl<A> From<irn_rpc::client::Error> for Error<A> {
 
         let rpc_err = match err {
             irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
-            irn_rpc::client::Error::Rpc(err) => err,
+            irn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {

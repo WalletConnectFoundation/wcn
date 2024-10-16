@@ -65,7 +65,7 @@ impl Token {
             return Err(Error::Decoding);
         };
 
-        let mut split_iter = self.0.split('.');
+        let mut split_iter = message.split('.');
 
         let (Some(header), Some(claims), None) =
             (split_iter.next(), split_iter.next(), split_iter.next())
@@ -205,8 +205,8 @@ impl TokenClaims {
     }
 }
 
-const HEADER_TYP: &str = "";
-const HEADER_ALG: &str = "";
+const HEADER_TYP: &str = "JWT";
+const HEADER_ALG: &str = "EdDSA";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Header {

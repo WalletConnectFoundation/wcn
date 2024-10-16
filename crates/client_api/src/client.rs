@@ -29,7 +29,9 @@ pub struct Config {
     pub operation_timeout: Duration,
 
     /// [`Multiaddr`] of the API servers.
-    pub known_peers: HashSet<Multiaddr>,
+    pub nodes: HashSet<Multiaddr>,
+
+    pub api: token::Api,
 
     pub auth_ttl: Duration,
 
@@ -37,12 +39,13 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(known_peers: impl Into<HashSet<Multiaddr>>) -> Self {
+    pub fn new(nodes: impl Into<HashSet<Multiaddr>>) -> Self {
         Self {
             keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
-            known_peers: known_peers.into(),
+            nodes: nodes.into(),
+            api: token::Api::Storage,
             auth_ttl: DEFAULT_AUTH_TOKEN_TTL,
             namespaces: Default::default(),
         }
@@ -118,13 +121,14 @@ impl Inner {
     async fn apply_cluster_update(&self, update: ClusterUpdate) -> Result<(), super::Error> {
         let cluster = tokio::task::spawn_blocking(move || {
             let snapshot = postcard::from_bytes(&update.0).map_err(|_| Error::Serialization)?;
-            let cluster = domain::Cluster::from_snapshot(snapshot).map_err(Error::Cluster)?;
+            let cluster =
+                Arc::new(domain::Cluster::from_snapshot(snapshot).map_err(Error::Cluster)?);
             Ok::<_, Error<super::Error>>(cluster)
         })
         .await
         .map_err(|err| Error::Other(err.to_string()))??;
 
-        self.cluster.store(Arc::new(cluster));
+        self.cluster.store(cluster);
 
         Ok(())
     }
@@ -216,7 +220,7 @@ impl Client {
 
         let rpc_client_config = irn_rpc::client::Config {
             keypair: config.keypair,
-            known_peers: config.known_peers,
+            known_peers: config.nodes,
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
         };

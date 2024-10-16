@@ -203,6 +203,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         authorized_admin_api_clients: HashSet::new(),
         authorized_raft_candidates,
         organization: config.identity.organization,
+        network_id: config.identity.network_id,
         region: config.identity.region,
         eth_address: config.identity.eth_address,
         smart_contract: config.smart_contract.map(Into::into),

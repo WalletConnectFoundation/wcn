@@ -11,6 +11,7 @@ pub struct Identity {
     pub private_key: Keypair,
     pub region: NodeRegion,
     pub organization: String,
+    pub network_id: String,
     pub eth_address: Option<String>,
 }
 

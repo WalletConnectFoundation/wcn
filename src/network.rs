@@ -1180,7 +1180,7 @@ impl Network {
             keypair: cfg.keypair.clone(),
             operation_timeout: default_timeout,
             authorized_clients: cfg.authorized_clients.clone(),
-            network_id: "irn_mainnet".to_owned(),
+            network_id: cfg.network_id.clone(),
             cluster_view: node.consensus().cluster_view().clone(),
         };
 

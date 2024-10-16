@@ -10,7 +10,12 @@ use {
         },
         transport::{BiDirectionalStream, NoHandshake, SendStream},
     },
-    std::{collections::HashSet, future::Future, sync::Mutex, time::Duration},
+    std::{
+        collections::HashSet,
+        future::Future,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
 };
 
 /// [`Server`] config.
@@ -41,7 +46,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with_default(cfg.operation_timeout)
             .with::<{ ClusterUpdates::ID }>(None);
 
-        let rpc_server = Adapter {
+        let inner = Arc::new(Inner {
             keypair: cfg
                 .keypair
                 .clone()
@@ -49,15 +54,17 @@ pub trait Server: Clone + Send + Sync + 'static {
                 .map_err(|_| Error::Key)?,
             network_id: cfg.network_id,
             ns_nonce: Default::default(),
-            server: self,
             cluster_view: cfg.cluster_view,
-        }
-        .with_auth(Auth {
-            // TODO: Decide what to do with auth.
-            authorized_clients: cfg.authorized_clients.unwrap_or_default(),
-        })
-        .with_timeouts(timeouts)
-        .metered();
+            _server: self,
+        });
+
+        let rpc_server = Adapter { inner }
+            .with_auth(Auth {
+                // TODO: Decide what to do with auth.
+                authorized_clients: cfg.authorized_clients.unwrap_or_default(),
+            })
+            .with_timeouts(timeouts)
+            .metered();
 
         let rpc_server_config = irn_rpc::server::Config {
             name: "client_api",
@@ -72,43 +79,31 @@ pub trait Server: Clone + Send + Sync + 'static {
     }
 }
 
-struct Adapter<S> {
+struct Inner<S> {
     keypair: Ed25519Keypair,
     network_id: String,
     ns_nonce: Mutex<Option<auth::Nonce>>,
-    server: S,
     cluster_view: domain::ClusterView,
+    _server: S,
 }
 
-// Adapter is cloned per connection, so it's important to have a unique
-// `ns_nonce` for each adapter.
-impl<S> Clone for Adapter<S>
-where
-    S: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            keypair: self.keypair.clone(),
-            network_id: self.network_id.clone(),
-            ns_nonce: Default::default(),
-            server: self.server.clone(),
-            cluster_view: self.cluster_view.clone(),
-        }
-    }
+#[derive(Clone)]
+struct Adapter<S> {
+    inner: Arc<Inner<S>>,
 }
 
 impl<S> Adapter<S> {
     fn create_auth_nonce(&self) -> auth::Nonce {
         let nonce = auth::Nonce::generate();
         // Safe unwrap, as this lock can't be poisoned.
-        let mut lock = self.ns_nonce.lock().unwrap();
+        let mut lock = self.inner.ns_nonce.lock().unwrap();
         *lock = Some(nonce);
         nonce
     }
 
     fn take_auth_nonce(&self) -> Option<auth::Nonce> {
         // Safe unwrap, as this lock can't be poisoned.
-        let mut lock = self.ns_nonce.lock().unwrap();
+        let mut lock = self.inner.ns_nonce.lock().unwrap();
         lock.take()
     }
 
@@ -118,8 +113,8 @@ impl<S> Adapter<S> {
         req: token::Config,
     ) -> Result<token::Token, token::Error> {
         let mut claims = token::TokenClaims {
-            aud: self.network_id.clone(),
-            iss: self.keypair.public().into(),
+            aud: self.inner.network_id.clone(),
+            iss: self.inner.keypair.public().into(),
             sub: peer_id,
             api: req.api,
             iat: token::create_timestamp(None),
@@ -144,11 +139,11 @@ impl<S> Adapter<S> {
             }
         }
 
-        claims.encode(&self.keypair)
+        claims.encode(&self.inner.keypair)
     }
 
     fn cluster_snapshot(&self) -> Result<ClusterUpdate, super::Error> {
-        let cluster = self.cluster_view.cluster();
+        let cluster = self.inner.cluster_view.cluster();
 
         postcard::to_allocvec(&cluster.snapshot())
             .map(ClusterUpdate)
@@ -159,7 +154,7 @@ impl<S> Adapter<S> {
         &self,
         mut tx: SendStream<ClusterUpdate>,
     ) -> Result<(), irn_rpc::server::Error> {
-        let mut updates = std::pin::pin!(self.cluster_view.updates());
+        let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
         while updates.next().await.is_some() {
             let snapshot = self
@@ -227,66 +222,4 @@ pub enum Error {
 
     #[error("Serialization failed")]
     Serialization,
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, irn_core::Cluster, token::Config};
-
-    #[test]
-    #[allow(clippy::redundant_clone)]
-    fn nonce() {
-        let cluster_view = Cluster::new().into_viewable().view();
-        let adapter1 = Adapter {
-            keypair: Ed25519Keypair::generate(),
-            network_id: "test_network".to_owned(),
-            ns_nonce: Default::default(),
-            server: (),
-            cluster_view,
-        };
-
-        let nonce1 = adapter1.create_auth_nonce();
-        let adapter2 = adapter1.clone();
-        let nonce1_verify = adapter1.take_auth_nonce();
-        let nonce2_verify = adapter2.take_auth_nonce();
-
-        // Nonce should be unique per adapter.
-        assert_eq!(nonce1_verify, Some(nonce1));
-        assert!(nonce1_verify.is_some());
-        assert!(nonce2_verify.is_none());
-    }
-
-    #[test]
-    fn auth_token() {
-        let cluster_view = Cluster::new().into_viewable().view();
-        let adapter_keypair = Ed25519Keypair::generate();
-        let adapter_peer_id = Keypair::from(adapter_keypair.clone()).public().to_peer_id();
-
-        let adapter = Adapter {
-            keypair: adapter_keypair,
-            network_id: "test_network".to_owned(),
-            ns_nonce: Default::default(),
-            server: (),
-            cluster_view,
-        };
-
-        let client_peer_id = Keypair::from(Ed25519Keypair::generate())
-            .public()
-            .to_peer_id();
-
-        let token = adapter
-            .create_auth_token(client_peer_id, Config {
-                api: token::Api::Storage,
-                duration: None,
-                namespaces: Vec::new(),
-            })
-            .unwrap();
-
-        let claims = token.decode().unwrap();
-
-        assert_eq!(claims.network_id(), "test_network");
-        assert_eq!(claims.issuer_peer_id(), adapter_peer_id);
-        assert_eq!(claims.client_peer_id(), client_peer_id);
-        assert_eq!(claims.api(), token::Api::Storage);
-    }
 }

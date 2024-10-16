@@ -109,17 +109,20 @@ pub struct Config {
     /// If `None` the Raft authorization is going to be disabled.
     pub authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
 
-    // Operator config.
+    /// Operator config.
     pub eth_address: Option<String>,
 
-    // Bootstrap node config.
+    /// Bootstrap node config.
     pub smart_contract: Option<SmartContractConfig>,
 
-    // Region in which the node is being deployed.
+    /// Region in which the node is being deployed.
     pub region: NodeRegion,
 
-    // Organization that operates this node.
+    /// Organization that operates this node.
     pub organization: String,
+
+    /// Network ID. E.g. `irn_mainnet` or `irn_testnet`.
+    pub network_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -147,6 +150,7 @@ impl Config {
             keypair: raw.keypair,
             region: raw.region,
             organization: raw.organization,
+            network_id: raw.network_id,
             is_raft_voter: raw.is_raft_voter.unwrap_or_default(),
             server_addr: raw.server_addr,
             raft_server_port: raw.raft_server_port.unwrap_or(3010),
@@ -217,6 +221,7 @@ struct RawConfig {
 
     region: NodeRegion,
     organization: String,
+    network_id: String,
 
     is_raft_voter: Option<bool>,
 

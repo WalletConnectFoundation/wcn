@@ -3578,6 +3578,7 @@ dependencies = [
 name = "irn_admin_api"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "irn_rpc",
  "postcard",
  "serde",

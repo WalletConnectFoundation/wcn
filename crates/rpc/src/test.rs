@@ -36,7 +36,7 @@ impl crate::Server for Node {
                 UnaryRpc::ID => {
                     UnaryRpc::handle(stream, |req| async move {
                         assert_eq!(req, "ping".to_string());
-                        "pong".to_string()
+                        Ok("pong".to_string())
                     })
                     .await
                 }
@@ -47,7 +47,7 @@ impl crate::Server for Node {
                         while let Some(res) = rx.next().await {
                             let req = res.unwrap();
                             assert_eq!(req, "ping".to_string());
-                            tx.send("pong".to_string()).await.unwrap();
+                            tx.send(Ok("pong".to_string())).await.unwrap();
                             count += 1;
                         }
 

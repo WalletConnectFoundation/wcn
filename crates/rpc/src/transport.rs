@@ -13,9 +13,6 @@ use {
 pub struct BiDirectionalStream {
     rx: RawRecvStream,
     tx: RawSendStream,
-
-    // TODO: remove after migration
-    pub(crate) wrap_result: bool,
 }
 
 type RawSendStream = FramedWrite<quinn::SendStream, LengthDelimitedCodec>;
@@ -26,37 +23,20 @@ impl BiDirectionalStream {
         Self {
             tx: FramedWrite::new(tx, LengthDelimitedCodec::new()),
             rx: FramedRead::new(rx, LengthDelimitedCodec::new()),
-            wrap_result: false,
         }
     }
 
     pub fn upgrade<I, O>(self) -> (RecvStream<I>, SendStream<O>) {
         (
             RecvStream(Framed::new(self.rx, SymmetricalPostcard::default())),
-            if self.wrap_result {
-                SendStream::WrapResult(Framed::new(self.tx, SymmetricalPostcard::default()))
-            } else {
-                SendStream::Regular(Framed::new(self.tx, SymmetricalPostcard::default()))
-            },
+            SendStream(Framed::new(self.tx, SymmetricalPostcard::default())),
         )
     }
 }
 
 /// [`Stream`] of outbound [`Message`]s.
-// TODO: Simplify after migration
 #[pin_project(project = SendStreamProj)]
-pub enum SendStream<T> {
-    Regular(#[pin] Framed<RawSendStream, T, T, SymmetricalPostcard<T>>),
-    WrapResult(
-        #[pin]
-        Framed<
-            RawSendStream,
-            crate::Result<T>,
-            crate::Result<T>,
-            SymmetricalPostcard<crate::Result<T>>,
-        >,
-    ),
-}
+pub struct SendStream<T>(#[pin] Framed<RawSendStream, T, T, SymmetricalPostcard<T>>);
 
 impl<T: Serialize> Sink<T> for SendStream<T> {
     type Error = io::Error;
@@ -65,37 +45,25 @@ impl<T: Serialize> Sink<T> for SendStream<T> {
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        match self.project() {
-            SendStreamProj::Regular(stream) => stream.poll_ready(cx),
-            SendStreamProj::WrapResult(stream) => stream.poll_ready(cx),
-        }
+        self.project().0.poll_ready(cx)
     }
 
     fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        match self.project() {
-            SendStreamProj::Regular(stream) => stream.start_send(item),
-            SendStreamProj::WrapResult(stream) => stream.start_send(Ok(item)),
-        }
+        self.project().0.start_send(item)
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        match self.project() {
-            SendStreamProj::Regular(stream) => stream.poll_flush(cx),
-            SendStreamProj::WrapResult(stream) => stream.poll_flush(cx),
-        }
+        self.project().0.poll_flush(cx)
     }
 
     fn poll_close(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        match self.project() {
-            SendStreamProj::Regular(stream) => stream.poll_close(cx),
-            SendStreamProj::WrapResult(stream) => stream.poll_close(cx),
-        }
+        self.project().0.poll_close(cx)
     }
 }
 

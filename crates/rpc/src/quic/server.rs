@@ -124,7 +124,7 @@ where
 
         // Wait for the client to send a protocol version being used, if it timeouts
         // then client doesn't support versioning yet.
-        let protocol_version = read_protocol_version::<H::Err>(&conn)
+        let _protocol_version = read_protocol_version::<H::Err>(&conn)
             .with_timeout(Duration::from_millis(500))
             .await
             .ok()
@@ -168,8 +168,7 @@ where
                     Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
                 };
 
-                let mut stream = BiDirectionalStream::new(tx, rx);
-                stream.wrap_result = protocol_version.is_some();
+                let stream = BiDirectionalStream::new(tx, rx);
                 local_peer.handle_rpc(rpc_id, stream, &conn_info).await
             }
             .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))

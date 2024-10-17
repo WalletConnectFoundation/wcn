@@ -1,5 +1,6 @@
 use {
     super::*,
+    futures::FutureExt as _,
     irn_rpc::{
         identity::Keypair,
         middleware::Timeouts,
@@ -97,20 +98,23 @@ where
         async move {
             let _ = match id {
                 GetClusterView::ID => {
-                    GetClusterView::handle(stream, |()| self.server.get_cluster_view()).await
+                    GetClusterView::handle(stream, |()| self.server.get_cluster_view().map(Ok))
+                        .await
                 }
                 GetNodeStatus::ID => {
-                    GetNodeStatus::handle(stream, |()| self.server.get_node_status()).await
+                    GetNodeStatus::handle(stream, |()| self.server.get_node_status().map(Ok)).await
                 }
                 DecommissionNode::ID => {
                     DecommissionNode::handle(stream, |req| {
-                        self.server.decommission_node(req.id, req.force)
+                        self.server.decommission_node(req.id, req.force).map(Ok)
                     })
                     .await
                 }
                 GetMemoryProfile::ID => {
-                    GetMemoryProfile::handle(stream, |req| self.server.memory_profile(req.duration))
-                        .await
+                    GetMemoryProfile::handle(stream, |req| {
+                        self.server.memory_profile(req.duration).map(Ok)
+                    })
+                    .await
                 }
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),

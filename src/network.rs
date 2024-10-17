@@ -294,223 +294,265 @@ impl ApiServer {
 
         let _ = match id {
             api::rpc::Get::ID => {
-                api::rpc::Get::handle(stream, |req| async {
-                    let op = storage::Get {
-                        key: prepare_key(req.key, conn_info)?,
-                    };
+                api::rpc::Get::handle(stream, |req| {
+                    async {
+                        let op = storage::Get {
+                            key: prepare_key(req.key, conn_info)?,
+                        };
 
-                    coordinator
-                        .replicate(client_id, op)
-                        .map(api_result)
-                        .await
-                        .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
+                        coordinator
+                            .replicate(client_id, op)
+                            .map(api_result)
+                            .await
+                            .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::Set::ID => {
-                api::rpc::Set::handle(stream, |req| async move {
-                    if let Some(expiration) = req.expiration {
-                        let op = storage::Set {
+                api::rpc::Set::handle(stream, |req| {
+                    async move {
+                        if let Some(expiration) = req.expiration {
+                            let op = storage::Set {
+                                key: prepare_key(req.key, conn_info)?,
+                                value: req.value,
+                                expiration,
+                                version: timestamp_micros(),
+                            };
+
+                            return coordinator.replicate(client_id, op).map(api_result).await;
+                        }
+
+                        let op = storage::SetVal {
                             key: prepare_key(req.key, conn_info)?,
                             value: req.value,
-                            expiration,
                             version: timestamp_micros(),
                         };
 
-                        return coordinator.replicate(client_id, op).map(api_result).await;
+                        coordinator.replicate(client_id, op).map(api_result).await
                     }
-
-                    let op = storage::SetVal {
-                        key: prepare_key(req.key, conn_info)?,
-                        value: req.value,
-                        version: timestamp_micros(),
-                    };
-
-                    coordinator.replicate(client_id, op).map(api_result).await
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::Del::ID => {
-                api::rpc::Del::handle(stream, |req| async {
-                    let op = storage::Del {
-                        key: prepare_key(req.key, conn_info)?,
-                        version: timestamp_micros(),
-                    };
+                api::rpc::Del::handle(stream, |req| {
+                    async {
+                        let op = storage::Del {
+                            key: prepare_key(req.key, conn_info)?,
+                            version: timestamp_micros(),
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::GetExp::ID => {
-                api::rpc::GetExp::handle(stream, |req| async {
-                    let op = storage::GetExp {
-                        key: prepare_key(req.key, conn_info)?,
-                    };
+                api::rpc::GetExp::handle(stream, |req| {
+                    async {
+                        let op = storage::GetExp {
+                            key: prepare_key(req.key, conn_info)?,
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::SetExp::ID => {
-                api::rpc::SetExp::handle(stream, |req| async move {
-                    let Some(expiration) = req.expiration else {
-                        return Err(api::Error::Internal(api::InternalError {
-                            code: "invalid_request".into(),
-                            message: "`None` expiration is no longer allowed".into(),
-                        }));
-                    };
+                api::rpc::SetExp::handle(stream, |req| {
+                    async move {
+                        let Some(expiration) = req.expiration else {
+                            return Err(api::Error::Internal(api::InternalError {
+                                code: "invalid_request".into(),
+                                message: "`None` expiration is no longer allowed".into(),
+                            }));
+                        };
 
-                    let op = storage::SetExp {
-                        key: prepare_key(req.key, conn_info)?,
-                        expiration,
-                        version: timestamp_micros(),
-                    };
-
-                    coordinator.replicate(client_id, op).map(api_result).await
-                })
-                .await
-            }
-            api::rpc::HGet::ID => {
-                api::rpc::HGet::handle(stream, |req| async {
-                    let op = storage::HGet {
-                        key: prepare_key(req.key, conn_info)?,
-                        field: req.field,
-                    };
-
-                    coordinator
-                        .replicate(client_id, op)
-                        .map(api_result)
-                        .await
-                        .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
-                })
-                .await
-            }
-            api::rpc::HSet::ID => {
-                api::rpc::HSet::handle(stream, |req| async move {
-                    if let Some(expiration) = req.expiration {
-                        let op = storage::HSet {
+                        let op = storage::SetExp {
                             key: prepare_key(req.key, conn_info)?,
-                            field: req.field,
-                            value: req.value,
                             expiration,
                             version: timestamp_micros(),
                         };
 
-                        return coordinator.replicate(client_id, op).map(api_result).await;
+                        coordinator.replicate(client_id, op).map(api_result).await
                     }
+                    .map(Ok)
+                })
+                .await
+            }
+            api::rpc::HGet::ID => {
+                api::rpc::HGet::handle(stream, |req| {
+                    async {
+                        let op = storage::HGet {
+                            key: prepare_key(req.key, conn_info)?,
+                            field: req.field,
+                        };
 
-                    let op = storage::HSetVal {
-                        key: prepare_key(req.key, conn_info)?,
-                        field: req.field,
-                        value: req.value,
-                        version: timestamp_micros(),
-                    };
+                        coordinator
+                            .replicate(client_id, op)
+                            .map(api_result)
+                            .await
+                            .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
+                    }
+                    .map(Ok)
+                })
+                .await
+            }
+            api::rpc::HSet::ID => {
+                api::rpc::HSet::handle(stream, |req| {
+                    async move {
+                        if let Some(expiration) = req.expiration {
+                            let op = storage::HSet {
+                                key: prepare_key(req.key, conn_info)?,
+                                field: req.field,
+                                value: req.value,
+                                expiration,
+                                version: timestamp_micros(),
+                            };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                            return coordinator.replicate(client_id, op).map(api_result).await;
+                        }
+
+                        let op = storage::HSetVal {
+                            key: prepare_key(req.key, conn_info)?,
+                            field: req.field,
+                            value: req.value,
+                            version: timestamp_micros(),
+                        };
+
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HDel::ID => {
-                api::rpc::HDel::handle(stream, |req| async {
-                    let op = storage::HDel {
-                        key: prepare_key(req.key, conn_info)?,
-                        field: req.field,
-                        version: timestamp_micros(),
-                    };
+                api::rpc::HDel::handle(stream, |req| {
+                    async {
+                        let op = storage::HDel {
+                            key: prepare_key(req.key, conn_info)?,
+                            field: req.field,
+                            version: timestamp_micros(),
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HGetExp::ID => {
-                api::rpc::HGetExp::handle(stream, |req| async {
-                    let op = storage::HGetExp {
-                        key: prepare_key(req.key, conn_info)?,
-                        field: req.field,
-                    };
+                api::rpc::HGetExp::handle(stream, |req| {
+                    async {
+                        let op = storage::HGetExp {
+                            key: prepare_key(req.key, conn_info)?,
+                            field: req.field,
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HSetExp::ID => {
-                api::rpc::HSetExp::handle(stream, |req| async move {
-                    let Some(expiration) = req.expiration else {
-                        return Err(api::Error::Internal(api::InternalError {
-                            code: "invalid_request".into(),
-                            message: "`None` expiration is no longer allowed".into(),
-                        }));
-                    };
+                api::rpc::HSetExp::handle(stream, |req| {
+                    async move {
+                        let Some(expiration) = req.expiration else {
+                            return Err(api::Error::Internal(api::InternalError {
+                                code: "invalid_request".into(),
+                                message: "`None` expiration is no longer allowed".into(),
+                            }));
+                        };
 
-                    let op = storage::HSetExp {
-                        key: prepare_key(req.key, conn_info)?,
-                        field: req.field,
-                        expiration,
-                        version: timestamp_micros(),
-                    };
+                        let op = storage::HSetExp {
+                            key: prepare_key(req.key, conn_info)?,
+                            field: req.field,
+                            expiration,
+                            version: timestamp_micros(),
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HCard::ID => {
-                api::rpc::HCard::handle(stream, |req| async {
-                    let op = storage::HCard {
-                        key: prepare_key(req.key, conn_info)?,
-                    };
+                api::rpc::HCard::handle(stream, |req| {
+                    async {
+                        let op = storage::HCard {
+                            key: prepare_key(req.key, conn_info)?,
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HFields::ID => {
-                api::rpc::HFields::handle(stream, |req| async {
-                    let op = storage::HFields {
-                        key: prepare_key(req.key, conn_info)?,
-                    };
+                api::rpc::HFields::handle(stream, |req| {
+                    async {
+                        let op = storage::HFields {
+                            key: prepare_key(req.key, conn_info)?,
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HVals::ID => {
-                api::rpc::HVals::handle(stream, |req| async {
-                    let op = storage::HVals {
-                        key: prepare_key(req.key, conn_info)?,
-                    };
+                api::rpc::HVals::handle(stream, |req| {
+                    async {
+                        let op = storage::HVals {
+                            key: prepare_key(req.key, conn_info)?,
+                        };
 
-                    coordinator.replicate(client_id, op).map(api_result).await
+                        coordinator.replicate(client_id, op).map(api_result).await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
             api::rpc::HScan::ID => {
-                api::rpc::HScan::handle(stream, |req| async move {
-                    let op = storage::HScan {
-                        key: prepare_key(req.key, conn_info)?,
-                        count: req.count,
-                        cursor: req.cursor,
-                    };
+                api::rpc::HScan::handle(stream, |req| {
+                    async move {
+                        let op = storage::HScan {
+                            key: prepare_key(req.key, conn_info)?,
+                            count: req.count,
+                            cursor: req.cursor,
+                        };
 
-                    // Client only needs `(Vec<Value>, Option<Cursor>)`, however storage
-                    // basically returns `Vec<(Cursor, Value)>`.
-                    // TODO: Change storage return type after client api migration is done.
-                    #[derive(Debug)]
-                    struct Page(irn::replication::Page<(Cursor, Value)>);
+                        // Client only needs `(Vec<Value>, Option<Cursor>)`, however storage
+                        // basically returns `Vec<(Cursor, Value)>`.
+                        // TODO: Change storage return type after client api migration is done.
+                        #[derive(Debug)]
+                        struct Page(irn::replication::Page<(Cursor, Value)>);
 
-                    #[allow(clippy::from_over_into)]
-                    impl Into<(Vec<Value>, Option<Cursor>)> for Page {
-                        fn into(self) -> (Vec<Value>, Option<Cursor>) {
-                            let cursor = self.0.items.last().map(|t| t.0.clone());
-                            let items = self.0.items.into_iter().map(|t| t.1).collect();
-                            (items, cursor)
+                        #[allow(clippy::from_over_into)]
+                        impl Into<(Vec<Value>, Option<Cursor>)> for Page {
+                            fn into(self) -> (Vec<Value>, Option<Cursor>) {
+                                let cursor = self.0.items.last().map(|t| t.0.clone());
+                                let items = self.0.items.into_iter().map(|t| t.1).collect();
+                                (items, cursor)
+                            }
                         }
-                    }
 
-                    coordinator
-                        .replicate(client_id, op)
-                        .map_ok(|res| res.map(Page))
-                        .map(api_result)
-                        .await
+                        coordinator
+                            .replicate(client_id, op)
+                            .map_ok(|res| res.map(Page))
+                            .map(api_result)
+                            .await
+                    }
+                    .map(Ok)
                 })
                 .await
             }
@@ -554,97 +596,129 @@ impl ApiServer {
         let _ = match id {
             rpc::replica::Get::ID => {
                 rpc::replica::Get::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::Set::ID => {
                 rpc::replica::Set::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::SetVal::ID => {
                 rpc::replica::SetVal::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::Del::ID => {
                 rpc::replica::Del::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::GetExp::ID => {
                 rpc::replica::GetExp::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::SetExp::ID => {
                 rpc::replica::SetExp::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HGet::ID => {
                 rpc::replica::HGet::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HSet::ID => {
                 rpc::replica::HSet::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HSetVal::ID => {
                 rpc::replica::HSetVal::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HDel::ID => {
                 rpc::replica::HDel::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HGetExp::ID => {
                 rpc::replica::HGetExp::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HSetExp::ID => {
                 rpc::replica::HSetExp::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HCard::ID => {
                 rpc::replica::HCard::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HFields::ID => {
                 rpc::replica::HFields::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HVals::ID => {
                 rpc::replica::HVals::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
             rpc::replica::HScan::ID => {
                 rpc::replica::HScan::handle(stream, |req| {
-                    replica.handle_replication(peer_id, req.operation, req.keyspace_version)
+                    replica
+                        .handle_replication(peer_id, req.operation, req.keyspace_version)
+                        .map(Ok)
                 })
                 .await
             }
@@ -667,15 +741,15 @@ impl ApiServer {
 
             rpc::Health::ID => {
                 rpc::Health::handle(stream, |_req| async {
-                    rpc::health::HealthResponse {
+                    Ok(rpc::health::HealthResponse {
                         node_version: crate::NODE_VERSION,
-                    }
+                    })
                 })
                 .await
             }
 
             rpc::Metrics::ID => {
-                rpc::Metrics::handle(stream, |_req| async { self.prometheus.render() }).await
+                rpc::Metrics::handle(stream, |_req| async { Ok(self.prometheus.render()) }).await
             }
 
             id => {
@@ -715,7 +789,7 @@ impl ApiServer {
     async fn handle_pubsub_subscribe(
         &self,
         mut rx: RecvStream<api::Subscribe>,
-        mut tx: SendStream<api::PubsubEventPayload>,
+        mut tx: SendStream<irn_rpc::Result<api::PubsubEventPayload>>,
         _conn_info: &ConnectionInfo<HandshakeData>,
     ) -> server::Result<()> {
         let req = rx.recv_message().await?;
@@ -723,7 +797,7 @@ impl ApiServer {
         let mut subscription = self.pubsub.subscribe(req.channels);
 
         while let Some(msg) = subscription.rx.recv().await {
-            tx.send(msg).await?;
+            tx.send(Ok(msg)).await?;
         }
 
         Ok(())
@@ -733,7 +807,7 @@ impl ApiServer {
         &self,
         peer_id: &libp2p::PeerId,
         mut rx: RecvStream<rpc::migration::PullDataRequest>,
-        mut tx: SendStream<rpc::migration::PullDataResponse>,
+        mut tx: SendStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
     ) -> server::Result<()> {
         let req = rx.recv_message().await?;
 
@@ -744,8 +818,8 @@ impl ApiServer {
             .await;
 
         match resp {
-            Ok(data) => tx.send_all(&mut data.map(Ok).map(Ok)).await?,
-            Err(e) => tx.send(Err(e.into())).await?,
+            Ok(data) => tx.send_all(&mut data.map(Ok).map(Ok).map(Ok)).await?,
+            Err(e) => tx.send(Ok(Err(e.into()))).await?,
         };
 
         Ok(())
@@ -836,11 +910,16 @@ impl RaftRpcServer {
 
         let _ = match id {
             rpc::raft::AddMember::ID => {
-                rpc::raft::AddMember::handle(stream, |req| self.raft.add_member(peer_id, req)).await
+                rpc::raft::AddMember::handle(stream, |req| {
+                    self.raft.add_member(peer_id, req).map(Ok)
+                })
+                .await
             }
             rpc::raft::RemoveMember::ID => {
-                rpc::raft::RemoveMember::handle(stream, |req| self.raft.remove_member(peer_id, req))
-                    .await
+                rpc::raft::RemoveMember::handle(stream, |req| {
+                    self.raft.remove_member(peer_id, req).map(Ok)
+                })
+                .await
             }
 
             // Adding `Unauthorized` error to responses of these RPCs is total PITA, as the types
@@ -852,26 +931,34 @@ impl RaftRpcServer {
                 if !self.raft.is_member(peer_id) {
                     return;
                 }
-                rpc::raft::ProposeChange::handle(stream, |req| self.raft.propose_change(req)).await
+                rpc::raft::ProposeChange::handle(stream, |req| {
+                    self.raft.propose_change(req).map(Ok)
+                })
+                .await
             }
             rpc::raft::AppendEntries::ID => {
                 if !self.raft.is_member(peer_id) {
                     return;
                 }
-                rpc::raft::AppendEntries::handle(stream, |req| self.raft.append_entries(req)).await
+                rpc::raft::AppendEntries::handle(stream, |req| {
+                    self.raft.append_entries(req).map(Ok)
+                })
+                .await
             }
             rpc::raft::InstallSnapshot::ID => {
                 if !self.raft.is_member(peer_id) {
                     return;
                 }
-                rpc::raft::InstallSnapshot::handle(stream, |req| self.raft.install_snapshot(req))
-                    .await
+                rpc::raft::InstallSnapshot::handle(stream, |req| {
+                    self.raft.install_snapshot(req).map(Ok)
+                })
+                .await
             }
             rpc::raft::Vote::ID => {
                 if !self.raft.is_member(peer_id) {
                     return;
                 }
-                rpc::raft::Vote::handle(stream, |req| self.raft.vote(req)).await
+                rpc::raft::Vote::handle(stream, |req| self.raft.vote(req).map(Ok)).await
             }
 
             id => {

@@ -21,3 +21,4 @@ postcard = { version = "1.0", default-features = false, features = [
 snap = "1.1"
 thiserror = "1"
 tracing = "0.1"
+futures = "0.3"

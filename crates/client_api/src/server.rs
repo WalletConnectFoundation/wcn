@@ -154,7 +154,7 @@ impl<S> Adapter<S> {
 
     async fn handle_cluster_updates(
         &self,
-        mut tx: SendStream<ClusterUpdate>,
+        mut tx: SendStream<irn_rpc::Result<ClusterUpdate>>,
     ) -> Result<(), irn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
@@ -163,7 +163,7 @@ impl<S> Adapter<S> {
                 .cluster_snapshot()
                 .map_err(|err| irn_rpc::transport::Error::Other(err.to_string()))?;
 
-            tx.send(snapshot)
+            tx.send(Ok(snapshot))
                 .await
                 .map_err(|err| irn_rpc::transport::Error::IO(err.kind()))?;
         }
@@ -185,18 +185,19 @@ where
         async move {
             let _ = match id {
                 CreateAuthNonce::ID => {
-                    CreateAuthNonce::handle(stream, |_| async { self.create_auth_nonce() }).await
+                    CreateAuthNonce::handle(stream, |_| async { Ok(self.create_auth_nonce()) })
+                        .await
                 }
 
                 CreateAuthToken::ID => {
                     CreateAuthToken::handle(stream, |req| async {
-                        self.create_auth_token(conn_info.peer_id, req)
+                        Ok(self.create_auth_token(conn_info.peer_id, req))
                     })
                     .await
                 }
 
                 GetCluster::ID => {
-                    GetCluster::handle(stream, |_| async { self.cluster_snapshot() }).await
+                    GetCluster::handle(stream, |_| async { Ok(self.cluster_snapshot()) }).await
                 }
 
                 ClusterUpdates::ID => {

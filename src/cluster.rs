@@ -1,5 +1,4 @@
-use irn::cluster;
-pub use {client_api::domain::*, irn::cluster::Error};
+pub use {domain::*, irn::cluster::Error};
 
 pub type Cluster = irn::Cluster<Node, Keyspace>;
 pub type Snapshot<'a> = cluster::Snapshot<'a, Node, Keyspace>;

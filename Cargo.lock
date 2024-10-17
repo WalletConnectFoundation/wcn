@@ -3634,17 +3634,14 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "futures-util",
- "irn_api",
  "irn_auth",
- "irn_core",
+ "irn_domain",
  "irn_rpc",
  "postcard",
  "serde",
- "sharding",
  "thiserror",
  "tokio",
  "tracing",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -3698,6 +3695,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "irn_domain"
+version = "0.1.0"
+dependencies = [
+ "irn_core",
+ "irn_rpc",
+ "serde",
+ "sharding",
+ "thiserror",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "irn_node"
 version = "0.0.0"
 dependencies = [
@@ -3723,6 +3732,7 @@ dependencies = [
  "irn_auth",
  "irn_client_api",
  "irn_core",
+ "irn_domain",
  "irn_rpc",
  "itertools 0.11.0",
  "libp2p",

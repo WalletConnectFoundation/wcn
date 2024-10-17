@@ -1,6 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
-    crate::cluster::NodeRegion,
+    domain::NodeRegion,
     irn_rpc::{identity::Keypair, Multiaddr},
     libp2p::PeerId,
     serde::{de::Error, Deserialize, Deserializer},

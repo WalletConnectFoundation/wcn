@@ -13,17 +13,14 @@ server = ["irn_rpc/server"]
 
 [dependencies]
 irn_rpc = { workspace = true }
-api = { workspace = true }
-irn_core = { package = "irn_core", path = "../core" }
-sharding = { path = "../sharding" }
 auth = { workspace = true }
+domain = { workspace = true }
 
 serde = "1"
 thiserror = "1"
 tracing = "0.1"
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync"] }
-xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 postcard = { version = "1.0", default-features = false, features = [
     "alloc",
     "use-std",

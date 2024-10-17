@@ -9,6 +9,8 @@ use {
             ConnectionInfo,
         },
         transport::{BiDirectionalStream, NoHandshake, SendStream},
+        Multiaddr,
+        PeerId,
     },
     std::{
         collections::HashSet,

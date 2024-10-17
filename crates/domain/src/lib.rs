@@ -1,16 +1,9 @@
+pub use irn_core::cluster;
 use {
-    api::Multiaddr,
-    irn_core::cluster,
-    irn_rpc::PeerId,
+    irn_rpc::{Multiaddr, PeerId},
     serde::{Deserialize, Serialize},
     xxhash_rust::xxh3::Xxh3Builder,
 };
-
-#[derive(thiserror::Error, Debug, Serialize, Deserialize)]
-pub enum Error {
-    #[error("Other")]
-    Other,
-}
 
 pub type Keyspace = cluster::keyspace::Sharded<3, Xxh3Builder, ReplicationStrategy>;
 pub type Cluster = cluster::Cluster<Node, Keyspace>;

@@ -1,6 +1,5 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
     auth::token,
     irn_rpc as rpc,
@@ -9,7 +8,6 @@ use {
 
 #[cfg(feature = "client")]
 pub mod client;
-pub mod domain;
 #[cfg(feature = "client")]
 pub use client::Client;
 #[cfg(feature = "server")]

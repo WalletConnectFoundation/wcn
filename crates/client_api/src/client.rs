@@ -8,6 +8,7 @@ use {
         },
         identity::Keypair,
         transport::NoHandshake,
+        Multiaddr,
     },
     std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
     tokio::sync::oneshot,
@@ -318,7 +319,7 @@ pub enum Error<A = Infallible> {
     ClusterUpdate(String),
 
     #[error("Cluster view error: {0}")]
-    Cluster(#[from] irn_core::cluster::Error),
+    Cluster(#[from] domain::cluster::Error),
 
     /// Other error.
     #[error("Other: {0}")]

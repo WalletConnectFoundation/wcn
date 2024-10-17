@@ -104,7 +104,7 @@ impl NodeHandle {
             keyspace_version,
         };
 
-        rpc::replica::Get::send(&self.replica_api_client, addr, req)
+        rpc::replica::Get::send(&self.replica_api_client, addr, &req)
             .await
             .unwrap()
             .unwrap()
@@ -124,7 +124,7 @@ impl NodeHandle {
             keyspace_version,
         };
 
-        rpc::replica::Set::send(&self.replica_api_client, addr, req)
+        rpc::replica::Set::send(&self.replica_api_client, addr, &req)
             .await
             .unwrap()
             .unwrap()

@@ -40,28 +40,28 @@ pub struct Client<H = NoHandshake> {
 impl<H> client::Marker for Client<H> {}
 
 impl<H: Handshake> crate::Client for Client<H> {
-    fn send_rpc<Fut: Future<Output = Result<Ok>> + Send, Ok>(
-        &self,
-        addr: &Multiaddr,
+    fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
+        &'a self,
+        addr: &'a Multiaddr,
         rpc_id: RpcId,
-        f: impl FnOnce(BiDirectionalStream) -> Fut + Send,
-    ) -> impl Future<Output = Result<Ok>> + Send {
+        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.establish_stream(addr, rpc_id)
             .map_err(Into::into)
-            .and_then(|stream| f(stream).map_err(Into::into))
+            .and_then(move |stream| f(stream).map_err(Into::into))
     }
 }
 
 impl<H: Handshake> crate::Client<AnyPeer> for Client<H> {
-    fn send_rpc<Fut: Future<Output = Result<Ok>> + Send, Ok>(
-        &self,
-        _: &AnyPeer,
+    fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
+        &'a self,
+        _: &'a AnyPeer,
         rpc_id: RpcId,
-        f: impl FnOnce(BiDirectionalStream) -> Fut + Send,
-    ) -> impl Future<Output = Result<Ok>> + Send {
+        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.establish_stream_any(rpc_id)
             .map_err(Into::into)
-            .and_then(|stream| f(stream).map_err(Into::into))
+            .and_then(move |stream| f(stream).map_err(Into::into))
     }
 }
 

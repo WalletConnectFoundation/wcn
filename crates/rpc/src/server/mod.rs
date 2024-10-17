@@ -47,12 +47,12 @@ pub struct ConnectionInfo<H = ()> {
 /// RPC server.
 pub trait Server<H: Handshake = NoHandshake>: Clone + Send + Sync + 'static {
     /// Handles an inbound RPC.
-    fn handle_rpc(
-        &self,
+    fn handle_rpc<'a>(
+        &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo<H::Ok>,
-    ) -> impl Future<Output = ()> + Send;
+        conn_info: &'a ConnectionInfo<H::Ok>,
+    ) -> impl Future<Output = ()> + Send + '_;
 }
 
 /// Marker trait that should accompany [`Server`] impls in order to blanket impl
@@ -89,7 +89,7 @@ where
         let (mut rx, mut tx) = stream.upgrade::<Req, RpcResult<Resp>>();
         let req = rx.recv_message().await?;
         let resp = f(req).await;
-        tx.send(resp).await?;
+        tx.send(&resp).await?;
         Ok(())
     }
 }

@@ -900,6 +900,7 @@ impl TestCluster {
         let token = client.auth_token().load_full();
         let claims = token.decode().unwrap();
 
+        // Validate the auth token claims are correct.
         assert_eq!(claims.network_id(), NETWORK_ID);
         assert_eq!(claims.issuer_peer_id(), node_peer_id);
         assert_eq!(claims.client_peer_id(), client_id);
@@ -912,6 +913,24 @@ impl TestCluster {
                 .collect::<Vec<_>>()
         );
         assert!(!claims.is_expired());
+
+        // Spawn a couple of nodes and make sure the cluster state is updated in the
+        // client.
+        let cluster1 = client.cluster().load_full();
+
+        self.spawn_node().await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let cluster2 = client.cluster().load_full();
+        assert_ne!(cluster1.version(), cluster2.version());
+        assert_ne!(cluster1.keyspace_version(), cluster2.keyspace_version());
+
+        self.spawn_node().await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let cluster3 = client.cluster().load_full();
+        assert_ne!(cluster2.version(), cluster3.version());
+        assert_ne!(cluster2.keyspace_version(), cluster3.keyspace_version());
     }
 }
 

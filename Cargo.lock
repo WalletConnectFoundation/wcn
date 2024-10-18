@@ -3776,6 +3776,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "irn_replication"
+version = "0.1.0"
+dependencies = [
+ "derive_more 1.0.0",
+ "futures",
+ "irn_client_api",
+ "irn_core",
+ "irn_domain",
+ "irn_storage_api",
+ "smallvec",
+ "tap",
+ "thiserror",
+ "tokio",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "irn_rpc"
 version = "0.1.0"
 dependencies = [

@@ -53,7 +53,7 @@ impl From<ring::error::Unspecified> for Error {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Auth {
     sig_keypair: Arc<signature::Ed25519KeyPair>,
     encryption_key: aead::LessSafeKey,

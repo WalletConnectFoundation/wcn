@@ -316,7 +316,7 @@ impl<'a> RemoteStorage<'a> {
             cursor,
         })
         .await
-        .map_err(|err| Error::from(err))?;
+        .map_err(Error::from)?;
 
         Ok(MapPage {
             has_next: resp.records.len() >= count as usize,

@@ -463,7 +463,7 @@ impl<A: Authenticator> transport::Handshake for Handshake<A> {
                     });
                 }
                 Ok(_) => HandshakeErrorResponse::InvalidToken("Wrong PeerId".to_string()),
-                Err(err) => HandshakeErrorResponse::InvalidToken(err.to_string()),
+                Err(err) => HandshakeErrorResponse::InvalidToken(err),
             };
 
             tx.send(Err(err_resp.clone())).await?;

@@ -52,7 +52,7 @@ impl Key {
 
     /// Returns namespace of this [`Key`].
     pub fn namespace(&self) -> Option<&[u8]> {
-        match *self.0.get(0)? {
+        match *self.0.first()? {
             Self::KIND_SHARED => Some(&self.0[1..=Self::NAMESPACE_LEN + 1]),
             _ => None,
         }
@@ -65,7 +65,7 @@ impl Key {
     }
 
     fn from_raw_bytes(bytes: Vec<u8>) -> Option<Self> {
-        match *bytes.get(0)? {
+        match *bytes.first()? {
             Self::KIND_SHARED => Some(Self(bytes)),
             Self::KIND_PRIVATE if bytes.len() > Self::NAMESPACE_LEN + 1 => Some(Self(bytes)),
             _ => None,
@@ -249,6 +249,7 @@ impl From<UnixTimestampMicros> for EntryVersion {
 }
 
 impl EntryVersion {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> EntryVersion {
         Self {
             unix_timestamp_micros: std::time::SystemTime::now()

@@ -1,11 +1,6 @@
 use {
     irn::Keypair,
-    irn_api::{
-        auth::{Auth, PublicKey},
-        client,
-        Client,
-        Key,
-    },
+    irn_api::{client, Client, Key},
     irn_rpc::quic,
     std::{net::SocketAddr, str::FromStr, time::Duration},
 };
@@ -177,7 +172,7 @@ struct HValsCmd {
 }
 
 struct Storage {
-    namespace: Option<PublicKey>,
+    namespace: Option<irn_auth::PublicKey>,
     client: Client,
     encoding: Encoding,
 }
@@ -348,13 +343,13 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn initialize_namespaces(cmd: &StorageCmd) -> Result<Vec<Auth>, Error> {
+fn initialize_namespaces(cmd: &StorageCmd) -> Result<Vec<irn_auth::Auth>, Error> {
     let mut result = Vec::new();
 
     if let (Some(ns), Some(ns_secret)) = (cmd.namespace.as_deref(), cmd.namespace_secret.as_deref())
     {
-        let auth =
-            Auth::from_secret(ns_secret.as_bytes(), ns.as_bytes()).map_err(|_| Error::Namespace)?;
+        let auth = irn_auth::Auth::from_secret(ns_secret.as_bytes(), ns.as_bytes())
+            .map_err(|_| Error::Namespace)?;
 
         result.push(auth);
     }

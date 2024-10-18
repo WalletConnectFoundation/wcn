@@ -3558,6 +3558,7 @@ dependencies = [
  "humantime",
  "irn_admin_api",
  "irn_api",
+ "irn_auth",
  "irn_core",
  "irn_node",
  "irn_rpc",
@@ -3592,18 +3593,15 @@ name = "irn_api"
 version = "0.1.0"
 dependencies = [
  "async-stream",
- "data-encoding",
  "derive_more 1.0.0",
- "ed25519-dalek",
  "futures",
  "futures-util",
+ "irn_auth",
  "irn_rpc",
  "metrics",
  "postcard",
  "rand 0.8.5",
- "ring 0.17.8",
  "serde",
- "serde-big-array",
  "static_assertions",
  "tap",
  "thiserror",
@@ -3612,6 +3610,41 @@ dependencies = [
  "tryhard",
  "wc",
  "xxhash-rust",
+]
+
+[[package]]
+name = "irn_auth"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "derive_more 1.0.0",
+ "ed25519-dalek",
+ "irn_rpc",
+ "rand 0.8.5",
+ "ring 0.17.8",
+ "serde",
+ "serde-big-array",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "irn_client_api"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "futures-util",
+ "irn_auth",
+ "irn_domain",
+ "irn_rpc",
+ "postcard",
+ "rand 0.8.5",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wc",
 ]
 
 [[package]]
@@ -3665,6 +3698,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "irn_domain"
+version = "0.1.0"
+dependencies = [
+ "irn_core",
+ "irn_rpc",
+ "serde",
+ "sharding",
+ "thiserror",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "irn_node"
 version = "0.0.0"
 dependencies = [
@@ -3687,7 +3732,10 @@ dependencies = [
  "if-addrs 0.13.3",
  "irn_admin_api",
  "irn_api",
+ "irn_auth",
+ "irn_client_api",
  "irn_core",
+ "irn_domain",
  "irn_rpc",
  "itertools 0.11.0",
  "libp2p",
@@ -6042,11 +6090,12 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.115"
+version = "1.0.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
+checksum = "6ff5456707a1de34e7e37f2a6fd3d3f808c318259cbd01ab6377795054b483d8"
 dependencies = [
  "itoa",
+ "memchr",
  "ryu",
  "serde",
 ]

@@ -1,5 +1,5 @@
 use {
-    crate::{auth, HandshakeRequest, HandshakeResponse},
+    crate::{HandshakeRequest, HandshakeResponse},
     futures_util::{Future, SinkExt},
     irn_rpc::{
         quic,

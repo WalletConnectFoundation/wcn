@@ -176,12 +176,12 @@ impl<S> rpc::Server for Adapter<S>
 where
     S: Server,
 {
-    fn handle_rpc(
-        &self,
+    fn handle_rpc<'a>(
+        &'a self,
         id: rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo,
-    ) -> impl Future<Output = ()> + Send {
+        conn_info: &'a ConnectionInfo,
+    ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let _ = match id {
                 CreateAuthNonce::ID => {

@@ -34,12 +34,12 @@ impl<H: Handshake, S> Server<H> for Metered<S>
 where
     S: Server<H>,
 {
-    fn handle_rpc(
-        &self,
+    fn handle_rpc<'a>(
+        &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo<H::Ok>,
-    ) -> impl Future<Output = ()> {
+        conn_info: &'a ConnectionInfo<H::Ok>,
+    ) -> impl Future<Output = ()> + 'a {
         self.inner
             .handle_rpc(id, stream, conn_info)
             .with_metrics(future_metrics!(
@@ -69,12 +69,12 @@ where
     H: Handshake,
     S: Server<H>,
 {
-    fn handle_rpc(
-        &self,
+    fn handle_rpc<'a>(
+        &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo<H::Ok>,
-    ) -> impl Future<Output = ()> {
+        conn_info: &'a ConnectionInfo<H::Ok>,
+    ) -> impl Future<Output = ()> + 'a {
         async move {
             if let Some(timeout) = self.timeouts.get(id) {
                 let _ = self
@@ -121,12 +121,12 @@ where
     H: Handshake,
     S: Server<H>,
 {
-    fn handle_rpc(
-        &self,
+    fn handle_rpc<'a>(
+        &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo<H::Ok>,
-    ) -> impl Future<Output = ()> {
+        conn_info: &'a ConnectionInfo<H::Ok>,
+    ) -> impl Future<Output = ()> + 'a {
         async move {
             if !self.auth.authorized_clients.contains(&conn_info.peer_id) {
                 tracing::warn!(%conn_info.peer_id, "unauthorized");

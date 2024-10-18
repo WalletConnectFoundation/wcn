@@ -443,7 +443,7 @@ impl Raft {
                 let peer = self.network.get_peer(peer_id, multiaddr);
 
                 let res = async {
-                    rpc::raft::AddMember::send(&peer.client, peer.multiaddr.as_ref(), req.clone())
+                    rpc::raft::AddMember::send(&peer.client, peer.multiaddr.as_ref(), &req)
                         .await
                         .context("outbound::Error")??
                         .pipe(Ok::<_, anyhow::Error>)
@@ -732,7 +732,7 @@ impl raft::Network<TypeConfig> for Network {
 impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
     async fn add_member(&self, req: AddMemberRequest) -> AddMemberRpcResult {
         self.client
-            .send_unary::<rpc::raft::AddMember>(self.multiaddr.as_ref(), req)
+            .send_unary::<rpc::raft::AddMember>(self.multiaddr.as_ref(), &req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
@@ -740,7 +740,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 
     async fn remove_member(&self, req: RemoveMemberRequest) -> RemoveMemberRpcResult {
         self.client
-            .send_unary::<rpc::raft::RemoveMember>(self.multiaddr.as_ref(), req)
+            .send_unary::<rpc::raft::RemoveMember>(self.multiaddr.as_ref(), &req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
@@ -748,7 +748,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 
     async fn propose_change(&self, req: ProposeChangeRequest) -> ProposeChangeRpcResult {
         self.client
-            .send_unary::<rpc::raft::ProposeChange>(self.multiaddr.as_ref(), req)
+            .send_unary::<rpc::raft::ProposeChange>(self.multiaddr.as_ref(), &req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
@@ -756,7 +756,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 
     async fn append_entries(&self, req: AppendEntriesRequest) -> AppendEntriesRpcResult {
         self.client
-            .send_unary::<rpc::raft::AppendEntries>(self.multiaddr.as_ref(), req)
+            .send_unary::<rpc::raft::AppendEntries>(self.multiaddr.as_ref(), &req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
@@ -764,7 +764,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 
     async fn install_snapshot(&self, req: InstallSnapshotRequest) -> InstallSnapshotRpcResult {
         self.client
-            .send_unary::<rpc::raft::InstallSnapshot>(self.multiaddr.as_ref(), req)
+            .send_unary::<rpc::raft::InstallSnapshot>(self.multiaddr.as_ref(), &req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())
@@ -772,7 +772,7 @@ impl raft::Raft<TypeConfig, raft::RpcApi> for RemoteNode<'static> {
 
     async fn vote(&self, req: VoteRequest) -> VoteRpcResult {
         self.client
-            .send_unary::<rpc::raft::Vote>(self.multiaddr.as_ref(), req)
+            .send_unary::<rpc::raft::Vote>(self.multiaddr.as_ref(), &req)
             .await
             .map_err(|e| RpcError::Unreachable(raft::UnreachableError::new(&e)))?
             .map_err(|e| RemoteError::new(NodeId(self.id()), e).into())

@@ -82,14 +82,14 @@ impl Client {
 
     /// Gets [`ClusterView`].
     pub async fn get_cluster_view(&self) -> Result<ClusterView> {
-        GetClusterView::send(&self.rpc_client, &self.server_addr, ())
+        GetClusterView::send(&self.rpc_client, &self.server_addr, &())
             .await
             .map_err(Into::into)
     }
 
     /// Gets [`NodeStatus`].
     pub async fn get_node_status(&self) -> Result<NodeStatus, GetNodeStatusError> {
-        GetNodeStatus::send(&self.rpc_client, &self.server_addr, ())
+        GetNodeStatus::send(&self.rpc_client, &self.server_addr, &())
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)
@@ -106,7 +106,7 @@ impl Client {
     ) -> Result<(), DecommissionNodeError> {
         let req = DecommissionNodeRequest { id, force };
 
-        DecommissionNode::send(&self.rpc_client, &self.server_addr, req)
+        DecommissionNode::send(&self.rpc_client, &self.server_addr, &req)
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)
@@ -120,7 +120,7 @@ impl Client {
     ) -> Result<MemoryProfile, MemoryProfileError> {
         let req = MemoryProfileRequest { duration };
 
-        GetMemoryProfile::send(&self.rpc_client, &self.server_addr, req)
+        GetMemoryProfile::send(&self.rpc_client, &self.server_addr, &req)
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)

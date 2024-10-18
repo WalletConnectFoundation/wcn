@@ -3,6 +3,7 @@ use {
         kind,
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Error as RpcError,
+        ForceSendFuture,
         Id as RpcId,
         Message,
         Rpc,
@@ -34,52 +35,64 @@ pub struct Config<H = NoHandshake> {
 /// RPC client.
 pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends an outbound RPC.
-    fn send_rpc<Fut: Future<Output = Result<Ok>> + Send, Ok>(
-        &self,
-        addr: &A,
+    fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
+        &'a self,
+        addr: &'a A,
         rpc_id: RpcId,
-        f: impl FnOnce(BiDirectionalStream) -> Fut + Send,
-    ) -> impl Future<Output = Result<Ok>> + Send;
+        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a;
 
     /// Sends an unary RPC.
-    fn send_unary<RPC: Rpc<Kind = kind::Unary>>(
-        &self,
-        addr: &A,
-        request: RPC::Request,
-    ) -> impl Future<Output = Result<RPC::Response>> + Send {
-        self.send_rpc(addr, RPC::ID, |stream| async {
-            let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
-            tx.send(request).await?;
-            Ok(rx.recv_message().await??)
-        })
+    fn send_unary<'a, RPC: Rpc<Kind = kind::Unary>>(
+        &'a self,
+        addr: &'a A,
+        request: &'a RPC::Request,
+    ) -> impl Future<Output = Result<RPC::Response>> + Send + 'a {
+        async move {
+            self.send_rpc(addr, RPC::ID, &move |stream| async move {
+                let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
+                tx.send(request).await?;
+                Ok(rx.recv_message().await??)
+            })
+            .force_send_impl()
+            .await
+        }
     }
 
     /// Sends a streaming RPC.
-    fn send_streaming<RPC: Rpc<Kind = kind::Streaming>, Fut, Ok>(
-        &self,
-        addr: &A,
-        f: impl FnOnce(SendStream<RPC::Request>, RecvStream<RpcResult<RPC>>) -> Fut + Send,
-    ) -> impl Future<Output = Result<Ok>> + Send
+    fn send_streaming<'a, RPC: Rpc<Kind = kind::Streaming>, Fut, Ok: Send>(
+        &'a self,
+        addr: &'a A,
+        f: &'a (impl Fn(SendStream<RPC::Request>, RecvStream<RpcResult<RPC>>) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a
     where
         Fut: Future<Output = Result<Ok>> + Send,
     {
-        self.send_rpc(addr, RPC::ID, |stream| async {
-            let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
-            f(tx, rx).await.map_err(Into::into)
-        })
+        async move {
+            self.send_rpc(addr, RPC::ID, &move |stream| async move {
+                let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
+                f(tx, rx).await.map_err(Into::into)
+            })
+            .force_send_impl()
+            .await
+        }
     }
 
     /// Sends a oneshot RPC.
-    fn send_oneshot<RPC: Rpc<Kind = kind::Oneshot>>(
-        &self,
-        addr: &A,
-        msg: RPC::Request,
-    ) -> impl Future<Output = Result<()>> {
-        self.send_rpc(addr, RPC::ID, |stream| async {
-            let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
-            tx.send(msg).await?;
-            Ok(())
-        })
+    fn send_oneshot<'a, RPC: Rpc<Kind = kind::Oneshot>>(
+        &'a self,
+        addr: &'a A,
+        msg: &'a RPC::Request,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        async move {
+            self.send_rpc(addr, RPC::ID, &move |stream| async move {
+                let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+                tx.send(msg).await?;
+                Ok(())
+            })
+            .force_send_impl()
+            .await
+        }
     }
 }
 
@@ -143,7 +156,7 @@ where
     Req: Message,
     Resp: Message,
 {
-    pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, req: Req) -> Result<Resp> {
+    pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, req: &Req) -> Result<Resp> {
         client.send_unary::<Self>(addr, req).await
     }
 }
@@ -153,12 +166,16 @@ where
     Req: Message,
     Resp: Message,
 {
-    pub async fn send<A: Sync, F, Fut, Ok>(client: &impl Client<A>, addr: &A, f: F) -> Result<Ok>
+    pub fn send<'a, A: Sync, F, Fut, Ok: Send>(
+        client: &'a impl Client<A>,
+        addr: &'a A,
+        f: &'a F,
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a
     where
-        F: FnOnce(SendStream<Req>, RecvStream<RpcResult<Self>>) -> Fut + Send,
+        F: Fn(SendStream<Req>, RecvStream<RpcResult<Self>>) -> Fut + Send + Sync + 'a,
         Fut: Future<Output = Result<Ok>> + Send,
     {
-        client.send_streaming::<Self, _, _>(addr, f).await
+        client.send_streaming::<Self, _, _>(addr, f)
     }
 }
 
@@ -166,8 +183,12 @@ impl<const ID: RpcId, Msg> super::Oneshot<ID, Msg>
 where
     Msg: Message,
 {
-    pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, msg: Msg) -> Result<()> {
-        client.send_oneshot::<Self>(addr, msg).await
+    pub fn send<'a, A: Sync>(
+        client: &'a impl Client<A>,
+        addr: &'a A,
+        msg: &'a Msg,
+    ) -> impl Future<Output = Result<()>> + 'a {
+        client.send_oneshot::<Self>(addr, msg)
     }
 }
 

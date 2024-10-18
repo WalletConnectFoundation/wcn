@@ -83,7 +83,7 @@ impl Inner {
         let address = rand::seq::SliceRandom::choose(&self.nodes[..], &mut rand::thread_rng())
             .ok_or(Error::NodeNotAvailable)?;
 
-        let nonce = CreateAuthNonce::send(&self.rpc_client, address, ())
+        let nonce = CreateAuthNonce::send(&self.rpc_client, address, &())
             .await
             .map_err(Error::from)?;
 
@@ -102,7 +102,7 @@ impl Inner {
             namespaces,
         };
 
-        let token = CreateAuthToken::send(&self.rpc_client, address, req)
+        let token = CreateAuthToken::send(&self.rpc_client, address, &req)
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
@@ -113,7 +113,7 @@ impl Inner {
     }
 
     async fn update_cluster(&self) -> Result<(), super::Error> {
-        let update = GetCluster::send(&self.rpc_client, &AnyPeer, ())
+        let update = GetCluster::send(&self.rpc_client, &AnyPeer, &())
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
@@ -150,7 +150,7 @@ async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
 async fn cluster_update(inner: &Inner) {
     loop {
         let stream =
-            ClusterUpdates::send(&inner.rpc_client, &AnyPeer, |_, rx| async move { Ok(rx) }).await;
+            ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) }).await;
 
         let mut rx = match stream {
             Ok(rx) => rx,

@@ -1,7 +1,7 @@
 use {
     super::{Client, Error, Result},
-    crate::{transport::BiDirectionalStream, Id as RpcId, Name as RpcName},
-    std::{future::Future, sync::Arc},
+    crate::{transport::BiDirectionalStream, ForceSendFuture as _, Id as RpcId, Name as RpcName},
+    std::{future::Future, sync::Arc, time::Duration},
     wc::{
         future::FutureExt as _,
         metrics::{future_metrics, FutureExt as _, StringLabel},
@@ -30,12 +30,12 @@ where
     A: Sync,
     C: Client<A>,
 {
-    fn send_rpc<Fut: Future<Output = Result<Ok>> + Send, Ok>(
-        &self,
-        addr: &A,
+    fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
+        &'a self,
+        addr: &'a A,
         rpc_id: RpcId,
-        f: impl FnOnce(BiDirectionalStream) -> Fut + Send,
-    ) -> impl Future<Output = Result<Ok>> + Send {
+        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.inner
             .send_rpc(addr, rpc_id, f)
             .with_metrics(future_metrics!(
@@ -65,24 +65,95 @@ where
     A: Sync,
     C: Client<A>,
 {
-    fn send_rpc<Fut: Future<Output = Result<Ok>> + Send, Ok>(
-        &self,
-        addr: &A,
+    fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
+        &'a self,
+        addr: &'a A,
         rpc_id: RpcId,
-        f: impl FnOnce(BiDirectionalStream) -> Fut + Send,
-    ) -> impl Future<Output = Result<Ok>> + Send {
+        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         async move {
             if let Some(timeout) = self.timeouts.get(rpc_id) {
                 self.inner
                     .send_rpc(addr, rpc_id, f)
                     .with_timeout(timeout)
+                    .force_send_impl()
                     .await
                     .map_err(|_| Error::rpc(error_code::TIMEOUT))?
             } else {
-                self.inner.send_rpc(addr, rpc_id, f).await
+                self.inner.send_rpc(addr, rpc_id, f).force_send_impl().await
             }
         }
     }
 }
 
 impl<C: super::Marker> super::Marker for WithTimeouts<C> {}
+
+/// RPC client with configured RPC retries.
+#[derive(Clone, Debug)]
+pub struct WithRetries<T, R> {
+    inner: T,
+    strategy: R,
+}
+
+/// Retry strategy for [`WithRetries`] middleware.
+pub trait RetryStrategy: Clone + Send + Sync + 'static {
+    /// Specifies whether to perform an RPC retry.
+    ///
+    /// `attempts` counter starts from `1`.
+    ///
+    /// Returned [`Duration`] is going to be used as a delay before attempting
+    /// the retry. `None` means "don't retry".
+    fn requires_retry(&self, rpc_id: RpcId, error: &Error, attempt: usize) -> Option<Duration>;
+}
+
+impl<F> RetryStrategy for F
+where
+    F: Fn(RpcId, &Error, usize) -> Option<Duration> + Clone + Send + Sync + 'static,
+{
+    fn requires_retry(&self, rpc_id: RpcId, error: &Error, attempt: usize) -> Option<Duration> {
+        (self)(rpc_id, error, attempt)
+    }
+}
+
+/// Extension trait wrapping [`Client`]s with [`WithRetries`] middleware.
+pub trait WithRetriesExt: Sized {
+    /// Wraps `Self` with [`WithRetries`].
+    fn with_retries<S: RetryStrategy>(self, strategy: S) -> WithRetries<Self, S> {
+        WithRetries {
+            inner: self,
+            strategy,
+        }
+    }
+}
+
+impl<C> WithRetriesExt for C where C: super::Marker {}
+
+impl<A, C, R> Client<A> for WithRetries<C, R>
+where
+    A: Sync,
+    C: Client<A>,
+    R: RetryStrategy,
+{
+    fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
+        &'a self,
+        addr: &'a A,
+        rpc_id: RpcId,
+        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+    ) -> impl Future<Output = Result<Ok>> + Send + 'a {
+        async move {
+            let mut attempt = 1;
+            loop {
+                match self.inner.send_rpc(addr, rpc_id, f).force_send_impl().await {
+                    Ok(ok) => return Ok(ok),
+                    Err(err) => match self.strategy.requires_retry(rpc_id, &err, attempt) {
+                        Some(dur) => tokio::time::sleep(dur).force_send_impl().await,
+                        None => return Err(err),
+                    },
+                }
+                attempt += 1;
+            }
+        }
+    }
+}
+
+impl<C: super::Marker, R> super::Marker for WithRetries<C, R> {}

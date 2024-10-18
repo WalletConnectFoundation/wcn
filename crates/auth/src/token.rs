@@ -252,3 +252,86 @@ pub fn create_timestamp(offset: Option<Duration>) -> i64 {
         now
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TOKEN_AUD: &str = "test_token_aud";
+
+    fn peer_id(public_key: Ed25519PublicKey) -> PeerId {
+        irn_rpc::identity::PublicKey::from(public_key).to_peer_id()
+    }
+
+    fn create_claims() -> (Ed25519Keypair, TokenClaims) {
+        let keypair = Ed25519Keypair::generate();
+
+        let token = TokenClaims {
+            aud: TOKEN_AUD.to_owned(),
+            iss: keypair.public().into(),
+            sub: peer_id(keypair.public()),
+            api: Api::Storage,
+            iat: super::create_timestamp(None),
+            exp: None,
+            nsp: Default::default(),
+        };
+
+        (keypair, token)
+    }
+
+    #[test]
+    fn signature() {
+        let (key1, claims) = create_claims();
+        let key2 = Ed25519Keypair::generate();
+        let token1 = claims.encode(&key1).unwrap();
+        let token2 = claims.encode(&key2).unwrap();
+
+        assert!(token1.decode().is_ok());
+        assert!(matches!(token2.decode(), Err(Error::Signature)));
+    }
+
+    #[test]
+    fn claims() {
+        let (key, claims) = create_claims();
+        let token = claims.encode(&key).unwrap();
+        let claims = token.decode().unwrap();
+
+        assert_eq!(claims.issuer_peer_id(), peer_id(key.public()));
+        assert_eq!(claims.client_peer_id(), peer_id(key.public()));
+    }
+
+    #[test]
+    fn expiry() {
+        // No EXP, current IAT.
+        let (key, claims) = create_claims();
+        let token = claims.encode(&key).unwrap();
+        let claims = token.decode().unwrap();
+
+        assert!(!claims.is_expired());
+
+        // EXP in future, current IAT.
+        let (key, mut claims) = create_claims();
+        claims.exp = Some(create_timestamp(Some(Duration::from_secs(600))));
+        let token = claims.encode(&key).unwrap();
+        let claims = token.decode().unwrap();
+
+        assert!(!claims.is_expired());
+
+        // EXP in past.
+        let (key, mut claims) = create_claims();
+        claims.iat = create_timestamp(None) - 1000;
+        claims.exp = Some(claims.iat + 600);
+        let token = claims.encode(&key).unwrap();
+        let claims = token.decode().unwrap();
+
+        assert!(claims.is_expired());
+
+        // IAT in future.
+        let (key, mut claims) = create_claims();
+        claims.iat = create_timestamp(None) + 1000;
+        let token = claims.encode(&key).unwrap();
+        let claims = token.decode().unwrap();
+
+        assert!(claims.is_expired());
+    }
+}

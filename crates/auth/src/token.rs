@@ -38,14 +38,14 @@ pub struct NamespaceAuth {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    pub api: Api,
+    pub purpose: Purpose,
     pub duration: Option<Duration>,
     pub namespaces: Vec<NamespaceAuth>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Api {
+pub enum Purpose {
     Storage,
 }
 
@@ -153,7 +153,7 @@ pub struct TokenClaims {
     pub aud: String,
     pub sub: PeerId,
     pub iss: PublicKey,
-    pub api: Api,
+    pub api: Purpose,
     pub iat: i64,
     pub exp: Option<i64>,
     pub nsp: Vec<PublicKey>,
@@ -172,7 +172,7 @@ impl TokenClaims {
         self.sub
     }
 
-    pub fn api(&self) -> Api {
+    pub fn purpose(&self) -> Purpose {
         self.api
     }
 
@@ -270,7 +270,7 @@ mod tests {
             aud: TOKEN_AUD.to_owned(),
             iss: keypair.public().into(),
             sub: peer_id(keypair.public()),
-            api: Api::Storage,
+            api: Purpose::Storage,
             iat: super::create_timestamp(None),
             exp: None,
             nsp: Default::default(),

@@ -3644,6 +3644,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "wc",
 ]
 
 [[package]]

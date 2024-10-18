@@ -32,9 +32,9 @@ pub struct Config {
     /// [`Multiaddr`] of the API servers.
     pub nodes: HashSet<Multiaddr>,
 
-    pub api: token::Api,
+    pub auth_purpose: token::Purpose,
 
-    pub auth_ttl: Duration,
+    pub auth_token_ttl: Duration,
 
     pub namespaces: Vec<auth::Auth>,
 }
@@ -46,8 +46,8 @@ impl Config {
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             nodes: nodes.into(),
-            api: token::Api::Storage,
-            auth_ttl: DEFAULT_AUTH_TOKEN_TTL,
+            auth_purpose: token::Purpose::Storage,
+            auth_token_ttl: DEFAULT_AUTH_TOKEN_TTL,
             namespaces: Default::default(),
         }
     }
@@ -64,7 +64,7 @@ impl Config {
     }
 
     pub fn with_auth_ttl(mut self, ttl: Duration) -> Self {
-        self.auth_ttl = ttl;
+        self.auth_token_ttl = ttl;
         self
     }
 }
@@ -97,7 +97,7 @@ impl Inner {
             .collect();
 
         let req = token::Config {
-            api: token::Api::Storage,
+            purpose: token::Purpose::Storage,
             duration: Some(self.auth_ttl),
             namespaces,
         };
@@ -157,7 +157,9 @@ async fn cluster_update(inner: &Inner) {
 
             Err(err) => {
                 tracing::error!(?err, "failed to subscribe to any peer");
-                // TODO: Metrics.
+
+                wc::metrics::counter!("irn_client_api_cluster_connection_failed").increment(1);
+
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
@@ -169,24 +171,18 @@ async fn cluster_update(inner: &Inner) {
                     if let Err(err) = inner.apply_cluster_update(update).await {
                         tracing::warn!(?err, "failed to apply cluster update");
                     }
+
+                    wc::metrics::counter!("irn_client_api_cluster_updates").increment(1);
                 }
 
-                Ok(Err(err)) => {
+                res @ (Ok(Err(_)) | Err(_)) => {
                     tracing::warn!(
-                        ?err,
+                        ?res,
                         "failed to receive cluster update frame, resubscribing..."
                     );
-                    // TODO: Metrics.
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    break;
-                }
 
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        "failed to receive cluster update frame, resubscribing..."
-                    );
-                    // TODO: Metrics.
+                    wc::metrics::counter!("irn_client_api_cluster_updates_failed").increment(1);
+
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     break;
                 }
@@ -212,8 +208,12 @@ async fn auth_token_update(inner: &Inner) {
         if let Err(err) = inner.refresh_auth_token().await {
             tracing::warn!(?err, "failed to refresh auth token");
 
+            wc::metrics::counter!("irn_client_api_token_updates_failed").increment(1);
+
             next_delay = Duration::from_secs(1);
         } else {
+            wc::metrics::counter!("irn_client_api_token_updates").increment(1);
+
             next_delay = normal_delay;
         }
     }
@@ -229,7 +229,7 @@ pub struct Client {
 impl Client {
     /// Creates a new [`Client`].
     pub async fn new(config: Config) -> Result<Self, super::Error> {
-        if config.auth_ttl < MIN_AUTH_TOKEN_TTL {
+        if config.auth_token_ttl < MIN_AUTH_TOKEN_TTL {
             return Err(Error::TokenTtl);
         }
 
@@ -255,7 +255,7 @@ impl Client {
         let inner = Arc::new(Inner {
             rpc_client,
             namespaces: config.namespaces,
-            auth_ttl: config.auth_ttl,
+            auth_ttl: config.auth_token_ttl,
             auth_token: Arc::new(ArcSwap::from_pointee(token::Token::default())),
             cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
             nodes,

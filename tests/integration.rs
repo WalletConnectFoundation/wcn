@@ -904,7 +904,7 @@ impl TestCluster {
         assert_eq!(claims.network_id(), NETWORK_ID);
         assert_eq!(claims.issuer_peer_id(), node_peer_id);
         assert_eq!(claims.client_peer_id(), client_id);
-        assert_eq!(claims.api(), auth::token::Api::Storage);
+        assert_eq!(claims.purpose(), auth::token::Purpose::Storage);
         assert_eq!(
             claims.namespaces(),
             namespaces

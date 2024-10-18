@@ -13,6 +13,7 @@ server = ["irn_rpc/server"]
 
 [dependencies]
 irn_rpc = { workspace = true }
+wc = { workspace = true, features = ["metrics"] }
 auth = { workspace = true }
 domain = { workspace = true }
 

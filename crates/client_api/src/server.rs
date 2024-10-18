@@ -118,7 +118,7 @@ impl<S> Adapter<S> {
             aud: self.inner.network_id.clone(),
             iss: self.inner.keypair.public().into(),
             sub: peer_id,
-            api: req.api,
+            api: req.purpose,
             iat: token::create_timestamp(None),
             exp: req.duration.map(|dur| token::create_timestamp(Some(dur))),
             nsp: Default::default(),

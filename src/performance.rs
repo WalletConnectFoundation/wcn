@@ -109,7 +109,7 @@ impl<R: contract::PerformanceReporter> Tracker<R> {
         let this = &self;
         stream::iter(self.consensus.cluster().nodes().cloned())
             .map(|node| async move {
-                let res = rpc::Health::send(&this.network.client, &node.addr, ()).await;
+                let res = rpc::Health::send(&this.network.client, &node.addr, &()).await;
                 (node, res)
             })
             .buffer_unordered(100)

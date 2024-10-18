@@ -42,7 +42,7 @@ impl transport::Handshake for Handshake {
 
             let auth_nonce = auth::Nonce::generate();
 
-            tx.send(HandshakeRequest { auth_nonce }).await?;
+            tx.send(&HandshakeRequest { auth_nonce }).await?;
 
             let resp = rx
                 .recv_message()

@@ -2,7 +2,12 @@ use {
     futures::{Future, Sink, StreamExt as _},
     pin_project::pin_project,
     serde::{Deserialize, Serialize},
-    std::{convert::Infallible, io, pin::Pin, task},
+    std::{
+        convert::Infallible,
+        io,
+        pin::Pin,
+        task::{self, ready},
+    },
     tokio_serde::Framed,
     tokio_serde_postcard::SymmetricalPostcard,
     tokio_stream::Stream,
@@ -29,14 +34,56 @@ impl BiDirectionalStream {
     pub fn upgrade<I, O>(self) -> (RecvStream<I>, SendStream<O>) {
         (
             RecvStream(Framed::new(self.rx, SymmetricalPostcard::default())),
-            SendStream(Framed::new(self.tx, SymmetricalPostcard::default())),
+            SendStream {
+                inner: self.tx,
+                codec: SymmetricalPostcard::default(),
+            },
         )
     }
 }
 
 /// [`Stream`] of outbound [`Message`]s.
 #[pin_project(project = SendStreamProj)]
-pub struct SendStream<T>(#[pin] Framed<RawSendStream, T, T, SymmetricalPostcard<T>>);
+pub struct SendStream<T> {
+    #[pin]
+    inner: RawSendStream,
+    #[pin]
+    codec: SymmetricalPostcard<T>,
+}
+
+impl<T: Serialize> Sink<&T> for SendStream<T> {
+    type Error = io::Error;
+
+    fn poll_ready(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
+        self.project().inner.poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: &T) -> Result<(), Self::Error> {
+        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, item)?;
+
+        self.as_mut().project().inner.start_send(bytes)?;
+
+        Ok(())
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
+        self.project().inner.poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
+        ready!(self.as_mut().project().inner.poll_flush(cx))?;
+        self.project().inner.poll_close(cx)
+    }
+}
 
 impl<T: Serialize> Sink<T> for SendStream<T> {
     type Error = io::Error;
@@ -45,25 +92,30 @@ impl<T: Serialize> Sink<T> for SendStream<T> {
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().0.poll_ready(cx)
+        self.project().inner.poll_ready(cx)
     }
 
-    fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        self.project().0.start_send(item)
+    fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, &item)?;
+
+        self.as_mut().project().inner.start_send(bytes)?;
+
+        Ok(())
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().0.poll_flush(cx)
+        self.project().inner.poll_flush(cx)
     }
 
     fn poll_close(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().0.poll_close(cx)
+        ready!(self.as_mut().project().inner.poll_flush(cx))?;
+        self.project().inner.poll_close(cx)
     }
 }
 

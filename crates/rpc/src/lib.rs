@@ -104,8 +104,8 @@ impl Name {
 }
 
 /// Message transimitted over the network.
-pub trait Message: Serialize + for<'de> Deserialize<'de> + Unpin + Send {}
-impl<M> Message for M where M: Serialize + for<'de> Deserialize<'de> + Unpin + Send {}
+pub trait Message: Serialize + for<'de> Deserialize<'de> + Unpin + Sync + Send + 'static {}
+impl<M> Message for M where M: Serialize + for<'de> Deserialize<'de> + Unpin + Sync + Send + 'static {}
 
 /// Unary (request-response) RPC.
 pub struct Unary<const ID: Id, Req, Resp>(PhantomData<(Req, Resp)>);
@@ -176,3 +176,17 @@ impl Error {
 
 /// RPC result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+// Workaround for this compliler bug: https://github.com/rust-lang/rust/issues/100013
+// https://github.com/rust-lang/rust/issues/100013#issuecomment-2210995259
+// TODO: remove when fixed
+trait ForceSendFuture: core::future::Future {
+    fn force_send_impl(self) -> impl core::future::Future<Output = Self::Output> + Send
+    where
+        Self: Sized + Send,
+    {
+        self
+    }
+}
+
+impl<T: core::future::Future> ForceSendFuture for T {}

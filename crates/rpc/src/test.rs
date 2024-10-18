@@ -25,12 +25,12 @@ pub struct Node {
 }
 
 impl crate::Server for Node {
-    fn handle_rpc(
-        &self,
+    fn handle_rpc<'a>(
+        &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        _: &ConnectionInfo,
-    ) -> impl Future<Output = ()> + Send {
+        _: &'a ConnectionInfo,
+    ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             match id {
                 UnaryRpc::ID => {
@@ -47,7 +47,7 @@ impl crate::Server for Node {
                         while let Some(res) = rx.next().await {
                             let req = res.unwrap();
                             assert_eq!(req, "ping".to_string());
-                            tx.send(Ok("pong".to_string())).await.unwrap();
+                            tx.send(&Ok("pong".to_string())).await.unwrap();
                             count += 1;
                         }
 
@@ -139,17 +139,17 @@ async fn suite() {
 
             // unary
 
-            let res = UnaryRpc::send(client, to, "ping".to_string()).await;
+            let res = UnaryRpc::send(client, to, &"ping".to_string()).await;
             assert_eq!(res, Ok("pong".to_string()));
 
-            let res = UnaryRpc::send(client, &AnyPeer, "ping".to_string()).await;
+            let res = UnaryRpc::send(client, &AnyPeer, &"ping".to_string()).await;
             assert_eq!(res, Ok("pong".to_string()));
 
             // streaming
 
-            StreamingRpc::send(client, to, |mut tx, mut rx| async move {
+            StreamingRpc::send(client, to, &|mut tx, mut rx| async move {
                 for _ in 0..3 {
-                    tx.send("ping".to_string()).await?;
+                    tx.send(&"ping".to_string()).await?;
                     assert_eq!(rx.recv_message().await?, Ok("pong".to_string()));
                 }
                 Ok(())
@@ -159,7 +159,7 @@ async fn suite() {
 
             // oneshot
 
-            OneshotRpc::send(client, to, i as u8).await.unwrap();
+            OneshotRpc::send(client, to, &(i as u8)).await.unwrap();
         }
     }
 

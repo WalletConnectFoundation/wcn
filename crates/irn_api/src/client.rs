@@ -263,9 +263,9 @@ impl<K: Kind> Client<K> {
         // `u32::MAX`.
         let retries = u32::MAX;
 
-        tryhard::retry_fn(move || {
+        tryhard::retry_fn(|| {
             self.random_client()
-                .send_unary::<RPC>(&AnyPeer, op.clone())
+                .send_unary::<RPC>(&AnyPeer, &op)
                 .map(|res| {
                     match res {
                         Ok(Ok(out)) => Ok(out),
@@ -500,7 +500,7 @@ impl<K: Kind> Client<K> {
 
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
         self.random_client()
-            .send_oneshot::<rpc::Publish>(&AnyPeer, super::Publish { channel, message })
+            .send_oneshot::<rpc::Publish>(&AnyPeer, &super::Publish { channel, message })
             .await
             .map_err(Into::into)
     }
@@ -514,16 +514,17 @@ impl<K: Kind> Client<K> {
         Self::meter_operation_result::<super::Subscribe, _>(&Ok(()), ResultKind::Final);
 
         async_stream::stream! {
-            loop {
-                let op = super::Subscribe { channels: channels.clone() };
+            let op = &super::Subscribe { channels: channels.clone() };
 
-                let subscribe =
-                    rpc::Subscribe::send(this.random_client(), &AnyPeer, |mut tx, rx| async move {
+            loop {
+                let res =
+                    rpc::Subscribe::send(this.random_client(), &AnyPeer, &|mut tx, rx| async  move {
                         tx.send(op).await?;
                         Ok(rx)
-                    });
+                    })
+                    .await;
 
-                let mut rx = match subscribe.await {
+                let mut rx = match res {
                     Ok(rx) => rx,
                     Err(err) => {
                         tracing::error!(?err, "Failed to subscribe to any peer");
@@ -578,7 +579,7 @@ impl transport::Handshake for Handshake {
                 })
                 .collect();
 
-            tx.send(HandshakeResponse { namespaces }).await?;
+            tx.send(&HandshakeResponse { namespaces }).await?;
 
             Ok(())
         }

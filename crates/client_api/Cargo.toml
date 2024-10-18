@@ -26,3 +26,4 @@ postcard = { version = "1.0", default-features = false, features = [
     "use-std",
 ] }
 arc-swap = "1.7"
+rand = "0.8"

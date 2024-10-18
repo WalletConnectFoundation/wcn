@@ -75,11 +75,15 @@ struct Inner {
     auth_ttl: Duration,
     auth_token: Arc<ArcSwap<token::Token>>,
     cluster: Arc<ArcSwap<domain::Cluster>>,
+    nodes: Vec<Multiaddr>,
 }
 
 impl Inner {
     async fn refresh_auth_token(&self) -> Result<(), token::Error> {
-        let nonce = CreateAuthNonce::send(&self.rpc_client, &AnyPeer, ())
+        let address = rand::seq::SliceRandom::choose(&self.nodes[..], &mut rand::thread_rng())
+            .ok_or(Error::NodeNotAvailable)?;
+
+        let nonce = CreateAuthNonce::send(&self.rpc_client, address, ())
             .await
             .map_err(Error::from)?;
 
@@ -98,7 +102,7 @@ impl Inner {
             namespaces,
         };
 
-        let token = CreateAuthToken::send(&self.rpc_client, &AnyPeer, req)
+        let token = CreateAuthToken::send(&self.rpc_client, address, req)
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
@@ -229,6 +233,8 @@ impl Client {
             return Err(Error::TokenTtl);
         }
 
+        let nodes = config.nodes.iter().cloned().collect();
+
         let rpc_client_config = irn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: config.nodes,
@@ -252,6 +258,7 @@ impl Client {
             auth_ttl: config.auth_ttl,
             auth_token: Arc::new(ArcSwap::from_pointee(token::Token::default())),
             cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
+            nodes,
         });
 
         // Preload the client with initial auth token and cluster state.
@@ -320,6 +327,9 @@ pub enum Error<A = Infallible> {
 
     #[error("Cluster view error: {0}")]
     Cluster(#[from] domain::cluster::Error),
+
+    #[error("Node not available")]
+    NodeNotAvailable,
 
     /// Other error.
     #[error("Other: {0}")]

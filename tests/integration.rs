@@ -1,6 +1,6 @@
 use {
     admin_api::{ClusterView, NodeState},
-    api::{auth, Multiaddr},
+    api::Multiaddr,
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,
@@ -32,6 +32,7 @@ use {
 };
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
+const NETWORK_ID: &str = "irn_integration_tests";
 
 fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::Relaxed)
@@ -67,6 +68,8 @@ async fn test_suite() {
     cluster.test_restart_then_decommission().await;
 
     cluster.test_scaling().await;
+
+    cluster.test_client_auth().await;
 }
 
 struct NodeHandle {
@@ -83,6 +86,7 @@ struct NodeHandle {
 
     replica_api_server_addr: Multiaddr,
     coordinator_api_server_addr: Multiaddr,
+    client_api_server_addr: Multiaddr,
     admin_api_server_addr: Multiaddr,
 }
 
@@ -853,6 +857,81 @@ impl TestCluster {
             self.decommission_node(&id).await
         }
     }
+
+    async fn test_client_auth(&mut self) {
+        let node_keypair = Keypair::generate_ed25519();
+        let node_peer_id = PeerId::from_public_key(&node_keypair.public());
+
+        let client_keypair = Keypair::generate_ed25519();
+        let client_id = PeerId::from_public_key(&client_keypair.public());
+
+        let node_id = self
+            .configure_and_spawn_node(|cfg| {
+                cfg.id = node_peer_id;
+                cfg.keypair = node_keypair;
+                cfg.network_id = NETWORK_ID.to_owned();
+                cfg.authorized_clients = Some([client_id].into_iter().collect())
+            })
+            .await;
+
+        let node_addr = self.nodes[&node_id].client_api_server_addr.clone();
+
+        let namespaces = (0..2)
+            .map(|i| {
+                let auth = auth::Auth::from_secret(
+                    b"namespace_master_secret",
+                    format!("namespace{i}").as_bytes(),
+                )
+                .unwrap();
+
+                let public_key = auth.public_key();
+
+                (auth, public_key)
+            })
+            .collect::<Vec<_>>();
+
+        let client = new_client_api_client(|cfg| {
+            cfg.keypair = client_keypair;
+            cfg.nodes.insert(node_addr);
+            cfg.namespaces = namespaces.iter().map(|(auth, _)| auth.clone()).collect();
+        })
+        .await;
+
+        let token = client.auth_token().load_full();
+        let claims = token.decode().unwrap();
+
+        // Validate the auth token claims are correct.
+        assert_eq!(claims.network_id(), NETWORK_ID);
+        assert_eq!(claims.issuer_peer_id(), node_peer_id);
+        assert_eq!(claims.client_peer_id(), client_id);
+        assert_eq!(claims.purpose(), auth::token::Purpose::Storage);
+        assert_eq!(
+            claims.namespaces(),
+            namespaces
+                .iter()
+                .map(|(_, public_key)| *public_key)
+                .collect::<Vec<_>>()
+        );
+        assert!(!claims.is_expired());
+
+        // Spawn a couple of nodes and make sure the cluster state is updated in the
+        // client.
+        let cluster1 = client.cluster().load_full();
+
+        self.spawn_node().await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let cluster2 = client.cluster().load_full();
+        assert_ne!(cluster1.version(), cluster2.version());
+        assert_ne!(cluster1.keyspace_version(), cluster2.keyspace_version());
+
+        self.spawn_node().await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let cluster3 = client.cluster().load_full();
+        assert_ne!(cluster2.version(), cluster3.version());
+        assert_ne!(cluster2.keyspace_version(), cluster3.keyspace_version());
+    }
 }
 
 fn new_node_config() -> Config {
@@ -876,10 +955,12 @@ fn new_node_config() -> Config {
         id,
         region,
         organization: "WalletConnect".to_string(),
+        network_id: NETWORK_ID.to_string(),
         is_raft_voter: false,
         raft_server_port: next_port(),
         replica_api_server_port: next_port(),
         coordinator_api_server_port: next_port(),
+        client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
         replica_api_max_concurrent_connections: 500,
         replica_api_max_concurrent_rpcs: 10000,
@@ -931,12 +1012,23 @@ fn new_coordinator_api_client(f: impl FnOnce(&mut api::client::Config)) -> api::
     api::Client::new(client_config).unwrap()
 }
 
+async fn new_client_api_client(
+    f: impl FnOnce(&mut client_api::client::Config),
+) -> client_api::Client {
+    let mut config = client_api::client::Config::new([]);
+
+    f(&mut config);
+
+    client_api::Client::new(config).await.unwrap()
+}
+
 fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
     let (tx, rx) = oneshot::channel();
     let rx = rx.map(|res| res.unwrap_or(ShutdownReason::Decommission));
 
     let replica_api_server_addr = local_multiaddr(cfg.replica_api_server_port);
     let coordinator_api_server_addr = local_multiaddr(cfg.coordinator_api_server_port);
+    let client_api_server_addr = local_multiaddr(cfg.client_api_server_port);
     let admin_api_server_addr = local_multiaddr(cfg.admin_api_server_port);
 
     let coordinator_api_client = new_coordinator_api_client(|c| {
@@ -980,6 +1072,7 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
         replica_api_client,
         replica_api_server_addr,
         coordinator_api_server_addr,
+        client_api_server_addr,
         admin_api_server_addr,
     }
 }

@@ -1,0 +1,30 @@
+[package]
+name = "irn_client_api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+client = ["irn_rpc/client"]
+server = ["irn_rpc/server"]
+
+[dependencies]
+irn_rpc = { workspace = true }
+wc = { workspace = true, features = ["metrics"] }
+auth = { workspace = true }
+domain = { workspace = true }
+
+serde = "1"
+thiserror = "1"
+tracing = "0.1"
+futures-util = "0.3"
+tokio = { version = "1", features = ["sync"] }
+postcard = { version = "1.0", default-features = false, features = [
+    "alloc",
+    "use-std",
+] }
+arc-swap = "1.7"
+rand = "0.8"

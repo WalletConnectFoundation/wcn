@@ -41,6 +41,7 @@ services:
       - "3012:3012/tcp"
       - "3013:3013/udp"
       - "3014:3014/udp"
+      - "3015:3015/udp"
     environment:
       - SERVER_ADDR=
       - RAFT_SERVER_PORT=3010
@@ -48,12 +49,14 @@ services:
       - METRICS_SERVER_PORT=3012
       - REPLICA_API_SERVER_PORT=3013
       - ADMIN_API_SERVER_PORT=3014
+      - CLIENT_API_SERVER_PORT=3015
       - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
       - RAFT_DIR=/irn/raft
       - ROCKSDB_DIR=/irn/rocksdb
       - LOG_LEVEL=info,tarpc=error
       - REGION=eu
       - ORGANIZATION=WalletConnect
+      - NETWORK_ID=irn_local
       - IS_RAFT_VOTER=true
       - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
       - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY=/ip4//udp/3020/quic-v1
@@ -71,6 +74,7 @@ services:
       - "3022:3022/tcp"
       - "3023:3023/udp"
       - "3024:3024/udp"
+      - "3025:3025/udp"
     environment:
       - SERVER_ADDR=
       - RAFT_SERVER_PORT=3020
@@ -78,12 +82,14 @@ services:
       - METRICS_SERVER_PORT=3022
       - REPLICA_API_SERVER_PORT=3023
       - ADMIN_API_SERVER_PORT=3024
+      - CLIENT_API_SERVER_PORT=3025
       - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
       - RAFT_DIR=/irn/raft
       - ROCKSDB_DIR=/irn/rocksdb
       - LOG_LEVEL=info,tarpc=error
       - REGION=us
       - ORGANIZATION=WalletConnect
+      - NETWORK_ID=irn_local
       - IS_RAFT_VOTER=true
       - SECRET_KEY=aAz8/3kOkdukRmWks9/QCgiKBAm+3FnqxXE35U44t/c=
       - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4//udp/3010/quic-v1
@@ -102,6 +108,7 @@ services:
       - "3032:3032/tcp"
       - "3033:3033/udp"
       - "3034:3034/udp"
+      - "3035:3035/udp"
     environment:
       - SERVER_ADDR=
       - RAFT_SERVER_PORT=3030
@@ -109,12 +116,14 @@ services:
       - METRICS_SERVER_PORT=3032
       - REPLICA_API_SERVER_PORT=3033
       - ADMIN_API_SERVER_PORT=3034
+      - CLIENT_API_SERVER_PORT=3035
       - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
       - RAFT_DIR=/irn/raft
       - ROCKSDB_DIR=/irn/rocksdb
       - LOG_LEVEL=info,tarpc=error
       - REGION=ap
       - ORGANIZATION=WalletConnect
+      - NETWORK_ID=irn_local
       - IS_RAFT_VOTER=true
       - SECRET_KEY=Fn+92TJONBeB3ji6jd083wfPiRuZF5ScPSyhfCJy8C0=
       - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4//udp/3010/quic-v1

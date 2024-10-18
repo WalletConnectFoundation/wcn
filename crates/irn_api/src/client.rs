@@ -1,14 +1,12 @@
 pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
     crate::{
-        auth,
         rpc,
         Cursor,
         Field,
         HandshakeRequest,
         HandshakeResponse,
         Key,
-        NamespaceAuth,
         Operation,
         PubsubEventPayload,
         UnixTimestampSecs,
@@ -97,7 +95,7 @@ mod kind {
     pub struct Shadowing {
         pub(super) extra_requests: usize,
         pub(super) max_hash: u64,
-        pub(super) default_namespace: Option<super::auth::PublicKey>,
+        pub(super) default_namespace: Option<auth::PublicKey>,
     }
 }
 
@@ -122,7 +120,7 @@ pub enum Error {
     Api(super::Error),
 
     #[error("Encryption: {0:?}")]
-    Encryption(#[from] super::auth::Error),
+    Encryption(#[from] auth::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -574,7 +572,7 @@ impl transport::Handshake for Handshake {
             let namespaces = self
                 .namespaces
                 .iter()
-                .map(|(pub_key, auth)| NamespaceAuth {
+                .map(|(pub_key, auth)| auth::token::NamespaceAuth {
                     namespace: *pub_key,
                     signature: auth.sign(req.auth_nonce.as_ref()),
                 })

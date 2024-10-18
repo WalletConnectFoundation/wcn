@@ -8,12 +8,15 @@ bootstrap_nodes = []
 # region = "eu"
 # organization = "WalletConnect"
 # eth_address = "0xeD380b8da6012c20856CEc076C348AC44fA50f63"
+# network_id = "irn_mainnet"
 
 [server]
 bind_address = ""
 server_port = 3010
 client_port = 3011
 metrics_port = 3012
+auth_port = 3013
+admin_port = 3014
 warmup_delay = 45000
 
 # [[known_peers]]

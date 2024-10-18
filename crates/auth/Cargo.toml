@@ -1,0 +1,22 @@
+[package]
+name = "irn_auth"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+irn_rpc = { workspace = true }
+
+serde = "1"
+rand = "0.8"
+ring = "0.17"
+ed25519-dalek = "2.1"
+thiserror = "1"
+derive_more = { workspace = true, features = ["as_ref", "into"] }
+serde-big-array = "0.5"
+data-encoding = "2.6"
+serde_json = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["now"] }
+
+[lints]
+workspace = true

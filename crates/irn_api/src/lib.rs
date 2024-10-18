@@ -11,7 +11,6 @@ use {
 pub mod client;
 #[cfg(feature = "client")]
 pub use client::Client;
-pub mod auth;
 #[cfg(feature = "server")]
 pub mod server;
 
@@ -353,12 +352,6 @@ impl Operation for Subscribe {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NamespaceAuth {
-    pub namespace: auth::PublicKey,
-    pub signature: auth::Signature,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PubsubEventPayload {
     pub channel: Vec<u8>,
@@ -372,5 +365,5 @@ pub struct HandshakeRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HandshakeResponse {
-    pub namespaces: Vec<NamespaceAuth>,
+    pub namespaces: Vec<auth::token::NamespaceAuth>,
 }

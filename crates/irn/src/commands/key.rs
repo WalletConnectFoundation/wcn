@@ -102,14 +102,14 @@ fn validate(args: ValidateCmd) -> anyhow::Result<()> {
     let data = args.key.as_bytes();
 
     let private_key = if args.secret {
-        irn_api::auth::client_key_from_secret(data).context("Failed to expand secret into key")?
+        irn_auth::client_key_from_secret(data).context("Failed to expand secret into key")?
     } else {
-        irn_api::auth::client_key_from_bytes(data, irn_api::auth::Encoding::Base64)
+        irn_auth::client_key_from_bytes(data, irn_auth::Encoding::Base64)
             .context("Failed to decode key")?
     };
 
     let public_key = private_key.verifying_key();
-    let peer_id = irn_api::auth::peer_id(&public_key);
+    let peer_id = irn_auth::peer_id(&public_key);
 
     println!(
         "Public key: {}",

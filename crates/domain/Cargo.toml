@@ -1,0 +1,16 @@
+[package]
+name = "irn_domain"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+irn_rpc = { workspace = true }
+irn_core = { package = "irn_core", path = "../core" }
+sharding = { path = "../sharding" }
+serde = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
+thiserror = "1"
+
+[lints]
+workspace = true

@@ -11,6 +11,7 @@ pub struct Identity {
     pub private_key: Keypair,
     pub region: NodeRegion,
     pub organization: String,
+    pub network_id: String,
     pub eth_address: Option<String>,
 }
 
@@ -38,6 +39,7 @@ pub struct Server {
     pub server_port: u16,
     pub client_port: u16,
     pub raft_port: u16,
+    pub auth_port: u16,
     pub admin_port: u16,
     pub metrics_port: u16,
     pub warmup_delay: u64,

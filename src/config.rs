@@ -1,6 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
-    crate::cluster::NodeRegion,
+    domain::NodeRegion,
     irn_rpc::{identity::Keypair, Multiaddr},
     libp2p::PeerId,
     serde::{de::Error, Deserialize, Deserializer},
@@ -36,6 +36,9 @@ pub struct Config {
 
     /// Port of the coordinator API server.
     pub coordinator_api_server_port: u16,
+
+    /// Port of the client API server.
+    pub client_api_server_port: u16,
 
     /// Port of the admin API server.
     pub admin_api_server_port: u16,
@@ -106,17 +109,20 @@ pub struct Config {
     /// If `None` the Raft authorization is going to be disabled.
     pub authorized_raft_candidates: Option<HashSet<libp2p::PeerId>>,
 
-    // Operator config.
+    /// Operator config.
     pub eth_address: Option<String>,
 
-    // Bootstrap node config.
+    /// Bootstrap node config.
     pub smart_contract: Option<SmartContractConfig>,
 
-    // Region in which the node is being deployed.
+    /// Region in which the node is being deployed.
     pub region: NodeRegion,
 
-    // Organization that operates this node.
+    /// Organization that operates this node.
     pub organization: String,
+
+    /// Network ID. E.g. `irn_mainnet` or `irn_testnet`.
+    pub network_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -144,11 +150,13 @@ impl Config {
             keypair: raw.keypair,
             region: raw.region,
             organization: raw.organization,
+            network_id: raw.network_id,
             is_raft_voter: raw.is_raft_voter.unwrap_or_default(),
             server_addr: raw.server_addr,
             raft_server_port: raw.raft_server_port.unwrap_or(3010),
             replica_api_server_port: raw.replica_api_server_port.unwrap_or(3011),
             coordinator_api_server_port: raw.coordinator_api_server_port.unwrap_or(3012),
+            client_api_server_port: raw.client_api_server_port.unwrap_or(3014),
             admin_api_server_port: raw.admin_api_server_port.unwrap_or(3013),
             metrics_server_port: raw.metrics_server_port.unwrap_or(3014),
             replica_api_max_concurrent_connections: raw
@@ -213,6 +221,7 @@ struct RawConfig {
 
     region: NodeRegion,
     organization: String,
+    network_id: String,
 
     is_raft_voter: Option<bool>,
 
@@ -220,6 +229,7 @@ struct RawConfig {
     raft_server_port: Option<u16>,
     replica_api_server_port: Option<u16>,
     coordinator_api_server_port: Option<u16>,
+    client_api_server_port: Option<u16>,
     admin_api_server_port: Option<u16>,
     metrics_server_port: Option<u16>,
 

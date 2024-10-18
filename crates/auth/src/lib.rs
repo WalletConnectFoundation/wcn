@@ -13,7 +13,9 @@ use {
     std::sync::Arc,
 };
 
-pub const PUBLIC_KEY_LEN: usize = signature::ED25519_PUBLIC_KEY_LEN;
+pub mod token;
+
+pub const PUBLIC_KEY_LEN: usize = ring::signature::ED25519_PUBLIC_KEY_LEN;
 
 const INFO_CLIENT_KEY: &[u8] = b"client_auth_key";
 const INFO_NAMESPACE_KEY: &[u8] = b"namespace_auth_key";
@@ -101,7 +103,7 @@ impl Auth {
         PublicKey::try_from(self.sig_keypair.public_key().as_ref()).unwrap()
     }
 
-    pub(crate) fn seal(&self, data: Vec<u8>) -> Result<Vec<u8>, Error> {
+    pub fn seal(&self, data: Vec<u8>) -> Result<Vec<u8>, Error> {
         if data.is_empty() {
             return Ok(data);
         }
@@ -131,10 +133,7 @@ impl Auth {
         Ok(out)
     }
 
-    pub(crate) fn open_in_place<'in_out>(
-        &self,
-        data: &'in_out mut [u8],
-    ) -> Result<&'in_out [u8], Error> {
+    pub fn open_in_place<'in_out>(&self, data: &'in_out mut [u8]) -> Result<&'in_out [u8], Error> {
         if data.is_empty() {
             Ok(data)
         } else if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
@@ -149,7 +148,7 @@ impl Auth {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, AsRef)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, AsRef, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct Nonce([u8; aead::NONCE_LEN]);
 
@@ -186,6 +185,16 @@ impl PublicKey {
         signature::UnparsedPublicKey::new(&signature::ED25519, &self.0)
             .verify(data, sig.as_ref())
             .map_err(|_| Error::Signature)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; signature::ED25519_PUBLIC_KEY_LEN] {
+        &self.0
+    }
+}
+
+impl From<[u8; signature::ED25519_PUBLIC_KEY_LEN]> for PublicKey {
+    fn from(value: [u8; signature::ED25519_PUBLIC_KEY_LEN]) -> Self {
+        Self(value)
     }
 }
 

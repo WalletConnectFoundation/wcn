@@ -15,6 +15,7 @@ server = ["irn_rpc/server"]
 irn_rpc = { workspace = true}
 wc = { workspace = true, features = ["metrics", "future"] }
 metrics = { workspace = true }
+auth = { workspace = true }
 
 async-stream = "0.3"
 serde = "1"
@@ -31,11 +32,7 @@ futures = "0.3"
 derive_more = { workspace = true, features = ["as_ref", "into"] }
 tryhard = "0.5"
 rand = "0.8"
-ring = "0.17"
-serde-big-array = "0.5"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
-ed25519-dalek = "2.1"
-data-encoding = "2.6"
 
 [dev-dependencies]
 static_assertions = "1.1"

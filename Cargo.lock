@@ -3737,6 +3737,7 @@ dependencies = [
  "irn_core",
  "irn_domain",
  "irn_rpc",
+ "irn_storage_api",
  "itertools 0.11.0",
  "libp2p",
  "metrics",
@@ -3802,6 +3803,21 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "wc",
+]
+
+[[package]]
+name = "irn_storage_api"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "futures",
+ "irn_auth",
+ "irn_rpc",
+ "serde",
+ "thiserror",
+ "time",
+ "tracing",
  "wc",
 ]
 

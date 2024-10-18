@@ -1,3 +1,4 @@
+pub use token::Token;
 use {
     derive_more::AsRef,
     irn_rpc::{
@@ -52,7 +53,7 @@ impl From<ring::error::Unspecified> for Error {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Auth {
     sig_keypair: Arc<signature::Ed25519KeyPair>,
     encryption_key: aead::LessSafeKey,

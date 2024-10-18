@@ -158,15 +158,13 @@ pub enum Error<A = Infallible> {
 
 impl<A> From<irn_rpc::client::Error> for Error<A> {
     fn from(err: irn_rpc::client::Error) -> Self {
-        use irn_rpc::client::middleware::error_code;
-
         let rpc_err = match err {
             irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
             irn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {
-            error_code::TIMEOUT => Self::Timeout,
+            irn_rpc::error_code::TIMEOUT => Self::Timeout,
             _ => Self::Other(format!("{rpc_err:?}")),
         }
     }

@@ -114,7 +114,7 @@ impl<S> Adapter<S> {
         peer_id: PeerId,
         req: token::Config,
     ) -> Result<token::Token, token::Error> {
-        let mut claims = token::TokenClaims {
+        let mut claims = token::Claims {
             aud: self.inner.network_id.clone(),
             iss: self.inner.keypair.public().into(),
             sub: peer_id,

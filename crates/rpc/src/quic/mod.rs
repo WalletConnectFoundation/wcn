@@ -140,3 +140,36 @@ pub enum Error {
     #[error(transparent)]
     InvalidMultiaddr(#[from] InvalidMultiaddrError),
 }
+
+fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdError> {
+    use ExtractPeerIdError as Error;
+
+    let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
+    let certificate = identity
+        .downcast::<Vec<rustls::Certificate>>()
+        .map_err(|_| Error::DowncastPeerIdentity)?
+        .into_iter()
+        .next()
+        .ok_or(Error::MissingTlsCertificate)?;
+
+    let peer_id = libp2p_tls::certificate::parse(&certificate)
+        .map_err(Error::ParseTlsCertificate)?
+        .peer_id();
+
+    Ok(peer_id)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExtractPeerIdError {
+    #[error("Missing peer identity")]
+    MissingPeerIdentity,
+
+    #[error("Failed to downcast peer identity")]
+    DowncastPeerIdentity,
+
+    #[error("Missing TLS certificate")]
+    MissingTlsCertificate,
+
+    #[error("Failed to parse TLS certificate: {0:?}")]
+    ParseTlsCertificate(libp2p_tls::certificate::ParseError),
+}

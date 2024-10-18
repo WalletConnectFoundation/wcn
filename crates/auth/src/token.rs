@@ -58,7 +58,7 @@ impl Token {
         self.0.as_str()
     }
 
-    pub fn decode(&self) -> Result<TokenClaims, Error> {
+    pub fn decode(&self) -> Result<Claims, Error> {
         let mut split_iter = self.0.rsplitn(2, '.');
 
         let (Some(signature), Some(message)) = (split_iter.next(), split_iter.next()) else {
@@ -74,7 +74,7 @@ impl Token {
         };
 
         let header = decode::<Header>(header.as_bytes())?;
-        let claims = decode::<TokenClaims>(claims.as_bytes())?;
+        let claims = decode::<Claims>(claims.as_bytes())?;
         let signature = data_encoding::BASE64URL_NOPAD
             .decode(signature.as_bytes())
             .map_err(|_| Error::Signature)?;
@@ -149,7 +149,7 @@ impl<'de> Deserialize<'de> for PublicKey {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TokenClaims {
+pub struct Claims {
     pub aud: String,
     pub sub: PeerId,
     pub iss: PublicKey,
@@ -159,7 +159,7 @@ pub struct TokenClaims {
     pub nsp: Vec<PublicKey>,
 }
 
-impl TokenClaims {
+impl Claims {
     pub fn network_id(&self) -> &str {
         &self.aud
     }
@@ -263,10 +263,10 @@ mod tests {
         irn_rpc::identity::PublicKey::from(public_key).to_peer_id()
     }
 
-    fn create_claims() -> (Ed25519Keypair, TokenClaims) {
+    fn create_claims() -> (Ed25519Keypair, Claims) {
         let keypair = Ed25519Keypair::generate();
 
-        let token = TokenClaims {
+        let token = Claims {
             aud: TOKEN_AUD.to_owned(),
             iss: keypair.public().into(),
             sub: peer_id(keypair.public()),

@@ -5,6 +5,7 @@ use {
         quic,
         server,
         transport::{self, PendingConnection},
+        PeerId,
     },
     std::{collections::HashSet, io, sync::Arc, time::Duration},
     wc::future::FutureExt,
@@ -33,6 +34,7 @@ impl transport::Handshake for Handshake {
 
     fn handle(
         &self,
+        _peer_id: PeerId,
         conn: PendingConnection,
     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
         async move {

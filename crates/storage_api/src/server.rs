@@ -450,8 +450,11 @@ impl<A: Authenticator> transport::Handshake for Handshake<A> {
 
             let req = rx.recv_message().await?;
 
-            let err_resp = match self.authenticator.validate_access_token(&req.access_token) {
-                Ok(data) if data.client_peer_id() == peer_id => {
+            let err_resp = match self
+                .authenticator
+                .validate_access_token(&req.access_token, peer_id)
+            {
+                Ok(data) => {
                     tx.send(Ok(())).await?;
                     return Ok(HandshakeData {
                         namespaces: Arc::new(
@@ -462,7 +465,6 @@ impl<A: Authenticator> transport::Handshake for Handshake<A> {
                         ),
                     });
                 }
-                Ok(_) => HandshakeErrorResponse::InvalidToken("Wrong PeerId".to_string()),
                 Err(err) => HandshakeErrorResponse::InvalidToken(err),
             };
 
@@ -482,7 +484,11 @@ pub trait Authenticator: Clone + Send + Sync + 'static {
     fn network_id(&self) -> &str;
 
     /// Validates the provided access token.
-    fn validate_access_token(&self, token: &auth::Token) -> Result<auth::token::Claims, String> {
+    fn validate_access_token(
+        &self,
+        token: &auth::Token,
+        client_peer_id: PeerId,
+    ) -> Result<auth::token::Claims, String> {
         let claims = token.decode().map_err(|err| err.to_string())?;
 
         if claims.is_expired() {
@@ -499,6 +505,10 @@ pub trait Authenticator: Clone + Send + Sync + 'static {
 
         if !self.is_authorized_token_issuer(claims.issuer_peer_id()) {
             return Err("Unauthorized token issuer".to_string());
+        }
+
+        if claims.client_peer_id() != client_peer_id {
+            return Err("Wrong PeerId".to_string());
         }
 
         Ok(claims)

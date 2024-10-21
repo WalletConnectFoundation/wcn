@@ -35,10 +35,10 @@ pub struct Key(Vec<u8>);
 
 impl Key {
     /// Length of a [`Key`] namespace (prefix).
-    pub const NAMESPACE_LEN: usize = 32;
+    pub const NAMESPACE_LEN: usize = auth::PUBLIC_KEY_LEN;
 
-    const KIND_PRIVATE: u8 = 0;
-    const KIND_SHARED: u8 = 1;
+    const KIND_SHARED: u8 = 0;
+    const KIND_PRIVATE: u8 = 1;
 
     /// Creates a new shared [`Key`] using the global namespace.
     pub fn shared(bytes: Vec<u8>) -> Self {
@@ -46,7 +46,7 @@ impl Key {
     }
 
     /// Creates a new private [`Key`] using the provided `namespace`.
-    pub fn private(namespace: &[u8; Self::NAMESPACE_LEN], bytes: Vec<u8>) -> Self {
+    pub fn private(namespace: &auth::PublicKey, bytes: Vec<u8>) -> Self {
         Self::new(bytes, Some(namespace))
     }
 
@@ -72,7 +72,7 @@ impl Key {
         }
     }
 
-    fn new(bytes: Vec<u8>, namespace: Option<&[u8; Self::NAMESPACE_LEN]>) -> Self {
+    fn new(bytes: Vec<u8>, namespace: Option<&auth::PublicKey>) -> Self {
         let prefix_len = if namespace.is_some() {
             Self::NAMESPACE_LEN
         } else {

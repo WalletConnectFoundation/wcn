@@ -280,7 +280,7 @@ impl Client {
     }
 
     /// Publishes the provided message to the specified channel.
-    pub async fn publish(self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
+    pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
         Publish::send(&self.inner.rpc_client, &AnyPeer, &PublishRequest {
             channel,
             message,
@@ -292,7 +292,7 @@ impl Client {
     /// Subscribes to the [`SubscriptionEvent`]s of the provided `channel`s, and
     /// handles them using the provided `event_handler`.
     pub async fn subscribe<F: Future<Output = ()> + Send + Sync>(
-        self,
+        &self,
         channels: HashSet<Vec<u8>>,
         event_handler: impl Fn(SubscriptionEvent) -> F + Send + Sync,
     ) -> Result<()> {

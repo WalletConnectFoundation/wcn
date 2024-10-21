@@ -37,8 +37,8 @@ impl Key {
     /// Length of a [`Key`] namespace (prefix).
     pub const NAMESPACE_LEN: usize = auth::PUBLIC_KEY_LEN;
 
-    const KIND_PRIVATE: u8 = 0;
-    const KIND_SHARED: u8 = 1;
+    const KIND_SHARED: u8 = 0;
+    const KIND_PRIVATE: u8 = 1;
 
     /// Creates a new shared [`Key`] using the global namespace.
     pub fn shared(bytes: Vec<u8>) -> Self {

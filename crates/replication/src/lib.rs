@@ -1,4 +1,7 @@
-pub use storage_api::{self as storage, auth, identity, Multiaddr, PeerId};
+pub use {
+    client_api::SubscriptionEvent,
+    storage_api::{self as storage, auth, identity, Multiaddr, PeerId},
+};
 use {
     consistency::ReplicationResults,
     derive_more::derive::AsRef,
@@ -223,13 +226,10 @@ impl Driver {
 
     /// Publishes the provided message to the specified channel.
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
-        todo!()
-        // Publish::send(&self.rpc_client, &self.server_addr, PublishRequest {
-        //     channel,
-        //     message,
-        // })
-        // .await
-        // .map_err(Into::into)
+        self.client_api
+            .publish(channel, message)
+            .await
+            .map_err(Error::ClientApi)
     }
 
     /// Subscribes to the [`storage::SubscriptionEvent`]s of the provided
@@ -237,32 +237,12 @@ impl Driver {
     pub async fn subscribe<F: Future<Output = ()> + Send + Sync>(
         &self,
         channels: HashSet<Vec<u8>>,
-        event_handler: impl Fn(storage::SubscriptionEvent) -> F + Send + Sync,
+        event_handler: impl Fn(SubscriptionEvent) -> F + Send + Sync,
     ) -> Result<()> {
-        todo!()
-        // Subscribe::send(
-        //     &self.rpc_client,
-        //     &self.server_addr,
-        //     |mut tx, mut rx| async move {
-        //         tx.send(SubscribeRequest { channels }).await?;
-
-        //         loop {
-        //             let resp = match rx.recv_message().await {
-        //                 Ok(rpc_res) => rpc_res?,
-        //                 Err(transport::Error::StreamFinished) => return
-        // Ok(()),                 Err(err) => return Err(err.into()),
-        //             };
-
-        //             event_handler(SubscriptionEvent {
-        //                 channel: resp.channel,
-        //                 message: resp.message,
-        //             })
-        //             .await
-        //         }
-        //     },
-        // )
-        // .await
-        // .map_err(Into::into)
+        self.client_api
+            .subscribe(channels, event_handler)
+            .await
+            .map_err(Error::ClientApi)
     }
 
     async fn replicate<Op: StorageOperation>(&self, operation: Op) -> Result<Op::Output> {
@@ -311,7 +291,7 @@ async fn replication_task<Op: StorageOperation>(
 
         if let Some(res) = quorum.is_reached() {
             if let Some(channel) = result_channel.take() {
-                let _ = channel.send(res.clone().map_err(Error::Client));
+                let _ = channel.send(res.clone().map_err(Error::StorageApi));
             }
         }
     }
@@ -689,6 +669,9 @@ pub enum Error {
     #[error("Inconsistent results")]
     InconsistentResults,
 
-    #[error("Client: {_0}")]
-    Client(storage_api::client::Error),
+    #[error("Storage API: {_0}")]
+    StorageApi(storage_api::client::Error),
+
+    #[error("Client API: {_0}")]
+    ClientApi(client_api::client::Error),
 }

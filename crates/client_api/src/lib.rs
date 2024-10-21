@@ -4,6 +4,7 @@ use {
     auth::token,
     irn_rpc as rpc,
     serde::{Deserialize, Serialize},
+    std::collections::HashSet,
 };
 
 #[cfg(feature = "client")]
@@ -29,4 +30,35 @@ type ClusterUpdates = rpc::Streaming<{ rpc::id(b"cluster_updates") }, (), Cluste
 pub enum Error {
     #[error("Serialization failed")]
     Serialization,
+}
+
+/// Storage subscription event.
+#[derive(Clone, Debug)]
+pub struct SubscriptionEvent {
+    /// Channel the message has been published to.
+    pub channel: Vec<u8>,
+
+    /// Published message.
+    pub message: Vec<u8>,
+}
+
+type Publish = rpc::Oneshot<{ rpc::id(b"publish") }, PublishRequest>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PublishRequest {
+    channel: Vec<u8>,
+    message: Vec<u8>,
+}
+
+type Subscribe = rpc::Streaming<{ rpc::id(b"subscribe") }, SubscribeRequest, SubscribeResponse>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SubscribeRequest {
+    channels: HashSet<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SubscribeResponse {
+    channel: Vec<u8>,
+    message: Vec<u8>,
 }

@@ -1,6 +1,6 @@
 use {
     super::*,
-    futures::{SinkExt as _, Stream, StreamExt},
+    futures::SinkExt as _,
     irn_rpc::{
         identity::Keypair,
         middleware::Timeouts,
@@ -9,9 +9,9 @@ use {
             middleware::{MeteredExt as _, WithTimeoutsExt as _},
             ConnectionInfo,
         },
-        transport::{self, BiDirectionalStream, PendingConnection, RecvStream, SendStream},
+        transport::{self, BiDirectionalStream, PendingConnection},
     },
-    std::{collections::HashSet, future::Future, pin::pin, sync::Arc, time::Duration},
+    std::{collections::HashSet, future::Future, sync::Arc, time::Duration},
 };
 
 /// Storage namespace.
@@ -115,15 +115,6 @@ pub trait Server: Clone + Send + Sync + 'static {
         cursor: Option<Field>,
     ) -> impl Future<Output = Result<Vec<MapRecord>>> + Send;
 
-    /// Publishes the provided message to the specified channel.
-    fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> impl Future<Output = ()> + Send;
-
-    /// Subscribes to the [`SubscriptionEvent`]s of the provided `channel`s.
-    fn subscribe(
-        &self,
-        channels: HashSet<Vec<u8>>,
-    ) -> impl Future<Output = Result<impl Stream<Item = SubscriptionEvent> + Send + 'static>> + Send;
-
     /// Runs this [`Server`] using the provided [`Config`] and
     /// [`Authenticator`].
     fn serve(
@@ -131,9 +122,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         cfg: Config,
         authenticator: impl Authenticator,
     ) -> Result<impl Future<Output = ()>, quic::Error> {
-        let timeouts = Timeouts::new()
-            .with_default(cfg.operation_timeout)
-            .with::<{ Subscribe::ID }>(None);
+        let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
         let rpc_server = RpcServer { server: self }.with_timeouts(timeouts).metered();
 
@@ -323,35 +312,6 @@ impl<'a, S: Server> RpcHandler<'a, S> {
                 .collect(),
         })
     }
-
-    async fn publish(&self, req: PublishRequest) {
-        self.api_server.publish(req.channel, req.message).await;
-    }
-
-    async fn subscribe(
-        &self,
-        mut rx: RecvStream<SubscribeRequest>,
-        mut tx: SendStream<irn_rpc::Result<SubscribeResponse>>,
-    ) -> irn_rpc::server::Result<()> {
-        let req = rx.recv_message().await?;
-
-        let events = match self.api_server.subscribe(req.channels).await {
-            Ok(events) => events,
-            Err(err) => return Ok(tx.send(Err(err.into_rpc_error())).await?),
-        };
-
-        let mut events = pin!(events);
-
-        while let Some(evt) = events.next().await {
-            tx.send(Ok(SubscribeResponse {
-                channel: evt.channel,
-                message: evt.message,
-            }))
-            .await?;
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -390,11 +350,6 @@ where
                 HSetExp::ID => HSetExp::handle(stream, |req| handler.hset_exp(req)).await,
                 HCard::ID => HCard::handle(stream, |req| handler.hcard(req)).await,
                 HScan::ID => HScan::handle(stream, |req| handler.hscan(req)).await,
-
-                Publish::ID => Publish::handle(stream, |req| handler.publish(req)).await,
-                Subscribe::ID => {
-                    Subscribe::handle(stream, |rx, tx| handler.subscribe(rx, tx)).await
-                }
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),
             }

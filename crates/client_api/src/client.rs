@@ -1,16 +1,17 @@
 use {
     super::*,
     arc_swap::ArcSwap,
+    futures_util::SinkExt as _,
     irn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
         },
         identity::Keypair,
-        transport::NoHandshake,
+        transport::{self, NoHandshake},
         Multiaddr,
     },
-    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
+    std::{collections::HashSet, convert::Infallible, future::Future, sync::Arc, time::Duration},
     tokio::sync::oneshot,
 };
 
@@ -256,6 +257,7 @@ impl Client {
 
         let timeouts = Timeouts::new()
             .with_default(config.operation_timeout)
+            .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
         let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
@@ -287,6 +289,54 @@ impl Client {
             inner,
             _shutdown_tx: Arc::new(shutdown_tx),
         })
+    }
+
+    /// Publishes the provided message to the specified channel.
+    pub async fn publish(self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
+        Publish::send(&self.inner.rpc_client, &AnyPeer, &PublishRequest {
+            channel,
+            message,
+        })
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Subscribes to the [`SubscriptionEvent`]s of the provided `channel`s, and
+    /// handles them using the provided `event_handler`.
+    pub async fn subscribe<F: Future<Output = ()> + Send + Sync>(
+        self,
+        channels: HashSet<Vec<u8>>,
+        event_handler: impl Fn(SubscriptionEvent) -> F + Send + Sync,
+    ) -> Result<()> {
+        let channels = &channels;
+        let event_handler = &event_handler;
+
+        Subscribe::send(
+            &self.inner.rpc_client,
+            &AnyPeer,
+            &|mut tx, mut rx| async move {
+                tx.send(SubscribeRequest {
+                    channels: channels.clone(),
+                })
+                .await?;
+
+                loop {
+                    let resp = match rx.recv_message().await {
+                        Ok(rpc_res) => rpc_res?,
+                        Err(transport::Error::StreamFinished) => return Ok(()),
+                        Err(err) => return Err(err.into()),
+                    };
+
+                    event_handler(SubscriptionEvent {
+                        channel: resp.channel,
+                        message: resp.message,
+                    })
+                    .await
+                }
+            },
+        )
+        .await
+        .map_err(Into::into)
     }
 
     pub fn cluster(&self) -> Arc<ArcSwap<domain::Cluster>> {

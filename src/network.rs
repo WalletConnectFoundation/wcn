@@ -837,10 +837,12 @@ struct ClientApiServer {
 
 impl client_api::Server for ClientApiServer {
     fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> impl Future<Output = ()> + Send {
-        future::ready(self.pubsub.publish(api::PubsubEventPayload {
+        self.pubsub.publish(api::PubsubEventPayload {
             channel,
             payload: message,
-        }))
+        });
+
+        future::ready(())
     }
 
     fn subscribe(

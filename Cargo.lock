@@ -3745,6 +3745,7 @@ dependencies = [
  "nix 0.28.0",
  "once_cell",
  "parking_lot",
+ "pin-project",
  "postcard",
  "proc-mounts",
  "raft",

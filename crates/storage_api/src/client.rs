@@ -84,9 +84,7 @@ impl Client {
             connection_timeout: config.connection_timeout,
         };
 
-        let timeouts = Timeouts::new()
-            .with_default(config.operation_timeout)
-            .with::<{ Subscribe::ID }>(None);
+        let timeouts = Timeouts::new().with_default(config.operation_timeout);
 
         let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
@@ -112,16 +110,11 @@ struct RetryStrategy;
 impl middleware::RetryStrategy for RetryStrategy {
     fn requires_retry(
         &self,
-        rpc_id: irn_rpc::Id,
+        _rpc_id: irn_rpc::Id,
         error: &irn_rpc::client::Error,
         attempt: usize,
     ) -> Option<Duration> {
         use crate::error_code;
-
-        // These RPCs are non-retryable
-        if let Publish::ID | Subscribe::ID = rpc_id {
-            return None;
-        }
 
         let rpc_error = match error {
             irn_rpc::client::Error::Transport(_) => return Some(Duration::from_millis(50)),
@@ -331,54 +324,6 @@ impl<'a> RemoteStorage<'a> {
                 })
                 .collect(),
         })
-    }
-
-    /// Publishes the provided message to the specified channel.
-    pub async fn publish(self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
-        Publish::send(self.rpc_client(), self.server_addr, &PublishRequest {
-            channel,
-            message,
-        })
-        .await
-        .map_err(Into::into)
-    }
-
-    /// Subscribes to the [`SubscriptionEvent`]s of the provided `channel`s, and
-    /// handles them using the provided `event_handler`.
-    pub async fn subscribe<F: Future<Output = ()> + Send + Sync>(
-        self,
-        channels: HashSet<Vec<u8>>,
-        event_handler: impl Fn(SubscriptionEvent) -> F + Send + Sync,
-    ) -> Result<()> {
-        let channels = &channels;
-        let event_handler = &event_handler;
-
-        Subscribe::send(
-            self.rpc_client(),
-            self.server_addr,
-            &|mut tx, mut rx| async move {
-                tx.send(SubscribeRequest {
-                    channels: channels.clone(),
-                })
-                .await?;
-
-                loop {
-                    let resp = match rx.recv_message().await {
-                        Ok(rpc_res) => rpc_res?,
-                        Err(transport::Error::StreamFinished) => return Ok(()),
-                        Err(err) => return Err(err.into()),
-                    };
-
-                    event_handler(SubscriptionEvent {
-                        channel: resp.channel,
-                        message: resp.message,
-                    })
-                    .await
-                }
-            },
-        )
-        .await
-        .map_err(Into::into)
     }
 }
 

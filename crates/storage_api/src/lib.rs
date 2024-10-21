@@ -4,7 +4,7 @@ pub use irn_rpc::{identity, Multiaddr, PeerId};
 use {
     irn_rpc::{self as rpc, transport},
     serde::{Deserialize, Serialize},
-    std::{collections::HashSet, io, time::Duration},
+    std::{io, time::Duration},
     time::OffsetDateTime as DateTime,
 };
 
@@ -292,16 +292,6 @@ impl Record {
     }
 }
 
-/// Storage subscription event.
-#[derive(Clone, Debug)]
-pub struct SubscriptionEvent {
-    /// Channel the message has been published to.
-    pub channel: Vec<u8>,
-
-    /// Published message.
-    pub message: Vec<u8>,
-}
-
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct UnixTimestampSecs(u64);
 
@@ -457,27 +447,6 @@ struct HScanResponseRecord {
     value: Value,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
-}
-
-type Publish = rpc::Oneshot<{ rpc::id(b"publish") }, PublishRequest>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct PublishRequest {
-    channel: Vec<u8>,
-    message: Vec<u8>,
-}
-
-type Subscribe = rpc::Streaming<{ rpc::id(b"subscribe") }, SubscribeRequest, SubscribeResponse>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SubscribeRequest {
-    channels: HashSet<Vec<u8>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SubscribeResponse {
-    channel: Vec<u8>,
-    message: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

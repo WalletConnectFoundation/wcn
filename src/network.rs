@@ -19,6 +19,7 @@ use {
         Future,
         FutureExt,
         SinkExt,
+        Stream,
         StreamExt,
         TryFutureExt,
     },
@@ -44,6 +45,7 @@ use {
     },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
+    pin_project::{pin_project, pinned_drop},
     raft::Raft,
     relay_rocks::{db::migration::ExportItem, util::timestamp_micros, StorageError},
     std::{
@@ -51,6 +53,7 @@ use {
         collections::{HashMap, HashSet},
         fmt::{self, Debug},
         io,
+        pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
     },
@@ -828,9 +831,35 @@ impl ApiServer {
 }
 
 #[derive(Clone)]
-struct ClientApiServer;
+struct ClientApiServer {
+    pubsub: Pubsub,
+}
 
-impl client_api::server::Server for ClientApiServer {}
+impl client_api::Server for ClientApiServer {
+    fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> impl Future<Output = ()> + Send {
+        future::ready(self.pubsub.publish(api::PubsubEventPayload {
+            channel,
+            payload: message,
+        }))
+    }
+
+    fn subscribe(
+        &self,
+        channels: HashSet<Vec<u8>>,
+    ) -> impl Future<
+        Output = client_api::server::Result<
+            impl stream::Stream<Item = client_api::SubscriptionEvent> + Send + 'static,
+        >,
+    > + Send {
+        self.pubsub
+            .subscribe(channels)
+            .map(|payload| client_api::SubscriptionEvent {
+                channel: payload.channel,
+                message: payload.payload,
+            })
+            .pipe(future::ok)
+    }
+}
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum PullDataError {
@@ -1243,9 +1272,11 @@ impl Network {
 
         let node = Arc::new(node);
 
+        let pubsub = Pubsub::new();
+
         let server = ApiServer {
             node: node.clone(),
-            pubsub: Pubsub::new(),
+            pubsub: pubsub.clone(),
             prometheus,
         }
         .with_timeouts(rpc_timeouts)
@@ -1260,7 +1291,7 @@ impl Network {
             cluster_view: node.consensus().cluster_view().clone(),
         };
 
-        let client_api_server = ClientApiServer.serve(client_api_cfg)?;
+        let client_api_server = ClientApiServer { pubsub }.serve(client_api_cfg)?;
 
         let admin_api_server = AdminApiServer {
             node,
@@ -1510,15 +1541,29 @@ struct Subscriber {
     tx: mpsc::Sender<api::PubsubEventPayload>,
 }
 
+#[pin_project(PinnedDrop)]
 struct Subscription {
     id: u64,
     pubsub: Pubsub,
 
+    #[pin]
     rx: mpsc::Receiver<api::PubsubEventPayload>,
 }
 
-impl Drop for Subscription {
-    fn drop(&mut self) {
+impl Stream for Subscription {
+    type Item = api::PubsubEventPayload;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.project().rx.poll_recv(cx)
+    }
+}
+
+#[pinned_drop]
+impl PinnedDrop for Subscription {
+    fn drop(self: Pin<&mut Self>) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
         let _ = self

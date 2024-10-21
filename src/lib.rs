@@ -62,7 +62,7 @@ pub enum Error {
     ApiServer(#[from] api::Error),
 
     #[error("Failed to start Client API server: {0:?}")]
-    ClientApiServer(#[from] client_api::server::Error),
+    ClientApiServer(#[from] client_api::server::ServeError),
 
     #[error("Failed to start Admin API server: {0:?}")]
     AdminApiServer(#[from] admin_api::server::Error),

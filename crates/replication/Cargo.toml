@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+wc = { workspace = true, features = ["metrics"] }
 storage_api = { package = "irn_storage_api", path = "../storage_api", features = ["client"] }
 client_api = { package = "irn_client_api", path = "../client_api", features = ["client"] }
 domain = { workspace = true }

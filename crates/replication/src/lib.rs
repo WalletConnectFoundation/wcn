@@ -10,6 +10,8 @@ use {
     irn_core::cluster,
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
+    tap::TapFallible as _,
+    wc::metrics::{self, enum_ordinalize::Ordinalize, future_metrics, EnumLabel, FutureExt as _},
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
@@ -228,7 +230,9 @@ impl Driver {
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
         self.client_api
             .publish(channel, message)
+            .with_metrics(future_metrics!("irn_replication_driver_publish"))
             .await
+            .tap_err(|_| metrics::counter!("irn_replication_driver_publish_errors").increment(1))
             .map_err(Error::ClientApi)
     }
 
@@ -241,16 +245,35 @@ impl Driver {
     ) -> Result<()> {
         self.client_api
             .subscribe(channels, event_handler)
+            .with_metrics(future_metrics!("irn_replication_driver_subscribe"))
             .await
+            .tap_err(|_| metrics::counter!("irn_replication_driver_subscribe_errors").increment(1))
             .map_err(Error::ClientApi)
     }
 
     async fn replicate<Op: StorageOperation>(&self, operation: Op) -> Result<Op::Output> {
-        let (tx, rx) = oneshot::channel();
+        async move {
+            let (tx, rx) = oneshot::channel();
 
-        tokio::spawn(replication_task(self.clone(), operation, tx));
+            tokio::spawn(replication_task(self.clone(), operation, tx).with_metrics(
+                future_metrics!("irn_replication_driver_task",
+                    EnumLabel<"operation", OperationName> => Op::NAME
+                ),
+            ));
 
-        rx.await.map_err(|_| Error::TaskCancelled)?
+            rx.await.map_err(|_| Error::TaskCancelled)?
+        }
+        .with_metrics(future_metrics!(
+            "irn_replication_driver_operation",
+            EnumLabel<"name", OperationName> => Op::NAME
+        ))
+        .await
+        .tap_err(|_| {
+            metrics::counter!("irn_replication_driver_operation_errors",
+                EnumLabel<"operation", OperationName> => Op::NAME
+            )
+            .increment(1)
+        })
     }
 
     fn cluster(&self) -> Arc<Cluster> {
@@ -302,7 +325,16 @@ async fn replication_task<Op: StorageOperation>(
             .map(|addr| {
                 operation
                     .repair(driver.storage_api.remote_storage(addr), value)
-                    .map(|res| { // TODO: meter
+                    .map(|res| match res {
+                        Ok(true) => metrics::counter!("irn_replication_read_repairs",
+                            EnumLabel<"operation_name", OperationName> => Op::NAME
+                        )
+                        .increment(1),
+                        Ok(false) => {}
+                        Err(_) => metrics::counter!("irn_replication_read_repair_errors",
+                            EnumLabel<"operation_name", OperationName> => Op::NAME
+                        )
+                        .increment(1),
                     })
             })
             .collect();
@@ -310,17 +342,68 @@ async fn replication_task<Op: StorageOperation>(
         return drop(stream.collect::<Vec<()>>().await);
     }
 
-    let res = Op::reconcile(quorum.into_results(), replica_set.required_count)
-        .ok_or(Error::InconsistentResults);
+    let res = match Op::reconcile(quorum.into_results(), replica_set.required_count) {
+        Some(Ok(value)) => {
+            metrics::counter!("irn_replication_driver_reconciliations",
+                EnumLabel<"operation_name", OperationName> => Op::NAME
+            )
+            .increment(1);
+            Ok(value)
+        }
+        Some(Err(_)) => {
+            metrics::counter!("irn_replication_driver_reconciliation_errors",
+                EnumLabel<"operation_name", OperationName> => Op::NAME
+            )
+            .increment(1);
+            Err(Error::InconsistentResults)
+        }
+        None => Err(Error::InconsistentResults),
+    };
 
     if let Some(channel) = result_channel.take() {
         let _ = channel.send(res);
     }
 }
 
+#[derive(Clone, Copy, Ordinalize)]
+enum OperationName {
+    Get,
+    Set,
+    Del,
+    GetExp,
+    SetExp,
+    HGet,
+    HSet,
+    HDel,
+    HGetExp,
+    HSetExp,
+    HCard,
+    HScan,
+}
+
+impl metrics::Enum for OperationName {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Set => "set",
+            Self::Del => "del",
+            Self::GetExp => "get_exp",
+            Self::SetExp => "set_exp",
+            Self::HGet => "hget",
+            Self::HSet => "hset",
+            Self::HDel => "hdel",
+            Self::HGetExp => "hget_exp",
+            Self::HSetExp => "hset_exp",
+            Self::HCard => "hcard",
+            Self::HScan => "hscan",
+        }
+    }
+}
+
 trait StorageOperation: AsRef<storage::Key> + Send + Sync + 'static {
     type Output: Clone + Eq + Send;
 
+    const NAME: OperationName;
     const IS_WRITE: bool;
 
     fn execute(
@@ -332,14 +415,14 @@ trait StorageOperation: AsRef<storage::Key> + Send + Sync + 'static {
         &self,
         _storage: RemoteStorage<'_>,
         _output: &Self::Output,
-    ) -> impl Future<Output = storage_api::client::Result<()>> + Send {
-        async { Ok(()) }
+    ) -> impl Future<Output = storage_api::client::Result<bool>> + Send {
+        async { Ok(false) }
     }
 
     fn reconcile(
         _results: ReplicationResults<Self::Output>,
         _required_replicas: usize,
-    ) -> Option<Self::Output> {
+    ) -> Option<reconciliation::Result<Self::Output>> {
         None
     }
 }
@@ -353,6 +436,7 @@ struct Get {
 impl StorageOperation for Get {
     type Output = Option<storage::Record>;
 
+    const NAME: OperationName = OperationName::Get;
     const IS_WRITE: bool = false;
 
     fn execute(
@@ -366,7 +450,7 @@ impl StorageOperation for Get {
         &self,
         storage: RemoteStorage<'_>,
         output: &Self::Output,
-    ) -> impl Future<Output = storage_api::client::Result<()>> {
+    ) -> impl Future<Output = storage_api::client::Result<bool>> {
         let entry = output.as_ref().map(|rec| storage::Entry {
             key: self.key.clone(),
             value: rec.value.clone(),
@@ -376,9 +460,9 @@ impl StorageOperation for Get {
 
         async move {
             if let Some(entry) = entry {
-                storage.set(entry).await
+                storage.set(entry).await.map(|()| true)
             } else {
-                Ok(())
+                Ok(false)
             }
         }
     }
@@ -397,6 +481,7 @@ impl AsRef<storage::Key> for Set {
 impl StorageOperation for Set {
     type Output = ();
 
+    const NAME: OperationName = OperationName::Set;
     const IS_WRITE: bool = true;
 
     fn execute(
@@ -417,6 +502,7 @@ struct Del {
 impl StorageOperation for Del {
     type Output = ();
 
+    const NAME: OperationName = OperationName::Del;
     const IS_WRITE: bool = true;
 
     fn execute(
@@ -436,6 +522,7 @@ struct GetExp {
 impl StorageOperation for GetExp {
     type Output = Option<storage::EntryExpiration>;
 
+    const NAME: OperationName = OperationName::GetExp;
     const IS_WRITE: bool = false;
 
     fn execute(
@@ -457,6 +544,7 @@ struct SetExp {
 impl StorageOperation for SetExp {
     type Output = ();
 
+    const NAME: OperationName = OperationName::SetExp;
     const IS_WRITE: bool = true;
 
     fn execute(
@@ -477,6 +565,7 @@ struct HGet {
 impl StorageOperation for HGet {
     type Output = Option<storage::Record>;
 
+    const NAME: OperationName = OperationName::HGet;
     const IS_WRITE: bool = false;
 
     fn execute(
@@ -490,7 +579,7 @@ impl StorageOperation for HGet {
         &self,
         storage: RemoteStorage<'_>,
         output: &Self::Output,
-    ) -> impl Future<Output = storage_api::client::Result<()>> {
+    ) -> impl Future<Output = storage_api::client::Result<bool>> {
         let entry = output.as_ref().map(|rec| storage::MapEntry {
             key: self.key.clone(),
             field: self.field.clone(),
@@ -501,9 +590,9 @@ impl StorageOperation for HGet {
 
         async move {
             if let Some(entry) = entry {
-                storage.hset(entry).await
+                storage.hset(entry).await.map(|()| true)
             } else {
-                Ok(())
+                Ok(false)
             }
         }
     }
@@ -522,6 +611,7 @@ impl AsRef<storage::Key> for HSet {
 impl StorageOperation for HSet {
     type Output = ();
 
+    const NAME: OperationName = OperationName::HSet;
     const IS_WRITE: bool = true;
 
     fn execute(
@@ -543,6 +633,7 @@ struct HDel {
 impl StorageOperation for HDel {
     type Output = ();
 
+    const NAME: OperationName = OperationName::HDel;
     const IS_WRITE: bool = true;
 
     fn execute(
@@ -563,6 +654,7 @@ struct HGetExp {
 impl StorageOperation for HGetExp {
     type Output = Option<storage::EntryExpiration>;
 
+    const NAME: OperationName = OperationName::HGetExp;
     const IS_WRITE: bool = false;
 
     fn execute(
@@ -585,6 +677,7 @@ struct HSetExp {
 impl StorageOperation for HSetExp {
     type Output = ();
 
+    const NAME: OperationName = OperationName::HSetExp;
     const IS_WRITE: bool = true;
 
     fn execute(
@@ -609,6 +702,7 @@ struct HCard {
 impl StorageOperation for HCard {
     type Output = u64;
 
+    const NAME: OperationName = OperationName::HCard;
     const IS_WRITE: bool = false;
 
     fn execute(
@@ -621,8 +715,11 @@ impl StorageOperation for HCard {
     fn reconcile(
         results: ReplicationResults<Self::Output>,
         required_replicas: usize,
-    ) -> Option<Self::Output> {
-        reconciliation::reconcile_map_cardinality(results, required_replicas)
+    ) -> Option<reconciliation::Result<Self::Output>> {
+        Some(reconciliation::reconcile_map_cardinality(
+            results,
+            required_replicas,
+        ))
     }
 }
 
@@ -637,6 +734,7 @@ struct HScan {
 impl StorageOperation for HScan {
     type Output = storage::MapPage;
 
+    const NAME: OperationName = OperationName::HScan;
     const IS_WRITE: bool = false;
 
     fn execute(
@@ -649,8 +747,11 @@ impl StorageOperation for HScan {
     fn reconcile(
         results: ReplicationResults<Self::Output>,
         required_replicas: usize,
-    ) -> Option<Self::Output> {
-        reconciliation::reconcile_map_page(results, required_replicas)
+    ) -> Option<reconciliation::Result<Self::Output>> {
+        Some(reconciliation::reconcile_map_page(
+            results,
+            required_replicas,
+        ))
     }
 }
 

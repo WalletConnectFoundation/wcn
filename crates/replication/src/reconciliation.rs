@@ -3,13 +3,21 @@ use {
     std::collections::HashMap,
 };
 
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Reconciliation error.
+pub enum Error {
+    /// Not enough successful responses to reconcile.
+    InsufficientValues,
+}
+
 pub fn reconcile_map_page(
     results: ReplicationResults<storage::MapPage>,
     required_replicas: usize,
-) -> Option<storage::MapPage> {
+) -> Result<storage::MapPage> {
     let ok_count = results.iter().filter(|res| res.is_ok()).count();
     if ok_count < required_replicas {
-        return None;
+        return Err(Error::InsufficientValues);
     }
 
     let has_next = results
@@ -44,18 +52,13 @@ pub fn reconcile_map_page(
 
     records.sort_unstable_by(|a, b| a.field.cmp(&b.field));
 
-    Some(storage::MapPage { records, has_next })
+    Ok(storage::MapPage { records, has_next })
 }
 
 pub fn reconcile_map_cardinality(
     results: ReplicationResults<u64>,
     required_replicas: usize,
-) -> Option<u64> {
-    let ok_count = results.iter().filter(|res| res.is_ok()).count();
-    if ok_count < required_replicas {
-        return None;
-    }
-
+) -> Result<u64> {
     let mut counters = HashMap::with_capacity(results.len());
     for res in results {
         if let Ok(value) = res.inner {
@@ -70,4 +73,5 @@ pub fn reconcile_map_cardinality(
         .find_map(|(value, count)| (*count >= required_replicas).then_some(value))
         .or_else(|| counters.keys().min())
         .copied()
+        .ok_or(Error::InsufficientValues)
 }

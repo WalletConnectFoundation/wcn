@@ -35,7 +35,7 @@ pub struct Key(Vec<u8>);
 
 impl Key {
     /// Length of a [`Key`] namespace (prefix).
-    pub const NAMESPACE_LEN: usize = 32;
+    pub const NAMESPACE_LEN: usize = auth::PUBLIC_KEY_LEN;
 
     const KIND_PRIVATE: u8 = 0;
     const KIND_SHARED: u8 = 1;

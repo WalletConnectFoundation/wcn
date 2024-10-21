@@ -58,6 +58,18 @@ impl Config {
         self
     }
 
+    /// Overwrites [`Config::connection_timeout`].
+    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
+        self.connection_timeout = timeout;
+        self
+    }
+
+    /// Overwrites [`Config::operation_timeout`].
+    pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
+        self.operation_timeout = timeout;
+        self
+    }
+
     pub fn with_namespaces(mut self, namespaces: impl Into<Vec<auth::Auth>>) -> Self {
         self.namespaces = namespaces.into();
         self
@@ -228,7 +240,7 @@ pub struct Client {
 
 impl Client {
     /// Creates a new [`Client`].
-    pub async fn new(config: Config) -> Result<Self, super::Error> {
+    pub async fn new(config: Config) -> Result<Self> {
         if config.auth_token_ttl < MIN_AUTH_TOKEN_TTL {
             return Err(Error::TokenTtl);
         }

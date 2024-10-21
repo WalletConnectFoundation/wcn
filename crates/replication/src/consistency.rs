@@ -47,10 +47,14 @@ impl<'a, T: Clone + Eq> MajorityQuorum<T> {
         }
     }
 
+    /// Indicates whether the [`MajorityQuorum`] is reached by returning the
+    /// replication [`Result`] the quorum agreed upon.
     pub fn is_reached(&self) -> Option<&storage_api::client::Result<T>> {
         self.reached_idx.map(|idx| &self.results[idx].inner)
     }
 
+    /// Returns an [`Iterator`] of replicas replication results of which do not
+    /// match with the [`MajorityQuorum`].
     pub fn minority_replicas(&self) -> impl Iterator<Item = &Multiaddr> + '_ {
         let quorum_reached = self.reached_idx.is_some();
 
@@ -59,6 +63,7 @@ impl<'a, T: Clone + Eq> MajorityQuorum<T> {
         })
     }
 
+    /// Converts [`MajorityQuorum`] into the underlying [`ReplicationResults`].
     pub fn into_results(self) -> ReplicationResults<T> {
         self.results
     }

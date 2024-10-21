@@ -1,11 +1,11 @@
-pub use storage_api as storage;
+pub use storage_api::{self as storage, auth, identity, Multiaddr, PeerId};
 use {
     consistency::ReplicationResults,
     derive_more::derive::AsRef,
     domain::Cluster,
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, StreamExt},
     irn_core::cluster,
-    std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc},
+    std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     xxhash_rust::xxh3::Xxh3Builder,
 };
@@ -20,7 +20,94 @@ pub struct Driver {
     storage_api: storage_api::Client,
 }
 
+/// Replication config.
+pub struct Config {
+    /// [`Keypair`] to be used for RPC clients.
+    pub keypair: identity::Keypair,
+
+    /// Timeout of establishing a network connection.
+    pub connection_timeout: Duration,
+
+    /// Timeout of an API operation.
+    pub operation_timeout: Duration,
+
+    /// [`Multiaddr`]s of the nodes to connect to.
+    pub nodes: HashSet<Multiaddr>,
+
+    /// A list of storage namespaces to be used.
+    pub namespaces: Vec<auth::Auth>,
+}
+
+impl Config {
+    /// Creates a new [`Config`] with the provided list of nodes to connect to
+    /// and other options defaults.
+    pub fn new(nodes: HashSet<Multiaddr>) -> Self {
+        Self {
+            keypair: identity::Keypair::generate_ed25519(),
+            connection_timeout: Duration::from_secs(5),
+            operation_timeout: Duration::from_secs(10),
+            nodes,
+            namespaces: Vec::new(),
+        }
+    }
+
+    /// Overwrites [`Config::keypair`].
+    pub fn with_keypair(mut self, keypair: identity::Keypair) -> Self {
+        self.keypair = keypair;
+        self
+    }
+
+    /// Overwrites [`Config::connection_timeout`].
+    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
+        self.connection_timeout = timeout;
+        self
+    }
+
+    /// Overwrites [`Config::operation_timeout`].
+    pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
+        self.operation_timeout = timeout;
+        self
+    }
+
+    /// Overwrites [`Config::namespaces`].
+    pub fn with_namespaces(mut self, namespaces: impl Into<Vec<auth::Auth>>) -> Self {
+        self.namespaces = namespaces.into();
+        self
+    }
+}
+
+/// Error of [`Driver::new`].
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{_0}")]
+pub struct CreationError(String);
+
 impl Driver {
+    /// Creates a new replication [`Driver`].
+    pub async fn new(cfg: Config) -> Result<Self, CreationError> {
+        let client_api_cfg = client_api::client::Config::new(cfg.nodes)
+            .with_keypair(cfg.keypair.clone())
+            .with_connection_timeout(cfg.connection_timeout)
+            .with_operation_timeout(cfg.operation_timeout)
+            .with_namespaces(cfg.namespaces);
+
+        let client_api = client_api::Client::new(client_api_cfg)
+            .await
+            .map_err(|err| CreationError(err.to_string()))?;
+
+        let storage_api_cfg = storage_api::client::Config::new(client_api.auth_token())
+            .with_keypair(cfg.keypair)
+            .with_connection_timeout(cfg.connection_timeout)
+            .with_operation_timeout(cfg.operation_timeout);
+
+        let storage_api = storage_api::Client::new(storage_api_cfg)
+            .map_err(|err| CreationError(err.to_string()))?;
+
+        Ok(Self {
+            client_api,
+            storage_api,
+        })
+    }
+
     /// Gets a [`storage::Record`] by the provided [`storage::Key`].
     pub async fn get(&self, key: storage::Key) -> Result<Option<storage::Record>> {
         self.replicate(Get { key }).await
@@ -187,7 +274,7 @@ impl Driver {
     }
 
     fn cluster(&self) -> Arc<Cluster> {
-        todo!()
+        self.client_api.cluster().load_full()
     }
 }
 

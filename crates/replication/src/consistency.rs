@@ -8,7 +8,7 @@ pub struct MajorityQuorum<T> {
     reached_idx: Option<usize>,
 }
 
-impl<'a, T: Clone + Eq> MajorityQuorum<T> {
+impl<T: Clone + Eq> MajorityQuorum<T> {
     /// Creates a new [`Quorum`] with the provided quorum `threshold`.
     pub fn new(threshold: usize) -> Self {
         Self {
@@ -132,11 +132,11 @@ mod test {
         assert!(quorum.minority_replicas().count() == 3);
 
         let mut quorum = MajorityQuorum::<u8>::new(2);
-        quorum.push(addr1.clone(), Err(storage_api::client::Error::Timeout));
+        quorum.push(addr1, Err(storage_api::client::Error::Timeout));
         assert_eq!(quorum.is_reached(), None);
-        quorum.push(addr2.clone(), Ok(0));
+        quorum.push(addr2, Ok(0));
         assert_eq!(quorum.is_reached(), None);
-        quorum.push(addr3.clone(), Err(storage_api::client::Error::Timeout));
+        quorum.push(addr3, Err(storage_api::client::Error::Timeout));
         assert_eq!(
             quorum.is_reached(),
             Some(&Err(storage_api::client::Error::Timeout))

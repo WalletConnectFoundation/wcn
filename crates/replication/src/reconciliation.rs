@@ -106,7 +106,7 @@ mod test {
 
         let result = |res: storage_api::client::Result<(&[u8], bool)>| {
             res.map(|(values, has_next)| page(values, has_next))
-                .pipe(|res| ReplicationResult::new_test(res))
+                .pipe(ReplicationResult::new_test)
         };
 
         let results = smallvec![

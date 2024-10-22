@@ -513,8 +513,8 @@ impl StorageOperation for Get {
         let entry = output.as_ref().map(|rec| storage::Entry {
             key: self.key.clone(),
             value: rec.value.clone(),
-            expiration: rec.expiration.clone(),
-            version: rec.version.clone(),
+            expiration: rec.expiration,
+            version: rec.version,
         });
 
         async move {
@@ -643,8 +643,8 @@ impl StorageOperation for HGet {
             key: self.key.clone(),
             field: self.field.clone(),
             value: rec.value.clone(),
-            expiration: rec.expiration.clone(),
-            version: rec.version.clone(),
+            expiration: rec.expiration,
+            version: rec.version,
         });
 
         async move {

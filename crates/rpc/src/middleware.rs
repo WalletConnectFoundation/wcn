@@ -5,12 +5,6 @@ use {
     std::{collections::HashMap, sync::Arc, time::Duration},
 };
 
-/// Error codes produced by middleware defined in this module.
-pub mod error_code {
-    /// Error code of [`super::WithTimeouts`] middleware.
-    pub const TIMEOUT: &str = "timeout";
-}
-
 /// Metered RPC client or server, enabling outbound and inbound RPC metrics
 /// respectively.
 #[derive(Clone, Debug)]

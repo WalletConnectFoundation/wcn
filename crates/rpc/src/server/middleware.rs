@@ -15,11 +15,6 @@ use {
 
 pub use crate::middleware::*;
 
-/// Error codes produced by middleware defined in this module.
-pub mod error_code {
-    pub use crate::middleware::error_code::*;
-}
-
 /// Extension trait wrapping [`Server`]s with [`Metered`] middleware.
 pub trait MeteredExt: Sized {
     /// Wraps `Self` with [`Metered`].

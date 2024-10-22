@@ -1,19 +1,21 @@
 use {
     super::{Client, Error, Result},
-    crate::{transport::BiDirectionalStream, ForceSendFuture as _, Id as RpcId, Name as RpcName},
+    crate::{
+        error_code,
+        transport::BiDirectionalStream,
+        ForceSendFuture as _,
+        Id as RpcId,
+        Name as RpcName,
+    },
+    futures::FutureExt as _,
     std::{future::Future, sync::Arc, time::Duration},
     wc::{
         future::FutureExt as _,
-        metrics::{future_metrics, FutureExt as _, StringLabel},
+        metrics::{self, future_metrics, FutureExt as _, StringLabel},
     },
 };
 
 pub use crate::middleware::*;
-
-/// Error codes produced by middleware defined in this module.
-pub mod error_code {
-    pub use crate::middleware::error_code::*;
-}
 
 /// Extension trait wrapping [`Client`]s with [`Metered`] middleware.
 pub trait MeteredExt: Sized {
@@ -42,6 +44,22 @@ where
                 "outbound_rpc",
                 StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str()
             ))
+            .map(move |res| {
+                let error_kind = match &res {
+                    Ok(_) => return res,
+                    Err(Error::Transport(_)) => "transport",
+                    Err(Error::Rpc { error, .. }) => error.code.as_ref(),
+                };
+
+                metrics::counter!(
+                    "outbound_rpc_errors",
+                    StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
+                    StringLabel<"error_kind"> => error_kind
+                )
+                .increment(1);
+
+                res
+            })
     }
 }
 

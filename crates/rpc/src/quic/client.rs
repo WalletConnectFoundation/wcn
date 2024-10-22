@@ -163,10 +163,14 @@ fn new_connection<H: Handshake>(
                 .map_err(|_| "timeout".to_owned())?
                 .map_err(|e| e.to_string())?;
 
+            // TODO: Validate server `PeerId`.
+            let peer_id = super::connection_peer_id(&conn)
+                .map_err(|err| format!("Failed to extract PeerId: {err:?}"))?;
+
             write_protocol_version(&conn).await?;
 
             handshake
-                .handle(PendingConnection(conn.clone()))
+                .handle(peer_id, PendingConnection(conn.clone()))
                 .await
                 .map_err(|e| format!("handshake error: {e:?}"))?;
 

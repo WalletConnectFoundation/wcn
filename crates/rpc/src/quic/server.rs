@@ -5,7 +5,7 @@ use {
         transport::{BiDirectionalStream, Handshake, PendingConnection},
         Server,
     },
-    futures::TryFutureExt as _,
+    futures::{FutureExt, SinkExt as _, TryFutureExt as _},
     std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
     tap::{Pipe as _, TapOptional},
     tokio::{
@@ -104,17 +104,7 @@ where
                 Error::ConnectionTimeout
             })??;
 
-        let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
-        let certificate = identity
-            .downcast::<Vec<rustls::Certificate>>()
-            .map_err(|_| Error::DowncastPeerIdentity)?
-            .into_iter()
-            .next()
-            .ok_or(Error::MissingTlsCertificate)?;
-
-        let peer_id = libp2p_tls::certificate::parse(&certificate)
-            .map_err(Error::ParseTlsCertificate)?
-            .peer_id();
+        let peer_id = super::connection_peer_id(&conn)?;
 
         // Unwrap is safe here, addr doesn't contain another `PeerId` as we've just
         // built it from `SocketAddr`.
@@ -135,7 +125,7 @@ where
             remote_address,
             handshake_data: self
                 .handshake
-                .handle(PendingConnection(conn.clone()))
+                .handle(peer_id, PendingConnection(conn.clone()))
                 .with_timeout(Duration::from_millis(1000))
                 .await
                 .map_err(|_| {
@@ -151,9 +141,14 @@ where
             let (tx, mut rx) = conn.accept_bi().await?;
 
             let Some(stream_permit) = self.acquire_stream_permit().await else {
-                // Over the allowed capacity, so just drop the stream. Do this instead of
-                // awaiting a permit to become available, so that the server doesn't lag behind
-                // the client, and also to keep streams from accumulating in quic internals.
+                static THROTTLED_RESULT: &crate::Result<()> = &Err(crate::Error::THROTTLED);
+
+                let (_, mut tx) =
+                    BiDirectionalStream::new(tx, rx).upgrade::<(), crate::Result<()>>();
+
+                // The send buffer is large enough to write the whole response.
+                tx.send(THROTTLED_RESULT).now_or_never();
+
                 continue;
             };
 
@@ -211,17 +206,8 @@ pub enum ConnectionHandlerError<H = Infallible> {
     #[error("Inbound connection failed: {0}")]
     Connection(#[from] quinn::ConnectionError),
 
-    #[error("Missing peer identity")]
-    MissingPeerIdentity,
-
-    #[error("Failed to downcast peer identity")]
-    DowncastPeerIdentity,
-
-    #[error("Missing TLS certificate")]
-    MissingTlsCertificate,
-
-    #[error("Failed to parse TLS certificate: {0:?}")]
-    ParseTlsCertificate(libp2p_tls::certificate::ParseError),
+    #[error(transparent)]
+    ExtractPeerId(#[from] super::ExtractPeerIdError),
 
     #[error("Handshake failed: {0:?}")]
     Handshake(H),

@@ -155,7 +155,12 @@ impl<'a, S: Server> RpcHandler<'a, S> {
             .ok_or_else(|| irn_rpc::Error::new(error_code::INVALID_KEY))?;
 
         if let Some(namespace) = key.namespace() {
-            if !self.conn_info.handshake_data.namespaces.contains(namespace) {
+            if !self
+                .conn_info
+                .handshake_data
+                .namespaces
+                .contains(namespace.as_slice())
+            {
                 return Err(irn_rpc::Error::new(error_code::UNAUTHORIZED));
             }
         }

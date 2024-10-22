@@ -51,9 +51,9 @@ impl Key {
     }
 
     /// Returns namespace of this [`Key`].
-    pub fn namespace(&self) -> Option<&[u8]> {
+    pub fn namespace(&self) -> Option<&[u8; Self::NAMESPACE_LEN]> {
         match *self.0.first()? {
-            Self::KIND_SHARED => Some(&self.0[1..=Self::NAMESPACE_LEN + 1]),
+            Self::KIND_SHARED => Some(self.0[1..=Self::NAMESPACE_LEN + 1].try_into().unwrap()),
             _ => None,
         }
     }

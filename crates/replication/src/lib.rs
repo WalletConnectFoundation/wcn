@@ -223,7 +223,7 @@ impl Driver {
         // `1000` is generous, relay has ~100 limit for these small maps
         self.hscan(key, 1000, None)
             .await
-            .map(|page| page.records.into_iter().map(|rec| rec.field).collect())
+            .map(|page| page.records.into_iter().map(|rec| rec.value).collect())
     }
 
     /// Publishes the provided message to the specified channel.

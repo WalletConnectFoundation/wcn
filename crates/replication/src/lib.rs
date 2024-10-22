@@ -10,7 +10,7 @@ use {
     irn_core::cluster,
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
-    tap::TapFallible as _,
+    tap::{Pipe, TapFallible as _},
     wc::metrics::{self, enum_ordinalize::Ordinalize, future_metrics, EnumLabel, FutureExt as _},
     xxhash_rust::xxh3::Xxh3Builder,
 };
@@ -253,15 +253,9 @@ impl Driver {
 
     async fn replicate<Op: StorageOperation>(&self, operation: Op) -> Result<Op::Output> {
         async move {
-            let (tx, rx) = oneshot::channel();
-
-            tokio::spawn(replication_task(self.clone(), operation, tx).with_metrics(
-                future_metrics!("irn_replication_driver_task",
-                    EnumLabel<"operation", OperationName> => Op::NAME
-                ),
-            ));
-
-            rx.await.map_err(|_| Error::TaskCancelled)?
+            ReplicationTask::spawn(self, operation)
+                .await
+                .map_err(|_| Error::TaskCancelled)?
         }
         .with_metrics(future_metrics!(
             "irn_replication_driver_operation",
@@ -281,57 +275,123 @@ impl Driver {
     }
 }
 
-async fn replication_task<Op: StorageOperation>(
+type Quorum<T> = consistency::MajorityQuorum<T>;
+
+struct ReplicationTask<Op: StorageOperation> {
     driver: Driver,
+
     operation: Op,
-    result_channel: oneshot::Sender<Result<Op::Output>>,
-) {
-    static HASHER: Xxh3Builder = Xxh3Builder::new();
+    key_hash: u64,
 
-    let key_hash = HASHER.hash_one(operation.as_ref().as_bytes());
+    result_channel: Option<oneshot::Sender<Result<Op::Output>>>,
+}
 
-    let cluster = driver.cluster();
+impl<Op: StorageOperation> ReplicationTask<Op> {
+    fn spawn(driver: &Driver, operation: Op) -> oneshot::Receiver<Result<Op::Output>> {
+        static HASHER: Xxh3Builder = Xxh3Builder::new();
 
-    let replica_set = match cluster.replica_set(key_hash, Op::IS_WRITE) {
-        Ok(set) => set,
-        Err(err) => return drop(result_channel.send(Err(Error::Cluster(err)))),
-    };
+        let key_hash = HASHER.hash_one(operation.as_ref().as_bytes());
 
-    let mut result_stream: FuturesUnordered<_> = replica_set
-        .nodes
-        .map(|node| {
-            operation
-                .execute(driver.storage_api.remote_storage(&node.addr))
-                .map(|res| (&node.addr, res))
-        })
-        .collect();
+        let (tx, rx) = oneshot::channel();
 
-    let mut quorum = consistency::MajorityQuorum::new(replica_set.required_count);
+        Self {
+            driver: driver.clone(),
+            operation,
+            key_hash,
+            result_channel: Some(tx),
+        }
+        .run()
+        .with_metrics(future_metrics!("irn_replication_driver_task",
+            EnumLabel<"operation", OperationName> => Op::NAME
+        ))
+        .pipe(tokio::spawn);
 
-    let mut result_channel = Some(result_channel);
-    while let Some((addr, result)) = result_stream.next().await {
-        quorum.push(addr.clone(), result);
+        rx
+    }
 
-        if let Some(res) = quorum.is_reached() {
-            if let Some(channel) = result_channel.take() {
-                let _ = channel.send(res.clone().map_err(Error::StorageApi));
+    async fn run(mut self) {
+        let mut attempt = 0;
+
+        // Retry once if we've got a `KeyspaceVersionMismatch` error.
+        let quorum = loop {
+            attempt += 1;
+
+            match self.execute_operation().await {
+                Ok(quorum) => break quorum,
+                Err(err) if err.is_keyspace_version_mismatch() && attempt < 2 => {
+                    // TODO: reconsider this value / make configurable once tested on Mainnet
+                    tokio::time::sleep(Duration::from_millis(500)).await
+                }
+                Err(err) => {
+                    if let Some(channel) = self.result_channel.take() {
+                        let _ = channel.send(Err(err));
+                    }
+                    return;
+                }
             }
+        };
+
+        if let Some(Ok(value)) = quorum.is_reached() {
+            self.repair(&quorum, value).await;
+        }
+
+        if let Some(channel) = self.result_channel.take() {
+            let _ = channel.send(self.reconcile(quorum));
         }
     }
 
-    if let Some(Ok(value)) = quorum.is_reached() {
+    async fn execute_operation(&mut self) -> Result<consistency::MajorityQuorum<Op::Output>> {
+        let cluster = self.driver.cluster();
+
+        let replica_set = match cluster.replica_set(self.key_hash, Op::IS_WRITE) {
+            Ok(set) => set,
+            Err(err) => return Err(Error::Cluster(err)),
+        };
+
+        let mut result_stream: FuturesUnordered<_> = replica_set
+            .nodes
+            .map(|node| {
+                self.operation
+                    .execute(self.driver.storage_api.remote_storage(&node.addr))
+                    .map(|res| (&node.addr, res))
+            })
+            .collect();
+
+        let mut quorum = consistency::MajorityQuorum::new(replica_set.required_count);
+
+        while let Some((addr, result)) = result_stream.next().await {
+            quorum.push(addr.clone(), result);
+
+            let Some(result) = quorum.is_reached() else {
+                continue;
+            };
+
+            match result {
+                Ok(value) => {
+                    if let Some(channel) = self.result_channel.take() {
+                        let _ = channel.send(Ok(value.clone()));
+                    }
+                }
+                Err(err) => return Err(Error::StorageApi(err.clone())),
+            };
+        }
+
+        Ok(quorum)
+    }
+
+    async fn repair(&self, quorum: &Quorum<Op::Output>, value: &Op::Output) {
         let stream: FuturesUnordered<_> = quorum
             .minority_replicas()
             .map(|addr| {
-                operation
-                    .repair(driver.storage_api.remote_storage(addr), value)
+                self.operation
+                    .repair(self.driver.storage_api.remote_storage(addr), value)
                     .map(|res| match res {
-                        Ok(true) => metrics::counter!("irn_replication_read_repairs",
+                        Ok(true) => metrics::counter!("irn_replication_driver_read_repairs",
                             EnumLabel<"operation_name", OperationName> => Op::NAME
                         )
                         .increment(1),
                         Ok(false) => {}
-                        Err(_) => metrics::counter!("irn_replication_read_repair_errors",
+                        Err(_) => metrics::counter!("irn_replication_driver_read_repair_errors",
                             EnumLabel<"operation_name", OperationName> => Op::NAME
                         )
                         .increment(1),
@@ -339,29 +399,28 @@ async fn replication_task<Op: StorageOperation>(
             })
             .collect();
 
-        return drop(stream.collect::<Vec<()>>().await);
+        stream.collect::<Vec<()>>().await;
     }
 
-    let res = match Op::reconcile(quorum.into_results(), replica_set.required_count) {
-        Some(Ok(value)) => {
-            metrics::counter!("irn_replication_driver_reconciliations",
-                EnumLabel<"operation_name", OperationName> => Op::NAME
-            )
-            .increment(1);
-            Ok(value)
+    fn reconcile(&self, quorum: Quorum<Op::Output>) -> Result<Op::Output> {
+        let required_replicas = quorum.threshold();
+        match Op::reconcile(quorum.into_results(), required_replicas) {
+            Some(Ok(value)) => {
+                metrics::counter!("irn_replication_driver_reconciliations",
+                    EnumLabel<"operation_name", OperationName> => Op::NAME
+                )
+                .increment(1);
+                Ok(value)
+            }
+            Some(Err(_)) => {
+                metrics::counter!("irn_replication_driver_reconciliation_errors",
+                    EnumLabel<"operation_name", OperationName> => Op::NAME
+                )
+                .increment(1);
+                Err(Error::InconsistentResults)
+            }
+            None => Err(Error::InconsistentResults),
         }
-        Some(Err(_)) => {
-            metrics::counter!("irn_replication_driver_reconciliation_errors",
-                EnumLabel<"operation_name", OperationName> => Op::NAME
-            )
-            .increment(1);
-            Err(Error::InconsistentResults)
-        }
-        None => Err(Error::InconsistentResults),
-    };
-
-    if let Some(channel) = result_channel.take() {
-        let _ = channel.send(res);
     }
 }
 
@@ -401,7 +460,7 @@ impl metrics::Enum for OperationName {
 }
 
 trait StorageOperation: AsRef<storage::Key> + Send + Sync + 'static {
-    type Output: Clone + Eq + Send;
+    type Output: Clone + Eq + Send + Sync;
 
     const NAME: OperationName;
     const IS_WRITE: bool;
@@ -775,4 +834,13 @@ pub enum Error {
 
     #[error("Client API: {_0}")]
     ClientApi(client_api::client::Error),
+}
+
+impl Error {
+    fn is_keyspace_version_mismatch(&self) -> bool {
+        matches!(
+            self,
+            Self::StorageApi(storage_api::client::Error::KeyspaceVersionMismatch)
+        )
+    }
 }

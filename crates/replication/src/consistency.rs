@@ -63,6 +63,11 @@ impl<'a, T: Clone + Eq> MajorityQuorum<T> {
         })
     }
 
+    /// Returns threshould of this [`MajorityQuorum`].
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+
     /// Converts [`MajorityQuorum`] into the underlying [`ReplicationResults`].
     pub fn into_results(self) -> ReplicationResults<T> {
         self.results

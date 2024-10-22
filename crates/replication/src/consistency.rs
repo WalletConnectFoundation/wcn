@@ -78,3 +78,63 @@ pub(super) struct ReplicationResult<T> {
     pub replica_addr: Multiaddr,
     within_quorum: bool,
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    impl<T> ReplicationResult<T> {
+        pub(crate) fn new_test(inner: storage_api::client::Result<T>) -> Self {
+            Self {
+                inner,
+                replica_addr: "/ip4/10.0.0.1/udp/3010/quic-v1".parse().unwrap(),
+                within_quorum: true,
+            }
+        }
+    }
+
+    #[test]
+    fn test_majority_quorum() {
+        let addr1: Multiaddr = "/ip4/10.0.0.1/udp/3010/quic-v1".parse().unwrap();
+        let addr2: Multiaddr = "/ip4/10.0.0.2/udp/3010/quic-v1".parse().unwrap();
+        let addr3: Multiaddr = "/ip4/10.0.0.3/udp/3010/quic-v1".parse().unwrap();
+
+        let mut quorum = MajorityQuorum::<u8>::new(2);
+        quorum.push(addr1.clone(), Ok(42));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr2.clone(), Ok(42));
+        assert_eq!(quorum.is_reached(), Some(&Ok(42)));
+        quorum.push(addr3.clone(), Ok(42));
+        assert_eq!(quorum.is_reached(), Some(&Ok(42)));
+        assert!(quorum.minority_replicas().count() == 0);
+
+        let mut quorum = MajorityQuorum::<u8>::new(2);
+        quorum.push(addr1.clone(), Ok(42));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr2.clone(), Ok(0));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr3.clone(), Ok(42));
+        assert_eq!(quorum.is_reached(), Some(&Ok(42)));
+        assert_eq!(quorum.minority_replicas().collect::<Vec<_>>(), vec![&addr2]);
+
+        let mut quorum = MajorityQuorum::<u8>::new(2);
+        quorum.push(addr1.clone(), Ok(42));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr2.clone(), Ok(0));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr3.clone(), Ok(1));
+        assert_eq!(quorum.is_reached(), None);
+        assert!(quorum.minority_replicas().count() == 3);
+
+        let mut quorum = MajorityQuorum::<u8>::new(2);
+        quorum.push(addr1.clone(), Err(storage_api::client::Error::Timeout));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr2.clone(), Ok(0));
+        assert_eq!(quorum.is_reached(), None);
+        quorum.push(addr3.clone(), Err(storage_api::client::Error::Timeout));
+        assert_eq!(
+            quorum.is_reached(),
+            Some(&Err(storage_api::client::Error::Timeout))
+        );
+    }
+}

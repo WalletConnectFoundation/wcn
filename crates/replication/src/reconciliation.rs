@@ -6,6 +6,7 @@ use {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Reconciliation error.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
     /// Not enough successful responses to reconcile.
     InsufficientValues,
@@ -59,6 +60,11 @@ pub fn reconcile_map_cardinality(
     results: ReplicationResults<u64>,
     required_replicas: usize,
 ) -> Result<u64> {
+    let ok_count = results.iter().filter(|res| res.is_ok()).count();
+    if ok_count < required_replicas {
+        return Err(Error::InsufficientValues);
+    }
+
     let mut counters = HashMap::with_capacity(results.len());
     for res in results {
         if let Ok(value) = res.inner {
@@ -74,4 +80,151 @@ pub fn reconcile_map_cardinality(
         .or_else(|| counters.keys().min())
         .copied()
         .ok_or(Error::InsufficientValues)
+}
+
+#[cfg(test)]
+mod test {
+    use {super::*, crate::consistency::ReplicationResult, smallvec::smallvec, tap::Pipe};
+
+    #[test]
+    fn reconcile_map_page() {
+        let expiration = storage::EntryExpiration::from(std::time::Duration::from_secs(60));
+        let version = storage::EntryVersion::new();
+
+        let page = |values: &[u8], has_next| storage_api::MapPage {
+            records: values
+                .iter()
+                .map(|&byte| storage::MapRecord {
+                    field: vec![byte],
+                    value: vec![byte],
+                    expiration,
+                    version,
+                })
+                .collect(),
+            has_next,
+        };
+
+        let result = |res: storage_api::client::Result<(&[u8], bool)>| {
+            res.map(|(values, has_next)| page(values, has_next))
+                .pipe(|res| ReplicationResult::new_test(res))
+        };
+
+        let results = smallvec![
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1, 2], true)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1, 2], true))
+        );
+
+        let results = smallvec![
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1], true)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1, 2], true))
+        );
+
+        let results = smallvec![
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1], true))),
+            result(Ok((&[0, 1], true)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1], true))
+        );
+
+        let results = smallvec![
+            result(Ok((&[0, 1, 2], false))),
+            result(Ok((&[0, 1], false))),
+            result(Ok((&[0, 1], true)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1], false))
+        );
+
+        let results = smallvec![
+            result(Err(storage_api::client::Error::Timeout)),
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1], true)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1], true))
+        );
+
+        let results = smallvec![
+            result(Err(storage_api::client::Error::Timeout)),
+            result(Ok((&[0, 1, 2], true))),
+            result(Ok((&[0, 1], false)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1], false))
+        );
+
+        let results = smallvec![
+            result(Err(storage_api::client::Error::Timeout)),
+            result(Ok((&[0, 1, 4], true))),
+            result(Ok((&[0, 1, 5], true)))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Ok(page(&[0, 1], true))
+        );
+
+        let results = smallvec![
+            result(Err(storage_api::client::Error::Timeout)),
+            result(Ok((&[0, 1, 4], true))),
+            result(Err(storage_api::client::Error::Timeout))
+        ];
+        assert_eq!(
+            super::reconcile_map_page(results, 2),
+            Err(Error::InsufficientValues)
+        );
+
+        let results = smallvec![
+            result(Ok((&[0], false))),
+            result(Ok((&[1], true))),
+            result(Ok((&[2], true))),
+        ];
+        assert_eq!(super::reconcile_map_page(results, 2), Ok(page(&[], true)));
+    }
+
+    #[test]
+    fn reconcile_map_cardinality() {
+        let result = ReplicationResult::<u64>::new_test;
+
+        let results = smallvec![result(Ok(5)), result(Ok(5)), result(Ok(4))];
+        assert_eq!(super::reconcile_map_cardinality(results, 2), Ok(5));
+
+        let results = smallvec![result(Ok(5)), result(Ok(4)), result(Ok(4))];
+        assert_eq!(super::reconcile_map_cardinality(results, 2), Ok(4));
+
+        let results = smallvec![result(Ok(5)), result(Ok(4)), result(Ok(3))];
+        assert_eq!(super::reconcile_map_cardinality(results, 2), Ok(3));
+
+        let results = smallvec![
+            result(Ok(5)),
+            result(Err(storage_api::client::Error::Timeout)),
+            result(Ok(3))
+        ];
+        assert_eq!(super::reconcile_map_cardinality(results, 2), Ok(3));
+
+        let results = smallvec![
+            result(Ok(5)),
+            result(Err(storage_api::client::Error::Timeout)),
+            result(Err(storage_api::client::Error::Timeout)),
+        ];
+        assert_eq!(
+            super::reconcile_map_cardinality(results, 2),
+            Err(Error::InsufficientValues)
+        );
+    }
 }

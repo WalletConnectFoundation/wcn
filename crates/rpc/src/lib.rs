@@ -26,6 +26,18 @@ pub mod transport;
 #[cfg(test)]
 mod test;
 
+/// Error codes produced by this module.
+pub mod error_code {
+    #[allow(unused_imports)]
+    use super::middleware;
+
+    /// RPC server is throttling.
+    pub const THROTTLED: &str = "throttled";
+
+    /// Error code of [`middleware::WithTimeouts`].
+    pub const TIMEOUT: &str = "timeout";
+}
+
 /// RPC identifier derived from a UTF-8 string of up to 16 bytes.
 pub type Id = u128;
 
@@ -165,10 +177,12 @@ pub struct Error {
 }
 
 impl Error {
+    const THROTTLED: Self = Self::new(error_code::THROTTLED);
+
     /// Creates a new RPC error with the provided error code.
-    pub fn new(code: &'static str) -> Self {
+    pub const fn new(code: &'static str) -> Self {
         Self {
-            code: code.into(),
+            code: Cow::Borrowed(code),
             description: None,
         }
     }

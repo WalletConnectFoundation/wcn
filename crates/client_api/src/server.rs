@@ -1,6 +1,6 @@
 use {
     super::*,
-    futures_util::{SinkExt, StreamExt},
+    futures_util::{SinkExt, Stream, StreamExt},
     irn_rpc::{
         identity::{ed25519::Keypair as Ed25519Keypair, Keypair},
         middleware::Timeouts,
@@ -8,13 +8,14 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake, SendStream},
+        transport::{BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Multiaddr,
         PeerId,
     },
     std::{
         collections::HashSet,
         future::Future,
+        pin::pin,
         sync::{Arc, Mutex},
         time::Duration,
     },
@@ -42,10 +43,20 @@ pub struct Config {
 
 /// API server.
 pub trait Server: Clone + Send + Sync + 'static {
+    /// Publishes the provided message to the specified channel.
+    fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> impl Future<Output = ()> + Send;
+
+    /// Subscribes to the [`SubscriptionEvent`]s of the provided `channel`s.
+    fn subscribe(
+        &self,
+        channels: HashSet<Vec<u8>>,
+    ) -> impl Future<Output = Result<impl Stream<Item = SubscriptionEvent> + Send + 'static>> + Send;
+
     /// Runs this [`Server`] using the provided [`Config`].
-    fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
+    fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, ServeError> {
         let timeouts = Timeouts::new()
             .with_default(cfg.operation_timeout)
+            .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
         let inner = Arc::new(Inner {
@@ -53,11 +64,11 @@ pub trait Server: Clone + Send + Sync + 'static {
                 .keypair
                 .clone()
                 .try_into_ed25519()
-                .map_err(|_| Error::Key)?,
+                .map_err(|_| ServeError::Key)?,
             network_id: cfg.network_id,
             ns_nonce: Default::default(),
             cluster_view: cfg.cluster_view,
-            _server: self,
+            server: self,
         });
 
         let rpc_server = Adapter { inner }
@@ -77,7 +88,8 @@ pub trait Server: Clone + Send + Sync + 'static {
             max_concurrent_rpcs: 100,
         };
 
-        irn_rpc::quic::server::run(rpc_server, rpc_server_config, NoHandshake).map_err(Error::Quic)
+        irn_rpc::quic::server::run(rpc_server, rpc_server_config, NoHandshake)
+            .map_err(ServeError::Quic)
     }
 }
 
@@ -86,7 +98,7 @@ struct Inner<S> {
     network_id: String,
     ns_nonce: Mutex<Option<auth::Nonce>>,
     cluster_view: domain::ClusterView,
-    _server: S,
+    server: S,
 }
 
 #[derive(Clone)]
@@ -94,7 +106,7 @@ struct Adapter<S> {
     inner: Arc<Inner<S>>,
 }
 
-impl<S> Adapter<S> {
+impl<S: Server> Adapter<S> {
     fn create_auth_nonce(&self) -> auth::Nonce {
         let nonce = auth::Nonce::generate();
         // Safe unwrap, as this lock can't be poisoned.
@@ -114,7 +126,7 @@ impl<S> Adapter<S> {
         peer_id: PeerId,
         req: token::Config,
     ) -> Result<token::Token, token::Error> {
-        let mut claims = token::TokenClaims {
+        let mut claims = token::Claims {
             aud: self.inner.network_id.clone(),
             iss: self.inner.keypair.public().into(),
             sub: peer_id,
@@ -170,6 +182,35 @@ impl<S> Adapter<S> {
 
         Ok(())
     }
+
+    async fn publish(&self, req: PublishRequest) {
+        self.inner.server.publish(req.channel, req.message).await;
+    }
+
+    async fn subscribe(
+        &self,
+        mut rx: RecvStream<SubscribeRequest>,
+        mut tx: SendStream<irn_rpc::Result<SubscribeResponse>>,
+    ) -> irn_rpc::server::Result<()> {
+        let req = rx.recv_message().await?;
+
+        let events = match self.inner.server.subscribe(req.channels).await {
+            Ok(events) => events,
+            Err(err) => return Ok(tx.send(Err(err.into_rpc_error())).await?),
+        };
+
+        let mut events = pin!(events);
+
+        while let Some(evt) = events.next().await {
+            tx.send(Ok(SubscribeResponse {
+                channel: evt.channel,
+                message: evt.message,
+            }))
+            .await?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<S> rpc::Server for Adapter<S>
@@ -204,6 +245,10 @@ where
                     ClusterUpdates::handle(stream, |_, rx| self.handle_cluster_updates(rx)).await
                 }
 
+                Publish::ID => Publish::handle(stream, |req| self.publish(req)).await,
+
+                Subscribe::ID => Subscribe::handle(stream, |rx, tx| self.subscribe(rx, tx)).await,
+
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),
             }
             .map_err(|err| {
@@ -215,14 +260,28 @@ where
 
 impl<S> rpc::server::Marker for Adapter<S> {}
 
+/// Error of [`Server::serve`]
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum ServeError {
     #[error("{0:?}")]
     Quic(irn_rpc::quic::Error),
 
     #[error("Invalid server keypair")]
     Key,
-
-    #[error("Serialization failed")]
-    Serialization,
 }
+
+/// Error of a [`Server`] operation.
+#[derive(Clone, Debug)]
+pub struct Error(String);
+
+impl Error {
+    fn into_rpc_error(self) -> irn_rpc::Error {
+        irn_rpc::Error {
+            code: "internal".into(),
+            description: Some(self.0.into()),
+        }
+    }
+}
+
+/// [`Server`] operation [`Result`].
+pub type Result<T, E = Error> = std::result::Result<T, E>;

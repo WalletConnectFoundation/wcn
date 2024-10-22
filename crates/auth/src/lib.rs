@@ -1,3 +1,4 @@
+pub use token::Token;
 use {
     derive_more::AsRef,
     irn_rpc::{

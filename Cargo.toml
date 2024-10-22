@@ -63,6 +63,7 @@ core = { package = "irn_core", path = "crates/core" }
 auth = { package = "irn_auth", path = "crates/auth" }
 api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 domain = { package = "irn_domain", path = "crates/domain" }
+storage_api = { package = "irn_storage_api", path = "crates/storage_api", features = ["server"] }
 admin_api = { package = "irn_admin_api", path = "crates/admin_api" }
 client_api = { package = "irn_client_api", path = "crates/client_api" }
 raft = { path = "crates/raft" }
@@ -77,6 +78,7 @@ sharding = { path = "crates/sharding" }
 auth = { workspace = true }
 api = { workspace = true }
 domain = { workspace = true }
+storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }
 raft = { workspace = true }
@@ -136,6 +138,7 @@ alloy = { git = "https://github.com/alloy-rs/alloy", features = [
 reqwest = { version = "0.12", default-features = false }
 chrono = { version = "0.4", default-features = false }
 if-addrs = "0.13"
+pin-project = "1.0"
 
 # These are required by the tests and the `test_cluster` module.
 tempfile = { version = "3", optional = true }
@@ -144,6 +147,7 @@ rand = { version = "0.8", optional = true }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 
 [dev-dependencies]
+storage_api = { workspace = true, features = ["client", "server"] }
 admin_api = { workspace = true, features = ["client", "server"] }
 tempfile = "3"
 test-log = "0.2"

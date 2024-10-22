@@ -1,5 +1,6 @@
 use {
     futures::{Future, Sink, StreamExt as _},
+    libp2p::PeerId,
     pin_project::pin_project,
     serde::{Deserialize, Serialize},
     std::{
@@ -211,6 +212,7 @@ pub trait Handshake: Clone + Send + Sync + 'static {
 
     fn handle(
         &self,
+        peer_id: PeerId,
         conn: PendingConnection,
     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send;
 }
@@ -225,8 +227,34 @@ impl Handshake for NoHandshake {
 
     fn handle(
         &self,
+        _: PeerId,
         _: PendingConnection,
     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
         async { Ok(()) }
     }
+}
+
+// Makes sure that an error serialized under different `Result` types has the
+// same byte representation.
+#[test]
+fn test_result_serialization() {
+    use tokio_serde::Serializer as _;
+
+    type Result1 = crate::Result<()>;
+    type Result2 = crate::Result<u8>;
+
+    let err = crate::Error::new("test");
+
+    let res1: Result1 = Err(err.clone());
+    let res2: Result2 = Err(err);
+
+    let bytes1 = Pin::new(&mut SymmetricalPostcard::<Result1>::new())
+        .serialize(&res1)
+        .unwrap();
+
+    let bytes2 = Pin::new(&mut SymmetricalPostcard::<Result2>::new())
+        .serialize(&res2)
+        .unwrap();
+
+    assert_eq!(bytes1, bytes2);
 }

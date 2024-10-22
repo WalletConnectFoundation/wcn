@@ -70,7 +70,9 @@
               text = ''cargo "$@"'';
             })
 
-            fenixPackages.rust-analyzer
+            # TODO: seems to be broken currently, restore later
+            # fenixPackages.rust-analyzer 
+            rust-analyzer
             cargo-nextest
             cargo-udeps
             just

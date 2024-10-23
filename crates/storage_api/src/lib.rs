@@ -1,6 +1,9 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use irn_rpc::{identity, Multiaddr, PeerId};
+pub use {
+    auth,
+    irn_rpc::{identity, Multiaddr, PeerId},
+};
 use {
     irn_rpc::{self as rpc, transport},
     serde::{Deserialize, Serialize},

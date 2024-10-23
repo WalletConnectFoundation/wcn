@@ -68,6 +68,18 @@ impl Config {
         self.keypair = keypair;
         self
     }
+
+    /// Overwrites [`Config::connection_timeout`].
+    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
+        self.connection_timeout = timeout;
+        self
+    }
+
+    /// Overwrites [`Config::operation_timeout`].
+    pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
+        self.operation_timeout = timeout;
+        self
+    }
 }
 
 impl Client {

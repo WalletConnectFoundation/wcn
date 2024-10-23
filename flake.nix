@@ -10,19 +10,20 @@
     };
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    fenix,
-    flake-utils,
-    ...
-  }:
+  outputs =
+    { self
+    , nixpkgs
+    , fenix
+    , flake-utils
+    , ...
+    }:
     flake-utils.lib.eachDefaultSystem (
-      system: let
+      system:
+      let
         pkgs = import nixpkgs {
           inherit system;
           config.allowUnfree = true; # terraform is no longer free
-          overlays = [fenix.overlays.default];
+          overlays = [ fenix.overlays.default ];
         };
         fenixPackages = fenix.packages."${system}";
         nativeBuildInputs = with pkgs; [
@@ -45,7 +46,8 @@
         rust-src = fenixPackages.stable.rust-src;
         rustfmt = fenixPackages.default.rustfmt;
         clippy = fenixPackages.default.clippy;
-      in {
+      in
+      {
         devShells.default = pkgs.mkShell {
           inherit nativeBuildInputs;
 
@@ -60,13 +62,13 @@
           NIX_LDFLAGS = "${pkgs.lib.optionalString pkgs.stdenv.isDarwin "\
             -F${pkgs.darwin.apple_sdk.frameworks.Security}/Library/Frameworks -framework Security \
             -F${pkgs.darwin.apple_sdk.frameworks.CoreFoundation}/Library/Frameworks -framework CoreFoundation"}";
-          
+
           buildInputs = with pkgs; [
             (fenixPackages.combine [ cargo.stable rustc.stable rust-std.stable rust-src rustfmt ])
 
             (writeShellApplication {
               name = "cargo-nightly";
-              runtimeInputs = [ cargo.nightly rustc.nightly rust-std.nightly clippy];
+              runtimeInputs = [ cargo.nightly rustc.nightly rust-std.nightly clippy ];
               text = ''cargo "$@"'';
             })
 
@@ -78,7 +80,7 @@
             just
             docker-compose
             terraform
-            ssm-session-manager-plugin            
+            ssm-session-manager-plugin
             awscli2
             jq
             jsonnet
@@ -87,6 +89,16 @@
             # so we use a local version of `ssh` in this dev env (maybe there is a better way to fix it)
             # openssh
           ];
+
+          shellHook = ''
+            alias ga="$(which git) add"
+            alias gst="$(which git) status"
+            alias gc="$(which git) commit"
+            alias gco="$(which git) checkout -b"
+            alias glog="$(which git) log"
+            alias lsa="ls -lah"
+          '';
+
         };
       }
     );

@@ -77,70 +77,13 @@ cargo run -p irn
 ```bash
 irn key generate
 ```
-
-You should see an output as follows
+You should see output like this:
 
 ```bash
 Key 0
 Private key: DFu899OZ7vsRJ0wDmApHqEKuklvN3KnigGLqguJF+54=
 Public key: F4sT/gmL87wcrPXmkdOCZQVOijiRGJzAeLM6NCnSu8U=
 Peer ID: 12D3KooWBQGYh92KEdxUW5UUdy7BvAW96hvYLBMmjzy6X2XsY2HA
-```
-
-### Running a node using the CLI
-
-```bash
-irn node start -w ./working-dir -c ./config.toml
-```
-
-Minimal config file for a **non-bootstrap** node would look like the following:
-
-```toml
-# Node identity.
-[identity]
-# ed25519 private key encoded as base64. Can be generated using `irn key generate` command.
-private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
-# Replication group this node will belong to. Should correlate with availability zones.
-group = 1
-# ETH address of the node operator.
-eth_address = "0xeD380b8da6012c20856CEc076C348AC44fA50f63"
-
-# List of known nodes. Should contain at least one node to be able to join the cluster.
-[[known_peers]]
-id = "12D3KooWHFJ8gjwjw4e6irVouqpiPs9EpqN4nD4GrJ8ZfobheDeH"
-group = 1
-address = ":3010"
-
-# The node's address on the network. IP address should be accessible to other nodes.
-[server]
-bind_address = ""
-server_port = 3050
-client_port = 3051
-metrics_port = 3052
-
-[authorization]
-# Whitelist of client peer IDs this node would allow to connect.
-clients = ["12D3KooWSjVfmYoyEQD4GFR2YXmcRvzZJx1SuNuaLfhmZydSpUzm"]
-```
-
-**Note:** Interrupting a running node via `ctrl+c`/`SIGINT` would put the node into the `restarting` state, which assumes a very short downtime. Having one node in the cluster in `restarting` state prevents other nodes from restarting or leaving the cluster. If the node is being shutdown for a long period of time, it should be decommissioned instead. Decommissioning can only be done externally (see below).
-
-### Running a node in detached mode
-
-```bash
-irn node start -w ./working-dir -c ./config.toml -d
-```
-
-### Stopping a node for restart
-
-```bash
-irn node stop -w ./working-dir -r
-```
-
-### Stopping and decomissioning node
-
-```bash
-irn node stop -w ./working-dir
 ```
 
 ### Interacting with a running node
@@ -219,4 +162,61 @@ irn storage \
     --address ":3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     hvals "userDetails"
+```
+
+### Running a node using the CLI
+Please be advised, running a node via the CLI is intended for development purposes only and subject to change in the future. In production environments, please run either the irn_node binary or one of the docker images our team provides and configure them via environment variables instead.
+
+```bash
+irn node start -w ./working-dir -c ./config.toml
+```
+
+Minimal config file for a **non-bootstrap** node would look like the following:
+
+```toml
+# Node identity.
+[identity]
+# ed25519 private key encoded as base64. Can be generated using `irn key generate` command.
+private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
+# Replication group this node will belong to. Should correlate with availability zones.
+group = 1
+# ETH address of the node operator.
+eth_address = "0xeD380b8da6012c20856CEc076C348AC44fA50f63"
+
+# List of known nodes. Should contain at least one node to be able to join the cluster.
+[[known_peers]]
+id = "12D3KooWHFJ8gjwjw4e6irVouqpiPs9EpqN4nD4GrJ8ZfobheDeH"
+group = 1
+address = ":3010"
+
+# The node's address on the network. IP address should be accessible to other nodes.
+[server]
+bind_address = ""
+server_port = 3050
+client_port = 3051
+metrics_port = 3052
+
+[authorization]
+# Whitelist of client peer IDs this node would allow to connect.
+clients = ["12D3KooWSjVfmYoyEQD4GFR2YXmcRvzZJx1SuNuaLfhmZydSpUzm"]
+```
+
+**Note:** Interrupting a running node via `ctrl+c`/`SIGINT` would put the node into the `restarting` state, which assumes a very short downtime. Having one node in the cluster in `restarting` state prevents other nodes from restarting or leaving the cluster. If the node is being shutdown for a long period of time, it should be decommissioned instead. Decommissioning can only be done externally (see below).
+
+### Running a node in detached mode
+
+```bash
+irn node start -w ./working-dir -c ./config.toml -d
+```
+
+### Stopping a node for restart
+
+```bash
+irn node stop -w ./working-dir -r
+```
+
+### Stopping and decomissioning node
+
+```bash
+irn node stop -w ./working-dir
 ```

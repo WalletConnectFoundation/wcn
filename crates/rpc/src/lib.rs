@@ -127,7 +127,7 @@ impl ServerName {
     ///
     /// If the provided string is larger than `16` bytes.
     pub const fn new(s: &'static str) -> Self {
-        assert!(!(s.len() > 16), "`ServiceName` should be <= 16 bytes");
+        assert!(s.len() <= 16, "`ServiceName` should be <= 16 bytes");
 
         Self(copy_slice_recursive(0, s.as_bytes(), [0u8; 16]))
     }

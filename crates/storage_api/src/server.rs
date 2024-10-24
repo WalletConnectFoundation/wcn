@@ -124,17 +124,27 @@ pub trait Server: Clone + Send + Sync + 'static {
     ) -> Result<impl Future<Output = ()>, quic::Error> {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
-        let rpc_server = RpcServer { server: self }.with_timeouts(timeouts).metered();
-
         let rpc_server_config = irn_rpc::server::Config {
-            name: "storage_api",
+            name: crate::RPC_SERVER_NAME,
+            handshake: Handshake { authenticator },
+        };
+
+        let quic_server_config = irn_rpc::quic::server::Config {
+            name: const { crate::RPC_SERVER_NAME.as_str() },
             addr: cfg.addr,
             keypair: cfg.keypair,
             max_concurrent_connections: cfg.max_concurrent_connections,
-            max_concurrent_rpcs: cfg.max_concurrent_ops,
+            max_concurrent_streams: cfg.max_concurrent_ops,
         };
 
-        irn_rpc::quic::server::run(rpc_server, rpc_server_config, Handshake { authenticator })
+        let rpc_server = RpcServer {
+            api_server: self,
+            config: rpc_server_config,
+        }
+        .with_timeouts(timeouts)
+        .metered();
+
+        irn_rpc::quic::server::run(rpc_server, quic_server_config)
     }
 }
 
@@ -320,15 +330,22 @@ impl<'a, S: Server> RpcHandler<'a, S> {
 }
 
 #[derive(Clone, Debug)]
-struct RpcServer<S> {
-    server: S,
+struct RpcServer<S, V> {
+    api_server: S,
+    config: rpc::server::Config<Handshake<V>>,
 }
 
-impl<S, V> rpc::Server<Handshake<V>> for RpcServer<S>
+impl<S, V> rpc::Server for RpcServer<S, V>
 where
     S: Server,
     V: Authenticator,
 {
+    type Handshake = Handshake<V>;
+
+    fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
+        &self.config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: rpc::Id,
@@ -337,7 +354,7 @@ where
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let handler = RpcHandler {
-                api_server: &self.server,
+                api_server: &self.api_server,
                 conn_info,
             };
 
@@ -365,8 +382,6 @@ where
     }
 }
 
-impl<S> rpc::server::Marker for RpcServer<S> {}
-
 /// Error of a [`Server`] operation.
 #[derive(Clone, Debug)]
 pub struct Error(String);
@@ -384,7 +399,7 @@ impl Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Server part of the [`network::Handshake`].
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Handshake<V> {
     authenticator: V,
 }

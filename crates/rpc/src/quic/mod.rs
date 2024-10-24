@@ -1,4 +1,5 @@
 use {
+    crate::ServerName,
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
     libp2p_tls::certificate,
     quinn::VarInt,
@@ -23,6 +24,10 @@ pub mod server;
 mod metrics;
 
 const PROTOCOL_VERSION: u32 = 0;
+
+struct ConnectionHeader {
+    server_name: Option<ServerName>,
+}
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 #[error("{0}: invalid QUIC Multiaddr")]

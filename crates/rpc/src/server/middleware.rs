@@ -1,7 +1,7 @@
 use {
     super::{ConnectionInfo, Server},
     crate::{
-        transport::{BiDirectionalStream, Handshake},
+        transport::{BiDirectionalStream, HandshakeData},
         Id as RpcId,
         Name as RpcName,
     },
@@ -23,17 +23,23 @@ pub trait MeteredExt: Sized {
     }
 }
 
-impl<S> MeteredExt for S where S: super::Marker {}
+impl<S> MeteredExt for S where S: Server {}
 
-impl<H: Handshake, S> Server<H> for Metered<S>
+impl<S> Server for Metered<S>
 where
-    S: Server<H>,
+    S: Server,
 {
+    type Handshake = S::Handshake;
+
+    fn config(&self) -> &super::Config<Self::Handshake> {
+        self.inner.config()
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<H::Ok>,
+        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
     ) -> impl Future<Output = ()> + 'a {
         self.inner
             .handle_rpc(id, stream, conn_info)
@@ -43,8 +49,6 @@ where
             ))
     }
 }
-
-impl<S: super::Marker> super::Marker for Metered<S> {}
 
 /// Extension trait wrapping [`Server`]s with [`WithTimeouts`] middleware.
 pub trait WithTimeoutsExt: Sized {
@@ -57,18 +61,23 @@ pub trait WithTimeoutsExt: Sized {
     }
 }
 
-impl<S> WithTimeoutsExt for S where S: super::Marker {}
+impl<S> WithTimeoutsExt for S where S: Server {}
 
-impl<H, S> Server<H> for WithTimeouts<S>
+impl<S> Server for WithTimeouts<S>
 where
-    H: Handshake,
-    S: Server<H>,
+    S: Server,
 {
+    type Handshake = S::Handshake;
+
+    fn config(&self) -> &super::Config<Self::Handshake> {
+        self.inner.config()
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<H::Ok>,
+        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
             if let Some(timeout) = self.timeouts.get(id) {
@@ -84,8 +93,6 @@ where
         }
     }
 }
-
-impl<S: super::Marker> super::Marker for WithTimeouts<S> {}
 
 /// RPC server with configured RPC authorization.
 #[derive(Clone, Debug)]
@@ -109,18 +116,23 @@ pub trait WithAuthExt: Sized {
     }
 }
 
-impl<S> WithAuthExt for S where S: super::Marker {}
+impl<S> WithAuthExt for S where S: Server {}
 
-impl<H, S> Server<H> for WithAuth<S>
+impl<S> Server for WithAuth<S>
 where
-    H: Handshake,
-    S: Server<H>,
+    S: Server,
 {
+    type Handshake = S::Handshake;
+
+    fn config(&self) -> &super::Config<Self::Handshake> {
+        self.server.config()
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<H::Ok>,
+        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
             if !self.auth.authorized_clients.contains(&conn_info.peer_id) {
@@ -132,5 +144,3 @@ where
         }
     }
 }
-
-impl<S: super::Marker> super::Marker for WithAuth<S> {}

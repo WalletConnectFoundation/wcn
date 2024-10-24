@@ -22,9 +22,16 @@ type OneshotRpc = crate::Oneshot<{ rpc_id(b"test_oneshot") }, u8>;
 #[derive(Clone, Debug)]
 pub struct Node {
     received_messages: Arc<Mutex<HashSet<u8>>>,
+    rpc_server_config: server::Config,
 }
 
 impl crate::Server for Node {
+    type Handshake = NoHandshake;
+
+    fn config(&self) -> &server::Config<Self::Handshake> {
+        &self.rpc_server_config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
@@ -107,21 +114,27 @@ async fn suite() {
         let client = quic::Client::new(client_config).expect("Client::new");
 
         let server_config = server::Config {
+            name: const { crate::ServerName::new("test_server") },
+            handshake: NoHandshake,
+        };
+
+        let quic_server_config = quic::server::Config {
             name: "test_server",
             addr: addr.clone(),
             keypair: keypair.clone(),
             max_concurrent_connections: 500,
-            max_concurrent_rpcs: 10000,
+            max_concurrent_streams: 10000,
         };
 
         clients.push(client.clone());
 
         let node = Node {
             received_messages: Arc::new(Mutex::new(HashSet::new())),
+            rpc_server_config: server_config,
         };
         nodes.push(node.clone());
 
-        quic::server::run(node, server_config, NoHandshake)
+        quic::server::run(node, quic_server_config)
             .expect("run_server")
             .pipe(tokio::spawn);
     }

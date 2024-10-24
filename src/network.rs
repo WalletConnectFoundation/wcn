@@ -214,16 +214,22 @@ pub mod rpc {
 }
 
 #[derive(AsRef, Clone)]
-struct ApiServer {
+struct CoordinatorApiServer {
     #[as_ref]
     node: Arc<Node>,
 
     pubsub: Pubsub,
 
-    prometheus: PrometheusHandle,
+    config: irn_rpc::server::Config<Handshake>,
 }
 
-impl irn_rpc::Server<Handshake> for ApiServer {
+impl irn_rpc::Server for CoordinatorApiServer {
+    type Handshake = Handshake;
+
+    fn config(&self) -> &server::Config<Self::Handshake> {
+        &self.config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: irn_rpc::Id,
@@ -234,7 +240,25 @@ impl irn_rpc::Server<Handshake> for ApiServer {
     }
 }
 
-impl irn_rpc::Server for ApiServer {
+#[derive(AsRef, Clone)]
+struct ReplicaApiServer {
+    #[as_ref]
+    node: Arc<Node>,
+
+    pubsub: Pubsub,
+
+    prometheus: PrometheusHandle,
+
+    config: irn_rpc::server::Config,
+}
+
+impl irn_rpc::Server for ReplicaApiServer {
+    type Handshake = NoHandshake;
+
+    fn config(&self) -> &server::Config<Self::Handshake> {
+        &self.config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: irn_rpc::Id,
@@ -244,8 +268,6 @@ impl irn_rpc::Server for ApiServer {
         Self::handle_internal_rpc(self, id, stream, conn_info)
     }
 }
-
-impl irn_rpc::server::Marker for ApiServer {}
 
 fn prepare_key(key: api::Key, conn_info: &ConnectionInfo<HandshakeData>) -> api::Result<Vec<u8>> {
     if let Some(namespace) = &key.namespace {
@@ -285,7 +307,7 @@ pub fn namespaced_key(key: api::Key) -> storage::Key {
     data
 }
 
-impl ApiServer {
+impl CoordinatorApiServer {
     fn handle_coordinator_rpc<'a>(
         &'a self,
         id: irn_rpc::Id,
@@ -588,7 +610,9 @@ impl ApiServer {
             });
         }
     }
+}
 
+impl ReplicaApiServer {
     async fn handle_internal_rpc(
         &self,
         id: irn_rpc::Id,
@@ -772,7 +796,9 @@ impl ApiServer {
             )
         });
     }
+}
 
+impl CoordinatorApiServer {
     async fn handle_pubsub_publish(&self, req: api::Publish) {
         let evt = &api::PubsubEventPayload {
             channel: req.channel,
@@ -806,7 +832,9 @@ impl ApiServer {
 
         Ok(())
     }
+}
 
+impl ReplicaApiServer {
     async fn handle_pull_data(
         &self,
         peer_id: &libp2p::PeerId,
@@ -919,11 +947,16 @@ impl irn::migration::Network<cluster::Node> for Network {
 #[derive(Clone)]
 struct RaftRpcServer {
     raft: consensus::Raft,
+    config: irn_rpc::server::Config,
 }
 
-impl irn_rpc::server::Marker for RaftRpcServer {}
-
 impl irn_rpc::Server for RaftRpcServer {
+    type Handshake = NoHandshake;
+
+    fn config(&self) -> &server::Config<Self::Handshake> {
+        &self.config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: irn_rpc::Id,
@@ -1222,18 +1255,26 @@ impl Network {
         raft: consensus::Raft,
     ) -> Result<tokio::task::JoinHandle<()>, quic::Error> {
         let server_config = irn_rpc::server::Config {
+            name: const { irn_rpc::ServerName::new("raft_api") },
+            handshake: NoHandshake,
+        };
+
+        let quic_server_config = irn_rpc::quic::server::Config {
             name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
             max_concurrent_connections: 500,
-            max_concurrent_rpcs: 1000,
+            max_concurrent_streams: 1000,
         };
 
-        let server = RaftRpcServer { raft }
-            .with_timeouts(Timeouts::new().with_default(Duration::from_secs(2)))
-            .metered();
+        let server = RaftRpcServer {
+            raft,
+            config: server_config,
+        }
+        .with_timeouts(Timeouts::new().with_default(Duration::from_secs(2)))
+        .metered();
 
-        irn_rpc::quic::server::run(server, server_config, NoHandshake).map(tokio::spawn)
+        irn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
     }
 
     pub fn spawn_servers<S: StatusReporter>(
@@ -1243,19 +1284,27 @@ impl Network {
         status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let replica_api_server_config = irn_rpc::server::Config {
+            name: const { irn_rpc::ServerName::new("replica_api") },
+            handshake: NoHandshake,
+        };
+        let replica_api_quic_server_config = irn_rpc::quic::server::Config {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
             max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
-            max_concurrent_rpcs: cfg.replica_api_max_concurrent_rpcs,
+            max_concurrent_streams: cfg.replica_api_max_concurrent_rpcs,
         };
 
         let coordinator_api_server_config = irn_rpc::server::Config {
+            name: const { irn_rpc::ServerName::new("coordinator_api") },
+            handshake: Handshake,
+        };
+        let coordinator_api_quic_server_config = irn_rpc::quic::server::Config {
             name: "coordinator_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
             keypair: cfg.keypair.clone(),
             max_concurrent_connections: cfg.coordinator_api_max_concurrent_connections,
-            max_concurrent_rpcs: cfg.coordinator_api_max_concurrent_rpcs,
+            max_concurrent_streams: cfg.coordinator_api_max_concurrent_rpcs,
         };
 
         let default_timeout = Duration::from_millis(cfg.network_request_timeout);
@@ -1276,10 +1325,19 @@ impl Network {
 
         let pubsub = Pubsub::new();
 
-        let server = ApiServer {
+        let coordinator_api_server = CoordinatorApiServer {
+            node: node.clone(),
+            pubsub: pubsub.clone(),
+            config: coordinator_api_server_config,
+        }
+        .with_timeouts(rpc_timeouts.clone())
+        .metered();
+
+        let replica_api_server = ReplicaApiServer {
             node: node.clone(),
             pubsub: pubsub.clone(),
             prometheus,
+            config: replica_api_server_config,
         }
         .with_timeouts(rpc_timeouts)
         .metered();
@@ -1303,8 +1361,9 @@ impl Network {
         .serve(admin_api_server_config)?;
 
         let replica_api_server =
-            irn_rpc::quic::server::run(server.clone(), replica_api_server_config, NoHandshake)?;
-        let coordinator_api_server = ::api::server::run(server, coordinator_api_server_config)?;
+            irn_rpc::quic::server::run(replica_api_server, replica_api_quic_server_config)?;
+        let coordinator_api_server =
+            ::api::server::run(coordinator_api_server, coordinator_api_quic_server_config)?;
 
         Ok(async move {
             tokio::join!(

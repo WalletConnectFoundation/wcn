@@ -2,37 +2,26 @@ use {
     super::*,
     futures::SinkExt as _,
     irn_rpc::{
-        identity::Keypair,
         middleware::Timeouts,
-        quic,
         server::{
-            middleware::{MeteredExt as _, WithTimeoutsExt as _},
+            middleware::{MeteredExt, WithTimeoutsExt},
             ConnectionInfo,
         },
         transport::{self, BiDirectionalStream, PendingConnection},
     },
-    std::{collections::HashSet, future::Future, sync::Arc, time::Duration},
+    std::{collections::HashSet, future::Future, sync::Arc},
 };
 
 /// Storage namespace.
 pub type Namespace = Vec<u8>;
 
 /// Storage API [`Server`] config.
-pub struct Config {
-    /// [`Multiaddr`] of the server.
-    pub addr: Multiaddr,
-
-    /// [`Keypair`] of the server.
-    pub keypair: Keypair,
-
+pub struct Config<A> {
     /// Timeout of a [`Server`] operation.
     pub operation_timeout: Duration,
 
-    /// Maximum allowed amount of concurrent connections.
-    pub max_concurrent_connections: u32,
-
-    /// Maximum allowed amount of concurrent operations.
-    pub max_concurrent_ops: u32,
+    /// Inbound connection [`Authenticator`].
+    pub authenticator: A,
 }
 
 /// Storage API server.
@@ -100,12 +89,6 @@ pub trait Server: Clone + Send + Sync + 'static {
     /// Returns cardinality of the map with the provided [`Key`].
     fn hcard(&self, key: Key) -> impl Future<Output = Result<u64>> + Send;
 
-    /// Returns [`Field`]s of the map with the provided [`Key`].
-    fn hfields(&self, key: Key) -> impl Future<Output = Result<Vec<Field>>> + Send;
-
-    /// Returns [`Value`]s of the map with the provided [`Key`].
-    fn hvals(&self, key: Key) -> impl Future<Output = Result<Vec<Value>>> + Send;
-
     /// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
     /// the provided [`Key`].
     fn hscan(
@@ -113,38 +96,25 @@ pub trait Server: Clone + Send + Sync + 'static {
         key: Key,
         count: u32,
         cursor: Option<Field>,
-    ) -> impl Future<Output = Result<Vec<MapRecord>>> + Send;
+    ) -> impl Future<Output = Result<MapPage>> + Send;
 
-    /// Runs this [`Server`] using the provided [`Config`] and
-    /// [`Authenticator`].
-    fn serve(
-        self,
-        cfg: Config,
-        authenticator: impl Authenticator,
-    ) -> Result<impl Future<Output = ()>, quic::Error> {
+    /// Converts this Storage API [`Server`] into an [`rpc::Server`].
+    fn into_rpc_server(self, cfg: Config<impl Authenticator>) -> impl rpc::Server {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
         let rpc_server_config = irn_rpc::server::Config {
             name: crate::RPC_SERVER_NAME,
-            handshake: Handshake { authenticator },
+            handshake: Handshake {
+                authenticator: cfg.authenticator,
+            },
         };
 
-        let quic_server_config = irn_rpc::quic::server::Config {
-            name: const { crate::RPC_SERVER_NAME.as_str() },
-            addr: cfg.addr,
-            keypair: cfg.keypair,
-            max_concurrent_connections: cfg.max_concurrent_connections,
-            max_concurrent_streams: cfg.max_concurrent_ops,
-        };
-
-        let rpc_server = RpcServer {
+        RpcServer {
             api_server: self,
             config: rpc_server_config,
         }
         .with_timeouts(timeouts)
-        .metered();
-
-        irn_rpc::quic::server::run(rpc_server, quic_server_config)
+        .metered()
     }
 }
 
@@ -309,14 +279,15 @@ impl<'a, S: Server> RpcHandler<'a, S> {
     }
 
     async fn hscan(&self, req: HScanRequest) -> irn_rpc::Result<HScanResponse> {
-        let records = self
+        let page = self
             .api_server
             .hscan(self.prepare_key(req.key)?, req.count, req.cursor)
             .await
             .map_err(Error::into_rpc_error)?;
 
         Ok(HScanResponse {
-            records: records
+            records: page
+                .records
                 .into_iter()
                 .map(|rec| HScanResponseRecord {
                     field: rec.field,
@@ -325,6 +296,7 @@ impl<'a, S: Server> RpcHandler<'a, S> {
                     version: rec.version.timestamp(),
                 })
                 .collect(),
+            has_more: page.has_next,
         })
     }
 }
@@ -387,6 +359,10 @@ where
 pub struct Error(String);
 
 impl Error {
+    pub fn new<E: std::error::Error>(err: E) -> Self {
+        Self(format!("{err}"))
+    }
+
     fn into_rpc_error(self) -> irn_rpc::Error {
         irn_rpc::Error {
             code: "internal".into(),

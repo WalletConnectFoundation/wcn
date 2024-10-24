@@ -5,6 +5,9 @@ use {
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
+/// Hasher used for hashing storage keys.
+pub static HASHER: Xxh3Builder = Xxh3Builder::new();
+
 pub type Keyspace = cluster::keyspace::Sharded<3, Xxh3Builder, ReplicationStrategy>;
 pub type Cluster = cluster::Cluster<Node, Keyspace>;
 pub type ClusterView = cluster::View<Node, Keyspace>;

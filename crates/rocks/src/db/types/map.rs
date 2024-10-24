@@ -1,6 +1,7 @@
 //! Map storage for `RocksDB`.
 
 use {
+    super::string,
     crate::{
         db::{
             batch,
@@ -15,6 +16,14 @@ use {
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, hash::Hash},
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Record<F = Vec<u8>, V = Vec<u8>> {
+    pub field: F,
+    pub value: V,
+    pub expiration: UnixTimestampSecs,
+    pub version: UnixTimestampMicros,
+}
 
 /// Defines `(field, value)` pair.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Default)]
@@ -76,7 +85,7 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
-    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Option<string::Record<C::ValueType>>, Error>> + Send + Sync;
 
     /// Returns if `field` is an existing field in the hash stored at `key`.
     ///
@@ -214,7 +223,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         &self,
         key: &C::KeyType,
         field: &C::SubKeyType,
-    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync
+    ) -> impl Future<Output = Result<Option<string::Record<C::ValueType>>, Error>> + Send + Sync
     {
         async {
             let ext_key = C::ext_key(key, field)?;
@@ -223,7 +232,16 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
             };
 
             let exp = data.expiration_timestamp();
-            Ok(data.into_payload().map(|value| (value, exp)))
+
+            let version = data
+                .modification_timestamp()
+                .unwrap_or_else(|| data.creation_timestamp());
+
+            Ok(data.into_payload().map(|value| string::Record {
+                value,
+                expiration: exp,
+                version,
+            }))
         }
     }
 
@@ -320,7 +338,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
 
             self.backend
                 .exec_blocking(move |b| {
-                    iterators::scan::<C, iterators::CursorAndValue, _>(&b, &key, opts)
+                    iterators::scan::<C, iterators::MapRecords, _>(&b, &key, opts)
                 })
                 .await
         }
@@ -396,26 +414,35 @@ mod tests {
         assert!(db.hvals(&key).await.unwrap().is_empty());
 
         let expiration = timestamp_secs() + 600;
+        let version = timestamp_micros();
 
         // Add messages to the store.
-        db.hset(&key, &val1.clone().into(), expiration, timestamp_micros())
+        db.hset(&key, &val1.clone().into(), expiration, version)
             .await
             .unwrap();
 
         // Make sure messages saved correctly.
         assert_eq!(
             db.hget(&key, &val1.field().into()).await.unwrap(),
-            Some((val1.value().into(), expiration))
+            Some(string::Record {
+                value: val1.value().into(),
+                expiration,
+                version,
+            })
         );
         assert_eq!(db.hget(&key, &val2.field().into()).await.unwrap(), None);
 
         // Only now second message is stored.
-        db.hset(&key, &val2.clone().into(), expiration, timestamp_micros())
+        db.hset(&key, &val2.clone().into(), expiration, version)
             .await
             .unwrap();
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
-            Some((val2.value().into(), expiration))
+            Some(string::Record {
+                value: val2.value().into(),
+                expiration,
+                version,
+            })
         );
 
         // Check collection.
@@ -430,11 +457,19 @@ mod tests {
             .unwrap();
         assert_eq!(
             db.hget(&key, &val1.field().into()).await.unwrap(),
-            Some((val1.value().into(), expiration))
+            Some(string::Record {
+                value: val1.value().into(),
+                expiration,
+                version,
+            })
         );
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
-            Some((val2.value().into(), expiration))
+            Some(string::Record {
+                value: val2.value().into(),
+                expiration,
+                version,
+            })
         );
 
         // Remove messages.
@@ -444,7 +479,11 @@ mod tests {
         assert_eq!(db.hget(&key, &val1.field().into()).await.unwrap(), None);
         assert_eq!(
             db.hget(&key, &val2.field().into()).await.unwrap(),
-            Some((val2.value().into(), expiration))
+            Some(string::Record {
+                value: val2.value().into(),
+                expiration,
+                version,
+            })
         );
         db.hdel(&key, &val2.field().into(), timestamp_micros())
             .await
@@ -460,7 +499,7 @@ mod tests {
             let res = db.hexp(key, &val1.field().into()).await;
             assert!(matches!(res, Err(Error::EntryNotFound)));
 
-            db.hset(key, &val1.clone().into(), expiration, timestamp_micros())
+            db.hset(key, &val1.clone().into(), expiration, version)
                 .await
                 .unwrap();
             let res = db.hexp(key, &val1.field().into()).await;
@@ -518,7 +557,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some((val1.value().into(), expiration))
+                Some(string::Record {
+                    value: val1.value().into(),
+                    expiration,
+                    version: timestamp1,
+                })
             );
 
             // Update the data with higher timestamp value. It's expected to succeed.
@@ -527,7 +570,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some((val2.value().into(), expiration))
+                Some(string::Record {
+                    value: val2.value().into(),
+                    expiration,
+                    version: timestamp2,
+                })
             );
 
             // Update the data with lower timestamp value. It's expected to be ignored.
@@ -536,7 +583,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some((val2.value().into(), expiration))
+                Some(string::Record {
+                    value: val2.value().into(),
+                    expiration,
+                    version: timestamp2,
+                })
             );
 
             // Remove the data with lower timestamp value. It's expected to be ignored.
@@ -545,7 +596,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some((val2.value().into(), expiration))
+                Some(string::Record {
+                    value: val2.value().into(),
+                    expiration,
+                    version: timestamp2,
+                })
             );
         }
 
@@ -567,7 +622,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 db.hget(&key, &val1.field().into()).await.unwrap(),
-                Some((val1.value().into(), expiry1))
+                Some(string::Record {
+                    value: val1.value().into(),
+                    expiration: expiry1,
+                    version: timestamp1,
+                })
             );
             assert_eq!(db.hexp(&key, &val1.field().into()).await.unwrap(), expiry1);
 
@@ -855,7 +914,7 @@ mod tests {
             .await
             .unwrap();
         assert!(has_more);
-        let cursor = page1.last().map(|data| data.0.clone());
+        let cursor = page1.last().map(|data| data.field.clone());
 
         let ScanResult {
             items: page2,
@@ -870,8 +929,8 @@ mod tests {
         assert!(!has_more);
 
         let mut data1_received = HashSet::new();
-        data1_received.extend(page1.into_iter().map(|data| data.1));
-        data1_received.extend(page2.into_iter().map(|data| data.1));
+        data1_received.extend(page1.into_iter().map(|data| data.value));
+        data1_received.extend(page2.into_iter().map(|data| data.value));
         assert_eq!(
             data1_received,
             HashSet::from_iter(data1.into_iter().map(|data| data.value().into()))
@@ -886,7 +945,7 @@ mod tests {
             .await
             .unwrap();
         assert!(has_more);
-        let cursor = page1.last().map(|data| data.0.clone());
+        let cursor = page1.last().map(|data| data.field.clone());
 
         let ScanResult {
             items: page2,
@@ -901,8 +960,8 @@ mod tests {
         assert!(!has_more);
 
         let mut data2_received = HashSet::new();
-        data2_received.extend(page1.into_iter().map(|data| data.1));
-        data2_received.extend(page2.into_iter().map(|data| data.1));
+        data2_received.extend(page1.into_iter().map(|data| data.value));
+        data2_received.extend(page2.into_iter().map(|data| data.value));
         assert_eq!(
             data2_received,
             HashSet::from_iter(data2.into_iter().map(|data| data.value().into()))

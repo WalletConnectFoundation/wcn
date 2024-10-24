@@ -5,14 +5,13 @@ pub use {
 use {
     consistency::ReplicationResults,
     derive_more::derive::AsRef,
-    domain::Cluster,
+    domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, StreamExt},
     irn_core::cluster,
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
     wc::metrics::{self, enum_ordinalize::Ordinalize, future_metrics, EnumLabel, FutureExt as _},
-    xxhash_rust::xxh3::Xxh3Builder,
 };
 
 mod consistency;
@@ -288,8 +287,6 @@ struct ReplicationTask<Op: StorageOperation> {
 
 impl<Op: StorageOperation> ReplicationTask<Op> {
     fn spawn(driver: &Driver, operation: Op) -> oneshot::Receiver<Result<Op::Output>> {
-        static HASHER: Xxh3Builder = Xxh3Builder::new();
-
         let key_hash = HASHER.hash_one(operation.as_ref().as_bytes());
 
         let (tx, rx) = oneshot::channel();

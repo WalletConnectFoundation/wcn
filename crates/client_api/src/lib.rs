@@ -16,6 +16,8 @@ pub mod server;
 #[cfg(feature = "server")]
 pub use server::Server;
 
+const RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("client_api");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ClusterUpdate(Vec<u8>);

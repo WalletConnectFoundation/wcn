@@ -19,6 +19,8 @@ pub mod server;
 #[cfg(feature = "server")]
 pub use server::Server;
 
+const RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("admin_api");
+
 type GetClusterView = rpc::Unary<{ rpc::id(b"get_cluster_view") }, (), ClusterView>;
 type GetNodeStatus =
     rpc::Unary<{ rpc::id(b"get_node_status") }, (), Result<NodeStatus, GetNodeStatusError>>;

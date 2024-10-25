@@ -57,22 +57,30 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with::<{ GetMemoryProfile::ID }>(MEMORY_PROFILE_MAX_DURATION)
             .with_default(cfg.operation_timeout);
 
-        let rpc_server = Adapter { server: self }
-            .with_auth(Auth {
-                authorized_clients: cfg.authorized_clients,
-            })
-            .with_timeouts(timeouts)
-            .metered();
-
         let rpc_server_config = irn_rpc::server::Config {
-            name: "admin_api",
+            name: crate::RPC_SERVER_NAME,
+            handshake: NoHandshake,
+        };
+
+        let quic_server_config = irn_rpc::quic::server::Config {
+            name: const { crate::RPC_SERVER_NAME.as_str() },
             addr: cfg.addr,
             keypair: cfg.keypair,
             max_concurrent_connections: 10,
-            max_concurrent_rpcs: 100,
+            max_concurrent_streams: 100,
         };
 
-        irn_rpc::quic::server::run(rpc_server, rpc_server_config, NoHandshake).map_err(Error)
+        let rpc_server = RpcServer {
+            api_server: self,
+            config: rpc_server_config,
+        }
+        .with_auth(Auth {
+            authorized_clients: cfg.authorized_clients,
+        })
+        .with_timeouts(timeouts)
+        .metered();
+
+        irn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(Error)
     }
 }
 
@@ -81,14 +89,21 @@ pub type DecommissionNodeResult = Result<(), DecommissionNodeError>;
 pub type MemoryProfileResult = Result<MemoryProfile, MemoryProfileError>;
 
 #[derive(Clone, Debug)]
-struct Adapter<S> {
-    server: S,
+struct RpcServer<S> {
+    api_server: S,
+    config: rpc::server::Config,
 }
 
-impl<S> rpc::Server for Adapter<S>
+impl<S> rpc::Server for RpcServer<S>
 where
     S: Server,
 {
+    type Handshake = NoHandshake;
+
+    fn config(&self) -> &rpc::server::Config {
+        &self.config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: rpc::Id,
@@ -98,21 +113,22 @@ where
         async move {
             let _ = match id {
                 GetClusterView::ID => {
-                    GetClusterView::handle(stream, |()| self.server.get_cluster_view().map(Ok))
+                    GetClusterView::handle(stream, |()| self.api_server.get_cluster_view().map(Ok))
                         .await
                 }
                 GetNodeStatus::ID => {
-                    GetNodeStatus::handle(stream, |()| self.server.get_node_status().map(Ok)).await
+                    GetNodeStatus::handle(stream, |()| self.api_server.get_node_status().map(Ok))
+                        .await
                 }
                 DecommissionNode::ID => {
                     DecommissionNode::handle(stream, |req| {
-                        self.server.decommission_node(req.id, req.force).map(Ok)
+                        self.api_server.decommission_node(req.id, req.force).map(Ok)
                     })
                     .await
                 }
                 GetMemoryProfile::ID => {
                     GetMemoryProfile::handle(stream, |req| {
-                        self.server.memory_profile(req.duration).map(Ok)
+                        self.api_server.memory_profile(req.duration).map(Ok)
                     })
                     .await
                 }
@@ -125,8 +141,6 @@ where
         }
     }
 }
-
-impl<S> rpc::server::Marker for Adapter<S> {}
 
 #[derive(Debug, thiserror::Error)]
 #[error("{_0:?}")]

@@ -1,12 +1,16 @@
 use {
-    super::Error,
+    super::{ConnectionHeader, Error},
     crate::{
-        server::{Config, ConnectionInfo},
+        self as rpc,
+        quic,
+        server::ConnectionInfo,
         transport::{BiDirectionalStream, Handshake, PendingConnection},
-        Server,
+        ServerName,
     },
+    derive_more::derive::Deref,
     futures::{FutureExt, SinkExt as _, TryFutureExt as _},
-    std::{convert::Infallible, future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
+    libp2p::{identity::Keypair, Multiaddr},
+    std::{future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
     tap::{Pipe as _, TapOptional},
     tokio::{
         io::AsyncReadExt as _,
@@ -18,129 +22,162 @@ use {
     },
 };
 
-/// Runs the [`rpc::Server`].
-pub fn run<H: Handshake>(
-    server: impl Server<H>,
-    cfg: Config,
-    handshake: H,
-) -> Result<impl Future<Output = ()>, Error> {
-    let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_rpcs);
+/// QUIC RPC server config.
+pub struct Config {
+    /// Name of the server. For metrics purposes only.
+    pub name: &'static str,
 
-    let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_tls_config));
-    server_config.transport = transport_config.clone();
-    server_config.migration(false);
+    /// [`Multiaddr`] to bind the server to.
+    pub addr: Multiaddr,
 
-    let socket_addr = match super::multiaddr_to_socketaddr(&cfg.addr)? {
-        SocketAddr::V4(v4) => SocketAddr::new([0, 0, 0, 0].into(), v4.port()),
-        SocketAddr::V6(v6) => SocketAddr::new([0, 0, 0, 0, 0, 0, 0, 0].into(), v6.port()),
-    };
+    /// [`Keypair`] of the server.
+    pub keypair: Keypair,
 
-    let endpoint = super::new_quinn_endpoint(
-        socket_addr,
-        &cfg.keypair,
-        transport_config,
-        Some(server_config),
-    )?;
+    /// Maximum allowed amount of concurrent connections.
+    pub max_concurrent_connections: u32,
 
-    Ok(async move {
-        let conn_permits = Arc::new(Semaphore::new(cfg.max_concurrent_connections as usize));
-        let stream_permits = Arc::new(Semaphore::new(cfg.max_concurrent_rpcs as usize));
-
-        while let Some(connecting) = endpoint.accept().await {
-            let Ok(permit) = conn_permits.clone().try_acquire_owned() else {
-                metrics::counter!("irn_rpc_server_connections_dropped", StringLabel<"server_name"> => cfg.name)
-                    .increment(1);
-
-                continue;
-            };
-
-            metrics::counter!("irn_rpc_server_connections", StringLabel<"server_name"> => cfg.name)
-                .increment(1);
-
-            ConnectionHandler {
-                server_name: cfg.name,
-                server: server.clone(),
-                handshake: handshake.clone(),
-                stream_concurrency_limiter: stream_permits.clone(),
-                _connection_permit: permit,
-            }
-            .handle(connecting)
-            .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
-            .with_metrics(future_metrics!("quic_inbound_connection_handler"))
-            .pipe(tokio::spawn);
-        }
-    })
+    /// Maximum allowed amount of concurrent streams.
+    pub max_concurrent_streams: u32,
 }
+
+/// Runs the provided [`rpc::Server`] using QUIC protocol.
+pub fn run(rpc_server: impl rpc::Server, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
+    multiplex((rpc_server,), cfg)
+}
+
+/// Runs multiple [`rpc::Server`]s on top of a single QUIC server.
+///
+/// `server` argument is expected to be a tuple of [`rpc::Server`] impls.
+pub fn multiplex<S>(rpc_servers: S, cfg: Config) -> Result<impl Future<Output = ()>, Error>
+where
+    S: Send + Sync + 'static,
+    Server<S>: Multiplexer,
+{
+    Server::new(rpc_servers, cfg).map(|server| server.serve())
+}
+
+/// QUIC server.
+#[derive(Clone, Debug, Deref)]
+pub struct Server<S>(#[deref] Arc<ServerInner<S>>);
 
 #[derive(Debug)]
-struct ConnectionHandler<S, H> {
-    server_name: &'static str,
-    server: S,
-    handshake: H,
+pub struct ServerInner<S> {
+    name: &'static str,
 
-    stream_concurrency_limiter: Arc<Semaphore>,
-    _connection_permit: OwnedSemaphorePermit,
+    endpoint: quinn::Endpoint,
+    rpc_servers: S,
+
+    connection_permits: Arc<Semaphore>,
+    stream_permits: Arc<Semaphore>,
 }
 
-impl<S, H> ConnectionHandler<S, H>
+impl<S> Server<S>
 where
-    S: Server<H>,
-    H: Handshake,
+    S: Send + Sync + 'static,
+    Self: Multiplexer,
 {
-    async fn handle(
-        self,
-        connecting: quinn::Connecting,
-    ) -> Result<(), ConnectionHandlerError<H::Err>> {
-        use ConnectionHandlerError as Error;
+    pub fn new(rpc_servers: S, cfg: Config) -> Result<Self, quic::Error> {
+        let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_streams);
 
-        let conn = connecting
-            .with_timeout(Duration::from_millis(1000))
-            .await
-            .map_err(|_| {
-                metrics::counter!("irn_rpc_server_connection_timeout", StringLabel<"server_name"> => self.server_name)
-                    .increment(1);
+        let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)?;
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_tls_config));
+        server_config.transport = transport_config.clone();
+        server_config.migration(false);
 
-                Error::ConnectionTimeout
-            })??;
+        let socket_addr = match super::multiaddr_to_socketaddr(&cfg.addr)? {
+            SocketAddr::V4(v4) => SocketAddr::new([0, 0, 0, 0].into(), v4.port()),
+            SocketAddr::V6(v6) => SocketAddr::new([0, 0, 0, 0, 0, 0, 0, 0].into(), v6.port()),
+        };
 
-        let peer_id = super::connection_peer_id(&conn)?;
+        let endpoint = super::new_quinn_endpoint(
+            socket_addr,
+            &cfg.keypair,
+            transport_config,
+            Some(server_config),
+        )?;
+
+        Ok(Self(Arc::new(ServerInner {
+            name: cfg.name,
+            endpoint,
+            rpc_servers,
+            connection_permits: Arc::new(Semaphore::new(cfg.max_concurrent_connections as usize)),
+            stream_permits: Arc::new(Semaphore::new(cfg.max_concurrent_streams as usize)),
+        })))
+    }
+
+    pub async fn serve(self) {
+        while let Some(connecting) = self.endpoint.accept().await {
+            self.accept_connection(connecting)
+        }
+    }
+
+    fn accept_connection(&self, connecting: quinn::Connecting) {
+        let Ok(conn_permit) = self.connection_permits.clone().try_acquire_owned() else {
+            metrics::counter!("irn_rpc_quic_server_connections_dropped").increment(1);
+            return;
+        };
+
+        let this = self.clone();
+
+        async move {
+            let conn = connecting
+                .with_timeout(Duration::from_millis(1000))
+                .await
+                .map_err(|_| ConnectionError::Timeout)??;
+
+            let header = read_connection_header(&conn)
+                .with_timeout(Duration::from_millis(500))
+                .await
+                .map_err(|_| ConnectionError::ReadHeaderTimeout)??;
+
+            let _conn_permit = conn_permit;
+
+            this.route_connection(header.server_name, conn).await
+        }
+        .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
+        .with_metrics(future_metrics!("irn_rpc_quic_server_inbound_connection"))
+        .pipe(tokio::spawn);
+    }
+
+    async fn handle_connection(
+        &self,
+        conn: quinn::Connection,
+        rpc_server: &impl rpc::Server,
+    ) -> Result<(), ConnectionError> {
+        use ConnectionError as Error;
+
+        let cfg = rpc_server.config();
+        let server_name = cfg.name.as_str();
+
+        let peer_id = quic::connection_peer_id(&conn)?;
 
         // Unwrap is safe here, addr doesn't contain another `PeerId` as we've just
         // built it from `SocketAddr`.
-        let remote_address = super::socketaddr_to_multiaddr(conn.remote_address())
+        let remote_address = quic::socketaddr_to_multiaddr(conn.remote_address())
             .with_p2p(peer_id)
             .unwrap();
-
-        // Wait for the client to send a protocol version being used, if it timeouts
-        // then client doesn't support versioning yet.
-        let _protocol_version = read_protocol_version::<H::Err>(&conn)
-            .with_timeout(Duration::from_millis(500))
-            .await
-            .ok()
-            .transpose()?;
 
         let conn_info = ConnectionInfo {
             peer_id,
             remote_address,
-            handshake_data: self
+            handshake_data: cfg
                 .handshake
                 .handle(peer_id, PendingConnection(conn.clone()))
                 .with_timeout(Duration::from_millis(1000))
                 .await
                 .map_err(|_| {
-                    metrics::counter!("irn_rpc_server_handshake_timeout", StringLabel<"server_name"> => self.server_name)
+                    metrics::counter!("irn_rpc_quic_server_handshake_timeout", StringLabel<"server_name"> => server_name)
                         .increment(1);
 
-                    Error::ConnectionTimeout
+                    Error::Timeout
                 })?
-                .map_err(Error::Handshake)?,
+                .map_err(|err| Error::Handshake(err.to_string()))?,
         };
 
         loop {
             let (tx, mut rx) = conn.accept_bi().await?;
 
-            let Some(stream_permit) = self.acquire_stream_permit().await else {
+            let Some(stream_permit) = self.acquire_stream_permit() else {
                 static THROTTLED_RESULT: &crate::Result<()> = &Err(crate::Error::THROTTLED);
 
                 let (_, mut tx) =
@@ -152,7 +189,7 @@ where
                 continue;
             };
 
-            let local_peer = self.server.clone();
+            let rpc_server = rpc_server.clone();
             let conn_info = conn_info.clone();
 
             async move {
@@ -164,33 +201,48 @@ where
                 };
 
                 let stream = BiDirectionalStream::new(tx, rx);
-                local_peer.handle_rpc(rpc_id, stream, &conn_info).await
+                rpc_server.handle_rpc(rpc_id, stream, &conn_info).await
             }
-            .with_metrics(future_metrics!("irn_network_inbound_stream_handler"))
+            .with_metrics(future_metrics!("irn_rpc_quic_server_inbound_stream"))
             .pipe(tokio::spawn);
         }
     }
 
-    async fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
-        metrics::gauge!("irn_rpc_server_available_permits", StringLabel<"server_name"> => self.server_name)
-            .set(self.stream_concurrency_limiter.available_permits() as f64);
+    fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
+        metrics::gauge!("irn_rpc_quic_server_available_stream_permits", StringLabel<"server_name"> => self.name)
+            .set(self.stream_permits.available_permits() as f64);
 
-        self.stream_concurrency_limiter
+        self.stream_permits
             .clone()
             .try_acquire_owned()
             .ok()
             .tap_none(|| {
-                metrics::counter!("irn_rpc_server_throttled_streams", StringLabel<"server_name"> => self.server_name)
+                metrics::counter!("irn_rpc_quic_server_throttled_streams", StringLabel<"server_name"> => self.name)
                     .increment(1);
             })
     }
 }
 
-async fn read_protocol_version<H>(
+async fn read_connection_header(
     conn: &quinn::Connection,
-) -> Result<u32, ConnectionHandlerError<H>> {
+) -> Result<ConnectionHeader, ConnectionError> {
     let mut rx = conn.accept_uni().await?;
-    Ok(rx.read_u32().await?)
+
+    let protocol_version = rx.read_u32().await?;
+
+    let service_name = match protocol_version {
+        0 => None,
+        1 => {
+            let mut buf = [0; 16];
+            rx.read_exact(&mut buf).await?;
+            Some(ServerName(buf))
+        }
+        ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
+    };
+
+    Ok(ConnectionHeader {
+        server_name: service_name,
+    })
 }
 
 async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {
@@ -202,19 +254,90 @@ async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ConnectionHandlerError<H = Infallible> {
-    #[error("Inbound connection failed: {0}")]
+pub enum ConnectionError {
+    #[error("Quinn: {0}")]
     Connection(#[from] quinn::ConnectionError),
 
     #[error(transparent)]
     ExtractPeerId(#[from] super::ExtractPeerIdError),
 
     #[error("Handshake failed: {0:?}")]
-    Handshake(H),
+    Handshake(String),
 
     #[error("Failed to read RpcId: {0:?}")]
     ReadRpcId(#[from] io::Error),
 
-    #[error("Connection timeout")]
-    ConnectionTimeout,
+    #[error("Timeout")]
+    Timeout,
+
+    #[error("Unsupported protocol version")]
+    UnsupportedProtocolVersion(u32),
+
+    #[error("Read Header timeout")]
+    ReadHeaderTimeout,
+
+    #[error("Failed to read ConnectionHeader: {0:?}")]
+    ReadHeader(#[from] quinn::ReadExactError),
+
+    #[error("Unknown Rpc server")]
+    UnknownRpcServer,
+}
+
+pub trait Multiplexer: Clone + Sized {
+    fn route_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: quinn::Connection,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send;
+}
+
+impl<A> Multiplexer for Server<(A,)>
+where
+    A: rpc::Server,
+{
+    fn route_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: quinn::Connection,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
+        async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
+            if self.rpc_servers.0.config().name == server_name {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            }
+
+            Err(ConnectionError::UnknownRpcServer)
+        }
+    }
+}
+
+impl<A, B> Multiplexer for Server<(A, B)>
+where
+    A: rpc::Server,
+    B: rpc::Server,
+{
+    fn route_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: quinn::Connection,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
+        async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
+            if self.rpc_servers.0.config().name == server_name {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            }
+
+            if self.rpc_servers.1.config().name == server_name {
+                return self.handle_connection(conn, &self.rpc_servers.1).await;
+            }
+
+            Err(ConnectionError::UnknownRpcServer)
+        }
+    }
 }

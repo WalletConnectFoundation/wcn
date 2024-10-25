@@ -59,6 +59,20 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
+        let rpc_server_config = irn_rpc::server::Config {
+            name: crate::RPC_SERVER_NAME,
+            handshake: NoHandshake,
+        };
+
+        let quic_server_config = irn_rpc::quic::server::Config {
+            name: const { crate::RPC_SERVER_NAME.as_str() },
+            addr: cfg.addr,
+            keypair: cfg.keypair.clone(),
+            // TODO: Make these configurable or find good defaults.
+            max_concurrent_connections: 500,
+            max_concurrent_streams: 100,
+        };
+
         let inner = Arc::new(Inner {
             keypair: cfg
                 .keypair
@@ -68,10 +82,11 @@ pub trait Server: Clone + Send + Sync + 'static {
             network_id: cfg.network_id,
             ns_nonce: Default::default(),
             cluster_view: cfg.cluster_view,
-            server: self,
+            api_server: self,
+            config: rpc_server_config,
         });
 
-        let rpc_server = Adapter { inner }
+        let rpc_server = RpcServer { inner }
             .with_auth(Auth {
                 // TODO: Decide what to do with auth.
                 authorized_clients: cfg.authorized_clients.unwrap_or_default(),
@@ -79,17 +94,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with_timeouts(timeouts)
             .metered();
 
-        let rpc_server_config = irn_rpc::server::Config {
-            name: "client_api",
-            addr: cfg.addr,
-            keypair: cfg.keypair,
-            // TODO: Make these configurable or find good defaults.
-            max_concurrent_connections: 500,
-            max_concurrent_rpcs: 100,
-        };
-
-        irn_rpc::quic::server::run(rpc_server, rpc_server_config, NoHandshake)
-            .map_err(ServeError::Quic)
+        irn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(ServeError::Quic)
     }
 }
 
@@ -98,15 +103,16 @@ struct Inner<S> {
     network_id: String,
     ns_nonce: Mutex<Option<auth::Nonce>>,
     cluster_view: domain::ClusterView,
-    server: S,
+    api_server: S,
+    config: rpc::server::Config,
 }
 
 #[derive(Clone)]
-struct Adapter<S> {
+struct RpcServer<S> {
     inner: Arc<Inner<S>>,
 }
 
-impl<S: Server> Adapter<S> {
+impl<S: Server> RpcServer<S> {
     fn create_auth_nonce(&self) -> auth::Nonce {
         let nonce = auth::Nonce::generate();
         // Safe unwrap, as this lock can't be poisoned.
@@ -184,7 +190,10 @@ impl<S: Server> Adapter<S> {
     }
 
     async fn publish(&self, req: PublishRequest) {
-        self.inner.server.publish(req.channel, req.message).await;
+        self.inner
+            .api_server
+            .publish(req.channel, req.message)
+            .await;
     }
 
     async fn subscribe(
@@ -194,7 +203,7 @@ impl<S: Server> Adapter<S> {
     ) -> irn_rpc::server::Result<()> {
         let req = rx.recv_message().await?;
 
-        let events = match self.inner.server.subscribe(req.channels).await {
+        let events = match self.inner.api_server.subscribe(req.channels).await {
             Ok(events) => events,
             Err(err) => return Ok(tx.send(Err(err.into_rpc_error())).await?),
         };
@@ -213,10 +222,16 @@ impl<S: Server> Adapter<S> {
     }
 }
 
-impl<S> rpc::Server for Adapter<S>
+impl<S> rpc::Server for RpcServer<S>
 where
     S: Server,
 {
+    type Handshake = NoHandshake;
+
+    fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
+        &self.inner.config
+    }
+
     fn handle_rpc<'a>(
         &'a self,
         id: rpc::Id,
@@ -257,8 +272,6 @@ where
         }
     }
 }
-
-impl<S> rpc::server::Marker for Adapter<S> {}
 
 /// Error of [`Server::serve`]
 #[derive(Debug, thiserror::Error)]

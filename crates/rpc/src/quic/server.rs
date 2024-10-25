@@ -230,19 +230,16 @@ async fn read_connection_header(
 
     let protocol_version = rx.read_u32().await?;
 
-    let service_name = match protocol_version {
-        0 => None,
-        1 => {
+    let server_name = match protocol_version {
+        super::PROTOCOL_VERSION => {
             let mut buf = [0; 16];
             rx.read_exact(&mut buf).await?;
-            Some(ServerName(buf))
+            ServerName(buf)
         }
         ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
     };
 
-    Ok(ConnectionHeader {
-        server_name: service_name,
-    })
+    Ok(ConnectionHeader { server_name })
 }
 
 async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {
@@ -286,7 +283,7 @@ pub enum ConnectionError {
 pub trait Multiplexer: Clone + Sized {
     fn route_connection(
         &self,
-        server_name: Option<ServerName>,
+        server_name: ServerName,
         conn: quinn::Connection,
     ) -> impl Future<Output = Result<(), ConnectionError>> + Send;
 }
@@ -297,14 +294,10 @@ where
 {
     fn route_connection(
         &self,
-        server_name: Option<ServerName>,
+        server_name: ServerName,
         conn: quinn::Connection,
     ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
         async move {
-            let Some(server_name) = server_name else {
-                return self.handle_connection(conn, &self.rpc_servers.0).await;
-            };
-
             if self.rpc_servers.0.config().name == server_name {
                 return self.handle_connection(conn, &self.rpc_servers.0).await;
             }
@@ -321,14 +314,10 @@ where
 {
     fn route_connection(
         &self,
-        server_name: Option<ServerName>,
+        server_name: ServerName,
         conn: quinn::Connection,
     ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
         async move {
-            let Some(server_name) = server_name else {
-                return self.handle_connection(conn, &self.rpc_servers.0).await;
-            };
-
             if self.rpc_servers.0.config().name == server_name {
                 return self.handle_connection(conn, &self.rpc_servers.0).await;
             }

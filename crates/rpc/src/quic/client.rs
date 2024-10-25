@@ -1,9 +1,10 @@
 use {
-    super::{InvalidMultiaddrError, PROTOCOL_VERSION},
+    super::{ConnectionHeader, InvalidMultiaddrError, PROTOCOL_VERSION},
     crate::{
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
         Id as RpcId,
+        ServerName,
     },
     backoff::ExponentialBackoffBuilder,
     derivative::Derivative,
@@ -32,6 +33,8 @@ pub struct Client<H = NoHandshake> {
     peer_id: PeerId,
     endpoint: quinn::Endpoint,
     handshake: H,
+
+    server_name: ServerName,
 
     connection_handlers: Arc<RwLock<Arc<OutboundConnectionHandlers<H>>>>,
     connection_timeout: Duration,
@@ -92,6 +95,7 @@ impl<H: Handshake> Client<H> {
                 super::multiaddr_to_socketaddr(&multiaddr).map(|socketaddr| {
                     let handler = ConnectionHandler::new(
                         socketaddr,
+                        cfg.server_name,
                         endpoint.clone(),
                         cfg.handshake.clone(),
                         cfg.connection_timeout,
@@ -105,6 +109,7 @@ impl<H: Handshake> Client<H> {
             peer_id: local_peer_id,
             endpoint,
             handshake: cfg.handshake,
+            server_name: cfg.server_name,
             connection_handlers: Arc::new(RwLock::new(Arc::new(handlers))),
             connection_timeout: cfg.connection_timeout,
         })
@@ -126,6 +131,7 @@ pub(super) struct ConnectionHandler<H> {
 #[derivative(Debug)]
 struct ConnectionHandlerInner {
     addr: SocketAddr,
+    server_name: ServerName,
     endpoint: quinn::Endpoint,
 
     #[derivative(Debug = "ignore")]
@@ -137,6 +143,7 @@ type Connection = Shared<BoxFuture<'static, quinn::Connection>>;
 
 fn new_connection<H: Handshake>(
     addr: SocketAddr,
+    server_name: ServerName,
     endpoint: quinn::Endpoint,
     handshake: H,
     timeout: Duration,
@@ -167,7 +174,7 @@ fn new_connection<H: Handshake>(
             let peer_id = super::connection_peer_id(&conn)
                 .map_err(|err| format!("Failed to extract PeerId: {err:?}"))?;
 
-            write_protocol_version(&conn).await?;
+            write_connection_header(&conn, ConnectionHeader { server_name }).await?;
 
             handshake
                 .handle(peer_id, PendingConnection(conn.clone()))
@@ -195,14 +202,22 @@ fn new_connection<H: Handshake>(
 impl<H: Handshake> ConnectionHandler<H> {
     pub(super) fn new(
         addr: SocketAddr,
+        server_name: ServerName,
         endpoint: quinn::Endpoint,
         handshake: H,
         connection_timeout: Duration,
     ) -> Self {
         let inner = ConnectionHandlerInner {
             addr,
+            server_name,
             endpoint: endpoint.clone(),
-            connection: new_connection(addr, endpoint, handshake.clone(), connection_timeout),
+            connection: new_connection(
+                addr,
+                server_name,
+                endpoint,
+                handshake.clone(),
+                connection_timeout,
+            ),
             connection_timeout,
         };
 
@@ -273,6 +288,7 @@ impl<H: Handshake> ConnectionHandler<H> {
             metrics::counter!("irn_network_reconnects").increment(1);
             this.connection = new_connection(
                 this.addr,
+                this.server_name,
                 this.endpoint.clone(),
                 self.handshake.clone(),
                 this.connection_timeout,
@@ -335,6 +351,7 @@ impl<H: Handshake> Client<H> {
         } else {
             let handler = ConnectionHandler::new(
                 super::multiaddr_to_socketaddr(multiaddr)?,
+                self.server_name,
                 self.endpoint.clone(),
                 self.handshake.clone(),
                 self.connection_timeout,
@@ -400,9 +417,18 @@ impl<H: Handshake> Client<H> {
     }
 }
 
-async fn write_protocol_version(conn: &quinn::Connection) -> Result<(), String> {
+async fn write_connection_header(
+    conn: &quinn::Connection,
+    header: ConnectionHeader,
+) -> Result<(), String> {
     let mut tx = conn.open_uni().await.map_err(|err| err.to_string())?;
     tx.write_u32(PROTOCOL_VERSION)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| format!("Failed to write protocol version: {err}"))?;
+
+    tx.write_all(&header.server_name.0)
+        .await
+        .map_err(|err| format!("Failed to write server name: {err}"))?;
+
+    Ok(())
 }

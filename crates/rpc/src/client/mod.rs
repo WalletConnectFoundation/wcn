@@ -7,6 +7,7 @@ use {
         Id as RpcId,
         Message,
         Rpc,
+        ServerName,
     },
     derive_more::{derive::Display, From},
     futures::{Future, SinkExt as _},
@@ -30,6 +31,9 @@ pub struct Config<H = NoHandshake> {
 
     /// Connection timeout.
     pub connection_timeout: Duration,
+
+    /// Name of the RPC server this client is going to be connecting to.
+    pub server_name: ServerName,
 }
 
 /// RPC client.

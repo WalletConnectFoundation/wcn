@@ -23,10 +23,10 @@ pub mod server;
 #[allow(dead_code)]
 mod metrics;
 
-const PROTOCOL_VERSION: u32 = 0;
+const PROTOCOL_VERSION: u32 = 1;
 
 struct ConnectionHeader {
-    server_name: Option<ServerName>,
+    server_name: ServerName,
 }
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]

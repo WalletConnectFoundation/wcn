@@ -204,6 +204,7 @@ impl<K: Kind> Client<K> {
                         handshake: Handshake {
                             namespaces: namespaces.clone(),
                         },
+                        server_name: crate::RPC_SERVER_NAME,
                     })
                     .map(|c| c.with_timeouts(timeouts.clone()).metered())
                 })

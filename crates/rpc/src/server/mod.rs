@@ -1,34 +1,34 @@
 use {
     crate::{
-        transport::{self, BiDirectionalStream, Handshake, NoHandshake, RecvStream, SendStream},
+        transport::{
+            self,
+            BiDirectionalStream,
+            Handshake,
+            HandshakeData,
+            NoHandshake,
+            RecvStream,
+            SendStream,
+        },
         Id as RpcId,
         Message,
         Result as RpcResult,
+        ServerName,
     },
     futures::{Future, SinkExt as _},
-    libp2p::{identity::Keypair, Multiaddr, PeerId},
+    libp2p::{Multiaddr, PeerId},
     std::io,
 };
 
 pub mod middleware;
 
 /// Server config.
-#[derive(Clone)]
-pub struct Config {
-    /// Server name. For metric purposes.
-    pub name: &'static str,
+#[derive(Clone, Debug)]
+pub struct Config<H = NoHandshake> {
+    /// Name of the server.
+    pub name: ServerName,
 
-    /// [`Multiaddr`] of the server.
-    pub addr: Multiaddr,
-
-    /// [`Keypair`] of the server.
-    pub keypair: Keypair,
-
-    /// Maximum allowed amount of concurrent connections.
-    pub max_concurrent_connections: u32,
-
-    /// Maximum allowed amount of concurrent RPCs.
-    pub max_concurrent_rpcs: u32,
+    /// [`Handshake`] implementation of the server.
+    pub handshake: H,
 }
 
 /// Info about an inbound connection.
@@ -45,19 +45,29 @@ pub struct ConnectionInfo<H = ()> {
 }
 
 /// RPC server.
-pub trait Server<H: Handshake = NoHandshake>: Clone + Send + Sync + 'static {
+pub trait Server: Clone + Send + Sync + 'static {
+    /// [`Handshake`] implementation of this RPC [`Server`].
+    type Handshake: Handshake;
+
+    /// Returns [`Config`] of this [`Server`].
+    fn config(&self) -> &Config<Self::Handshake>;
+
     /// Handles an inbound RPC.
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<H::Ok>,
+        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
     ) -> impl Future<Output = ()> + Send + '_;
 }
 
-/// Marker trait that should accompany [`Server`] impls in order to blanket impl
-/// the middleware extension traits.
-pub trait Marker {}
+/// Into [`Server`] converter.
+pub trait IntoServer {
+    type Server: Server;
+
+    /// Converts `self` into [`Server`].
+    fn into_rpc_server(self) -> Self::Server;
+}
 
 /// RPC [`Server`] error.
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]

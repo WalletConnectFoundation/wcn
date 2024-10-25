@@ -20,6 +20,8 @@ pub mod server;
 #[cfg(feature = "server")]
 pub use server::Server;
 
+const RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("storage_api");
+
 /// RPC error codes produced by this module.
 mod error_code {
     /// Client is not authorized to perform the operation.

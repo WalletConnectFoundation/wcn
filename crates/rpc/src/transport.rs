@@ -217,6 +217,8 @@ pub trait Handshake: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send;
 }
 
+pub type HandshakeData<H> = <H as Handshake>::Ok;
+
 /// No-op [`Handshake`] implementation.
 #[derive(Clone, Debug, Default)]
 pub struct NoHandshake;

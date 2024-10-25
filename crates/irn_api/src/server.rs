@@ -3,7 +3,6 @@ use {
     futures_util::{Future, SinkExt},
     irn_rpc::{
         quic,
-        server,
         transport::{self, PendingConnection},
         PeerId,
     },
@@ -13,10 +12,10 @@ use {
 
 /// Runs an RPC server using the provided [`RpcHandler`].
 pub fn run(
-    server: impl irn_rpc::Server<Handshake>,
-    cfg: server::Config,
+    server: impl irn_rpc::Server<Handshake = Handshake>,
+    config: irn_rpc::quic::server::Config,
 ) -> Result<impl Future<Output = ()>, quic::Error> {
-    quic::server::run(server, cfg, Handshake)
+    quic::server::run(server, config)
 }
 
 /// Server part of the [`network::Handshake`].

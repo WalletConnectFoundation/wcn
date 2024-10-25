@@ -16,7 +16,7 @@ pub use client::Client;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
-pub use server::Server;
+pub use server::{IntoServer, Server};
 
 pub mod middleware;
 
@@ -82,17 +82,17 @@ pub const fn id(bytes: &[u8]) -> Id {
         "rpc::Id should be no longer than 16 bytes"
     );
 
-    // loops aren't supported in const fns
-    const fn copy(idx: usize, src: &[u8], mut dst: [u8; 16]) -> [u8; 16] {
-        if idx == src.len() {
-            return dst;
-        }
+    u128::from_be_bytes(copy_slice_recursive(0, bytes, [0u8; 16]))
+}
 
-        dst[idx] = src[idx];
-        copy(idx + 1, src, dst)
+// loops aren't supported in const fns
+const fn copy_slice_recursive(idx: usize, src: &[u8], mut dst: [u8; 16]) -> [u8; 16] {
+    if idx == src.len() {
+        return dst;
     }
 
-    u128::from_be_bytes(copy(0, bytes, [0u8; 16]))
+    dst[idx] = src[idx];
+    copy_slice_recursive(idx + 1, src, dst)
 }
 
 /// RPC name derived from [`Id`].
@@ -107,6 +107,32 @@ impl Name {
     }
 
     /// Returns UTF-8 representation of this [`Name`].
+    pub const fn as_str(&self) -> &str {
+        match std::str::from_utf8(&self.0) {
+            Ok(s) => s,
+            Err(_) => "invalid",
+        }
+    }
+}
+
+/// RPC server name.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct ServerName([u8; 16]);
+
+impl ServerName {
+    /// Creates a new [`ServerName`] from the provided `&'static str`.
+    /// Intended to be used in `const` contexts only.
+    ///
+    /// # Panics
+    ///
+    /// If the provided string is larger than `16` bytes.
+    pub const fn new(s: &'static str) -> Self {
+        assert!(s.len() <= 16, "`ServiceName` should be <= 16 bytes");
+
+        Self(copy_slice_recursive(0, s.as_bytes(), [0u8; 16]))
+    }
+
+    /// Returns UTF-8 representation of this [`ServerName`].
     pub const fn as_str(&self) -> &str {
         match std::str::from_utf8(&self.0) {
             Ok(s) => s,

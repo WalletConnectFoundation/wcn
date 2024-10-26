@@ -13,6 +13,7 @@ use {
     api::server::{Handshake, HandshakeData},
     client_api::Server,
     derive_more::AsRef,
+    domain::HASHER,
     futures::{
         future,
         stream::{self, Map},
@@ -25,7 +26,14 @@ use {
     },
     irn::{
         cluster::Consensus,
-        replication::{self, CoordinatorError, ReplicaError, ReplicaResponse, StorageOperation},
+        replication::{
+            self,
+            CoordinatorError,
+            ReplicaError,
+            ReplicaResponse,
+            Storage as _,
+            StorageOperation,
+        },
     },
     irn_rpc::{
         client::{
@@ -52,6 +60,7 @@ use {
         borrow::Cow,
         collections::{HashMap, HashSet},
         fmt::{self, Debug},
+        hash::BuildHasher,
         io,
         pin::Pin,
         sync::{Arc, RwLock},
@@ -266,6 +275,237 @@ impl irn_rpc::Server for ReplicaApiServer {
         conn_info: &'a ConnectionInfo,
     ) -> impl Future<Output = ()> + Send + 'a {
         Self::handle_internal_rpc(self, id, stream, conn_info)
+    }
+}
+
+#[derive(AsRef, Clone)]
+struct StorageApiServer {
+    #[as_ref]
+    node: Arc<Node>,
+}
+
+impl storage_api::Server for StorageApiServer {
+    fn keyspace_version(&self) -> u64 {
+        self.node.consensus().cluster().keyspace_version()
+    }
+
+    fn get(
+        &self,
+        key: storage_api::Key,
+    ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::Record>>> + Send {
+        self.node
+            .storage()
+            .get(HASHER.hash_one(key.as_bytes()), key.into_bytes())
+            .map_ok(|opt| {
+                opt.map(|rec| storage_api::Record {
+                    value: rec.value,
+                    expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(
+                        rec.expiration,
+                    ),
+                    version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
+                })
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn set(
+        &self,
+        entry: storage_api::Entry,
+    ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(entry.key.as_bytes()), storage::Set {
+                key: entry.key.into_bytes(),
+                value: entry.value,
+                expiration: entry.expiration.unix_timestamp_secs(),
+                version: entry.version.unix_timestamp_micros(),
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn del(
+        &self,
+        key: storage_api::Key,
+        version: storage_api::EntryVersion,
+    ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::Del {
+                key: key.into_bytes(),
+                version: version.unix_timestamp_micros(),
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn get_exp(
+        &self,
+        key: storage_api::Key,
+    ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
+    {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::GetExp {
+                key: key.into_bytes(),
+            })
+            .map(|res| match res {
+                Ok(timestamp) => Ok(Some(
+                    storage_api::EntryExpiration::from_unix_timestamp_secs(timestamp),
+                )),
+                Err(StorageError::EntryNotFound) => Ok(None),
+                Err(err) => Err(storage_api::server::Error::new(err)),
+            })
+    }
+
+    fn set_exp(
+        &self,
+        key: storage_api::Key,
+        expiration: impl Into<storage_api::EntryExpiration>,
+        version: storage_api::EntryVersion,
+    ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::SetExp {
+                key: key.into_bytes(),
+                expiration: expiration.into().unix_timestamp_secs(),
+                version: version.unix_timestamp_micros(),
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn hget(
+        &self,
+        key: storage_api::Key,
+        field: storage_api::Field,
+    ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::Record>>> + Send {
+        self.node
+            .storage()
+            .hget(HASHER.hash_one(key.as_bytes()), key.into_bytes(), field)
+            .map_ok(|opt| {
+                opt.map(|rec| storage_api::Record {
+                    value: rec.value,
+                    expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(
+                        rec.expiration,
+                    ),
+                    version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
+                })
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn hset(
+        &self,
+        entry: storage_api::MapEntry,
+    ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(entry.key.as_bytes()), storage::HSet {
+                key: entry.key.into_bytes(),
+                field: entry.field,
+                value: entry.value,
+                expiration: entry.expiration.unix_timestamp_secs(),
+                version: entry.version.unix_timestamp_micros(),
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn hdel(
+        &self,
+        key: storage_api::Key,
+        field: storage_api::Field,
+        version: storage_api::EntryVersion,
+    ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::HDel {
+                key: key.into_bytes(),
+                field,
+                version: version.unix_timestamp_micros(),
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn hget_exp(
+        &self,
+        key: storage_api::Key,
+        field: storage_api::Field,
+    ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
+    {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::HGetExp {
+                key: key.into_bytes(),
+                field,
+            })
+            .map(|res| match res {
+                Ok(timestamp) => Ok(Some(
+                    storage_api::EntryExpiration::from_unix_timestamp_secs(timestamp),
+                )),
+                Err(StorageError::EntryNotFound) => Ok(None),
+                Err(err) => Err(storage_api::server::Error::new(err)),
+            })
+    }
+
+    fn hset_exp(
+        &self,
+        key: storage_api::Key,
+        field: storage_api::Field,
+        expiration: impl Into<storage_api::EntryExpiration>,
+        version: storage_api::EntryVersion,
+    ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::HSetExp {
+                key: key.into_bytes(),
+                field,
+                expiration: expiration.into().unix_timestamp_secs(),
+                version: version.unix_timestamp_micros(),
+            })
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn hcard(
+        &self,
+        key: storage_api::Key,
+    ) -> impl Future<Output = storage_api::server::Result<u64>> + Send {
+        self.node
+            .storage()
+            .exec(HASHER.hash_one(key.as_bytes()), storage::HCard {
+                key: key.into_bytes(),
+            })
+            .map_ok(|card| card.0)
+            .map_err(storage_api::server::Error::new)
+    }
+
+    fn hscan(
+        &self,
+        key: storage_api::Key,
+        count: u32,
+        cursor: Option<storage_api::Field>,
+    ) -> impl Future<Output = storage_api::server::Result<storage_api::MapPage>> + Send {
+        self.node
+            .storage()
+            .hscan(
+                HASHER.hash_one(key.as_bytes()),
+                key.into_bytes(),
+                count,
+                cursor,
+            )
+            .map_ok(|res| storage_api::MapPage {
+                records: res
+                    .items
+                    .into_iter()
+                    .map(|rec| storage_api::MapRecord {
+                        field: rec.field,
+                        value: rec.value,
+                        expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(
+                            rec.expiration,
+                        ),
+                        version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
+                    })
+                    .collect(),
+                has_next: res.has_more,
+            })
+            .map_err(storage_api::server::Error::new)
     }
 }
 
@@ -1354,20 +1594,33 @@ impl Network {
         let client_api_server = ClientApiServer { pubsub }.serve(client_api_cfg)?;
 
         let admin_api_server = AdminApiServer {
-            node,
+            node: node.clone(),
             status_reporter,
             eth_address: cfg.eth_address.clone().map(Into::into),
         }
         .serve(admin_api_server_config)?;
 
-        let replica_api_server =
-            irn_rpc::quic::server::run(replica_api_server, replica_api_quic_server_config)?;
+        let storage_api_server = storage_api::Server::into_rpc_server(
+            StorageApiServer { node: node.clone() },
+            storage_api::server::Config {
+                operation_timeout: default_timeout,
+                authenticator: StorageApiAuthenticator {
+                    network_id: cfg.network_id.clone().into(),
+                    node,
+                },
+            },
+        );
+
+        let replica_and_storage_api_servers = irn_rpc::quic::server::multiplex(
+            (replica_api_server, storage_api_server),
+            replica_api_quic_server_config,
+        )?;
         let coordinator_api_server =
             ::api::server::run(coordinator_api_server, coordinator_api_quic_server_config)?;
 
         Ok(async move {
             tokio::join!(
-                replica_api_server,
+                replica_and_storage_api_servers,
                 coordinator_api_server,
                 client_api_server,
                 admin_api_server
@@ -1658,5 +1911,21 @@ impl From<rpc::migration::PullDataError> for irn::migration::PullKeyrangeError {
             E::StorageExport(s) => Self::StorageExport(s),
             E::NotClusterMember => Self::NotClusterMember,
         }
+    }
+}
+
+#[derive(Clone)]
+struct StorageApiAuthenticator {
+    network_id: Arc<str>,
+    node: Arc<Node>,
+}
+
+impl storage_api::server::Authenticator for StorageApiAuthenticator {
+    fn is_authorized_token_issuer(&self, peer_id: PeerId) -> bool {
+        self.node.consensus().cluster().contains_node(&peer_id)
+    }
+
+    fn network_id(&self) -> &str {
+        &self.network_id
     }
 }

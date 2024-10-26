@@ -69,6 +69,11 @@ impl Key {
         &self.0
     }
 
+    /// Converts this [`Key`] into bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
     fn from_raw_bytes(bytes: Vec<u8>) -> Option<Self> {
         match *bytes.first()? {
             Self::KIND_SHARED => Some(Self(bytes)),
@@ -234,6 +239,25 @@ impl From<DateTime> for EntryExpiration {
 }
 
 impl EntryExpiration {
+    pub fn from_unix_timestamp_secs(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_secs: timestamp,
+        }
+    }
+
+    pub fn unix_timestamp_secs(&self) -> u64 {
+        self.unix_timestamp_secs
+    }
+
+    pub fn to_duration(&self) -> Duration {
+        let expiry = DateTime::from_unix_timestamp(self.unix_timestamp_secs as i64)
+            .unwrap_or(DateTime::UNIX_EPOCH);
+
+        (expiry - DateTime::now_utc())
+            .try_into()
+            .unwrap_or_default()
+    }
+
     fn timestamp(&self) -> UnixTimestampSecs {
         UnixTimestampSecs(self.unix_timestamp_secs)
     }
@@ -262,6 +286,16 @@ impl EntryVersion {
                 .unwrap()
                 .as_micros() as u64,
         }
+    }
+
+    pub fn from_unix_timestamp_micros(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_micros: timestamp,
+        }
+    }
+
+    pub fn unix_timestamp_micros(&self) -> u64 {
+        self.unix_timestamp_micros
     }
 
     fn timestamp(&self) -> UnixTimestampMicros {
@@ -444,6 +478,7 @@ struct HScanRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct HScanResponse {
     records: Vec<HScanResponseRecord>,
+    has_more: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

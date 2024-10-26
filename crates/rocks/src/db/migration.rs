@@ -147,7 +147,7 @@ mod test {
                     MapColumn,
                     StringColumn,
                 },
-                types::{map::Pair, MapStorage, StringStorage},
+                types::{map::Pair, string, MapStorage, StringStorage},
             },
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,
@@ -178,6 +178,7 @@ mod test {
         let mut map_entries = Vec::with_capacity(NUM_ENTRIES);
 
         let expiration = timestamp_secs() + 600;
+        let timestamp = timestamp_micros();
 
         let string = src_db.column::<StringColumn>().unwrap();
         let map = src_db.column::<MapColumn>().unwrap();
@@ -186,16 +187,11 @@ mod test {
             let subkey = TestKey::new(rand::random::<u64>()).into();
             let val = TestValue::new(rand::random::<u64>().to_string()).into();
 
-            string
-                .set(&key, &val, expiration, timestamp_micros())
-                .await
-                .unwrap();
+            string.set(&key, &val, expiration, timestamp).await.unwrap();
             string_entries.push((key.clone(), val.clone()));
 
             let pair = Pair::new(subkey, val);
-            map.hset(&key, &pair, expiration, timestamp_micros())
-                .await
-                .unwrap();
+            map.hset(&key, &pair, expiration, timestamp).await.unwrap();
             map_entries.push((key, pair));
         }
 
@@ -236,13 +232,27 @@ mod test {
         let string = dest_db.column::<StringColumn>().unwrap();
         for (key, val) in string_entries {
             let got = string.get(&key).await.unwrap();
-            assert_eq!(got, Some((val, expiration)));
+            assert_eq!(
+                got,
+                Some(string::Record {
+                    value: val,
+                    expiration,
+                    version: timestamp,
+                })
+            );
         }
 
         let map = dest_db.column::<MapColumn>().unwrap();
         for (key, pair) in map_entries {
             let got = map.hget(&key, &pair.field).await.unwrap();
-            assert_eq!(got, Some((pair.value, expiration)));
+            assert_eq!(
+                got,
+                Some(string::Record {
+                    value: pair.value,
+                    expiration,
+                    version: timestamp,
+                })
+            );
         }
     }
 }

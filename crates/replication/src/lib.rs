@@ -6,7 +6,7 @@ use {
     consistency::ReplicationResults,
     derive_more::derive::AsRef,
     domain::{Cluster, HASHER},
-    futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, StreamExt},
+    futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
     irn_core::cluster,
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
@@ -237,17 +237,20 @@ impl Driver {
 
     /// Subscribes to the [`storage::SubscriptionEvent`]s of the provided
     /// `channel`s, and handles them using the provided `event_handler`.
-    pub async fn subscribe<F: Future<Output = ()> + Send + Sync>(
+    pub async fn subscribe(
         &self,
         channels: HashSet<Vec<u8>>,
-        event_handler: impl Fn(SubscriptionEvent) -> F + Send + Sync,
-    ) -> Result<()> {
-        self.client_api
-            .subscribe(channels, event_handler)
+    ) -> Result<impl Stream<Item = Result<SubscriptionEvent>>> {
+        let stream = self
+            .client_api
+            .subscribe(channels)
             .with_metrics(future_metrics!("irn_replication_driver_subscribe"))
             .await
             .tap_err(|_| metrics::counter!("irn_replication_driver_subscribe_errors").increment(1))
-            .map_err(Error::ClientApi)
+            .map_err(Error::ClientApi)?
+            .map(|res| res.map_err(Error::ClientApi));
+
+        Ok(stream)
     }
 
     async fn replicate<Op: StorageOperation>(&self, operation: Op) -> Result<Op::Output> {

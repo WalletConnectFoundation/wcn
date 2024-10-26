@@ -218,7 +218,7 @@ impl Driver {
     }
 
     /// Returns [`Value`]s of the map with the provided [`Key`].
-    pub async fn hvals(self, key: storage::Key) -> Result<Vec<storage::Value>> {
+    pub async fn hvals(&self, key: storage::Key) -> Result<Vec<storage::Value>> {
         // `1000` is generous, relay has ~100 limit for these small maps
         self.hscan(key, 1000, None)
             .await

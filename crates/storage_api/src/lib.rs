@@ -249,6 +249,15 @@ impl EntryExpiration {
         self.unix_timestamp_secs
     }
 
+    pub fn to_duration(&self) -> Duration {
+        let expiry = DateTime::from_unix_timestamp(self.unix_timestamp_secs as i64)
+            .unwrap_or(DateTime::UNIX_EPOCH);
+
+        (expiry - DateTime::now_utc())
+            .try_into()
+            .unwrap_or_default()
+    }
+
     fn timestamp(&self) -> UnixTimestampSecs {
         UnixTimestampSecs(self.unix_timestamp_secs)
     }

@@ -1,6 +1,6 @@
 use {
     crate::{
-        db::{cf, migration::ExportFrame, schema::ColumnFamilyName},
+        db::{cf, migration::ExportFrame, schema::ColumnFamilyName, types::map},
         util::serde::deserialize,
         DataContext,
         Error,
@@ -42,9 +42,9 @@ impl<'a> IntoIterator for DbIterator<'a> {
 
 pub type GenericCursor = Vec<u8>;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ScanResult<T> {
-    pub items: Vec<(GenericCursor, T)>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanResult<T = Vec<u8>> {
+    pub items: Vec<map::Record<GenericCursor, T>>,
     pub has_more: bool,
 }
 
@@ -161,18 +161,31 @@ fn parse_value<C: cf::Column>((_, value): &KVBytes) -> Result<Option<C::ValueTyp
     deserialize::<DataContext<C::ValueType>>(value).map(DataContext::into_payload)
 }
 
-pub struct CursorAndValue;
+pub struct MapRecords;
 
-impl<C> IterTransform<C> for CursorAndValue
+impl<C> IterTransform<C> for MapRecords
 where
     C: cf::Column,
 {
-    type Value = (GenericCursor, C::ValueType);
+    type Value = map::Record<GenericCursor, C::ValueType>;
 
     fn map(data: &KVBytes) -> Result<Option<Self::Value>, Error> {
         let subkey_slice = C::split_ext_key(&data.0)?;
-        let data = parse_value::<C>(data)?.map(|value| (subkey_slice.into(), value));
-        Ok(data)
+
+        let data = deserialize::<DataContext<C::ValueType>>(&data.1)?;
+
+        let exp = data.expiration_timestamp();
+
+        let version = data
+            .modification_timestamp()
+            .unwrap_or_else(|| data.creation_timestamp());
+
+        Ok(data.into_payload().map(|value| map::Record {
+            field: subkey_slice.to_vec(),
+            value,
+            expiration: exp,
+            version,
+        }))
     }
 }
 
@@ -206,7 +219,7 @@ pub fn scan<C, T, V>(
 ) -> Result<ScanResult<V>, Error>
 where
     C: cf::Column,
-    T: IterTransform<C, Value = (GenericCursor, V)>,
+    T: IterTransform<C, Value = map::Record<GenericCursor, V>>,
 {
     let iter = if let Some(cursor) = &opts.cursor {
         // If we have a cursor, use a different version of the iterator, which skips to
@@ -232,7 +245,7 @@ where
     // start from the next item.
     let is_same_cursor = matches!(
         (iter.peek(), &opts.cursor),
-        (Some(Ok((current_cursor, _))), Some(start_cursor)) if current_cursor == start_cursor
+        (Some(Ok(rec)), Some(start_cursor)) if &rec.field == start_cursor
     );
 
     if is_same_cursor {

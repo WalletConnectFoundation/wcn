@@ -21,7 +21,13 @@ use {
             context::UnixTimestampMicros,
             migration::ExportItem,
             schema::{self, GenericKey},
-            types::{common::iterators::ScanOptions, map::Pair, MapStorage, StringStorage},
+            types::{
+                common::iterators::{ScanOptions, ScanResult},
+                map::Pair,
+                string,
+                MapStorage,
+                StringStorage,
+            },
         },
         util::timestamp_micros,
         RocksBackend,
@@ -321,8 +327,8 @@ pub struct Storage {
     /// The underlying database.
     db: RocksBackend,
 
-    string: DbColumn<schema::StringColumn>,
-    map: DbColumn<schema::MapColumn>,
+    pub string: DbColumn<schema::StringColumn>,
+    pub map: DbColumn<schema::MapColumn>,
 }
 
 impl Storage {
@@ -360,13 +366,22 @@ impl replication::Storage<Get> for Storage {
         key_hash: u64,
         op: Get,
     ) -> impl Future<Output = Result<Option<(Value, UnixTimestampSecs)>, Self::Error>> + Send {
-        async move {
-            self.string
-                .get(&GenericKey::new(key_hash, op.key))
-                .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
-                .await
-                .map_err(map_err)
-        }
+        self.get(key_hash, op.key)
+            .map_ok(|opt| opt.map(|rec| (rec.value, rec.expiration)))
+    }
+}
+
+impl Storage {
+    pub async fn get(
+        &self,
+        key_hash: u64,
+        key: Key,
+    ) -> Result<Option<string::Record>, StorageError> {
+        self.string
+            .get(&GenericKey::new(key_hash, key))
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
+            .await
+            .map_err(map_err)
     }
 }
 
@@ -465,14 +480,23 @@ impl replication::Storage<HGet> for Storage {
         key_hash: u64,
         op: HGet,
     ) -> impl Future<Output = Result<Option<(Value, UnixTimestampSecs)>, Self::Error>> + Send {
-        async move {
-            let key = GenericKey::new(key_hash, op.key);
-            self.map
-                .hget(&key, &op.field)
-                .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
-                .await
-                .map_err(map_err)
-        }
+        self.hget(key_hash, op.key, op.field)
+            .map_ok(|opt| opt.map(|rec| (rec.value, rec.expiration)))
+    }
+}
+
+impl Storage {
+    pub async fn hget(
+        &self,
+        key_hash: u64,
+        key: Key,
+        field: Field,
+    ) -> Result<Option<string::Record>, StorageError> {
+        self.map
+            .hget(&GenericKey::new(key_hash, key), &field)
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
+            .await
+            .map_err(map_err)
     }
 }
 
@@ -631,6 +655,24 @@ impl replication::Storage<HVals> for Storage {
     }
 }
 
+impl Storage {
+    pub async fn hscan(
+        &self,
+        key_hash: u64,
+        key: Key,
+        count: u32,
+        cursor: Option<Field>,
+    ) -> Result<ScanResult, StorageError> {
+        let opts = ScanOptions::new(count as usize).with_cursor(cursor);
+
+        self.map
+            .hscan(&GenericKey::new(key_hash, key), opts)
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
+            .await
+            .map_err(map_err)
+    }
+}
+
 impl replication::Storage<HScan> for Storage {
     type Error = StorageError;
 
@@ -639,19 +681,15 @@ impl replication::Storage<HScan> for Storage {
         key_hash: u64,
         op: HScan,
     ) -> impl Future<Output = Result<Page<(Cursor, Value)>, Self::Error>> + Send {
-        async move {
-            let key = GenericKey::new(key_hash, op.key);
-            let opts = ScanOptions::new(op.count as usize).with_cursor(op.cursor);
-            self.map
-                .hscan(&key, opts)
-                .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
-                .await
-                .map(|res| Page {
-                    items: res.items,
-                    has_more: res.has_more,
-                })
-                .map_err(map_err)
-        }
+        self.hscan(key_hash, op.key, op.count, op.cursor)
+            .map_ok(|res| Page {
+                items: res
+                    .items
+                    .into_iter()
+                    .map(|rec| (rec.field, rec.value))
+                    .collect(),
+                has_more: res.has_more,
+            })
     }
 }
 

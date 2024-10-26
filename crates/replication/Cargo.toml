@@ -19,7 +19,6 @@ tokio = { version = "1", default-features = false }
 derive_more = { version = "1.0.0", features = ["as_ref"] }
 
 thiserror = "1"
-xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 
 [lints]
 workspace = true

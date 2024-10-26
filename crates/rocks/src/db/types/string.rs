@@ -14,6 +14,13 @@ use {
     std::future::Future,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Record<V = Vec<u8>> {
+    pub value: V,
+    pub expiration: UnixTimestampSecs,
+    pub version: UnixTimestampMicros,
+}
+
 pub trait StringStorage<C>: CommonStorage<C>
 where
     C: Column,
@@ -24,7 +31,7 @@ where
     fn get(
         &self,
         key: &C::KeyType,
-    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Option<Record<C::ValueType>>, Error>> + Send + Sync;
 
     /// Sets value and expiration for a provided key.
     ///
@@ -77,16 +84,24 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
     fn get(
         &self,
         key: &C::KeyType,
-    ) -> impl Future<Output = Result<Option<(C::ValueType, UnixTimestampSecs)>, Error>> + Send + Sync
-    {
+    ) -> impl Future<Output = Result<Option<Record<C::ValueType>>, Error>> + Send + Sync {
         async {
             let key = C::storage_key(key)?;
             let Some(data) = self.backend.get::<C::ValueType>(C::NAME, key).await? else {
                 return Ok(None);
             };
 
-            let exp = data.expiration_timestamp();
-            Ok(data.into_payload().map(|value| (value, exp)))
+            let expiration = data.expiration_timestamp();
+
+            let version = data
+                .modification_timestamp()
+                .unwrap_or_else(|| data.creation_timestamp());
+
+            Ok(data.into_payload().map(|value| Record {
+                value,
+                expiration,
+                version,
+            }))
         }
     }
 
@@ -194,17 +209,29 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Add data.
-            db.set(key, val, expiration, timestamp_micros())
-                .await
-                .unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val.clone(), expiration)));
+            let timestamp = timestamp_micros();
+            db.set(key, val, expiration, timestamp).await.unwrap();
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val.clone(),
+                    expiration,
+                    version: timestamp,
+                })
+            );
 
             // Update data.
             let val_upd = TestValue::new("updated value").into();
-            db.set(key, &val_upd, expiration, timestamp_micros())
-                .await
-                .unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val_upd, expiration)));
+            let ver_upd = timestamp_micros();
+            db.set(key, &val_upd, expiration, ver_upd).await.unwrap();
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val_upd,
+                    expiration,
+                    version: ver_upd
+                })
+            );
 
             // Remove data.
             db.del(key, timestamp_micros()).await.unwrap();
@@ -260,19 +287,47 @@ mod tests {
 
             // Add data.
             db.set(key, val1, expiration, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val1.clone(), expiration)));
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val1.clone(),
+                    expiration,
+                    version: timestamp1,
+                })
+            );
 
             // Update the data with higher timestamp value. It's expected to succeed.
             db.set(key, val2, expiration, timestamp2).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val2.clone(), expiration)));
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val2.clone(),
+                    expiration,
+                    version: timestamp2
+                })
+            );
 
             // Update the data with lower timestamp value. It's expected to be ignored.
             db.set(key, val1, expiration, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val2.clone(), expiration)));
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val2.clone(),
+                    expiration,
+                    version: timestamp2,
+                })
+            );
 
             // Delete the data with lower timestamp value. It's expected to be ignored.
             db.del(key, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val2.clone(), expiration)));
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val2.clone(),
+                    expiration,
+                    version: timestamp2,
+                })
+            );
         }
 
         // Expiry.
@@ -289,7 +344,14 @@ mod tests {
 
             // Add data.
             db.set(key, val, expiry1, timestamp1).await.unwrap();
-            assert_eq!(db.get(key).await.unwrap(), Some((val.clone(), expiry1)));
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val.clone(),
+                    expiration: expiry1,
+                    version: timestamp1,
+                })
+            );
             assert_eq!(db.exp(key).await.unwrap(), expiry1);
 
             // Update the data with higher timestamp value. It's expected to succeed.
@@ -318,22 +380,20 @@ mod tests {
 
         const N: usize = 25_000;
 
+        let timestamp = timestamp_micros();
+
         let h1 = tokio::spawn(async move {
             for i in (0..N).step_by(2) {
                 let key = &TestKey::new(i as u64).into();
                 let val = &TestValue::new(format!("value_{i}")).into();
-                db1.set(key, val, expiration, timestamp_micros())
-                    .await
-                    .unwrap();
+                db1.set(key, val, expiration, timestamp).await.unwrap();
             }
         });
         let h2 = tokio::spawn(async move {
             for i in (1..N).step_by(2) {
                 let key = &TestKey::new(i as u64).into();
                 let val = TestValue::new(format!("value_{i}")).into();
-                db2.set(key, &val, expiration, timestamp_micros())
-                    .await
-                    .unwrap();
+                db2.set(key, &val, expiration, timestamp).await.unwrap();
             }
         });
         futures::future::join_all(vec![h1, h2]).await;
@@ -341,7 +401,14 @@ mod tests {
         for i in 0..N {
             let key = &TestKey::new(i as u64).into();
             let val = TestValue::new(format!("value_{i}")).into();
-            assert_eq!(db.get(key).await.unwrap(), Some((val, expiration)));
+            assert_eq!(
+                db.get(key).await.unwrap(),
+                Some(Record {
+                    value: val,
+                    expiration,
+                    version: timestamp,
+                })
+            );
         }
     }
 
@@ -447,41 +514,62 @@ mod tests {
             assert_eq!(cf2.get(key).await.unwrap(), None);
 
             // Add different values under the same key in different column families.
+            let timestamp = timestamp_micros();
             cf1.set(key, &val1, expiration, timestamp_micros())
                 .await
                 .unwrap();
             assert_eq!(
                 cf1.get(key).await.unwrap(),
-                Some((val1.clone(), expiration))
+                Some(Record {
+                    value: val1.clone(),
+                    expiration,
+                    version: timestamp,
+                })
             );
             assert_eq!(cf2.get(key).await.unwrap(), None); // db1 update only!
-            cf2.set(key, &val2, expiration, timestamp_micros())
-                .await
-                .unwrap();
+            let timestamp2 = timestamp_micros();
+            cf2.set(key, &val2, expiration, timestamp2).await.unwrap();
             assert_eq!(
                 cf1.get(key).await.unwrap(),
-                Some((val1.clone(), expiration))
+                Some(Record {
+                    value: val1.clone(),
+                    expiration,
+                    version: timestamp,
+                })
             ); // still val1
             assert_eq!(
                 cf2.get(key).await.unwrap(),
-                Some((val2.clone(), expiration))
+                Some(Record {
+                    value: val2.clone(),
+                    expiration,
+                    version: timestamp2,
+                })
             );
 
             // Update data.
             let updated_val = TestValue::new("updated value").into();
-            cf1.set(key, &updated_val, expiration, timestamp_micros())
+            let updated_ver = timestamp_micros();
+            cf1.set(key, &updated_val, expiration, updated_ver)
                 .await
                 .unwrap();
-            cf2.set(key, &updated_val, expiration, timestamp_micros())
+            cf2.set(key, &updated_val, expiration, updated_ver)
                 .await
                 .unwrap();
             assert_eq!(
                 cf1.get(key).await.unwrap(),
-                Some((updated_val.clone(), expiration))
+                Some(Record {
+                    value: updated_val.clone(),
+                    expiration,
+                    version: updated_ver,
+                })
             );
             assert_eq!(
                 cf2.get(key).await.unwrap(),
-                Some((updated_val.clone(), expiration))
+                Some(Record {
+                    value: updated_val.clone(),
+                    expiration,
+                    version: updated_ver,
+                })
             );
 
             // Remove data.
@@ -489,7 +577,11 @@ mod tests {
             assert_eq!(cf1.get(key).await.unwrap(), None);
             assert_eq!(
                 cf2.get(key).await.unwrap(),
-                Some((updated_val.clone(), expiration))
+                Some(Record {
+                    value: updated_val.clone(),
+                    expiration,
+                    version: updated_ver,
+                })
             ); // still exists
             cf2.del(key, timestamp_micros()).await.unwrap();
             assert_eq!(cf2.get(key).await.unwrap(), None);

@@ -3791,7 +3791,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "wc",
- "xxhash-rust",
 ]
 
 [[package]]

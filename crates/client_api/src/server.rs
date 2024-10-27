@@ -6,7 +6,7 @@ use {
         middleware::Timeouts,
         server::{
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
-            ConnectionInfo,
+            ClientConnectionInfo,
         },
         transport::{BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Multiaddr,
@@ -80,17 +80,22 @@ pub trait Server: Clone + Send + Sync + 'static {
                 .try_into_ed25519()
                 .map_err(|_| ServeError::Key)?,
             network_id: cfg.network_id,
-            ns_nonce: Default::default(),
             cluster_view: cfg.cluster_view,
             api_server: self,
             config: rpc_server_config,
         });
 
+        // Allow auth to be disabled for testing purposes.
+        let auth = if let Some(authorized_clients) = cfg.authorized_clients {
+            Auth::new(authorized_clients)
+        } else {
+            tracing::warn!("client API auth is disabled");
+
+            Auth::disabled()
+        };
+
         let rpc_server = RpcServer { inner }
-            .with_auth(Auth {
-                // TODO: Decide what to do with auth.
-                authorized_clients: cfg.authorized_clients.unwrap_or_default(),
-            })
+            .with_auth(auth)
             .with_timeouts(timeouts)
             .metered();
 
@@ -101,7 +106,6 @@ pub trait Server: Clone + Send + Sync + 'static {
 struct Inner<S> {
     keypair: Ed25519Keypair,
     network_id: String,
-    ns_nonce: Mutex<Option<auth::Nonce>>,
     cluster_view: domain::ClusterView,
     api_server: S,
     config: rpc::server::Config,
@@ -113,29 +117,29 @@ struct RpcServer<S> {
 }
 
 impl<S: Server> RpcServer<S> {
-    fn create_auth_nonce(&self) -> auth::Nonce {
+    fn create_auth_nonce(&self, conn_info: &ClientConnectionInfo<Self>) -> auth::Nonce {
         let nonce = auth::Nonce::generate();
         // Safe unwrap, as this lock can't be poisoned.
-        let mut lock = self.inner.ns_nonce.lock().unwrap();
+        let mut lock = conn_info.storage.ns_nonce.lock().unwrap();
         *lock = Some(nonce);
         nonce
     }
 
-    fn take_auth_nonce(&self) -> Option<auth::Nonce> {
+    fn take_auth_nonce(&self, conn_info: &ClientConnectionInfo<Self>) -> Option<auth::Nonce> {
         // Safe unwrap, as this lock can't be poisoned.
-        let mut lock = self.inner.ns_nonce.lock().unwrap();
+        let mut lock = conn_info.storage.ns_nonce.lock().unwrap();
         lock.take()
     }
 
     fn create_auth_token(
         &self,
-        peer_id: PeerId,
+        conn_info: &ClientConnectionInfo<Self>,
         req: token::Config,
     ) -> Result<token::Token, token::Error> {
         let mut claims = token::Claims {
             aud: self.inner.network_id.clone(),
             iss: self.inner.keypair.public().into(),
-            sub: peer_id,
+            sub: conn_info.peer_id,
             api: req.purpose,
             iat: token::create_timestamp(None),
             exp: req.duration.map(|dur| token::create_timestamp(Some(dur))),
@@ -143,7 +147,7 @@ impl<S: Server> RpcServer<S> {
         };
 
         if !req.namespaces.is_empty() {
-            if let Some(nonce) = self.take_auth_nonce() {
+            if let Some(nonce) = self.take_auth_nonce(conn_info) {
                 claims.nsp = req
                     .namespaces
                     .into_iter()
@@ -222,11 +226,17 @@ impl<S: Server> RpcServer<S> {
     }
 }
 
+#[derive(Default)]
+struct Storage {
+    ns_nonce: Mutex<Option<auth::Nonce>>,
+}
+
 impl<S> rpc::Server for RpcServer<S>
 where
     S: Server,
 {
     type Handshake = NoHandshake;
+    type ConnectionData = Arc<Storage>;
 
     fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
         &self.inner.config
@@ -236,18 +246,20 @@ where
         &'a self,
         id: rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let _ = match id {
                 CreateAuthNonce::ID => {
-                    CreateAuthNonce::handle(stream, |_| async { Ok(self.create_auth_nonce()) })
-                        .await
+                    CreateAuthNonce::handle(stream, |_| async {
+                        Ok(self.create_auth_nonce(conn_info))
+                    })
+                    .await
                 }
 
                 CreateAuthToken::ID => {
                     CreateAuthToken::handle(stream, |req| async {
-                        Ok(self.create_auth_token(conn_info.peer_id, req))
+                        Ok(self.create_auth_token(conn_info, req))
                     })
                     .await
                 }

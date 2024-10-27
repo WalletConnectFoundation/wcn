@@ -5,6 +5,7 @@ use {
         middleware::Timeouts,
         server::{
             middleware::{MeteredExt, WithTimeoutsExt},
+            ClientConnectionInfo,
             ConnectionInfo,
         },
         transport::{self, BiDirectionalStream, PendingConnection},
@@ -120,7 +121,7 @@ pub trait Server: Clone + Send + Sync + 'static {
 
 struct RpcHandler<'a, S> {
     api_server: &'a S,
-    conn_info: &'a ConnectionInfo<HandshakeData>,
+    conn_info: &'a ConnectionInfo<HandshakeData, ()>,
 }
 
 impl<'a, S: Server> RpcHandler<'a, S> {
@@ -313,6 +314,7 @@ where
     V: Authenticator,
 {
     type Handshake = Handshake<V>;
+    type ConnectionData = ();
 
     fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
         &self.config
@@ -322,7 +324,7 @@ where
         &'a self,
         id: rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let handler = RpcHandler {

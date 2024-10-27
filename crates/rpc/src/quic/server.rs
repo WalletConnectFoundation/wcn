@@ -172,6 +172,7 @@ where
                     Error::Timeout
                 })?
                 .map_err(|err| Error::Handshake(err.to_string()))?,
+            storage: Default::default()
         };
 
         loop {

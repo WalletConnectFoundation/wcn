@@ -10,7 +10,7 @@ use {
     },
     admin_api::Server as _,
     anyerror::AnyError,
-    api::server::{Handshake, HandshakeData},
+    api::server::Handshake,
     client_api::Server,
     derive_more::AsRef,
     domain::HASHER,
@@ -45,7 +45,7 @@ use {
         server::{
             self,
             middleware::{MeteredExt as _, WithTimeoutsExt as _},
-            ConnectionInfo,
+            ClientConnectionInfo,
         },
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Client as _,
@@ -234,6 +234,7 @@ struct CoordinatorApiServer {
 
 impl irn_rpc::Server for CoordinatorApiServer {
     type Handshake = Handshake;
+    type ConnectionData = ();
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.config
@@ -243,7 +244,7 @@ impl irn_rpc::Server for CoordinatorApiServer {
         &'a self,
         id: irn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         Self::handle_coordinator_rpc(self, id, stream, conn_info)
     }
@@ -263,6 +264,7 @@ struct ReplicaApiServer {
 
 impl irn_rpc::Server for ReplicaApiServer {
     type Handshake = NoHandshake;
+    type ConnectionData = ();
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.config
@@ -272,7 +274,7 @@ impl irn_rpc::Server for ReplicaApiServer {
         &'a self,
         id: irn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         Self::handle_internal_rpc(self, id, stream, conn_info)
     }
@@ -509,7 +511,10 @@ impl storage_api::Server for StorageApiServer {
     }
 }
 
-fn prepare_key(key: api::Key, conn_info: &ConnectionInfo<HandshakeData>) -> api::Result<Vec<u8>> {
+fn prepare_key(
+    key: api::Key,
+    conn_info: &ClientConnectionInfo<CoordinatorApiServer>,
+) -> api::Result<Vec<u8>> {
     if let Some(namespace) = &key.namespace {
         if !conn_info.handshake_data.namespaces.contains(namespace) {
             return Err(api::Error::Unauthorized);
@@ -552,7 +557,7 @@ impl CoordinatorApiServer {
         &'a self,
         id: irn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
             let client_id = &conn_info.peer_id;
@@ -857,7 +862,7 @@ impl ReplicaApiServer {
         &self,
         id: irn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo,
+        conn_info: &ClientConnectionInfo<Self>,
     ) {
         let peer_id = &conn_info.peer_id;
         let replica = self.node.replica();
@@ -1060,7 +1065,7 @@ impl CoordinatorApiServer {
         &self,
         mut rx: RecvStream<api::Subscribe>,
         mut tx: SendStream<irn_rpc::Result<api::PubsubEventPayload>>,
-        _conn_info: &ConnectionInfo<HandshakeData>,
+        _conn_info: &ClientConnectionInfo<Self>,
     ) -> server::Result<()> {
         let req = rx.recv_message().await?;
 
@@ -1192,6 +1197,7 @@ struct RaftRpcServer {
 
 impl irn_rpc::Server for RaftRpcServer {
     type Handshake = NoHandshake;
+    type ConnectionData = ();
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.config
@@ -1201,7 +1207,7 @@ impl irn_rpc::Server for RaftRpcServer {
         &'a self,
         id: irn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         Self::handle_rpc(self, id, stream, conn_info)
     }
@@ -1212,7 +1218,7 @@ impl RaftRpcServer {
         &self,
         id: irn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &ConnectionInfo,
+        conn_info: &ClientConnectionInfo<Self>,
     ) {
         let peer_id = &conn_info.peer_id;
 

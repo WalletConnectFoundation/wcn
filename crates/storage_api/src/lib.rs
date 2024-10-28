@@ -46,19 +46,19 @@ impl Key {
     const KIND_PRIVATE: u8 = 1;
 
     /// Creates a new shared [`Key`] using the global namespace.
-    pub fn shared(bytes: Vec<u8>) -> Self {
+    pub fn shared(bytes: impl AsRef<[u8]>) -> Self {
         Self::new(bytes, None)
     }
 
     /// Creates a new private [`Key`] using the provided `namespace`.
-    pub fn private(namespace: &auth::PublicKey, bytes: Vec<u8>) -> Self {
+    pub fn private(namespace: &auth::PublicKey, bytes: impl AsRef<[u8]>) -> Self {
         Self::new(bytes, Some(namespace))
     }
 
     /// Returns namespace of this [`Key`].
     pub fn namespace(&self) -> Option<&[u8; Self::NAMESPACE_LEN]> {
         match *self.0.first()? {
-            Self::KIND_SHARED => Some(self.0[1..=Self::NAMESPACE_LEN + 1].try_into().unwrap()),
+            Self::KIND_PRIVATE => Some(self.0[1..][..Self::NAMESPACE_LEN].try_into().ok()?),
             _ => None,
         }
     }
@@ -82,7 +82,9 @@ impl Key {
         }
     }
 
-    fn new(bytes: Vec<u8>, namespace: Option<&auth::PublicKey>) -> Self {
+    fn new(bytes: impl AsRef<[u8]>, namespace: Option<&auth::PublicKey>) -> Self {
+        let bytes = bytes.as_ref();
+
         let prefix_len = if namespace.is_some() {
             Self::NAMESPACE_LEN
         } else {
@@ -98,7 +100,7 @@ impl Key {
             data.push(Self::KIND_SHARED);
         };
 
-        data.extend_from_slice(&bytes);
+        data.extend_from_slice(bytes);
         Self(data)
     }
 }

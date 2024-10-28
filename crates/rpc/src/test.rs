@@ -4,7 +4,7 @@ use {
         id as rpc_id,
         identity::Keypair,
         quic,
-        server::{self, ConnectionInfo},
+        server::{self, ClientConnectionInfo},
         transport::{BiDirectionalStream, NoHandshake},
         Id as RpcId,
         Multiaddr,
@@ -30,6 +30,7 @@ pub struct Node {
 
 impl crate::Server for Node {
     type Handshake = NoHandshake;
+    type ConnectionData = ();
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.rpc_server_config
@@ -39,7 +40,7 @@ impl crate::Server for Node {
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        _: &'a ConnectionInfo,
+        _: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             match id {

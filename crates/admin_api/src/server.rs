@@ -6,7 +6,7 @@ use {
         middleware::Timeouts,
         server::{
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
-            ConnectionInfo,
+            ClientConnectionInfo,
         },
         transport::{BiDirectionalStream, NoHandshake},
     },
@@ -74,9 +74,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             api_server: self,
             config: rpc_server_config,
         }
-        .with_auth(Auth {
-            authorized_clients: cfg.authorized_clients,
-        })
+        .with_auth(Auth::new(cfg.authorized_clients))
         .with_timeouts(timeouts)
         .metered();
 
@@ -99,6 +97,7 @@ where
     S: Server,
 {
     type Handshake = NoHandshake;
+    type ConnectionData = ();
 
     fn config(&self) -> &rpc::server::Config {
         &self.config
@@ -108,7 +107,7 @@ where
         &'a self,
         id: rpc::Id,
         stream: BiDirectionalStream,
-        _conn_info: &'a ConnectionInfo,
+        _conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
             let _ = match id {

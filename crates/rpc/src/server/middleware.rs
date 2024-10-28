@@ -1,10 +1,6 @@
 use {
-    super::{ConnectionInfo, Server},
-    crate::{
-        transport::{BiDirectionalStream, HandshakeData},
-        Id as RpcId,
-        Name as RpcName,
-    },
+    super::{ClientConnectionInfo, Server},
+    crate::{transport::BiDirectionalStream, Id as RpcId, Name as RpcName},
     libp2p::PeerId,
     std::{collections::HashSet, future::Future, sync::Arc},
     wc::{
@@ -30,6 +26,7 @@ where
     S: Server,
 {
     type Handshake = S::Handshake;
+    type ConnectionData = S::ConnectionData;
 
     fn config(&self) -> &super::Config<Self::Handshake> {
         self.inner.config()
@@ -39,7 +36,7 @@ where
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         self.inner
             .handle_rpc(id, stream, conn_info)
@@ -68,6 +65,7 @@ where
     S: Server,
 {
     type Handshake = S::Handshake;
+    type ConnectionData = S::ConnectionData;
 
     fn config(&self) -> &super::Config<Self::Handshake> {
         self.inner.config()
@@ -77,7 +75,7 @@ where
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
             if let Some(timeout) = self.timeouts.get(id) {
@@ -106,6 +104,25 @@ pub struct WithAuth<S> {
 pub struct Auth {
     /// A list of clients authorized to use the RPC server.
     pub authorized_clients: HashSet<PeerId>,
+
+    /// Disable auth for testing purposes.
+    pub disabled: bool,
+}
+
+impl Auth {
+    pub fn new(authorized_clients: impl Into<HashSet<PeerId>>) -> Self {
+        Self {
+            authorized_clients: authorized_clients.into(),
+            disabled: false,
+        }
+    }
+
+    pub fn disabled() -> Self {
+        Self {
+            authorized_clients: Default::default(),
+            disabled: true,
+        }
+    }
 }
 
 /// Extension trait wrapping [`Server`]s with [`WithAuth`] middleware.
@@ -123,6 +140,7 @@ where
     S: Server,
 {
     type Handshake = S::Handshake;
+    type ConnectionData = S::ConnectionData;
 
     fn config(&self) -> &super::Config<Self::Handshake> {
         self.server.config()
@@ -132,10 +150,12 @@ where
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
-            if !self.auth.authorized_clients.contains(&conn_info.peer_id) {
+            let auth = &self.auth;
+
+            if !auth.disabled && !auth.authorized_clients.contains(&conn_info.peer_id) {
                 tracing::warn!(%conn_info.peer_id, "unauthorized");
                 return;
             }

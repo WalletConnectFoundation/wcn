@@ -33,7 +33,7 @@ pub struct Config<H = NoHandshake> {
 
 /// Info about an inbound connection.
 #[derive(Debug, Clone)]
-pub struct ConnectionInfo<H = ()> {
+pub struct ConnectionInfo<H, S> {
     /// [`PeerId`] of the remote peer.
     pub peer_id: PeerId,
 
@@ -42,12 +42,21 @@ pub struct ConnectionInfo<H = ()> {
 
     /// Handshake data.
     pub handshake_data: H,
+
+    /// Local data storage for stateful connections.
+    pub storage: S,
 }
+
+pub type ClientConnectionInfo<S> =
+    ConnectionInfo<HandshakeData<<S as Server>::Handshake>, <S as Server>::ConnectionData>;
 
 /// RPC server.
 pub trait Server: Clone + Send + Sync + 'static {
     /// [`Handshake`] implementation of this RPC [`Server`].
     type Handshake: Handshake;
+
+    /// Local data storage for stateful connections.
+    type ConnectionData: Default + Clone + Send + Sync;
 
     /// Returns [`Config`] of this [`Server`].
     fn config(&self) -> &Config<Self::Handshake>;
@@ -57,7 +66,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         &'a self,
         id: RpcId,
         stream: BiDirectionalStream,
-        conn_info: &'a ConnectionInfo<HandshakeData<Self::Handshake>>,
+        conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + '_;
 }
 

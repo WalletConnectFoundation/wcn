@@ -41,7 +41,7 @@ env:
 jobs:
   tests:
     name: "${{ matrix.cargo.name }}"
-    runs-on: 
+    runs-on:
       group: ubuntu-runners
     strategy:
       fail-fast: false

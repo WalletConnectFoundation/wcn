@@ -2,6 +2,7 @@
 name = "irn_replication"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 wc = { workspace = true, features = ["metrics"] }

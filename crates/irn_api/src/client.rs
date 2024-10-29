@@ -265,7 +265,7 @@ impl<K: Kind> Client<K> {
 
         tryhard::retry_fn(|| {
             self.random_client()
-                .send_unary::<RPC>(&AnyPeer, &op)
+                .send_unary_legacy::<RPC>(&AnyPeer, &op)
                 .map(|res| {
                     match res {
                         Ok(Ok(out)) => Ok(out),
@@ -518,7 +518,7 @@ impl<K: Kind> Client<K> {
 
             loop {
                 let res =
-                    rpc::Subscribe::send(this.random_client(), &AnyPeer, &|mut tx, rx| async  move {
+                    rpc::Subscribe::send_legacy(this.random_client(), &AnyPeer, &|mut tx, rx| async  move {
                         tx.send(op).await?;
                         Ok(rx)
                     })
@@ -536,9 +536,9 @@ impl<K: Kind> Client<K> {
 
                 loop {
                     match rx.recv_message().await {
-                        Ok(Ok(msg)) => yield msg,
-                        res @ (Err(_) | Ok(Err(_))) => {
-                            tracing::warn!(?res, "Failed to receive pubsub message, resubscribing...");
+                        Ok(msg) => yield msg,
+                        Err(err) => {
+                            tracing::warn!(?err, "Failed to receive pubsub message, resubscribing...");
                             metrics::counter!("irn_api_client_subscription_failures", "client_tag" => K::METRICS_TAG).increment(1);
                             break;
                         }

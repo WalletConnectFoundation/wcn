@@ -125,10 +125,11 @@ where
                 .await
                 .map_err(|_| ConnectionError::Timeout)??;
 
+            // TODO: Error on timeout, instead of downgrading the protocol version
             let header = read_connection_header(&conn)
                 .with_timeout(Duration::from_millis(500))
                 .await
-                .map_err(|_| ConnectionError::ReadHeaderTimeout)??;
+                .unwrap_or_else(|_| Ok(super::ConnectionHeader::default()))?;
 
             let _conn_permit = conn_permit;
 

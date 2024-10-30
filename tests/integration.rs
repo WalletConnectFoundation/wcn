@@ -59,7 +59,7 @@ async fn test_suite() {
     cluster.spawn_node().await;
     cluster.spawn_node().await;
 
-    // cluster.test_addr_change().await;
+    cluster.test_addr_change().await;
 
     cluster.test_replication_and_read_repairs().await;
 

@@ -57,14 +57,17 @@ export ROCKSDB_DIR=$rocksdb_dir
 export RAFT_DIR=$raft_dir
 ```
 
-For the initial launch of your node (bootstrap) you also need to specify a list of peers to connect to.   
-
-**Make sure to select the correct peer list for the network you're connecting to.**
+The following section depends on the network: Mainnet / Testnet.
+**Make sure to select the correct network you're connecting to.**
 
 <details>
   <summary>Mainnet</summary>
   
   ```bash
+  # Identifier of the network.
+  export NETWORK_ID=mainnet
+  
+  # For the initial launch of your node (bootstrap) you also need to specify a list of peers to connect to.   
   export PEER_12D3KooWFJpHSpFCoHqFJsHyc9JA7C9XPTVhyXsiTRucU6TikGWe=/ip4/35.157.165.56/udp/3010/quic-v1
   export PEER_12D3KooWDdSQWrrkcxs6JGcWYHygwQ4zyoK4SR6Y58f7dsmXsXyp=/ip4/18.210.232.235/udp/3010/quic-v1
   export PEER_12D3KooWNhADaVPZFcRLxvbfp8abbuPLFz9NGxkh75aHivPHnjyP=/ip4/18.139.66.197/udp/3010/quic-v1
@@ -74,6 +77,10 @@ For the initial launch of your node (bootstrap) you also need to specify a list 
   <summary>Testnet</summary>
   
   ```bash
+  # Identifier of the network.
+  export NETWORK_ID=testnet
+
+  # For the initial launch of your node (bootstrap) you also need to specify a list of peers to connect to.   
   export PEER_12D3KooWDBZx6LibN1Lxvtb45yFNBfons96bn79AokA2amcJpcZd=/ip4/35.157.219.93/udp/3010/quic-v1
   export PEER_12D3KooWDfseE1zdkdPjhwHYfdSUSRZ5mGJoUTNUbiyehWrMDhDM=/ip4/3.211.214.115/udp/3010/quic-v1
   export PEER_12D3KooWJTtT7wUsqWtcGufQrYCcPm8s5vHib9cCVZWiVUKMJz5a=/ip4/18.136.236.182/udp/3010/quic-v1

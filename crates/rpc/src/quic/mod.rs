@@ -25,6 +25,7 @@ mod metrics;
 
 const PROTOCOL_VERSION: u32 = 1;
 
+#[derive(Default)]
 struct ConnectionHeader {
     server_name: ServerName,
 }

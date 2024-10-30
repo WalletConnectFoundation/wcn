@@ -111,6 +111,20 @@ where
         tx.send(&resp).await?;
         Ok(())
     }
+
+    // Support for the protocol version `None` client
+    // TODO: Remove when `irn_api` is removed
+    pub async fn handle_legacy<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
+    where
+        F: FnOnce(Req) -> Fut,
+        Fut: Future<Output = Resp>,
+    {
+        let (mut rx, mut tx) = stream.upgrade::<Req, Resp>();
+        let req = rx.recv_message().await?;
+        let resp = f(req).await;
+        tx.send(&resp).await?;
+        Ok(())
+    }
 }
 
 impl<const ID: RpcId, Req, Resp> super::Streaming<ID, Req, Resp>
@@ -121,6 +135,17 @@ where
     pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
     where
         F: FnOnce(RecvStream<Req>, SendStream<RpcResult<Resp>>) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let (rx, tx) = stream.upgrade();
+        f(rx, tx).await
+    }
+
+    // Support for the protocol version `None` client
+    // TODO: Remove when `irn_api` is removed
+    pub async fn handle_legacy<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
+    where
+        F: FnOnce(RecvStream<Req>, SendStream<Resp>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
         let (rx, tx) = stream.upgrade();

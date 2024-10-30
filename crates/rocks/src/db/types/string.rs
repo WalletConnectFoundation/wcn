@@ -515,9 +515,7 @@ mod tests {
 
             // Add different values under the same key in different column families.
             let timestamp = timestamp_micros();
-            cf1.set(key, &val1, expiration, timestamp_micros())
-                .await
-                .unwrap();
+            cf1.set(key, &val1, expiration, timestamp).await.unwrap();
             assert_eq!(
                 cf1.get(key).await.unwrap(),
                 Some(Record {

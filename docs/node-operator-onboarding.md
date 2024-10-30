@@ -57,7 +57,7 @@ export ROCKSDB_DIR=$rocksdb_dir
 export RAFT_DIR=$raft_dir
 ```
 
-The following section depends on the network: Mainnet / Testnet.
+The following section depends on the network: Mainnet / Testnet.   
 **Make sure to select the correct network you're connecting to.**
 
 <details>

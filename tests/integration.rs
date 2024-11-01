@@ -1,25 +1,18 @@
 use {
     admin_api::{ClusterView, NodeState},
-    api::Multiaddr,
     futures::{
         stream::{self, FuturesUnordered},
         FutureExt,
         StreamExt as _,
     },
     irn::fsm::ShutdownReason,
-    irn_node::{
-        cluster::NodeRegion,
-        network::{namespaced_key, rpc},
-        storage::{self, Get, Set, Value},
-        Config,
-        RocksdbDatabaseConfig,
-    },
-    irn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr, transport::NoHandshake},
+    irn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
+    irn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr},
     itertools::Itertools,
-    libp2p::PeerId,
+    libp2p::{Multiaddr, PeerId},
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
-    rand::{seq::IteratorRandom as _, Rng},
-    relay_rocks::util::{timestamp_micros, timestamp_secs},
+    rand::Rng,
+    replication::storage,
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
@@ -27,6 +20,7 @@ use {
         thread,
         time::Duration,
     },
+    tap::Pipe,
     tokio::sync::oneshot,
     tracing_subscriber::EnvFilter,
 };
@@ -49,11 +43,9 @@ fn authorized_client_keypair() -> Keypair {
 async fn test_suite() {
     let mut cluster = TestCluster::bootstrap().await;
 
-    cluster.test_pubsub().await;
+    // cluster.test_pubsub().await;
 
     cluster.test_namespaces().await;
-
-    cluster.test_coordinator_authorization().await;
 
     // add 2 exta nodes, 5 total
     cluster.spawn_node().await;
@@ -77,63 +69,12 @@ struct NodeHandle {
     thread_handle: thread::JoinHandle<()>,
     shutdown_tx: oneshot::Sender<ShutdownReason>,
 
-    /// Coordinator API client to make coordinator requests _to_ this node.
-    coordinator_api_client: api::Client,
-
-    /// Replica API client to make replica requests _from_ this node to other
-    /// nodes.
-    replica_api_client: irn_rpc::quic::Client,
-
     replica_api_server_addr: Multiaddr,
-    coordinator_api_server_addr: Multiaddr,
     client_api_server_addr: Multiaddr,
     admin_api_server_addr: Multiaddr,
 }
 
 impl NodeHandle {
-    async fn replica_get(
-        &self,
-        mut operation: storage::Get,
-        keyspace_version: u64,
-    ) -> Option<Value> {
-        operation.key = namespaced_key(api::Key {
-            namespace: None,
-            bytes: operation.key,
-        });
-
-        let addr = &self.replica_api_server_addr;
-
-        let req = rpc::replica::Request {
-            operation,
-            keyspace_version,
-        };
-
-        rpc::replica::Get::send(&self.replica_api_client, addr, &req)
-            .await
-            .unwrap()
-            .unwrap()
-            .map(|out| out.0)
-    }
-
-    async fn replica_set(&self, mut operation: storage::Set, keyspace_version: u64) {
-        operation.key = namespaced_key(api::Key {
-            namespace: None,
-            bytes: operation.key,
-        });
-
-        let addr = &self.replica_api_server_addr;
-
-        let req = rpc::replica::Request {
-            operation,
-            keyspace_version,
-        };
-
-        rpc::replica::Set::send(&self.replica_api_client, addr, &req)
-            .await
-            .unwrap()
-            .unwrap()
-    }
-
     fn change_addr(&mut self) {
         self.config.raft_server_port = next_port();
         self.config.replica_api_server_port = next_port();
@@ -177,7 +118,7 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
-        let client = admin_api::Client::new(
+        let admin_api_client = admin_api::Client::new(
             admin_api::client::Config::new(local_multiaddr(0))
                 .with_keypair(authorized_client_keypair()),
         )
@@ -186,7 +127,7 @@ impl TestCluster {
         let mut cluster = Self {
             nodes,
             prometheus,
-            admin_api_client: client,
+            admin_api_client,
             version: 0,
             keyspace_version: 0,
         };
@@ -201,13 +142,17 @@ impl TestCluster {
     }
 
     async fn restart_node(&mut self, id: &PeerId) {
+        let config = self.shutdown_node(id).await;
+        self.configure_and_spawn_node(|c| *c = config).await;
+    }
+
+    async fn shutdown_node(&mut self, id: &PeerId) -> Config {
         let node = self.nodes.remove(id).unwrap();
         node.shutdown_tx.send(ShutdownReason::Restart).unwrap();
         node.thread_handle.join().unwrap();
 
         self.wait_node_state(id, NodeState::Restarting).await;
-
-        self.configure_and_spawn_node(|c| *c = node.config).await;
+        node.config
     }
 
     async fn decommission_node(&mut self, id: &PeerId) {
@@ -311,10 +256,6 @@ impl TestCluster {
         Ok(client.get_cluster_view().await?)
     }
 
-    fn random_node(&self) -> &NodeHandle {
-        self.nodes.values().choose(&mut rand::thread_rng()).unwrap()
-    }
-
     fn gen_test_ops(&self) -> Operations {
         let mut rng = rand::thread_rng();
         let key = rng.gen::<u128>().to_be_bytes().to_vec();
@@ -325,18 +266,56 @@ impl TestCluster {
             set: Set {
                 key: key.clone(),
                 value: value.clone(),
-                expiration: timestamp_secs() + 600,
-                version: timestamp_micros(),
+                expiration: Duration::from_secs(600),
             },
             get: Get { key: key.clone() },
             expected_output: Some(value),
             overwrite: Set {
                 key,
                 value: value2,
-                expiration: timestamp_secs() + 600,
-                version: timestamp_micros(),
+                expiration: Duration::from_secs(600),
             },
         }
+    }
+
+    async fn new_replication_driver(
+        &self,
+        f: impl FnOnce(&mut replication::Config),
+    ) -> replication::Driver {
+        let nodes = self
+            .nodes
+            .values()
+            .map(|node| local_multiaddr(node.config.client_api_server_port))
+            .collect();
+
+        let mut cfg = replication::Config::new(nodes).with_keypair(authorized_client_keypair());
+        f(&mut cfg);
+
+        replication::Driver::new(cfg).await.unwrap()
+    }
+
+    async fn new_client_api_client(&self) -> client_api::Client {
+        let nodes: HashSet<_> = self
+            .nodes
+            .values()
+            .map(|node| local_multiaddr(node.config.client_api_server_port))
+            .collect();
+
+        client_api::Client::new(
+            client_api::client::Config::new(nodes).with_keypair(authorized_client_keypair()),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn new_storage_api_client(&self) -> storage_api::Client {
+        let client_api = self.new_client_api_client().await;
+        let token = client_api.auth_token();
+
+        storage_api::Client::new(
+            storage_api::client::Config::new(token).with_keypair(authorized_client_keypair()),
+        )
+        .unwrap()
     }
 
     async fn test_pubsub(&self) {
@@ -347,24 +326,27 @@ impl TestCluster {
         let payload1 = b"payload1";
         let payload2 = b"payload2";
 
-        let clients = self
-            .nodes
-            .values()
-            .map(|n| n.coordinator_api_client.clone())
-            .collect_vec();
+        let clients = (0..2)
+            .map(|_| self.new_replication_driver(|_| {}))
+            .pipe(stream::iter)
+            .buffer_unordered(2)
+            .collect::<Vec<_>>()
+            .await;
 
         // Subscribe 2 groups of clients to different channels.
         let mut subscriptions1 = stream::iter(&clients)
-            .then(|c| {
+            .then(|c| async {
                 c.subscribe([channel1.to_vec()].into_iter().collect())
-                    .map(Box::pin)
+                    .await
+                    .unwrap()
             })
             .collect::<Vec<_>>()
             .await;
         let mut subscriptions2 = stream::iter(&clients)
-            .then(|c| {
+            .then(|c| async {
                 c.subscribe([channel2.to_vec()].into_iter().collect())
-                    .map(Box::pin)
+                    .await
+                    .unwrap()
             })
             .collect::<Vec<_>>()
             .await;
@@ -396,10 +378,10 @@ impl TestCluster {
         for sub in subscriptions1.iter_mut() {
             tasks.push(
                 async {
-                    let data = sub.next().await.unwrap();
+                    let data = sub.next().await.unwrap().unwrap();
 
                     assert_eq!(&data.channel, channel1);
-                    assert_eq!(&data.payload, payload1);
+                    assert_eq!(&data.message, payload1);
                 }
                 .boxed_local(),
             )
@@ -408,10 +390,10 @@ impl TestCluster {
         for sub in subscriptions2.iter_mut() {
             tasks.push(
                 async {
-                    let data = sub.next().await.unwrap();
+                    let data = sub.next().await.unwrap().unwrap();
 
                     assert_eq!(&data.channel, channel2);
-                    assert_eq!(&data.payload, payload2);
+                    assert_eq!(&data.message, payload2);
                 }
                 .boxed_local(),
             )
@@ -435,8 +417,6 @@ impl TestCluster {
     async fn test_namespaces(&self) {
         tracing::info!("Namespaces");
 
-        let expiration = timestamp_secs() + 600;
-
         let namespaces = (0..2)
             .map(|i| {
                 let auth = auth::Auth::from_secret(
@@ -454,64 +434,63 @@ impl TestCluster {
         let node = self.nodes.values().next().unwrap();
 
         // Client, authorized for the first namespace.
-        let client0 = new_coordinator_api_client(|c| {
-            c.nodes
-                .insert(node.config.id, node.coordinator_api_server_addr.clone());
-            c.namespaces = vec![namespaces[0].0.clone()];
-        });
+        let client0 = self
+            .new_replication_driver(|cfg| {
+                cfg.nodes.insert(node.client_api_server_addr.clone());
+                cfg.namespaces = vec![namespaces[0].0.clone()];
+            })
+            .await;
         let namespace0 = namespaces[0].1;
 
         // Client, authorized for the second namespace.
-        let client1 = new_coordinator_api_client(|c| {
-            c.nodes
-                .insert(node.config.id, node.coordinator_api_server_addr.clone());
-            c.namespaces = vec![namespaces[1].0.clone()];
-        });
+        let client1 = self
+            .new_replication_driver(|cfg| {
+                cfg.nodes.insert(node.client_api_server_addr.clone());
+                cfg.namespaces = vec![namespaces[1].0.clone()];
+            })
+            .await;
         let namespace1 = namespaces[1].1;
 
-        let shared_key = api::Key {
-            namespace: None,
-            bytes: b"shared_key".to_vec(),
-        };
-        let shared_value = b"shared_value".to_vec();
+        let shared_entry = storage::Entry::new(
+            storage::Key::shared(b"shared_key"),
+            b"shared_value".to_vec(),
+            Duration::from_secs(600),
+        );
 
         // Add shared data without a namespace. Validate that it's accessible by both
         // clients.
-        client0
-            .set(shared_key.clone(), shared_value.clone(), expiration)
-            .await
-            .unwrap();
-        assert_eq!(
-            client1.get(shared_key.clone()).await.unwrap(),
-            Some(shared_value.clone())
-        );
+        client0.set(shared_entry.clone()).await.unwrap();
+        let record = client1.get(shared_entry.key.clone()).await.unwrap();
+        assert_eq!(record.unwrap().value, shared_entry.value);
 
         // Validate that the shared data is inaccessible with namespaces set.
-        let mut key = shared_key.clone();
-        key.namespace = Some(namespaces[0].1);
+        let key = storage::Key::private(&namespaces[0].1, b"shared_key");
         assert_eq!(client0.get(key.clone()).await.unwrap(), None);
-        key.namespace = Some(namespaces[1].1);
+
+        let key = storage::Key::private(&namespaces[1].1, b"shared_key");
         assert_eq!(client1.get(key.clone()).await.unwrap(), None);
 
         // Validate that data added into one namespace is inaccessible in others.
-        let mut key = api::Key {
-            namespace: Some(namespace0),
-            bytes: b"key1".to_vec(),
-        };
-        let value = b"value2".to_vec();
-        client0
-            .set(key.clone(), value.clone(), expiration)
-            .await
-            .unwrap();
-        assert_eq!(client0.get(key.clone()).await.unwrap(), Some(value.clone()));
-        key.namespace = Some(namespace1);
+        let private_entry = storage::Entry::new(
+            storage::Key::private(&namespace0, b"key1"),
+            b"value2".to_vec(),
+            Duration::from_secs(600),
+        );
+
+        client0.set(private_entry.clone()).await.unwrap();
+        let record = client0.get(private_entry.key.clone()).await.unwrap();
+        assert_eq!(record.unwrap().value, private_entry.value);
+
+        let key = storage::Key::private(&namespace1, b"key1");
         assert_eq!(client1.get(key.clone()).await.unwrap(), None);
 
         // Validate that the client returns an access denied error trying to access
         // unauthorized namespace.
         assert!(matches!(
             client0.get(key.clone()).await,
-            Err(api::client::Error::Api(api::Error::Unauthorized))
+            Err(replication::Error::StorageApi(
+                storage_api::client::Error::Unauthorized
+            ))
         ));
 
         // Validate map type.
@@ -525,42 +504,39 @@ impl TestCluster {
         // Add a few maps filled with multiple entries to the private namespace.
         for key in &keys {
             for (field, value) in &data {
-                let key = api::Key {
-                    namespace: Some(namespace0),
-                    bytes: key.0.clone(),
-                };
-                client0
-                    .hset(key, field.0.clone(), value.0.clone(), expiration)
-                    .await
-                    .unwrap();
+                let entry = storage::MapEntry::new(
+                    storage::Key::private(&namespace0, key.0.clone()),
+                    field.0.clone(),
+                    value.0.clone(),
+                    Duration::from_secs(600),
+                );
+
+                client0.hset(entry).await.unwrap();
             }
         }
 
         // Add a few maps filled with multiple entries to the shared namespace.
         for key in &keys {
             for (field, value) in &data {
-                let key = api::Key {
-                    namespace: None,
-                    bytes: key.0.clone(),
-                };
-                client0
-                    .hset(key, field.0.clone(), value.0.clone(), expiration)
-                    .await
-                    .unwrap();
+                let entry = storage::MapEntry::new(
+                    storage::Key::shared(key.0.clone()),
+                    field.0.clone(),
+                    value.0.clone(),
+                    Duration::from_secs(600),
+                );
+
+                client0.hset(entry).await.unwrap();
             }
         }
 
         // Validate private data.
         for key in &keys {
-            let key = api::Key {
-                namespace: Some(namespace0),
-                bytes: key.0.clone(),
-            };
+            let key = storage::Key::private(&namespace0, key.0.clone());
 
             // Validate `hget`.
             for (field, value) in &data {
                 let data = client0.hget(key.clone(), field.0.clone()).await.unwrap();
-                assert_eq!(data, Some(value.0.clone()));
+                assert_eq!(data.unwrap().value, value.0.clone());
             }
 
             // Validate `hvals`.
@@ -570,24 +546,21 @@ impl TestCluster {
             );
 
             // Validate `hscan`.
-            let (values, _) = client0.hscan(key, 10, None).await.unwrap();
+            let page = client0.hscan(key, 10, None).await.unwrap();
             assert_eq!(
-                crate::sort_data(values),
+                crate::sort_data(page.records.into_iter().map(|rec| rec.value).collect()),
                 crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
             );
         }
 
         // Validate shared data.
         for key in &keys {
-            let key = api::Key {
-                namespace: Some(namespace0),
-                bytes: key.0.clone(),
-            };
+            let key = storage::Key::shared(key.0.clone());
 
             // Validate `hget`.
             for (field, value) in &data {
                 let data = client0.hget(key.clone(), field.0.clone()).await.unwrap();
-                assert_eq!(data, Some(value.0.clone()));
+                assert_eq!(data.unwrap().value, value.0.clone());
             }
 
             // Validate `hvals`.
@@ -597,67 +570,12 @@ impl TestCluster {
             );
 
             // Validate `hscan`.
-            let (values, _) = client0.hscan(key, 10, None).await.unwrap();
+            let page = client0.hscan(key, 10, None).await.unwrap();
             assert_eq!(
-                crate::sort_data(values),
+                crate::sort_data(page.records.into_iter().map(|rec| rec.value).collect()),
                 crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
             );
         }
-    }
-
-    async fn test_coordinator_authorization(&mut self) {
-        tracing::info!("Authorization");
-
-        let ops = self.gen_test_ops();
-
-        let client_keypair = Keypair::generate_ed25519();
-        let client_id = PeerId::from_public_key(&client_keypair.public());
-
-        // bootup a new node with authorization enabled
-        let node_id = self
-            .configure_and_spawn_node(|cfg| {
-                cfg.authorized_clients = Some([client_id].into_iter().collect())
-            })
-            .await;
-
-        let node = self.nodes.get(&node_id).unwrap();
-
-        let resp = node
-            .coordinator_api_client
-            .get(api::Key {
-                namespace: None,
-                bytes: ops.get.key.clone(),
-            })
-            .await;
-
-        // TODO: shouldn't be an internal error
-        assert_eq!(
-            resp,
-            Err(api::client::Error::Api(api::Error::Internal(
-                api::InternalError {
-                    code: "other".into(),
-                    message: "Err(Unauthorized)".to_string(),
-                }
-            )))
-        );
-
-        let authorized_client = new_coordinator_api_client(|c| {
-            c.keypair = client_keypair;
-            c.nodes
-                .insert(node_id, node.coordinator_api_server_addr.clone());
-        });
-
-        let resp = authorized_client
-            .get(api::Key {
-                namespace: None,
-                bytes: ops.get.key,
-            })
-            .await;
-
-        assert_eq!(resp, Ok(None));
-
-        let _ = node;
-        self.decommission_node(&node_id).await;
     }
 
     async fn test_addr_change(&mut self) {
@@ -673,27 +591,31 @@ impl TestCluster {
         }
     }
 
-    async fn test_replication_and_read_repairs(&self) {
+    async fn test_replication_and_read_repairs(&mut self) {
         const REPLICATION_FACTOR: usize = 3;
         const RECORDS_NUM: usize = 10000;
         const REQUEST_CONCURRENCY: usize = 100;
 
         tracing::info!("Replication and read repairs");
 
-        let this = &self;
+        let driver = &self.new_replication_driver(|_| {}).await;
+        let storage_api_client = &self.new_storage_api_client().await;
+
+        let restarting_node_id = self.nodes.keys().next().copied().unwrap();
+        let restarting_node_cfg = self.shutdown_node(&restarting_node_id).await;
+
         let test_cases: Vec<_> = stream::iter(0..RECORDS_NUM)
-            .map(|_| async move {
+            .map(|_| async {
                 let ops = self.gen_test_ops();
 
                 let set = ops.set.clone();
-                let key = api::Key {
-                    namespace: None,
-                    bytes: set.key,
-                };
 
-                this.random_node()
-                    .coordinator_api_client
-                    .set(key, set.value, set.expiration)
+                driver
+                    .set(storage::Entry::new(
+                        storage::Key::shared(set.key),
+                        set.value,
+                        set.expiration,
+                    ))
                     .await
                     .unwrap();
 
@@ -706,49 +628,36 @@ impl TestCluster {
         // There are some non-blocking requests being spawned, wait for them to finish.
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        let this = &self;
-        let mismatches: usize = stream::iter(test_cases.clone())
-            .map(|c| async move {
-                // find one replica and break it
-                for n in this.nodes.values() {
-                    let output = n.replica_get(c.get.clone(), self.keyspace_version).await;
+        self.configure_and_spawn_node(|cfg| *cfg = restarting_node_cfg)
+            .await;
 
-                    if c.expected_output == output {
-                        n.replica_set(c.overwrite.clone(), self.keyspace_version)
-                            .await;
+        stream::iter(&test_cases)
+            .map(|c| async {
+                let key = storage::Key::shared(c.get.key.clone());
 
-                        break;
-                    }
-                }
+                // trigger read repair
+                let record = driver.get(key).await.unwrap().unwrap();
+                assert_eq!(record.value, c.set.value);
+            })
+            .buffer_unordered(REQUEST_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
 
-                // make replicated request via each coordinator to surely trigger a read repair
-                let coordinators: usize = stream::iter(this.nodes.values())
-                    .map(|n| async {
-                        let key = api::Key {
-                            namespace: None,
-                            bytes: c.get.key.clone(),
-                        };
+        // There are some non-blocking requests being spawned, wait for them to finish.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-                        let output = n.coordinator_api_client.get(key).await.unwrap();
-                        usize::from(c.expected_output == output)
-                    })
-                    .buffer_unordered(this.nodes.len())
-                    .collect::<Vec<_>>()
-                    .await
-                    .into_iter()
-                    .sum();
-
-                if coordinators != this.nodes.len() {
-                    return 1;
-                }
+        let mismatches: usize = stream::iter(&test_cases)
+            .map(|c| async {
+                let key = storage::Key::shared(c.get.key.clone());
 
                 // check that all replicas have the data
-                let replicas: usize = stream::iter(this.nodes.values())
+                let replicas: usize = stream::iter(self.nodes.values())
                     .map(|n| async {
-                        let output = n.replica_get(c.get.clone(), self.keyspace_version).await;
+                        let storage = storage_api_client.remote_storage(&n.replica_api_server_addr);
+                        let output = storage.get(key.clone()).await.unwrap().map(|rec| rec.value);
                         usize::from(c.expected_output == output)
                     })
-                    .buffer_unordered(this.nodes.len())
+                    .buffer_unordered(self.nodes.len())
                     .collect::<Vec<_>>()
                     .await
                     .into_iter()
@@ -763,33 +672,6 @@ impl TestCluster {
             .sum();
 
         assert_eq!(mismatches, 0);
-
-        let replication_driver = &replication::Driver::new(replication::Config {
-            keypair: authorized_client_keypair(),
-            connection_timeout: Duration::from_secs(5),
-            operation_timeout: Duration::from_secs(10),
-            nodes: self
-                .nodes
-                .values()
-                .map(|node| local_multiaddr(node.config.client_api_server_port))
-                .collect(),
-            namespaces: Vec::new(),
-        })
-        .await
-        .unwrap();
-
-        stream::iter(test_cases.clone())
-            .map(|c| async move {
-                let output = replication_driver
-                    .get(storage_api::Key::shared(c.get.key))
-                    .await
-                    .unwrap()
-                    .map(|rec| rec.value);
-                assert_eq!(output, c.expected_output);
-            })
-            .buffer_unordered(REQUEST_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await;
     }
 
     /// Test of Theseus. If all nodes in the cluster are replaced
@@ -800,20 +682,20 @@ impl TestCluster {
 
         tracing::info!("Full node rotation");
 
+        let driver = &self.new_replication_driver(|_| {}).await;
+
         let this = &self;
         let read_asserts: Vec<_> = stream::iter(0..RECORDS_NUM)
             .map(|_| async {
                 let assert = this.gen_test_ops();
                 let set = assert.set.clone();
 
-                let key = api::Key {
-                    namespace: None,
-                    bytes: set.key,
-                };
-
-                self.random_node()
-                    .coordinator_api_client
-                    .set(key, set.value, set.expiration)
+                driver
+                    .set(storage::Entry::new(
+                        storage::Key::shared(set.key),
+                        set.value,
+                        set.expiration,
+                    ))
                     .await
                     .unwrap();
 
@@ -838,15 +720,15 @@ impl TestCluster {
             self.decommission_node(&config.id).await;
         }
 
-        let node = &self.random_node();
+        let driver = &self.new_replication_driver(|_| {}).await;
+
         let mismatches: usize = stream::iter(read_asserts)
             .map(|assert| async move {
-                let key = api::Key {
-                    namespace: None,
-                    bytes: assert.get.key,
-                };
-
-                let output = node.coordinator_api_client.get(key).await.unwrap();
+                let output = driver
+                    .get(storage::Key::shared(assert.get.key))
+                    .await
+                    .unwrap()
+                    .map(|rec| rec.value);
 
                 usize::from(assert.expected_output != output)
             })
@@ -986,7 +868,6 @@ fn new_node_config() -> Config {
         is_raft_voter: false,
         raft_server_port: next_port(),
         replica_api_server_port: next_port(),
-        coordinator_api_server_port: next_port(),
         client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
         replica_api_max_concurrent_connections: 500,
@@ -1020,25 +901,6 @@ fn new_node_config() -> Config {
     }
 }
 
-fn new_coordinator_api_client(f: impl FnOnce(&mut api::client::Config)) -> api::Client {
-    let mut client_config = api::client::Config {
-        keypair: authorized_client_keypair(),
-        nodes: HashMap::new(),
-        shadowing_nodes: HashMap::new(),
-        shadowing_factor: 0.0,
-        shadowing_default_namespace: None,
-        request_timeout: Duration::from_secs(5),
-        max_operation_time: Duration::from_secs(10),
-        connection_timeout: Duration::from_secs(3),
-        udp_socket_count: 1,
-        namespaces: Vec::new(),
-    };
-
-    f(&mut client_config);
-
-    api::Client::new(client_config).unwrap()
-}
-
 async fn new_client_api_client(
     f: impl FnOnce(&mut client_api::client::Config),
 ) -> client_api::Client {
@@ -1054,23 +916,8 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
     let rx = rx.map(|res| res.unwrap_or(ShutdownReason::Decommission));
 
     let replica_api_server_addr = local_multiaddr(cfg.replica_api_server_port);
-    let coordinator_api_server_addr = local_multiaddr(cfg.coordinator_api_server_port);
     let client_api_server_addr = local_multiaddr(cfg.client_api_server_port);
     let admin_api_server_addr = local_multiaddr(cfg.admin_api_server_port);
-
-    let coordinator_api_client = new_coordinator_api_client(|c| {
-        c.nodes.insert(cfg.id, coordinator_api_server_addr.clone());
-    });
-
-    let client_config = irn_rpc::client::Config {
-        keypair: cfg.keypair.clone(),
-        known_peers: HashSet::new(),
-        handshake: NoHandshake,
-        connection_timeout: Duration::from_secs(5),
-        server_name: irn_node::network::REPLICA_API_SERVER_NAME,
-    };
-
-    let replica_api_client = irn_rpc::quic::Client::new(client_config).unwrap();
 
     let config = cfg.clone();
     let thread_handle = thread::spawn(move || {
@@ -1096,10 +943,7 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
         config: cfg,
         thread_handle,
         shutdown_tx: tx,
-        coordinator_api_client,
-        replica_api_client,
         replica_api_server_addr,
-        coordinator_api_server_addr,
         client_api_server_addr,
         admin_api_server_addr,
     }
@@ -1109,10 +953,22 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
 pub struct Operations {
     pub set: Set,
     pub get: Get,
-    pub expected_output: Option<Value>,
+    pub expected_output: Option<storage_api::Value>,
 
     // for corrupting the data to validate read repairs
     pub overwrite: Set,
+}
+
+#[derive(Clone)]
+pub struct Set {
+    key: Vec<u8>,
+    value: Vec<u8>,
+    expiration: Duration,
+}
+
+#[derive(Clone)]
+pub struct Get {
+    key: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]

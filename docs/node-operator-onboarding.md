@@ -122,3 +122,12 @@ This is required to achieve high availability.
 So, you need to make sure that your infrastructure won't `SIGKILL` the IRN node prematurely.  
 WalletConnectFoundation nodes are configured to have `12h` graceful shutdown timeout. But we expect other operator nodes to have at least `1h` of graceful shutdown window.
 
+### Mainnet Onboarding and Hardware Requirements
+After successful testnet operation, its time to prepare for mainnet. We ask in order to deploy a new node to have the following minimal specifications:
+- 8 vCPUs
+- 16GB RAM
+- 100GB storage
+- Share your new peer ID and IP address for mainnet whitelisting with Nacho or Addie in TG or WC Slack
+  
+*Important*: Wait for the green light from the WalletConnect Foundation Team before proceeding
+

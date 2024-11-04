@@ -12,7 +12,7 @@ client = ["irn_rpc/client"]
 server = ["irn_rpc/server"]
 
 [dependencies]
-irn_rpc = { workspace = true}
+irn_rpc = { package = "irn_legacy_rpc", path = "../rpc" }
 wc = { workspace = true, features = ["metrics", "future"] }
 metrics = { workspace = true }
 

@@ -176,21 +176,28 @@ impl<S: Server> RpcServer<S> {
 
     async fn handle_cluster_updates(
         &self,
+        mut rx: RecvStream<()>,
         mut tx: SendStream<irn_rpc::Result<ClusterUpdate>>,
     ) -> Result<(), irn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
-        while updates.next().await.is_some() {
-            let snapshot = self
-                .cluster_snapshot()
-                .map_err(|err| irn_rpc::transport::Error::Other(err.to_string()))?;
+        loop {
+            tokio::select! {
+                res = rx.recv_message() => res?,
+                update = updates.next() => match update {
+                    Some(_) => {
+                        let snapshot = self
+                            .cluster_snapshot()
+                            .map_err(|err| irn_rpc::transport::Error::Other(err.to_string()))?;
 
-            tx.send(Ok(snapshot))
-                .await
-                .map_err(|err| irn_rpc::transport::Error::IO(err.kind()))?;
+                        tx.send(Ok(snapshot))
+                            .await
+                            .map_err(|err| irn_rpc::transport::Error::IO(err.kind()))?;
+                    }
+                    None => return Ok(()),
+                }
+            };
         }
-
-        Ok(())
     }
 
     async fn publish(&self, req: PublishRequest) {
@@ -269,7 +276,8 @@ where
                 }
 
                 ClusterUpdates::ID => {
-                    ClusterUpdates::handle(stream, |_, rx| self.handle_cluster_updates(rx)).await
+                    ClusterUpdates::handle(stream, |rx, tx| self.handle_cluster_updates(rx, tx))
+                        .await
                 }
 
                 Publish::ID => Publish::handle(stream, |req| self.publish(req)).await,

@@ -175,9 +175,6 @@ jobs:
           - repo_name: irn
             aws-access-key-id: AWS_ACCESS_KEY_ID
             aws-secret-access-key: AWS_SECRET_ACCESS_KEY
-          - repo_name: irn
-            aws-access-key-id: TESTNET_AWS_ACCESS_KEY_ID
-            aws-secret-access-key: TESTNET_AWS_SECRET_ACCESS_KEY
     steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1

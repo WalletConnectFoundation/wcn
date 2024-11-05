@@ -176,14 +176,13 @@ impl<S: Server> RpcServer<S> {
 
     async fn handle_cluster_updates(
         &self,
-        mut rx: RecvStream<()>,
         mut tx: SendStream<irn_rpc::Result<ClusterUpdate>>,
     ) -> Result<(), irn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
         loop {
             tokio::select! {
-                res = rx.recv_message() => res?,
+                _ = tx.wait_closed() => return Ok(()),
                 update = updates.next() => match update {
                     Some(_) => {
                         let snapshot = self
@@ -276,8 +275,7 @@ where
                 }
 
                 ClusterUpdates::ID => {
-                    ClusterUpdates::handle(stream, |rx, tx| self.handle_cluster_updates(rx, tx))
-                        .await
+                    ClusterUpdates::handle(stream, |_, tx| self.handle_cluster_updates(tx)).await
                 }
 
                 Publish::ID => Publish::handle(stream, |req| self.publish(req)).await,

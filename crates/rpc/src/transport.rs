@@ -1,5 +1,5 @@
 use {
-    futures::{Future, Sink, StreamExt as _},
+    futures::{Future, FutureExt as _, Sink, StreamExt as _},
     libp2p::PeerId,
     pin_project::pin_project,
     serde::{Deserialize, Serialize},
@@ -50,6 +50,13 @@ pub struct SendStream<T> {
     inner: RawSendStream,
     #[pin]
     codec: SymmetricalPostcard<T>,
+}
+
+impl<T> SendStream<T> {
+    /// Waits until this [`SendStream`] is closed.
+    pub async fn wait_closed(&mut self) {
+        self.inner.get_mut().stopped().map(drop).await
+    }
 }
 
 impl<T: Serialize> Sink<&T> for SendStream<T> {

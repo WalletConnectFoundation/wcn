@@ -71,7 +71,7 @@ irn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
 metrics = "0.23"
 time = "0.3"
-libp2p = { version = "0.54", default-features = false, features = ["serde", "tokio"] }
+libp2p = { version = "0.54", default-features = false, features = ["serde"] }
 
 [dependencies]
 irn = { package = "irn_core", path = "crates/core" }

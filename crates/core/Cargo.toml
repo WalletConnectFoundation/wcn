@@ -14,7 +14,7 @@ workspace = true
 anyhow = "1"
 sharding = { path = "../sharding" }
 backoff = { version = "0.4", features = ["tokio"] }
-libp2p = { version = "0.53", default-features = false, features = ["serde"] }
+libp2p = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1", features = ["full"] }

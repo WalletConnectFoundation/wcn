@@ -1,8 +1,7 @@
 use {
     crate::ServerName,
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
-    libp2p_tls::certificate,
-    quinn::VarInt,
+    quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
         io,
         net::{SocketAddr, UdpSocket},
@@ -63,7 +62,10 @@ fn new_quinn_endpoint(
     transport_config: Arc<quinn::TransportConfig>,
     server_config: Option<quinn::ServerConfig>,
 ) -> Result<quinn::Endpoint, Error> {
-    let client_tls_config = libp2p_tls::make_client_config(keypair, None)?;
+    let client_tls_config =
+        libp2p_tls::make_client_config(keypair, None).map_err(|err| Error::Tls(err.to_string()))?;
+    let client_tls_config =
+        QuicClientConfig::try_from(client_tls_config).map_err(|err| Error::Tls(err.to_string()))?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(client_tls_config));
     client_config.transport_config(transport_config);
 
@@ -138,7 +140,7 @@ pub fn try_peer_id_from_multiaddr(addr: &Multiaddr) -> Option<PeerId> {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("failed to generate a TLS certificate: {0}")]
-    Tls(#[from] certificate::GenError),
+    Tls(String),
 
     #[error("failed to create, configure or bind a UDP socket")]
     Socket(#[from] io::Error),
@@ -152,7 +154,7 @@ fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdE
 
     let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
     let certificate = identity
-        .downcast::<Vec<rustls::Certificate>>()
+        .downcast::<Vec<CertificateDer<'static>>>()
         .map_err(|_| Error::DowncastPeerIdentity)?
         .into_iter()
         .next()

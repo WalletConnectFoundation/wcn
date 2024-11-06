@@ -105,7 +105,7 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
         for (stat, value) in [
             ("datagrams", udp.datagrams),
             ("bytes", udp.bytes),
-            ("transmits", udp.transmits),
+            ("ios", udp.ios),
             ("acks", frame.acks),
             ("crypto", frame.crypto),
             ("connection_close", frame.connection_close),
@@ -200,7 +200,7 @@ impl std::ops::Sub<UdpStats> for Local<UdpStats> {
 
         stats.datagrams -= rhs.datagrams;
         stats.bytes -= rhs.bytes;
-        stats.transmits -= rhs.transmits;
+        stats.ios -= rhs.ios;
 
         stats
     }

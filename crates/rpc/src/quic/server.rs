@@ -10,6 +10,7 @@ use {
     derive_more::derive::Deref,
     futures::{FutureExt, SinkExt as _, TryFutureExt as _},
     libp2p::{identity::Keypair, Multiaddr},
+    quinn::crypto::rustls::QuicServerConfig,
     std::{future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
     tap::{Pipe as _, TapOptional},
     tokio::{
@@ -79,7 +80,10 @@ where
     pub fn new(rpc_servers: S, cfg: Config) -> Result<Self, quic::Error> {
         let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_streams);
 
-        let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)?;
+        let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)
+            .map_err(|err| Error::Tls(err.to_string()))?;
+        let server_tls_config = QuicServerConfig::try_from(server_tls_config)
+            .map_err(|err| Error::Tls(err.to_string()))?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_tls_config));
         server_config.transport = transport_config.clone();
         server_config.migration(false);
@@ -106,8 +110,11 @@ where
     }
 
     pub async fn serve(self) {
-        while let Some(connecting) = self.endpoint.accept().await {
-            self.accept_connection(connecting)
+        while let Some(incoming) = self.endpoint.accept().await {
+            match incoming.accept() {
+                Ok(connecting) => self.accept_connection(connecting),
+                Err(err) => tracing::warn!(?err, "Failed to accept incoming connection"),
+            }
         }
     }
 

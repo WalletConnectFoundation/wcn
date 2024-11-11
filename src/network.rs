@@ -50,6 +50,7 @@ use {
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Client as _,
         Multiaddr,
+        ServerName,
     },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
@@ -69,6 +70,9 @@ use {
     tap::Pipe,
     tokio::sync::mpsc,
 };
+
+pub const RAFT_API_SERVER_NAME: ServerName = ServerName::new("raft_api");
+pub const REPLICA_API_SERVER_NAME: ServerName = ServerName::new("replica_api");
 
 pub mod rpc {
 
@@ -1016,7 +1020,8 @@ impl CoordinatorApiServer {
 
         stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
             .for_each_concurrent(None, |n| {
-                rpc::broadcast::Pubsub::send(&self.node.network().client, &n.addr, evt).map(drop)
+                rpc::broadcast::Pubsub::send(&self.node.network().replica_api_client, &n.addr, evt)
+                    .map(drop)
             })
             .await;
     }
@@ -1120,7 +1125,7 @@ impl irn::migration::Network<cluster::Node> for Network {
         async move {
             let range = &range;
             rpc::migration::PullData::send(
-                &self.client,
+                &self.replica_api_client,
                 &from.addr,
                 &move |mut tx, rx| async move {
                     tx.send(rpc::migration::PullDataRequest {
@@ -1432,7 +1437,8 @@ pub type Client = Metered<WithTimeouts<quic::Client>>;
 #[derive(Debug, Clone)]
 pub struct Network {
     pub local_id: PeerId,
-    pub client: Client,
+    pub replica_api_client: Client,
+    pub raft_api_client: Client,
 }
 
 impl Network {
@@ -1444,11 +1450,21 @@ impl Network {
 
         Ok(Self {
             local_id: cfg.id,
-            client: quic::Client::new(irn_rpc::client::Config {
+            replica_api_client: quic::Client::new(irn_rpc::client::Config {
                 keypair: cfg.keypair.clone(),
                 known_peers: cfg.known_peers.values().cloned().collect(),
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
+                server_name: REPLICA_API_SERVER_NAME,
+            })?
+            .with_timeouts(rpc_timeouts.clone())
+            .metered(),
+            raft_api_client: quic::Client::new(irn_rpc::client::Config {
+                keypair: cfg.keypair.clone(),
+                known_peers: cfg.known_peers.values().cloned().collect(),
+                handshake: NoHandshake,
+                connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
+                server_name: RAFT_API_SERVER_NAME,
             })?
             .with_timeouts(rpc_timeouts)
             .metered(),
@@ -1502,7 +1518,7 @@ impl Network {
         };
 
         let coordinator_api_server_config = irn_rpc::server::Config {
-            name: const { irn_rpc::ServerName::new("coordinator_api") },
+            name: api::RPC_SERVER_NAME,
             handshake: Handshake,
         };
         let coordinator_api_quic_server_config = irn_rpc::quic::server::Config {
@@ -1604,7 +1620,7 @@ impl Network {
         RemoteNode {
             id: Cow::Borrowed(node_id),
             multiaddr: Cow::Borrowed(multiaddr),
-            client: self.client.clone(),
+            client: self.raft_api_client.clone(),
         }
     }
 }
@@ -1645,7 +1661,7 @@ where
         keyspace_version: u64,
     ) -> impl Future<Output = Result<ReplicaResponse<Storage, Op>, Self::Error>> + Send {
         async move {
-            self.client
+            self.replica_api_client
                 .send_unary::<Op::Rpc>(&to.addr, &rpc::replica::Request {
                     operation,
                     keyspace_version,

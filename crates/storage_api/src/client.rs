@@ -94,6 +94,7 @@ impl Client {
             known_peers: HashSet::new(),
             handshake,
             connection_timeout: config.connection_timeout,
+            server_name: crate::RPC_SERVER_NAME,
         };
 
         let timeouts = Timeouts::new().with_default(config.operation_timeout);

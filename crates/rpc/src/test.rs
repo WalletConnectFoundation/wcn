@@ -9,11 +9,14 @@ use {
         Id as RpcId,
         Multiaddr,
         PeerId,
+        ServerName,
     },
     futures::{lock::Mutex, Future, SinkExt, StreamExt},
     std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration},
     tap::Pipe,
 };
+
+const RPC_SERVER_NAME: ServerName = ServerName::new("test_server");
 
 type UnaryRpc = crate::Unary<{ rpc_id(b"test_unary") }, String, String>;
 type StreamingRpc = crate::Streaming<{ rpc_id(b"test_streaming") }, String, String>;
@@ -110,12 +113,13 @@ async fn suite() {
                 .collect(),
             handshake: NoHandshake,
             connection_timeout: Duration::from_secs(15),
+            server_name: RPC_SERVER_NAME,
         };
 
         let client = quic::Client::new(client_config).expect("Client::new");
 
         let server_config = server::Config {
-            name: const { crate::ServerName::new("test_server") },
+            name: RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
 

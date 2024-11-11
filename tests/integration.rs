@@ -707,7 +707,7 @@ impl TestCluster {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         let this = &self;
-        let mismatches: usize = stream::iter(test_cases)
+        let mismatches: usize = stream::iter(test_cases.clone())
             .map(|c| async move {
                 // find one replica and break it
                 for n in this.nodes.values() {
@@ -763,6 +763,33 @@ impl TestCluster {
             .sum();
 
         assert_eq!(mismatches, 0);
+
+        let replication_driver = &replication::Driver::new(replication::Config {
+            keypair: authorized_client_keypair(),
+            connection_timeout: Duration::from_secs(5),
+            operation_timeout: Duration::from_secs(10),
+            nodes: self
+                .nodes
+                .values()
+                .map(|node| local_multiaddr(node.config.client_api_server_port))
+                .collect(),
+            namespaces: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+        stream::iter(test_cases.clone())
+            .map(|c| async move {
+                let output = replication_driver
+                    .get(storage_api::Key::shared(c.get.key))
+                    .await
+                    .unwrap()
+                    .map(|rec| rec.value);
+                assert_eq!(output, c.expected_output);
+            })
+            .buffer_unordered(REQUEST_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
     }
 
     /// Test of Theseus. If all nodes in the cluster are replaced
@@ -949,7 +976,7 @@ fn new_node_config() -> Config {
         _ => unreachable!(),
     };
 
-    let authorized_admin_api_client = authorized_client_keypair().public().to_peer_id();
+    let authorized_client = authorized_client_keypair().public().to_peer_id();
 
     Config {
         id,
@@ -985,8 +1012,8 @@ fn new_node_config() -> Config {
         request_limiter_queue: 1000,
         replication_request_timeout: 5000,
         warmup_delay: 5000,
-        authorized_clients: None,
-        authorized_admin_api_clients: [authorized_admin_api_client].into_iter().collect(),
+        authorized_clients: Some([authorized_client].into_iter().collect()),
+        authorized_admin_api_clients: [authorized_client].into_iter().collect(),
         authorized_raft_candidates: None,
         eth_address: None,
         smart_contract: None,
@@ -995,7 +1022,7 @@ fn new_node_config() -> Config {
 
 fn new_coordinator_api_client(f: impl FnOnce(&mut api::client::Config)) -> api::Client {
     let mut client_config = api::client::Config {
-        keypair: Keypair::generate_ed25519(),
+        keypair: authorized_client_keypair(),
         nodes: HashMap::new(),
         shadowing_nodes: HashMap::new(),
         shadowing_factor: 0.0,
@@ -1040,6 +1067,7 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
         known_peers: HashSet::new(),
         handshake: NoHandshake,
         connection_timeout: Duration::from_secs(5),
+        server_name: irn_node::network::REPLICA_API_SERVER_NAME,
     };
 
     let replica_api_client = irn_rpc::quic::Client::new(client_config).unwrap();
@@ -1077,6 +1105,7 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
     }
 }
 
+#[derive(Clone)]
 pub struct Operations {
     pub set: Set,
     pub get: Get,

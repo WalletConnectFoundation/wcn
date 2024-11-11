@@ -3533,6 +3533,7 @@ dependencies = [
  "irn_client_api",
  "irn_core",
  "irn_domain",
+ "irn_replication",
  "irn_rpc",
  "irn_storage_api",
  "itertools 0.11.0",

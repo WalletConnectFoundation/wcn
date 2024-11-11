@@ -174,7 +174,10 @@ fn new_connection<H: Handshake>(
             let peer_id = super::connection_peer_id(&conn)
                 .map_err(|err| format!("Failed to extract PeerId: {err:?}"))?;
 
-            write_connection_header(&conn, ConnectionHeader { server_name }).await?;
+            write_connection_header(&conn, ConnectionHeader {
+                server_name: Some(server_name),
+            })
+            .await?;
 
             handshake
                 .handle(peer_id, PendingConnection(conn.clone()))
@@ -426,9 +429,11 @@ async fn write_connection_header(
         .await
         .map_err(|err| format!("Failed to write protocol version: {err}"))?;
 
-    tx.write_all(&header.server_name.0)
-        .await
-        .map_err(|err| format!("Failed to write server name: {err}"))?;
+    if let Some(server_name) = &header.server_name {
+        tx.write_all(&server_name.0)
+            .await
+            .map_err(|err| format!("Failed to write server name: {err}"))?;
+    }
 
     Ok(())
 }

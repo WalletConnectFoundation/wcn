@@ -125,10 +125,11 @@ where
                 .await
                 .map_err(|_| ConnectionError::Timeout)??;
 
+            // TODO: Error on timeout, instead of downgrading the protocol version
             let header = read_connection_header(&conn)
                 .with_timeout(Duration::from_millis(500))
                 .await
-                .map_err(|_| ConnectionError::ReadHeaderTimeout)??;
+                .unwrap_or_else(|_| Ok(super::ConnectionHeader::default()))?;
 
             let _conn_permit = conn_permit;
 
@@ -232,10 +233,11 @@ async fn read_connection_header(
     let protocol_version = rx.read_u32().await?;
 
     let server_name = match protocol_version {
+        0 => None,
         super::PROTOCOL_VERSION => {
             let mut buf = [0; 16];
             rx.read_exact(&mut buf).await?;
-            ServerName(buf)
+            Some(ServerName(buf))
         }
         ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
     };
@@ -284,7 +286,7 @@ pub enum ConnectionError {
 pub trait Multiplexer: Clone + Sized {
     fn route_connection(
         &self,
-        server_name: ServerName,
+        server_name: Option<ServerName>,
         conn: quinn::Connection,
     ) -> impl Future<Output = Result<(), ConnectionError>> + Send;
 }
@@ -295,10 +297,14 @@ where
 {
     fn route_connection(
         &self,
-        server_name: ServerName,
+        server_name: Option<ServerName>,
         conn: quinn::Connection,
     ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
         async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
             if self.rpc_servers.0.config().name == server_name {
                 return self.handle_connection(conn, &self.rpc_servers.0).await;
             }
@@ -315,10 +321,14 @@ where
 {
     fn route_connection(
         &self,
-        server_name: ServerName,
+        server_name: Option<ServerName>,
         conn: quinn::Connection,
     ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
         async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
             if self.rpc_servers.0.config().name == server_name {
                 return self.handle_connection(conn, &self.rpc_servers.0).await;
             }

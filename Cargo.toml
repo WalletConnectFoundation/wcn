@@ -148,6 +148,7 @@ rand = { version = "0.8", optional = true }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 
 [dev-dependencies]
+replication = { package = "irn_replication", path = "crates/replication" }
 storage_api = { workspace = true, features = ["client", "server"] }
 admin_api = { workspace = true, features = ["client", "server"] }
 tempfile = "3"

@@ -253,6 +253,7 @@ impl Client {
             known_peers: config.nodes,
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
+            server_name: crate::RPC_SERVER_NAME,
         };
 
         let timeouts = Timeouts::new()

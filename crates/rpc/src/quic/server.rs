@@ -239,9 +239,9 @@ async fn read_connection_header(
 
     let protocol_version = rx.read_u32().await?;
 
-    let service_name = match protocol_version {
+    let server_name = match protocol_version {
         0 => None,
-        1 => {
+        super::PROTOCOL_VERSION => {
             let mut buf = [0; 16];
             rx.read_exact(&mut buf).await?;
             Some(ServerName(buf))
@@ -249,9 +249,7 @@ async fn read_connection_header(
         ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
     };
 
-    Ok(ConnectionHeader {
-        server_name: service_name,
-    })
+    Ok(ConnectionHeader { server_name })
 }
 
 async fn read_rpc_id(rx: &mut quinn::RecvStream) -> Result<crate::Id, String> {

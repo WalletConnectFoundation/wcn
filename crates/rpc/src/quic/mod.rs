@@ -22,7 +22,7 @@ pub mod server;
 #[allow(dead_code)]
 mod metrics;
 
-const PROTOCOL_VERSION: u32 = 0;
+const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Default)]
 struct ConnectionHeader {

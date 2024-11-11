@@ -3,6 +3,7 @@
 pub use irn_rpc::{Multiaddr, PeerId as NodeId};
 use {
     derive_more::AsRef,
+    irn_rpc::ServerName,
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, collections::HashSet},
 };
@@ -13,6 +14,8 @@ pub mod client;
 pub use client::Client;
 #[cfg(feature = "server")]
 pub mod server;
+
+pub const RPC_SERVER_NAME: ServerName = ServerName::new("coordinator_api");
 
 pub mod rpc {
     use {

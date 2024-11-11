@@ -32,18 +32,17 @@ fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::Relaxed)
 }
 
-fn authorized_client_keypair() -> Keypair {
-    Keypair::ed25519_from_bytes(
-        base64::decode("N++7piqpE9cGyaMZmNXKeTwhL5Uk89XsUyCGKQP3TcA=").unwrap(),
-    )
-    .unwrap()
+fn authorized_client_keypair(n: u8) -> Keypair {
+    let mut bytes: [u8; 32] = Default::default();
+    bytes[0] = n;
+    Keypair::ed25519_from_bytes(bytes).unwrap()
 }
 
 #[tokio::test]
 async fn test_suite() {
     let mut cluster = TestCluster::bootstrap().await;
 
-    // cluster.test_pubsub().await;
+    cluster.test_pubsub().await;
 
     cluster.test_namespaces().await;
 
@@ -120,7 +119,7 @@ impl TestCluster {
 
         let admin_api_client = admin_api::Client::new(
             admin_api::client::Config::new(local_multiaddr(0))
-                .with_keypair(authorized_client_keypair()),
+                .with_keypair(authorized_client_keypair(0)),
         )
         .unwrap();
 
@@ -288,7 +287,7 @@ impl TestCluster {
             .map(|node| local_multiaddr(node.config.client_api_server_port))
             .collect();
 
-        let mut cfg = replication::Config::new(nodes).with_keypair(authorized_client_keypair());
+        let mut cfg = replication::Config::new(nodes).with_keypair(authorized_client_keypair(0));
         f(&mut cfg);
 
         replication::Driver::new(cfg).await.unwrap()
@@ -302,7 +301,7 @@ impl TestCluster {
             .collect();
 
         client_api::Client::new(
-            client_api::client::Config::new(nodes).with_keypair(authorized_client_keypair()),
+            client_api::client::Config::new(nodes).with_keypair(authorized_client_keypair(0)),
         )
         .await
         .unwrap()
@@ -313,7 +312,7 @@ impl TestCluster {
         let token = client_api.auth_token();
 
         storage_api::Client::new(
-            storage_api::client::Config::new(token).with_keypair(authorized_client_keypair()),
+            storage_api::client::Config::new(token).with_keypair(authorized_client_keypair(0)),
         )
         .unwrap()
     }
@@ -327,11 +326,15 @@ impl TestCluster {
         let payload2 = b"payload2";
 
         let clients = (0..2)
-            .map(|_| self.new_replication_driver(|_| {}))
+            .map(|n| {
+                self.new_replication_driver(move |cfg| cfg.keypair = authorized_client_keypair(n))
+            })
             .pipe(stream::iter)
             .buffer_unordered(2)
             .collect::<Vec<_>>()
             .await;
+
+        tracing::info!("1");
 
         // Subscribe 2 groups of clients to different channels.
         let mut subscriptions1 = stream::iter(&clients)
@@ -342,6 +345,8 @@ impl TestCluster {
             })
             .collect::<Vec<_>>()
             .await;
+
+        tracing::info!("2");
         let mut subscriptions2 = stream::iter(&clients)
             .then(|c| async {
                 c.subscribe([channel2.to_vec()].into_iter().collect())
@@ -350,6 +355,8 @@ impl TestCluster {
             })
             .collect::<Vec<_>>()
             .await;
+
+        tracing::info!("3");
 
         let tasks = FuturesUnordered::new();
 
@@ -366,10 +373,12 @@ impl TestCluster {
                     .publish(channel1.to_vec(), payload1.to_vec())
                     .await
                     .unwrap();
+                tracing::info!("publish 1");
                 publisher
                     .publish(channel2.to_vec(), payload2.to_vec())
                     .await
                     .unwrap();
+                tracing::info!("publish 2");
             }
             .boxed_local(),
         );
@@ -379,6 +388,8 @@ impl TestCluster {
             tasks.push(
                 async {
                     let data = sub.next().await.unwrap().unwrap();
+
+                    tracing::info!("sub 1");
 
                     assert_eq!(&data.channel, channel1);
                     assert_eq!(&data.message, payload1);
@@ -392,6 +403,8 @@ impl TestCluster {
                 async {
                     let data = sub.next().await.unwrap().unwrap();
 
+                    tracing::info!("sub 2");
+
                     assert_eq!(&data.channel, channel2);
                     assert_eq!(&data.message, payload2);
                 }
@@ -401,6 +414,8 @@ impl TestCluster {
 
         // Await all tasks.
         tasks.count().await;
+
+        tracing::info!("4");
 
         // Verify there's no more messages to receive.
         stream::iter(subscriptions1)
@@ -858,7 +873,11 @@ fn new_node_config() -> Config {
         _ => unreachable!(),
     };
 
-    let authorized_client = authorized_client_keypair().public().to_peer_id();
+    let authorized_clients: HashSet<_> =
+        [authorized_client_keypair(0), authorized_client_keypair(1)]
+            .into_iter()
+            .map(|kp| kp.public().to_peer_id())
+            .collect();
 
     Config {
         id,
@@ -893,8 +912,8 @@ fn new_node_config() -> Config {
         request_limiter_queue: 1000,
         replication_request_timeout: 5000,
         warmup_delay: 5000,
-        authorized_clients: Some([authorized_client].into_iter().collect()),
-        authorized_admin_api_clients: [authorized_client].into_iter().collect(),
+        authorized_clients: Some(authorized_clients.clone()),
+        authorized_admin_api_clients: authorized_clients,
         authorized_raft_candidates: None,
         eth_address: None,
         smart_contract: None,

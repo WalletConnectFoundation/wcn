@@ -509,17 +509,33 @@ impl ReplicaApiServer {
 
 #[derive(Clone)]
 struct ClientApiServer {
+    node: Arc<Node>,
     pubsub: Pubsub,
 }
 
 impl client_api::Server for ClientApiServer {
     fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> impl Future<Output = ()> + Send {
-        self.pubsub.publish(rpc::broadcast::PubsubEventPayload {
+        let evt = rpc::broadcast::PubsubEventPayload {
             channel,
             payload: message,
-        });
+        };
 
-        future::ready(())
+        self.pubsub.publish(evt.clone());
+
+        let cluster = self.node.consensus().cluster();
+
+        async move {
+            stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
+                .for_each_concurrent(None, |n| {
+                    rpc::broadcast::Pubsub::send(
+                        &self.node.network().replica_api_client,
+                        &n.addr,
+                        &evt,
+                    )
+                    .map(drop)
+                })
+                .await
+        }
     }
 
     fn subscribe(
@@ -991,7 +1007,11 @@ impl Network {
             cluster_view: node.consensus().cluster_view().clone(),
         };
 
-        let client_api_server = ClientApiServer { pubsub }.serve(client_api_cfg)?;
+        let client_api_server = ClientApiServer {
+            node: node.clone(),
+            pubsub,
+        }
+        .serve(client_api_cfg)?;
 
         let admin_api_server = AdminApiServer {
             node: node.clone(),

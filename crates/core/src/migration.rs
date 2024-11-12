@@ -39,11 +39,11 @@ pub trait StorageExport: Clone + Send + Sync + 'static {
 
 #[derive(Clone, Debug)]
 pub struct Manager<C: Consensus, N, S> {
-    node_id: NodeId<C>,
+    pub(crate) node_id: NodeId<C>,
 
-    consensus: C,
-    network: N,
-    storage: S,
+    pub(crate) consensus: C,
+    pub(crate) network: N,
+    pub(crate) storage: S,
 }
 
 impl<C: Consensus, N, S> Manager<C, N, S> {

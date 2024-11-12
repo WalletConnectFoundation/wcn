@@ -5,7 +5,6 @@ use {
     cluster::{consensus, Consensus, Node as _},
     futures::{Future, FutureExt as _},
     pin_project::pin_project,
-    replication::Replica,
     std::{
         collections::HashSet,
         pin::{pin, Pin},
@@ -13,13 +12,12 @@ use {
         task,
         time::Duration,
     },
-    tokio::sync::{oneshot, Semaphore},
+    tokio::sync::oneshot,
 };
 
 pub mod cluster;
 pub mod fsm;
 pub mod migration;
-pub mod replication;
 
 /// [`Node`] configuration options.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,90 +51,52 @@ pub struct AuthorizationOpts {
 
 /// Shared [`Handle`] to a [`Node`].
 #[derive(Clone, Debug)]
-pub struct Node<C: Consensus, N, S, H> {
-    replication_coordinator: replication::Coordinator<C, N, S, H>,
+pub struct Node<C: Consensus, N, S> {
+    inner: C::Node,
     migration_manager: migration::Manager<C, N, S>,
 
     shutdown: Arc<Mutex<Option<oneshot::Sender<fsm::ShutdownReason>>>>,
     warmup_delay: Duration,
 }
 
-impl<C: Consensus, N, S, H> Node<C, N, S, H> {
+impl<C: Consensus, N, S> Node<C, N, S> {
     /// Returns ID of this [`Node`].
     pub fn id(&self) -> &consensus::NodeId<C> {
-        self.replication_coordinator.node().id()
+        &self.migration_manager.node_id
     }
 
     /// Returns storage of this [`Node`].
     pub fn storage(&self) -> &S {
-        self.replication_coordinator.storage()
+        &self.migration_manager.storage
     }
 
     /// Returns [`Consensus`] of this [`Node`].
     pub fn consensus(&self) -> &C {
-        self.replication_coordinator.consenus()
+        &self.migration_manager.consensus
     }
 
     /// Returns Network impl of this [`Node`].
     pub fn network(&self) -> &N {
-        self.replication_coordinator.network()
-    }
-
-    pub fn coordinator(&self) -> &replication::Coordinator<C, N, S, H> {
-        &self.replication_coordinator
-    }
-
-    pub fn replica(&self) -> &replication::Replica<C, S, H> {
-        self.replication_coordinator.replica()
+        &self.migration_manager.network
     }
 
     pub fn migration_manager(&self) -> &migration::Manager<C, N, S> {
         &self.migration_manager
     }
-
-    /// Returns representation of this [`Node`] in the [`Cluster`].
-    pub fn cluster_node(&self) -> &C::Node {
-        self.replica().node()
-    }
 }
 
-impl<C, N, S, H> Node<C, N, S, H>
+impl<C, N, S> Node<C, N, S>
 where
     C: Consensus + Clone,
     N: migration::Network<C::Node>,
     S: migration::StorageImport<N::DataStream> + Clone,
 {
     /// Creates a new [`Node`] using the provided [`NodeOpts`] and dependencies.
-    pub fn new(
-        inner: C::Node,
-        opts: NodeOpts,
-        consensus: C,
-        network: N,
-        storage: S,
-        hasher_builder: H,
-    ) -> Self {
+    pub fn new(inner: C::Node, opts: NodeOpts, consensus: C, network: N, storage: S) -> Self {
         let id = inner.id().clone();
 
-        let throttling = replication::Throttling {
-            request_timeout: opts.replication_request_timeout,
-            request_limiter: Arc::new(Semaphore::new(opts.replication_concurrency_limit)),
-            request_limiter_queue: Arc::new(Semaphore::new(opts.replication_request_queue)),
-        };
-
-        let replica = Replica::new(
-            inner,
-            consensus.clone(),
-            storage.clone(),
-            hasher_builder,
-            throttling,
-        );
-
         Node {
-            replication_coordinator: replication::Coordinator::new(
-                replica,
-                network.clone(),
-                opts.authorization,
-            ),
+            inner,
             migration_manager: migration::Manager::new(id, consensus, network, storage),
             shutdown: Arc::new(Mutex::new(None)),
             warmup_delay: opts.warmup_delay,
@@ -157,7 +117,7 @@ where
         };
 
         fsm::run(
-            self.replication_coordinator.node().clone(),
+            self.inner.clone(),
             self.consensus().clone(),
             self.migration_manager.clone(),
             self.warmup_delay,
@@ -172,7 +132,7 @@ where
 #[error("Node already running")]
 pub struct AlreadyRunning;
 
-impl<C: Consensus, N, S, H> Node<C, N, S, H> {
+impl<C: Consensus, N, S> Node<C, N, S> {
     /// Initiates shut down process of this [`Node`].
     pub fn shutdown(&self, reason: fsm::ShutdownReason) -> Result<(), ShutdownError> {
         let tx = self.shutdown.lock().unwrap().take().ok_or(ShutdownError)?;

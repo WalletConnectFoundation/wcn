@@ -34,9 +34,6 @@ pub struct Config {
     /// Port of the replica API server.
     pub replica_api_server_port: u16,
 
-    /// Port of the coordinator API server.
-    pub coordinator_api_server_port: u16,
-
     /// Port of the client API server.
     pub client_api_server_port: u16,
 
@@ -155,7 +152,6 @@ impl Config {
             server_addr: raw.server_addr,
             raft_server_port: raw.raft_server_port.unwrap_or(3010),
             replica_api_server_port: raw.replica_api_server_port.unwrap_or(3011),
-            coordinator_api_server_port: raw.coordinator_api_server_port.unwrap_or(3012),
             client_api_server_port: raw.client_api_server_port.unwrap_or(3014),
             admin_api_server_port: raw.admin_api_server_port.unwrap_or(3013),
             metrics_server_port: raw.metrics_server_port.unwrap_or(3014),
@@ -228,7 +224,6 @@ struct RawConfig {
     server_addr: Ipv4Addr,
     raft_server_port: Option<u16>,
     replica_api_server_port: Option<u16>,
-    coordinator_api_server_port: Option<u16>,
     client_api_server_port: Option<u16>,
     admin_api_server_port: Option<u16>,
     metrics_server_port: Option<u16>,

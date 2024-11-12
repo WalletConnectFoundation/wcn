@@ -1,6 +1,6 @@
 use {
     irn::Keypair,
-    irn_api::{client, Client, Key},
+    irn_replication::storage,
     irn_rpc::quic,
     std::{net::SocketAddr, str::FromStr, time::Duration},
 };
@@ -23,7 +23,7 @@ enum Error {
     Decoding(&'static str),
 
     #[error("Failed to execute storage request: {0}")]
-    Client(#[from] client::Error),
+    Client(#[from] irn_replication::Error),
 
     #[error("Failed to write data to stdout")]
     Io(#[from] std::io::Error),
@@ -103,7 +103,6 @@ enum StorageSub {
     Hset(HSetCmd),
     HGet(HGetCmd),
     HDel(HDelCmd),
-    HFields(HFieldsCmd),
     HVals(HValsCmd),
 }
 
@@ -173,7 +172,7 @@ struct HValsCmd {
 
 struct Storage {
     namespace: Option<irn_auth::PublicKey>,
-    client: Client,
+    driver: irn_replication::Driver,
     encoding: Encoding,
 }
 
@@ -190,10 +189,10 @@ impl Storage {
         }
     }
 
-    fn key(&self, bytes: Vec<u8>) -> Key {
-        Key {
-            namespace: self.namespace,
-            bytes,
+    fn key(&self, bytes: Vec<u8>) -> storage::Key {
+        match &self.namespace {
+            Some(ns) => storage::Key::private(ns, bytes),
+            None => storage::Key::shared(bytes),
         }
     }
 
@@ -210,12 +209,13 @@ impl Storage {
     }
 
     async fn set(&self, args: SetCmd) -> Result<(), Error> {
-        let key = self.decode(&args.key, "key")?;
-        let value = self.decode(&args.value, "value")?;
+        let entry = storage::Entry::new(
+            self.key(self.decode(&args.key, "key")?),
+            self.decode(&args.value, "value")?,
+            args.ttl.0,
+        );
 
-        self.client
-            .set(self.key(key), value, ttl_to_timestamp(args.ttl)?)
-            .await?;
+        self.driver.set(entry).await?;
 
         Ok(())
     }
@@ -223,10 +223,10 @@ impl Storage {
     async fn get(&self, args: GetCmd) -> Result<(), Error> {
         let key = self.decode(&args.key, "key")?;
 
-        self.client
+        self.driver
             .get(self.key(key))
             .await?
-            .map(|data| self.output(data))
+            .map(|rec| self.output(rec.value))
             .transpose()?;
 
         Ok(())
@@ -235,19 +235,20 @@ impl Storage {
     async fn del(&self, args: DelCmd) -> Result<(), Error> {
         let key = self.decode(&args.key, "key")?;
 
-        self.client.del(self.key(key)).await?;
+        self.driver.del(self.key(key)).await?;
 
         Ok(())
     }
 
     async fn hset(&self, args: HSetCmd) -> Result<(), Error> {
-        let key = self.decode(&args.key, "key")?;
-        let field = self.decode(&args.field, "field")?;
-        let value = self.decode(&args.value, "value")?;
+        let entry = storage::MapEntry::new(
+            self.key(self.decode(&args.key, "key")?),
+            self.decode(&args.field, "field")?,
+            self.decode(&args.value, "value")?,
+            args.ttl.0,
+        );
 
-        self.client
-            .hset(self.key(key), field, value, ttl_to_timestamp(args.ttl)?)
-            .await?;
+        self.driver.hset(entry).await?;
 
         Ok(())
     }
@@ -256,10 +257,10 @@ impl Storage {
         let key = self.decode(&args.key, "key")?;
         let field = self.decode(&args.field, "field")?;
 
-        self.client
+        self.driver
             .hget(self.key(key), field)
             .await?
-            .map(|data| self.output(data))
+            .map(|rec| self.output(rec.value))
             .transpose()?;
 
         Ok(())
@@ -269,19 +270,7 @@ impl Storage {
         let key = self.decode(&args.key, "key")?;
         let field = self.decode(&args.field, "field")?;
 
-        self.client.hdel(self.key(key), field).await?;
-
-        Ok(())
-    }
-
-    async fn hfields(&self, args: HFieldsCmd) -> Result<(), Error> {
-        let key = self.decode(&args.key, "key")?;
-
-        let fields = self.client.hfields(self.key(key)).await?;
-
-        for field in fields {
-            self.output(field)?;
-        }
+        self.driver.hdel(self.key(key), field).await?;
 
         Ok(())
     }
@@ -289,7 +278,7 @@ impl Storage {
     async fn hvals(&self, args: HValsCmd) -> Result<(), Error> {
         let key = self.decode(&args.key, "key")?;
 
-        let fields = self.client.hvals(self.key(key)).await?;
+        let fields = self.driver.hvals(self.key(key)).await?;
 
         for field in fields {
             self.output(field)?;
@@ -303,29 +292,18 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     let namespaces = initialize_namespaces(&cmd)?;
     let namespace = namespaces.first().map(|ns| ns.public_key());
 
-    // Currently, the client doesn't use or verify the peer ID of the provided node
-    // address. So we can use any peer ID and not require it as an input parameter.
-    let peer_id = irn_rpc::identity::Keypair::generate_ed25519()
-        .public()
-        .to_peer_id();
-    let address = (peer_id, quic::socketaddr_to_multiaddr(cmd.address));
-
-    let client = Client::new(client::Config {
+    let client = irn_replication::Driver::new(irn_replication::Config {
         keypair: cmd.private_key.0,
-        nodes: [address].into(),
-        shadowing_nodes: Default::default(),
-        shadowing_factor: 0.0,
-        shadowing_default_namespace: None,
-        request_timeout: Duration::from_secs(1),
-        max_operation_time: Duration::from_millis(2500),
         connection_timeout: Duration::from_secs(1),
-        udp_socket_count: 1,
+        operation_timeout: Duration::from_millis(2500),
+        nodes: [quic::socketaddr_to_multiaddr(cmd.address)].into(),
         namespaces,
-    })?;
+    })
+    .await?;
 
     let storage = Storage {
         namespace,
-        client,
+        driver: client,
         encoding: cmd.encoding,
     };
 
@@ -336,7 +314,6 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
         StorageSub::Hset(args) => storage.hset(args).await?,
         StorageSub::HGet(args) => storage.hget(args).await?,
         StorageSub::HDel(args) => storage.hdel(args).await?,
-        StorageSub::HFields(args) => storage.hfields(args).await?,
         StorageSub::HVals(args) => storage.hvals(args).await?,
     }
 
@@ -355,10 +332,4 @@ fn initialize_namespaces(cmd: &StorageCmd) -> Result<Vec<irn_auth::Auth>, Error>
     }
 
     Ok(result)
-}
-
-fn ttl_to_timestamp(ttl: Ttl) -> Result<u64, Error> {
-    chrono::Duration::from_std(ttl.0)
-        .map_err(|_| Error::InvalidTtl)
-        .map(|ttl| (chrono::Utc::now() + ttl).timestamp() as u64)
 }

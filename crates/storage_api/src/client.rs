@@ -150,6 +150,7 @@ impl middleware::RetryStrategy for RetryStrategy {
 }
 
 /// Handle to a remote Storage API (Server).
+#[derive(Clone, Copy)]
 pub struct RemoteStorage<'a> {
     client: &'a Client,
     server_addr: &'a Multiaddr,

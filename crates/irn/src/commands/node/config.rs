@@ -37,7 +37,6 @@ pub struct KnownPeer {
 pub struct Server {
     pub bind_address: Ipv4Addr,
     pub server_port: u16,
-    pub client_port: u16,
     pub raft_port: u16,
     pub auth_port: u16,
     pub admin_port: u16,

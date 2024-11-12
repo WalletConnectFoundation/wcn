@@ -1,10 +1,4 @@
-use {
-    anyhow::Context as _,
-    derive_more::Deref,
-    irn_api::client,
-    irn_rpc::Multiaddr,
-    std::str::FromStr,
-};
+use {anyhow::Context as _, derive_more::Deref, irn_rpc::Multiaddr, std::str::FromStr};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -19,9 +13,6 @@ pub enum CliError {
 
     #[error("Failed to decode parameter: {0}")]
     Decoding(&'static str),
-
-    #[error("Failed to run health check: {0}")]
-    Client(#[from] client::Error),
 
     #[error("Failed to write data to stdout")]
     Io(#[from] std::io::Error),

@@ -63,23 +63,6 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         }
     }
 
-    // TODO: remove once `irn_api` is removed
-    fn send_unary_legacy<'a, RPC: Rpc<Kind = kind::Unary>>(
-        &'a self,
-        addr: &'a A,
-        request: &'a RPC::Request,
-    ) -> impl Future<Output = Result<RPC::Response>> + Send + 'a {
-        async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (mut rx, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
-                tx.send(request).await?;
-                Ok(rx.recv_message().await?)
-            })
-            .force_send_impl()
-            .await
-        }
-    }
-
     /// Sends a streaming RPC.
     fn send_streaming<'a, RPC: Rpc<Kind = kind::Streaming>, Fut, Ok: Send>(
         &'a self,
@@ -92,25 +75,6 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         async move {
             self.send_rpc(addr, RPC::ID, &move |stream| async move {
                 let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
-                f(tx, rx).await.map_err(Into::into)
-            })
-            .force_send_impl()
-            .await
-        }
-    }
-
-    // TODO: remove once `irn_api` is removed
-    fn send_streaming_legacy<'a, RPC: Rpc<Kind = kind::Streaming>, Fut, Ok: Send>(
-        &'a self,
-        addr: &'a A,
-        f: &'a (impl Fn(SendStream<RPC::Request>, RecvStream<RPC::Response>) -> Fut + Send + Sync + 'a),
-    ) -> impl Future<Output = Result<Ok>> + Send + 'a
-    where
-        Fut: Future<Output = Result<Ok>> + Send,
-    {
-        async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (rx, tx) = stream.upgrade::<RPC::Response, RPC::Request>();
                 f(tx, rx).await.map_err(Into::into)
             })
             .force_send_impl()
@@ -216,19 +180,6 @@ where
         Fut: Future<Output = Result<Ok>> + Send,
     {
         client.send_streaming::<Self, _, _>(addr, f)
-    }
-
-    // TODO: remove once `irn_api` is removed
-    pub fn send_legacy<'a, A: Sync, F, Fut, Ok: Send>(
-        client: &'a impl Client<A>,
-        addr: &'a A,
-        f: &'a F,
-    ) -> impl Future<Output = Result<Ok>> + Send + 'a
-    where
-        F: Fn(SendStream<Req>, RecvStream<Resp>) -> Fut + Send + Sync + 'a,
-        Fut: Future<Output = Result<Ok>> + Send,
-    {
-        client.send_streaming_legacy::<Self, _, _>(addr, f)
     }
 }
 

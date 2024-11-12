@@ -17,7 +17,6 @@ use {
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
     tap::Pipe,
     time::{macros::datetime, OffsetDateTime},
-    xxhash_rust::xxh3::Xxh3Builder,
 };
 pub use {
     cluster::Cluster,
@@ -48,7 +47,7 @@ const NODE_VERSION: u64 = 0;
 /// [`NODE_VERSION`] are going to receive reduced rewards.
 const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-07-25 12:00:00 -0);
 
-pub type Node = irn::Node<Consensus, Network, Storage, Xxh3Builder>;
+pub type Node = irn::Node<Consensus, Network, Storage>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -57,9 +56,6 @@ pub enum Error {
 
     #[error("Metrics server error: {0}")]
     MetricsServer(#[from] hyper::Error),
-
-    #[error("Failed to start API server: {0:?}")]
-    ApiServer(#[from] api::Error),
 
     #[error("Failed to start Client API server: {0:?}")]
     ClientApiServer(#[from] client_api::server::ServeError),
@@ -229,7 +225,6 @@ pub async fn run(
         consensus,
         network,
         storage,
-        Xxh3Builder::new(),
     );
 
     Network::spawn_servers(cfg, node.clone(), prometheus.clone(), status_reporter)?;

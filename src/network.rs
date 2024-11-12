@@ -1,16 +1,7 @@
 use {
-    crate::{
-        cluster,
-        consensus,
-        contract::StatusReporter,
-        storage::{self, Cursor, Storage, Value},
-        Config,
-        Error,
-        Node,
-    },
+    crate::{cluster, consensus, contract::StatusReporter, Config, Error, Node},
     admin_api::Server as _,
     anyerror::AnyError,
-    api::server::Handshake,
     client_api::Server,
     derive_more::AsRef,
     domain::HASHER,
@@ -24,22 +15,9 @@ use {
         StreamExt,
         TryFutureExt,
     },
-    irn::{
-        cluster::Consensus,
-        replication::{
-            self,
-            CoordinatorError,
-            ReplicaError,
-            ReplicaResponse,
-            Storage as _,
-            StorageOperation,
-        },
-    },
+    irn::cluster::Consensus,
     irn_rpc::{
-        client::{
-            self,
-            middleware::{MeteredExt as _, WithTimeoutsExt as _},
-        },
+        client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
         middleware::{Metered, Timeouts, WithTimeouts},
         quic::{self, socketaddr_to_multiaddr},
         server::{
@@ -48,7 +26,6 @@ use {
             ClientConnectionInfo,
         },
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
-        Client as _,
         Multiaddr,
         ServerName,
     },
@@ -56,11 +33,24 @@ use {
     metrics_exporter_prometheus::PrometheusHandle,
     pin_project::{pin_project, pinned_drop},
     raft::Raft,
-    relay_rocks::{db::migration::ExportItem, util::timestamp_micros, StorageError},
+    relay_rocks::{
+        self as rocksdb,
+        db::{
+            cf::DbColumn,
+            migration::ExportItem,
+            schema::{self, GenericKey},
+            types::{
+                common::iterators::ScanOptions,
+                map::Pair,
+                MapStorage as _,
+                StringStorage as _,
+            },
+        },
+    },
     std::{
         borrow::Cow,
         collections::{HashMap, HashSet},
-        fmt::{self, Debug},
+        fmt::Debug,
         hash::BuildHasher,
         io,
         pin::Pin,
@@ -69,6 +59,7 @@ use {
     },
     tap::Pipe,
     tokio::sync::mpsc,
+    wc::metrics::{future_metrics, FutureExt as _},
 };
 
 pub const RAFT_API_SERVER_NAME: ServerName = ServerName::new("raft_api");
@@ -98,55 +89,6 @@ pub mod rpc {
         >;
 
         pub type Vote = rpc::Unary<{ rpc::id(b"vote") }, VoteRequest, VoteResult>;
-    }
-
-    pub mod replica {
-        use {
-            crate::storage,
-            irn::replication::{ReplicaError, StorageOperation},
-            irn_rpc as rpc,
-            relay_rocks::StorageError,
-            serde::{Deserialize, Serialize},
-        };
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct Request<Op> {
-            pub operation: Op,
-            pub keyspace_version: u64,
-        }
-
-        impl<Op> Request<Op> {
-            pub fn new(operation: Op, keyspace_version: u64) -> Self {
-                Self {
-                    operation,
-                    keyspace_version,
-                }
-            }
-        }
-
-        pub type Result<T> = std::result::Result<T, ReplicaError<StorageError>>;
-
-        pub type Rpc<const ID: rpc::Id, Op> =
-            rpc::Unary<ID, Request<Op>, Result<<Op as StorageOperation>::Output>>;
-
-        pub type Get = Rpc<{ rpc::id(b"r_get") }, storage::Get>;
-        pub type Set = Rpc<{ rpc::id(b"r_set") }, storage::Set>;
-        pub type SetVal = Rpc<{ rpc::id(b"r_set_val") }, storage::SetVal>;
-        pub type Del = Rpc<{ rpc::id(b"r_del") }, storage::Del>;
-        pub type GetExp = Rpc<{ rpc::id(b"r_get_exp") }, storage::GetExp>;
-        pub type SetExp = Rpc<{ rpc::id(b"r_set_exp") }, storage::SetExp>;
-
-        pub type HGet = Rpc<{ rpc::id(b"r_hget") }, storage::HGet>;
-        pub type HSet = Rpc<{ rpc::id(b"r_hset") }, storage::HSet>;
-        pub type HSetVal = Rpc<{ rpc::id(b"r_hset_val") }, storage::HSetVal>;
-        pub type HDel = Rpc<{ rpc::id(b"r_hdel") }, storage::HDel>;
-        pub type HGetExp = Rpc<{ rpc::id(b"r_hget_exp") }, storage::HGetExp>;
-        pub type HSetExp = Rpc<{ rpc::id(b"r_hset_exp") }, storage::HSetExp>;
-
-        pub type HCard = Rpc<{ rpc::id(b"r_hcard") }, storage::HCard>;
-        pub type HFields = Rpc<{ rpc::id(b"r_hfields") }, storage::HFields>;
-        pub type HVals = Rpc<{ rpc::id(b"r_hvals") }, storage::HVals>;
-        pub type HScan = Rpc<{ rpc::id(b"r_hscan") }, storage::HScan>;
     }
 
     pub mod migration {
@@ -189,7 +131,13 @@ pub mod rpc {
         #[derive(Clone, Debug, Serialize, Deserialize)]
         pub struct Message(pub Vec<u8>);
 
-        pub type Pubsub = rpc::Oneshot<{ rpc::id(b"pubsub") }, api::PubsubEventPayload>;
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        pub struct PubsubEventPayload {
+            pub channel: Vec<u8>,
+            pub payload: Vec<u8>,
+        }
+
+        pub type Pubsub = rpc::Oneshot<{ rpc::id(b"pubsub") }, PubsubEventPayload>;
 
         #[derive(Clone, Debug, Serialize, Deserialize)]
         pub struct HeartbeatMessage(pub PeerId);
@@ -223,34 +171,6 @@ pub mod rpc {
         pub type Response = String;
 
         pub type Metrics = rpc::Unary<{ rpc::id(b"metrics") }, Request, Response>;
-    }
-}
-
-#[derive(AsRef, Clone)]
-struct CoordinatorApiServer {
-    #[as_ref]
-    node: Arc<Node>,
-
-    pubsub: Pubsub,
-
-    config: irn_rpc::server::Config<Handshake>,
-}
-
-impl irn_rpc::Server for CoordinatorApiServer {
-    type Handshake = Handshake;
-    type ConnectionData = ();
-
-    fn config(&self) -> &server::Config<Self::Handshake> {
-        &self.config
-    }
-
-    fn handle_rpc<'a>(
-        &'a self,
-        id: irn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &'a ClientConnectionInfo<Self>,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        Self::handle_coordinator_rpc(self, id, stream, conn_info)
     }
 }
 
@@ -290,6 +210,20 @@ struct StorageApiServer {
     node: Arc<Node>,
 }
 
+impl StorageApiServer {
+    fn string_storage(&self) -> &DbColumn<schema::StringColumn> {
+        &self.node.storage().string
+    }
+
+    fn map_storage(&self) -> &DbColumn<schema::MapColumn> {
+        &self.node.storage().map
+    }
+}
+
+fn generic_key(key: storage_api::Key) -> GenericKey {
+    GenericKey::new(HASHER.hash_one(key.as_bytes()), key.into_bytes())
+}
+
 impl storage_api::Server for StorageApiServer {
     fn keyspace_version(&self) -> u64 {
         self.node.consensus().cluster().keyspace_version()
@@ -299,9 +233,8 @@ impl storage_api::Server for StorageApiServer {
         &self,
         key: storage_api::Key,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::Record>>> + Send {
-        self.node
-            .storage()
-            .get(HASHER.hash_one(key.as_bytes()), key.into_bytes())
+        async move { self.string_storage().get(&generic_key(key)).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
             .map_ok(|opt| {
                 opt.map(|rec| storage_api::Record {
                     value: rec.value,
@@ -318,14 +251,13 @@ impl storage_api::Server for StorageApiServer {
         &self,
         entry: storage_api::Entry,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(entry.key.as_bytes()), storage::Set {
-                key: entry.key.into_bytes(),
-                value: entry.value,
-                expiration: entry.expiration.unix_timestamp_secs(),
-                version: entry.version.unix_timestamp_micros(),
-            })
+        let key = generic_key(entry.key);
+        let val = entry.value;
+        let exp = entry.expiration.unix_timestamp_secs();
+        let ver = entry.version.unix_timestamp_micros();
+
+        async move { self.string_storage().set(&key, &val, exp, ver).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
             .map_err(storage_api::server::Error::new)
     }
 
@@ -334,12 +266,11 @@ impl storage_api::Server for StorageApiServer {
         key: storage_api::Key,
         version: storage_api::EntryVersion,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::Del {
-                key: key.into_bytes(),
-                version: version.unix_timestamp_micros(),
-            })
+        let key = generic_key(key);
+        let ver = version.unix_timestamp_micros();
+
+        async move { self.string_storage().del(&key, ver).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
             .map_err(storage_api::server::Error::new)
     }
 
@@ -348,16 +279,13 @@ impl storage_api::Server for StorageApiServer {
         key: storage_api::Key,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
     {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::GetExp {
-                key: key.into_bytes(),
-            })
+        async move { self.string_storage().exp(&generic_key(key)).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
             .map(|res| match res {
                 Ok(timestamp) => Ok(Some(
                     storage_api::EntryExpiration::from_unix_timestamp_secs(timestamp),
                 )),
-                Err(StorageError::EntryNotFound) => Ok(None),
+                Err(rocksdb::Error::EntryNotFound) => Ok(None),
                 Err(err) => Err(storage_api::server::Error::new(err)),
             })
     }
@@ -368,13 +296,12 @@ impl storage_api::Server for StorageApiServer {
         expiration: impl Into<storage_api::EntryExpiration>,
         version: storage_api::EntryVersion,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::SetExp {
-                key: key.into_bytes(),
-                expiration: expiration.into().unix_timestamp_secs(),
-                version: version.unix_timestamp_micros(),
-            })
+        let key = generic_key(key);
+        let exp = expiration.into().unix_timestamp_secs();
+        let ver = version.unix_timestamp_micros();
+
+        async move { self.string_storage().setexp(&key, exp, ver).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
             .map_err(storage_api::server::Error::new)
     }
 
@@ -383,9 +310,8 @@ impl storage_api::Server for StorageApiServer {
         key: storage_api::Key,
         field: storage_api::Field,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::Record>>> + Send {
-        self.node
-            .storage()
-            .hget(HASHER.hash_one(key.as_bytes()), key.into_bytes(), field)
+        async move { self.map_storage().hget(&generic_key(key), &field).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
             .map_ok(|opt| {
                 opt.map(|rec| storage_api::Record {
                     value: rec.value,
@@ -402,15 +328,13 @@ impl storage_api::Server for StorageApiServer {
         &self,
         entry: storage_api::MapEntry,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(entry.key.as_bytes()), storage::HSet {
-                key: entry.key.into_bytes(),
-                field: entry.field,
-                value: entry.value,
-                expiration: entry.expiration.unix_timestamp_secs(),
-                version: entry.version.unix_timestamp_micros(),
-            })
+        let key = generic_key(entry.key);
+        let pair = Pair::new(entry.field, entry.value);
+        let exp = entry.expiration.unix_timestamp_secs();
+        let ver = entry.version.unix_timestamp_micros();
+
+        async move { self.map_storage().hset(&key, &pair, exp, ver).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
             .map_err(storage_api::server::Error::new)
     }
 
@@ -420,13 +344,11 @@ impl storage_api::Server for StorageApiServer {
         field: storage_api::Field,
         version: storage_api::EntryVersion,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::HDel {
-                key: key.into_bytes(),
-                field,
-                version: version.unix_timestamp_micros(),
-            })
+        let key = generic_key(key);
+        let ver = version.unix_timestamp_micros();
+
+        async move { self.map_storage().hdel(&key, &field, ver).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
             .map_err(storage_api::server::Error::new)
     }
 
@@ -436,17 +358,13 @@ impl storage_api::Server for StorageApiServer {
         field: storage_api::Field,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
     {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::HGetExp {
-                key: key.into_bytes(),
-                field,
-            })
+        async move { self.map_storage().hexp(&generic_key(key), &field).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
             .map(|res| match res {
                 Ok(timestamp) => Ok(Some(
                     storage_api::EntryExpiration::from_unix_timestamp_secs(timestamp),
                 )),
-                Err(StorageError::EntryNotFound) => Ok(None),
+                Err(rocksdb::Error::EntryNotFound) => Ok(None),
                 Err(err) => Err(storage_api::server::Error::new(err)),
             })
     }
@@ -458,14 +376,12 @@ impl storage_api::Server for StorageApiServer {
         expiration: impl Into<storage_api::EntryExpiration>,
         version: storage_api::EntryVersion,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::HSetExp {
-                key: key.into_bytes(),
-                field,
-                expiration: expiration.into().unix_timestamp_secs(),
-                version: version.unix_timestamp_micros(),
-            })
+        let key = generic_key(key);
+        let exp = expiration.into().unix_timestamp_secs();
+        let ver = version.unix_timestamp_micros();
+
+        async move { self.map_storage().hsetexp(&key, &field, exp, ver).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
             .map_err(storage_api::server::Error::new)
     }
 
@@ -473,12 +389,11 @@ impl storage_api::Server for StorageApiServer {
         &self,
         key: storage_api::Key,
     ) -> impl Future<Output = storage_api::server::Result<u64>> + Send {
-        self.node
-            .storage()
-            .exec(HASHER.hash_one(key.as_bytes()), storage::HCard {
-                key: key.into_bytes(),
-            })
-            .map_ok(|card| card.0)
+        let key = generic_key(key);
+
+        async move { self.map_storage().hcard(&key).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
+            .map_ok(|card| card as u64)
             .map_err(storage_api::server::Error::new)
     }
 
@@ -488,14 +403,11 @@ impl storage_api::Server for StorageApiServer {
         count: u32,
         cursor: Option<storage_api::Field>,
     ) -> impl Future<Output = storage_api::server::Result<storage_api::MapPage>> + Send {
-        self.node
-            .storage()
-            .hscan(
-                HASHER.hash_one(key.as_bytes()),
-                key.into_bytes(),
-                count,
-                cursor,
-            )
+        let key = generic_key(key);
+        let opts = ScanOptions::new(count as usize).with_cursor(cursor);
+
+        async move { self.map_storage().hscan(&key, opts).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
             .map_ok(|res| storage_api::MapPage {
                 records: res
                     .items
@@ -515,312 +427,6 @@ impl storage_api::Server for StorageApiServer {
     }
 }
 
-fn prepare_key(
-    key: api::Key,
-    conn_info: &ClientConnectionInfo<CoordinatorApiServer>,
-) -> api::Result<Vec<u8>> {
-    if let Some(namespace) = &key.namespace {
-        if !conn_info.handshake_data.namespaces.contains(namespace) {
-            return Err(api::Error::Unauthorized);
-        }
-    }
-
-    Ok(namespaced_key(key))
-}
-
-// Creates the internal representation of the data key by combining namespace
-// information with the user key etc.
-pub fn namespaced_key(key: api::Key) -> storage::Key {
-    #[repr(u8)]
-    enum KeyKind {
-        Shared = 0,
-        Private = 1,
-    }
-
-    let prefix_len = if key.namespace.is_some() {
-        auth::PUBLIC_KEY_LEN
-    } else {
-        0
-    };
-
-    let mut data = Vec::with_capacity(1 + prefix_len + key.bytes.len());
-
-    if let Some(namespace) = key.namespace {
-        data.push(KeyKind::Private as u8);
-        data.extend_from_slice(namespace.as_ref());
-    } else {
-        data.push(KeyKind::Shared as u8);
-    };
-
-    data.extend_from_slice(&key.bytes);
-    data
-}
-
-impl CoordinatorApiServer {
-    fn handle_coordinator_rpc<'a>(
-        &'a self,
-        id: irn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &'a ClientConnectionInfo<Self>,
-    ) -> impl Future<Output = ()> + 'a {
-        async move {
-            let client_id = &conn_info.peer_id;
-            let coordinator = self.node.coordinator();
-
-            let _ = match id {
-                api::rpc::Get::ID => {
-                    api::rpc::Get::handle_legacy(stream, |req| async {
-                        let op = storage::Get {
-                            key: prepare_key(req.key, conn_info)?,
-                        };
-
-                        coordinator
-                            .replicate(client_id, op)
-                            .map(api_result)
-                            .await
-                            .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
-                    })
-                    .await
-                }
-                api::rpc::Set::ID => {
-                    api::rpc::Set::handle_legacy(stream, |req| async move {
-                        if let Some(expiration) = req.expiration {
-                            let op = storage::Set {
-                                key: prepare_key(req.key, conn_info)?,
-                                value: req.value,
-                                expiration,
-                                version: timestamp_micros(),
-                            };
-
-                            return coordinator.replicate(client_id, op).map(api_result).await;
-                        }
-
-                        let op = storage::SetVal {
-                            key: prepare_key(req.key, conn_info)?,
-                            value: req.value,
-                            version: timestamp_micros(),
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::Del::ID => {
-                    api::rpc::Del::handle_legacy(stream, |req| async {
-                        let op = storage::Del {
-                            key: prepare_key(req.key, conn_info)?,
-                            version: timestamp_micros(),
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::GetExp::ID => {
-                    api::rpc::GetExp::handle_legacy(stream, |req| async {
-                        let op = storage::GetExp {
-                            key: prepare_key(req.key, conn_info)?,
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::SetExp::ID => {
-                    api::rpc::SetExp::handle_legacy(stream, |req| async move {
-                        let Some(expiration) = req.expiration else {
-                            return Err(api::Error::Internal(api::InternalError {
-                                code: "invalid_request".into(),
-                                message: "`None` expiration is no longer allowed".into(),
-                            }));
-                        };
-
-                        let op = storage::SetExp {
-                            key: prepare_key(req.key, conn_info)?,
-                            expiration,
-                            version: timestamp_micros(),
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HGet::ID => {
-                    api::rpc::HGet::handle_legacy(stream, |req| async {
-                        let op = storage::HGet {
-                            key: prepare_key(req.key, conn_info)?,
-                            field: req.field,
-                        };
-
-                        coordinator
-                            .replicate(client_id, op)
-                            .map(api_result)
-                            .await
-                            .map(|opt: Option<(Value, _)>| opt.map(|(value, _)| value))
-                    })
-                    .await
-                }
-                api::rpc::HSet::ID => {
-                    api::rpc::HSet::handle_legacy(stream, |req| async move {
-                        if let Some(expiration) = req.expiration {
-                            let op = storage::HSet {
-                                key: prepare_key(req.key, conn_info)?,
-                                field: req.field,
-                                value: req.value,
-                                expiration,
-                                version: timestamp_micros(),
-                            };
-
-                            return coordinator.replicate(client_id, op).map(api_result).await;
-                        }
-
-                        let op = storage::HSetVal {
-                            key: prepare_key(req.key, conn_info)?,
-                            field: req.field,
-                            value: req.value,
-                            version: timestamp_micros(),
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HDel::ID => {
-                    api::rpc::HDel::handle_legacy(stream, |req| async {
-                        let op = storage::HDel {
-                            key: prepare_key(req.key, conn_info)?,
-                            field: req.field,
-                            version: timestamp_micros(),
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HGetExp::ID => {
-                    api::rpc::HGetExp::handle_legacy(stream, |req| async {
-                        let op = storage::HGetExp {
-                            key: prepare_key(req.key, conn_info)?,
-                            field: req.field,
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HSetExp::ID => {
-                    api::rpc::HSetExp::handle_legacy(stream, |req| async move {
-                        let Some(expiration) = req.expiration else {
-                            return Err(api::Error::Internal(api::InternalError {
-                                code: "invalid_request".into(),
-                                message: "`None` expiration is no longer allowed".into(),
-                            }));
-                        };
-
-                        let op = storage::HSetExp {
-                            key: prepare_key(req.key, conn_info)?,
-                            field: req.field,
-                            expiration,
-                            version: timestamp_micros(),
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HCard::ID => {
-                    api::rpc::HCard::handle_legacy(stream, |req| async {
-                        let op = storage::HCard {
-                            key: prepare_key(req.key, conn_info)?,
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HFields::ID => {
-                    api::rpc::HFields::handle_legacy(stream, |req| async {
-                        let op = storage::HFields {
-                            key: prepare_key(req.key, conn_info)?,
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HVals::ID => {
-                    api::rpc::HVals::handle_legacy(stream, |req| async {
-                        let op = storage::HVals {
-                            key: prepare_key(req.key, conn_info)?,
-                        };
-
-                        coordinator.replicate(client_id, op).map(api_result).await
-                    })
-                    .await
-                }
-                api::rpc::HScan::ID => {
-                    api::rpc::HScan::handle_legacy(stream, |req| {
-                        async move {
-                            let op = storage::HScan {
-                                key: prepare_key(req.key, conn_info)?,
-                                count: req.count,
-                                cursor: req.cursor,
-                            };
-
-                            // Client only needs `(Vec<Value>, Option<Cursor>)`, however storage
-                            // basically returns `Vec<(Cursor, Value)>`.
-                            // TODO: Change storage return type after client api migration is done.
-                            #[derive(Debug)]
-                            struct Page(irn::replication::Page<(Cursor, Value)>);
-
-                            #[allow(clippy::from_over_into)]
-                            impl Into<(Vec<Value>, Option<Cursor>)> for Page {
-                                fn into(self) -> (Vec<Value>, Option<Cursor>) {
-                                    let cursor = self.0.items.last().map(|t| t.0.clone());
-                                    let items = self.0.items.into_iter().map(|t| t.1).collect();
-                                    (items, cursor)
-                                }
-                            }
-
-                            coordinator
-                                .replicate(client_id, op)
-                                .map_ok(|res| res.map(Page))
-                                .map(api_result)
-                                .await
-                        }
-                    })
-                    .await
-                }
-
-                api::rpc::Publish::ID => {
-                    api::rpc::Publish::handle(stream, |req| self.handle_pubsub_publish(req)).await
-                }
-
-                api::rpc::Subscribe::ID => {
-                    api::rpc::Subscribe::handle_legacy(stream, |tx, rx| {
-                        self.handle_pubsub_subscribe(tx, rx, conn_info)
-                    })
-                    .await
-                }
-
-                id => {
-                    return tracing::warn!(
-                        name = irn_rpc::Name::new(id).as_str(),
-                        "Unexpected coordinator RPC"
-                    )
-                }
-            }
-            .map_err(|err| {
-                tracing::debug!(
-                    name = irn_rpc::Name::new(id).as_str(),
-                    ?err,
-                    "Failed to handle coordinator RPC"
-                )
-            });
-        }
-    }
-}
-
 impl ReplicaApiServer {
     async fn handle_internal_rpc(
         &self,
@@ -829,138 +435,8 @@ impl ReplicaApiServer {
         conn_info: &ClientConnectionInfo<Self>,
     ) {
         let peer_id = &conn_info.peer_id;
-        let replica = self.node.replica();
 
         let _ = match id {
-            rpc::replica::Get::ID => {
-                rpc::replica::Get::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::Set::ID => {
-                rpc::replica::Set::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::SetVal::ID => {
-                rpc::replica::SetVal::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::Del::ID => {
-                rpc::replica::Del::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::GetExp::ID => {
-                rpc::replica::GetExp::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::SetExp::ID => {
-                rpc::replica::SetExp::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HGet::ID => {
-                rpc::replica::HGet::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HSet::ID => {
-                rpc::replica::HSet::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HSetVal::ID => {
-                rpc::replica::HSetVal::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HDel::ID => {
-                rpc::replica::HDel::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HGetExp::ID => {
-                rpc::replica::HGetExp::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HSetExp::ID => {
-                rpc::replica::HSetExp::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HCard::ID => {
-                rpc::replica::HCard::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HFields::ID => {
-                rpc::replica::HFields::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HVals::ID => {
-                rpc::replica::HVals::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-            rpc::replica::HScan::ID => {
-                rpc::replica::HScan::handle(stream, |req| {
-                    replica
-                        .handle_replication(peer_id, req.operation, req.keyspace_version)
-                        .map(Ok)
-                })
-                .await
-            }
-
             rpc::migration::PullData::ID => {
                 rpc::migration::PullData::handle(stream, |rx, tx| {
                     self.handle_pull_data(peer_id, rx, tx)
@@ -1007,43 +483,6 @@ impl ReplicaApiServer {
     }
 }
 
-impl CoordinatorApiServer {
-    async fn handle_pubsub_publish(&self, req: api::Publish) {
-        let evt = &api::PubsubEventPayload {
-            channel: req.channel,
-            payload: req.message,
-        };
-
-        self.pubsub.publish(evt.clone());
-
-        let cluster = self.node.consensus().cluster();
-
-        stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
-            .for_each_concurrent(None, |n| {
-                rpc::broadcast::Pubsub::send(&self.node.network().replica_api_client, &n.addr, evt)
-                    .map(drop)
-            })
-            .await;
-    }
-
-    async fn handle_pubsub_subscribe(
-        &self,
-        mut rx: RecvStream<api::Subscribe>,
-        mut tx: SendStream<api::PubsubEventPayload>,
-        _conn_info: &ClientConnectionInfo<Self>,
-    ) -> server::Result<()> {
-        let req = rx.recv_message().await?;
-
-        let mut subscription = self.pubsub.subscribe(req.channels);
-
-        while let Some(msg) = subscription.rx.recv().await {
-            tx.send(&msg).await?;
-        }
-
-        Ok(())
-    }
-}
-
 impl ReplicaApiServer {
     async fn handle_pull_data(
         &self,
@@ -1070,17 +509,33 @@ impl ReplicaApiServer {
 
 #[derive(Clone)]
 struct ClientApiServer {
+    node: Arc<Node>,
     pubsub: Pubsub,
 }
 
 impl client_api::Server for ClientApiServer {
     fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> impl Future<Output = ()> + Send {
-        self.pubsub.publish(api::PubsubEventPayload {
+        let evt = rpc::broadcast::PubsubEventPayload {
             channel,
             payload: message,
-        });
+        };
 
-        future::ready(())
+        self.pubsub.publish(evt.clone());
+
+        let cluster = self.node.consensus().cluster();
+
+        async move {
+            stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
+                .for_each_concurrent(None, |n| {
+                    rpc::broadcast::Pubsub::send(
+                        &self.node.network().replica_api_client,
+                        &n.addr,
+                        &evt,
+                    )
+                    .map(drop)
+                })
+                .await
+        }
     }
 
     fn subscribe(
@@ -1517,18 +972,6 @@ impl Network {
             max_concurrent_streams: cfg.replica_api_max_concurrent_rpcs,
         };
 
-        let coordinator_api_server_config = irn_rpc::server::Config {
-            name: api::RPC_SERVER_NAME,
-            handshake: Handshake,
-        };
-        let coordinator_api_quic_server_config = irn_rpc::quic::server::Config {
-            name: "coordinator_api",
-            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.coordinator_api_server_port)),
-            keypair: cfg.keypair.clone(),
-            max_concurrent_connections: cfg.coordinator_api_max_concurrent_connections,
-            max_concurrent_streams: cfg.coordinator_api_max_concurrent_rpcs,
-        };
-
         let default_timeout = Duration::from_millis(cfg.network_request_timeout);
 
         let admin_api_server_config = admin_api::server::Config {
@@ -1540,20 +983,11 @@ impl Network {
 
         let rpc_timeouts = Timeouts::new()
             .with_default(default_timeout)
-            .with::<{ rpc::migration::PullData::ID }>(None)
-            .with::<{ api::rpc::Subscribe::ID }>(None);
+            .with::<{ rpc::migration::PullData::ID }>(None);
 
         let node = Arc::new(node);
 
         let pubsub = Pubsub::new();
-
-        let coordinator_api_server = CoordinatorApiServer {
-            node: node.clone(),
-            pubsub: pubsub.clone(),
-            config: coordinator_api_server_config,
-        }
-        .with_timeouts(rpc_timeouts.clone())
-        .metered();
 
         let replica_api_server = ReplicaApiServer {
             node: node.clone(),
@@ -1573,7 +1007,11 @@ impl Network {
             cluster_view: node.consensus().cluster_view().clone(),
         };
 
-        let client_api_server = ClientApiServer { pubsub }.serve(client_api_cfg)?;
+        let client_api_server = ClientApiServer {
+            node: node.clone(),
+            pubsub,
+        }
+        .serve(client_api_cfg)?;
 
         let admin_api_server = AdminApiServer {
             node: node.clone(),
@@ -1597,13 +1035,10 @@ impl Network {
             (replica_api_server, storage_api_server),
             replica_api_quic_server_config,
         )?;
-        let coordinator_api_server =
-            ::api::server::run(coordinator_api_server, coordinator_api_quic_server_config)?;
 
         Ok(async move {
             tokio::join!(
                 replica_and_storage_api_servers,
-                coordinator_api_server,
                 client_api_server,
                 admin_api_server
             )
@@ -1642,135 +1077,10 @@ impl<'a> RemoteNode<'a> {
     }
 }
 
-impl<Op: StorageOperation + MapRpc> irn::replication::Network<cluster::Node, Storage, Op>
-    for Network
-where
-    Op::Rpc: irn_rpc::Rpc<
-        Kind = irn_rpc::kind::Unary,
-        Request = rpc::replica::Request<Op>,
-        Response = ReplicaResponse<Storage, Op>,
-    >,
-    Storage: replication::Storage<Op, Error = StorageError>,
-{
-    type Error = client::Error;
-
-    fn send(
-        &self,
-        to: &cluster::Node,
-        operation: Op,
-        keyspace_version: u64,
-    ) -> impl Future<Output = Result<ReplicaResponse<Storage, Op>, Self::Error>> + Send {
-        async move {
-            self.replica_api_client
-                .send_unary::<Op::Rpc>(&to.addr, &rpc::replica::Request {
-                    operation,
-                    keyspace_version,
-                })
-                .await
-        }
-    }
-}
-
-pub trait MapRpc {
-    type Rpc;
-}
-
-impl MapRpc for storage::Get {
-    type Rpc = rpc::replica::Get;
-}
-
-impl MapRpc for storage::Set {
-    type Rpc = rpc::replica::Set;
-}
-
-impl MapRpc for storage::SetVal {
-    type Rpc = rpc::replica::SetVal;
-}
-
-impl MapRpc for storage::Del {
-    type Rpc = rpc::replica::Del;
-}
-
-impl MapRpc for storage::GetExp {
-    type Rpc = rpc::replica::GetExp;
-}
-
-impl MapRpc for storage::SetExp {
-    type Rpc = rpc::replica::SetExp;
-}
-
-impl MapRpc for storage::HGet {
-    type Rpc = rpc::replica::HGet;
-}
-
-impl MapRpc for storage::HSet {
-    type Rpc = rpc::replica::HSet;
-}
-
-impl MapRpc for storage::HSetVal {
-    type Rpc = rpc::replica::HSetVal;
-}
-
-impl MapRpc for storage::HDel {
-    type Rpc = rpc::replica::HDel;
-}
-
-impl MapRpc for storage::HGetExp {
-    type Rpc = rpc::replica::HGetExp;
-}
-
-impl MapRpc for storage::HSetExp {
-    type Rpc = rpc::replica::HSetExp;
-}
-
-impl MapRpc for storage::HCard {
-    type Rpc = rpc::replica::HCard;
-}
-
-impl MapRpc for storage::HFields {
-    type Rpc = rpc::replica::HFields;
-}
-
-impl MapRpc for storage::HVals {
-    type Rpc = rpc::replica::HVals;
-}
-
-impl MapRpc for storage::HScan {
-    type Rpc = rpc::replica::HScan;
-}
-
 impl<'a> RemoteNode<'a> {
     pub fn id(&self) -> PeerId {
         self.id.clone().into_owned()
     }
-}
-
-fn api_result<T, U>(
-    resp: Result<Result<T, ReplicaError<StorageError>>, CoordinatorError>,
-) -> api::Result<U>
-where
-    T: Into<U> + fmt::Debug,
-{
-    use StorageError as S;
-
-    Err(match resp {
-        Ok(Ok(v)) => return Ok(v.into()),
-
-        Ok(Err(ReplicaError::Throttled)) => api::Error::Throttled,
-        Ok(Err(ReplicaError::Storage(S::EntryNotFound))) => api::Error::NotFound,
-        Ok(Err(ReplicaError::Storage(S::IrnBackend { kind, message }))) => {
-            api::InternalError::new(kind, message).into()
-        }
-
-        Err(CoordinatorError::Throttled) => api::Error::Throttled,
-        Err(e @ CoordinatorError::Timeout) => api::InternalError::new("timeout", e).into(),
-        Err(e @ CoordinatorError::InconsistentOperation) => {
-            api::InternalError::new("inconsistent_operation", e).into()
-        }
-        Err(CoordinatorError::Network(e)) => api::InternalError::new("network", e).into(),
-
-        resp => api::Error::Internal(api::InternalError::new("other", format!("{resp:?}"))),
-    })
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1810,7 +1120,7 @@ impl Pubsub {
         }
     }
 
-    fn publish(&self, evt: api::PubsubEventPayload) {
+    fn publish(&self, evt: rpc::broadcast::PubsubEventPayload) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
         let subscribers = self.inner.read().unwrap().subscribers.clone();
@@ -1834,7 +1144,7 @@ impl Pubsub {
 #[derive(Clone, Debug)]
 struct Subscriber {
     channels: HashSet<Vec<u8>>,
-    tx: mpsc::Sender<api::PubsubEventPayload>,
+    tx: mpsc::Sender<rpc::broadcast::PubsubEventPayload>,
 }
 
 #[pin_project(PinnedDrop)]
@@ -1843,11 +1153,11 @@ struct Subscription {
     pubsub: Pubsub,
 
     #[pin]
-    rx: mpsc::Receiver<api::PubsubEventPayload>,
+    rx: mpsc::Receiver<rpc::broadcast::PubsubEventPayload>,
 }
 
 impl Stream for Subscription {
-    type Item = api::PubsubEventPayload;
+    type Item = rpc::broadcast::PubsubEventPayload;
 
     fn poll_next(
         self: Pin<&mut Self>,

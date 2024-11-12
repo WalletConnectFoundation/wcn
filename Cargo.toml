@@ -41,7 +41,6 @@ testing = [
     "dep:once_cell",
     "dep:rand",
     "irn/testing",
-    "api/client",
 ]
 memory_profiler = ["wc/profiler"]
 
@@ -61,7 +60,6 @@ derive_more = { version = "1.0.0", features = [
 ] }
 core = { package = "irn_core", path = "crates/core" }
 auth = { package = "irn_auth", path = "crates/auth" }
-api = { package = "irn_api", path = "crates/irn_api", features = ["server"] }
 domain = { package = "irn_domain", path = "crates/domain" }
 storage_api = { package = "irn_storage_api", path = "crates/storage_api", features = ["server"] }
 admin_api = { package = "irn_admin_api", path = "crates/admin_api" }
@@ -77,7 +75,6 @@ libp2p = { version = "0.54", default-features = false, features = ["serde"] }
 irn = { package = "irn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
 auth = { workspace = true }
-api = { workspace = true }
 domain = { workspace = true }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }

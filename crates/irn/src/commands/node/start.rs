@@ -178,7 +178,6 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         keypair: config.identity.private_key,
         server_addr: config.server.bind_address,
         replica_api_server_port: config.server.server_port,
-        coordinator_api_server_port: config.server.client_port,
         raft_server_port: config.server.raft_port,
         client_api_server_port: config.server.auth_port,
         admin_api_server_port: config.server.admin_port,

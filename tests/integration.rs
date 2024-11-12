@@ -334,8 +334,6 @@ impl TestCluster {
             .collect::<Vec<_>>()
             .await;
 
-        tracing::info!("1");
-
         // Subscribe 2 groups of clients to different channels.
         let mut subscriptions1 = stream::iter(&clients)
             .then(|c| async {
@@ -346,7 +344,6 @@ impl TestCluster {
             .collect::<Vec<_>>()
             .await;
 
-        tracing::info!("2");
         let mut subscriptions2 = stream::iter(&clients)
             .then(|c| async {
                 c.subscribe([channel2.to_vec()].into_iter().collect())
@@ -355,8 +352,6 @@ impl TestCluster {
             })
             .collect::<Vec<_>>()
             .await;
-
-        tracing::info!("3");
 
         let tasks = FuturesUnordered::new();
 
@@ -373,12 +368,10 @@ impl TestCluster {
                     .publish(channel1.to_vec(), payload1.to_vec())
                     .await
                     .unwrap();
-                tracing::info!("publish 1");
                 publisher
                     .publish(channel2.to_vec(), payload2.to_vec())
                     .await
                     .unwrap();
-                tracing::info!("publish 2");
             }
             .boxed_local(),
         );
@@ -388,8 +381,6 @@ impl TestCluster {
             tasks.push(
                 async {
                     let data = sub.next().await.unwrap().unwrap();
-
-                    tracing::info!("sub 1");
 
                     assert_eq!(&data.channel, channel1);
                     assert_eq!(&data.message, payload1);
@@ -403,8 +394,6 @@ impl TestCluster {
                 async {
                     let data = sub.next().await.unwrap().unwrap();
 
-                    tracing::info!("sub 2");
-
                     assert_eq!(&data.channel, channel2);
                     assert_eq!(&data.message, payload2);
                 }
@@ -414,8 +403,6 @@ impl TestCluster {
 
         // Await all tasks.
         tasks.count().await;
-
-        tracing::info!("4");
 
         // Verify there's no more messages to receive.
         stream::iter(subscriptions1)

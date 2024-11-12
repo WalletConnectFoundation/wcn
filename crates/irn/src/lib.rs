@@ -14,8 +14,6 @@ pub enum CliError {
     #[error("Failed to decode parameter: {0}")]
     Decoding(&'static str),
 
-    // #[error("Failed to run health check: {0}")]
-    // Client(#[from] client::Error),
     #[error("Failed to write data to stdout")]
     Io(#[from] std::io::Error),
 

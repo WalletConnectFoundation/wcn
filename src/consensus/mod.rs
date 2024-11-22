@@ -304,7 +304,7 @@ impl Consensus {
                     cfg.known_peers
                         .get(&id)
                         .map(|addr| (NodeId(id), Node(addr.clone())))
-                        .ok_or_else(|| InitializationError::BootstrapNodeAddrMissing(id))
+                        .ok_or(InitializationError::BootstrapNodeAddrMissing(id))
                 };
 
                 nodes.into_iter().map(map_fn).collect::<Result<_, _>>()

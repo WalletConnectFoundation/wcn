@@ -253,7 +253,7 @@ pub struct ReplicationStrategy<'a, S, N: Node> {
     nodes: &'a Nodes<N>,
 }
 
-impl<'a, S, N> sharding::ReplicationStrategy<node::Idx> for ReplicationStrategy<'a, S, N>
+impl<S, N> sharding::ReplicationStrategy<node::Idx> for ReplicationStrategy<'_, S, N>
 where
     S: sharding::ReplicationStrategy<N>,
     N: Node,

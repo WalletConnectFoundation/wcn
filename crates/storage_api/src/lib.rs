@@ -74,6 +74,7 @@ impl Key {
         self.0
     }
 
+    #[cfg(feature = "server")]
     fn from_raw_bytes(bytes: Vec<u8>) -> Option<Self> {
         match *bytes.first()? {
             Self::KIND_SHARED => Some(Self(bytes)),
@@ -316,9 +317,11 @@ pub struct MapPage {
 }
 
 impl MapPage {
-    /// Returns cursor pointing to the next [`Page`].
+    /// Returns cursor pointing to the next [`Page`] if there is one.
     pub fn next_page_cursor(&self) -> Option<&Field> {
-        self.records.last().map(|entry| &entry.field)
+        self.has_next
+            .then(|| self.records.last().map(|entry| &entry.field))
+            .flatten()
     }
 }
 

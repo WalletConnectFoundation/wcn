@@ -1067,7 +1067,7 @@ pub struct RemoteNode<'a> {
     pub client: Client,
 }
 
-impl<'a> RemoteNode<'a> {
+impl RemoteNode<'_> {
     pub fn into_owned(self) -> RemoteNode<'static> {
         RemoteNode {
             id: Cow::Owned(self.id.into_owned()),
@@ -1077,7 +1077,7 @@ impl<'a> RemoteNode<'a> {
     }
 }
 
-impl<'a> RemoteNode<'a> {
+impl RemoteNode<'_> {
     pub fn id(&self) -> PeerId {
         self.id.clone().into_owned()
     }

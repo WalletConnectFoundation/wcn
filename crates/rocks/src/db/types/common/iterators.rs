@@ -99,6 +99,7 @@ where
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn entries(
         self,
     ) -> impl Iterator<Item = Result<(C::KeyType, C::SubKeyType, C::ValueType), Error>> + 'a {
@@ -124,7 +125,7 @@ where
     }
 }
 
-impl<'a, C> Iterator for KeyValueIterator<'a, C>
+impl<C> Iterator for KeyValueIterator<'_, C>
 where
     C: cf::Column,
 {

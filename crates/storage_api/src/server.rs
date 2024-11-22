@@ -124,7 +124,7 @@ struct RpcHandler<'a, S> {
     conn_info: &'a ConnectionInfo<HandshakeData, ()>,
 }
 
-impl<'a, S: Server> RpcHandler<'a, S> {
+impl<S: Server> RpcHandler<'_, S> {
     fn prepare_key(&self, key: ExtendedKey) -> irn_rpc::Result<Key> {
         if let Some(keyspace_version) = key.keyspace_version {
             if keyspace_version != self.api_server.keyspace_version() {

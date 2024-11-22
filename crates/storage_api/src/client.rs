@@ -108,7 +108,7 @@ impl Client {
         Ok(Self { rpc: rpc_client })
     }
 
-    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'_> {
+    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a> {
         RemoteStorage {
             client: self,
             server_addr,
@@ -157,7 +157,7 @@ pub struct RemoteStorage<'a> {
     expected_keyspace_version: Option<u64>,
 }
 
-impl<'a> RemoteStorage<'a> {
+impl RemoteStorage<'_> {
     fn extended_key(&self, key: Key) -> ExtendedKey {
         ExtendedKey {
             inner: key.0,

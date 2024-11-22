@@ -67,7 +67,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         id: RpcId,
         stream: BiDirectionalStream,
         conn_info: &'a ClientConnectionInfo<Self>,
-    ) -> impl Future<Output = ()> + Send + '_;
+    ) -> impl Future<Output = ()> + Send + 'a;
 }
 
 /// Into [`Server`] converter.

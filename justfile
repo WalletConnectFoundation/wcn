@@ -127,24 +127,6 @@ fmt:
     echo '    ^^^^^^ To install `rustup component add rustfmt`, see https://github.com/rust-lang/rustfmt for details'
   fi
 
-  if command -v terraform -version >/dev/null; then
-    echo '==> Running terraform fmt'
-    terraform -chdir=terraform fmt -recursive
-  else
-    echo '==> terraform not found in PATH, skipping'
-    echo '    ^^^^^^^^^ To install see https://developer.hashicorp.com/terraform/downloads'
-  fi
-
-  if command -v jsonnetfmt -v >/dev/null; then
-    echo '==> Running jsonnetfmt'
-    for file in `find terraform -name "*.libsonnet" -type f`; do
-      jsonnetfmt -i "${file}"
-    done
-  else
-    echo '==> jsonnetfmt not found in PATH, skipping'
-    echo '    ^^^^^^^^^^ To install see https://github.com/google/jsonnet/'
-  fi
-
 # Run commit checker
 commit-check:
   #!/bin/bash

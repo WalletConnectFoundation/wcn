@@ -62,7 +62,8 @@ impl crate::Server for Node {
                             count += 1;
                         }
 
-                        Ok(assert_eq!(count, 3))
+                        assert_eq!(count, 3);
+                        Ok(())
                     })
                     .await
                 }

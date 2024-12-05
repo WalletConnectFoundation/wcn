@@ -47,7 +47,7 @@ where
             .map(move |res| {
                 let error_kind = match &res {
                     Ok(_) => return res,
-                    Err(Error::Transport(_)) => "transport",
+                    Err(Error::Transport(err)) => err.as_str(),
                     Err(Error::Rpc { error, .. }) => error.code.as_ref(),
                 };
 

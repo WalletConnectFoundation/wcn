@@ -179,6 +179,24 @@ pub enum Error {
     Other(String),
 }
 
+impl Error {
+    pub fn as_str(&self) -> &'static str {
+        use io::ErrorKind as IO;
+
+        match self {
+            Self::IO(IO::ConnectionRefused) => "connection_refused",
+            Self::IO(IO::ConnectionReset) => "connection_reset",
+            Self::IO(IO::ConnectionAborted) => "connection_aborted",
+            Self::IO(IO::NotConnected) => "not_connected",
+            Self::IO(IO::BrokenPipe) => "broken_pipe",
+            Self::IO(IO::InvalidData) => "invalid_data",
+            Self::IO(_) => "io",
+            Self::StreamFinished => "stream_finished",
+            Self::Other(_) => "other_transport",
+        }
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
         Self::IO(err.kind())

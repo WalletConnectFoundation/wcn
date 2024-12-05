@@ -32,7 +32,7 @@ pub struct Client {
 }
 
 type RpcClient =
-    WithRetries<WithTimeouts<Metered<irn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
+    WithRetries<Metered<WithTimeouts<irn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
 
 /// Storage API access token.
 pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
@@ -110,8 +110,8 @@ impl Client {
 
         let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
-            .metered()
             .with_timeouts(timeouts)
+            .metered()
             .with_retries(RetryStrategy::new(config.max_attempts));
 
         Ok(Self { rpc: rpc_client })

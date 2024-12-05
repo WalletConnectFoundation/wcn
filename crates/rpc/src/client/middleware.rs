@@ -8,6 +8,7 @@ use {
         Name as RpcName,
     },
     futures::FutureExt as _,
+    libp2p::Multiaddr,
     std::{future::Future, sync::Arc, time::Duration},
     wc::{
         future::FutureExt as _,
@@ -27,14 +28,13 @@ pub trait MeteredExt: Sized {
 
 impl<C> MeteredExt for C where C: super::Marker {}
 
-impl<A, C> Client<A> for Metered<C>
+impl<C> Client for Metered<C>
 where
-    A: Sync,
-    C: Client<A>,
+    C: Client,
 {
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
-        addr: &'a A,
+        addr: &'a Multiaddr,
         rpc_id: RpcId,
         f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
@@ -42,7 +42,8 @@ where
             .send_rpc(addr, rpc_id, f)
             .with_metrics(future_metrics!(
                 "outbound_rpc",
-                StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str()
+                StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
+                StringLabel<"destination", Multiaddr> => addr
             ))
             .map(move |res| {
                 let error_kind = match &res {
@@ -54,6 +55,7 @@ where
                 metrics::counter!(
                     "outbound_rpc_errors",
                     StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
+                    StringLabel<"destination", Multiaddr> => addr,
                     StringLabel<"error_kind"> => error_kind
                 )
                 .increment(1);

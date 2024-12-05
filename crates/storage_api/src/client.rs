@@ -32,7 +32,7 @@ pub struct Client {
 }
 
 type RpcClient =
-    WithTimeouts<WithRetries<Metered<irn_rpc::quic::Client<Handshake>>, RetryStrategy>>;
+    WithRetries<WithTimeouts<Metered<irn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
 
 /// Storage API access token.
 pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
@@ -51,6 +51,9 @@ pub struct Config {
 
     /// Storage API access token.
     pub access_token: AccessToken,
+
+    /// Maximum number of attempts to try before failing an operation.
+    pub max_attempts: usize,
 }
 
 impl Config {
@@ -60,6 +63,7 @@ impl Config {
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             access_token,
+            max_attempts: 3,
         }
     }
 
@@ -78,6 +82,11 @@ impl Config {
     /// Overwrites [`Config::operation_timeout`].
     pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
         self.operation_timeout = timeout;
+        self
+    }
+
+    pub fn with_max_attempts(mut self, max_attempts: usize) -> Self {
+        self.max_attempts = max_attempts;
         self
     }
 }
@@ -102,8 +111,8 @@ impl Client {
         let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
             .metered()
-            .with_retries(RetryStrategy)
-            .with_timeouts(timeouts);
+            .with_timeouts(timeouts)
+            .with_retries(RetryStrategy::new(config.max_attempts));
 
         Ok(Self { rpc: rpc_client })
     }
@@ -118,7 +127,15 @@ impl Client {
 }
 
 #[derive(Clone, Debug)]
-struct RetryStrategy;
+struct RetryStrategy {
+    max_attempts: usize,
+}
+
+impl RetryStrategy {
+    fn new(max_attempts: usize) -> Self {
+        Self { max_attempts }
+    }
+}
 
 impl middleware::RetryStrategy for RetryStrategy {
     fn requires_retry(
@@ -128,6 +145,10 @@ impl middleware::RetryStrategy for RetryStrategy {
         attempt: usize,
     ) -> Option<Duration> {
         use crate::error_code;
+
+        if attempt >= self.max_attempts {
+            return None;
+        }
 
         let rpc_error = match error {
             irn_rpc::client::Error::Transport(_) => return Some(Duration::from_millis(50)),

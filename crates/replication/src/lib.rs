@@ -11,7 +11,14 @@ use {
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
-    wc::metrics::{self, enum_ordinalize::Ordinalize, future_metrics, EnumLabel, FutureExt as _},
+    wc::metrics::{
+        self,
+        enum_ordinalize::Ordinalize,
+        future_metrics,
+        EnumLabel,
+        FutureExt as _,
+        StringLabel,
+    },
 };
 
 mod consistency;
@@ -264,9 +271,10 @@ impl Driver {
             EnumLabel<"name", OperationName> => Op::NAME
         ))
         .await
-        .tap_err(|_| {
+        .tap_err(|err| {
             metrics::counter!("irn_replication_driver_operation_errors",
-                EnumLabel<"operation", OperationName> => Op::NAME
+                EnumLabel<"operation", OperationName> => Op::NAME,
+                StringLabel<"error"> => err.as_str()
             )
             .increment(1)
         })
@@ -842,5 +850,52 @@ impl Error {
             self,
             Self::StorageApi(storage_api::client::Error::KeyspaceVersionMismatch)
         )
+    }
+
+    fn as_str(&self) -> &'static str {
+        use {
+            client_api::client::Error as ClientError,
+            cluster::Error as ClusterError,
+            storage::client::Error as StorageError,
+        };
+
+        match self {
+            Self::Cluster(err) => match err {
+                ClusterError::NotBootstrapped => "cluster_not_bootstrapped",
+                ClusterError::NodeAlreadyExists => "cluster_node_already_exists",
+                ClusterError::NodeAlreadyStarted => "cluster_node_already_started",
+                ClusterError::UnknownNode => "cluster_unknown_node",
+                ClusterError::TooManyNodes => "cluster_too_many_nodes",
+                ClusterError::TooFewNodes => "cluster_too_few_nodes",
+                ClusterError::NotNormal => "cluster_not_normal",
+                ClusterError::NoMigration => "cluster_no_migration",
+                ClusterError::KeyspaceVersionMismatch => "cluster_keyspace_version_mismatch",
+                ClusterError::InvalidNode(_) => "cluster_invalid_node",
+                ClusterError::Bug(_) => "cluster_bug",
+            },
+            Self::TaskCancelled => "task_cancelled",
+            Self::InconsistentResults => "inconsistent_results",
+            Self::StorageApi(err) => match err {
+                StorageError::Transport(_) => "storage_transport",
+                StorageError::Timeout => "storage_timeout",
+                StorageError::Throttled => "storage_throttled",
+                StorageError::Unauthorized => "storage_unauthorized",
+                StorageError::KeyspaceVersionMismatch => "storage_keyspace_version_mismatch",
+                StorageError::Other(_) => "storage_other",
+            },
+            Self::ClientApi(err) => match err {
+                ClientError::Api(_) => "client_api",
+                ClientError::Transport(_) => "client_transport",
+                ClientError::Unauthorized => "client_unauthorized",
+                ClientError::Timeout => "client_timeout",
+                ClientError::Serialization => "client_serialization",
+                ClientError::TokenTtl => "client_token_ttl",
+                ClientError::TokenUpdate(_) => "client_token_update",
+                ClientError::ClusterUpdate(_) => "client_cluster_update",
+                ClientError::Cluster(_) => "client_cluster",
+                ClientError::NodeNotAvailable => "client_node_not_available",
+                ClientError::Other(_) => "client_other",
+            },
+        }
     }
 }

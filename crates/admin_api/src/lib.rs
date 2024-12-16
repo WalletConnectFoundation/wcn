@@ -54,6 +54,7 @@ pub struct Node {
     pub region: NodeRegion,
     pub organization: String,
     pub eth_address: Option<String>,
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

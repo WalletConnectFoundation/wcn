@@ -742,6 +742,7 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
                     },
                     organization: node.organization.clone(),
                     eth_address: node.eth_address.clone(),
+                    version: node.version.clone(),
                 };
                 Some((node.id, node))
             })

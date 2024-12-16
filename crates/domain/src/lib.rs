@@ -21,6 +21,7 @@ pub struct Node {
     pub region: NodeRegion,
     pub organization: String,
     pub eth_address: Option<String>,
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +171,7 @@ mod test {
             },
             organization: organization.to_string(),
             eth_address: eth_addr.map(ToString::to_string),
+            version: Some("1.1".to_string()),
         }
     }
 

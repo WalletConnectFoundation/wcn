@@ -109,12 +109,6 @@ mod alloc {
 pub fn exec() -> anyhow::Result<()> {
     let _logger = Logger::init(logger::LogFormat::Json, None, None);
 
-    for (key, value) in vergen_pretty::vergen_pretty_env!() {
-        if let Some(value) = value {
-            tracing::warn!(key, value, "build info");
-        }
-    }
-
     let prometheus = PrometheusBuilder::new()
         .install_recorder()
         .map_err(Error::Prometheus)?;
@@ -138,6 +132,21 @@ pub async fn run(
     prometheus: PrometheusHandle,
     cfg: &Config,
 ) -> Result<impl Future<Output = ()> + Send, Error> {
+    let vergen = vergen_pretty::vergen_pretty_env!();
+    let vergen_attr = |key| vergen.get(key).copied().flatten().unwrap_or_default();
+
+    for (key, value) in &vergen {
+        if let Some(value) = value {
+            tracing::warn!(key, value, "build info");
+        }
+    }
+
+    let node_version = format!(
+        "{}-{}",
+        vergen_attr("VERGEN_GIT_COMMIT_DATE"),
+        vergen_attr("VERGEN_GIT_SHA")
+    );
+
     let storage = Storage::new(cfg).map_err(Error::Storage)?;
     let network = Network::new(cfg)?;
 
@@ -220,6 +229,7 @@ pub async fn run(
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
+            version: Some(node_version),
         },
         node_opts,
         consensus,

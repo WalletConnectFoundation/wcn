@@ -490,6 +490,8 @@ impl ReplicaApiServer {
         mut rx: RecvStream<rpc::migration::PullDataRequest>,
         mut tx: SendStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
     ) -> server::Result<()> {
+        tx.set_low_priority();
+
         let req = rx.recv_message().await?;
 
         let resp = self

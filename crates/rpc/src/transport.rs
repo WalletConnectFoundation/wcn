@@ -53,6 +53,11 @@ pub struct SendStream<T> {
 }
 
 impl<T> SendStream<T> {
+    /// Sets a low priority to this [`SendStream`].
+    pub fn set_low_priority(&mut self) {
+        let _: Result<(), quinn::ClosedStream> = self.inner.get_mut().set_priority(-1);
+    }
+
     /// Waits until this [`SendStream`] is closed.
     pub async fn wait_closed(&mut self) {
         self.inner.get_mut().stopped().map(drop).await

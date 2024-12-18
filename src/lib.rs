@@ -141,7 +141,9 @@ pub async fn run(
         }
     }
 
-    let node_version = format!(
+    // TODO: populate `Node` state with it once all nodes in the networks are
+    // updated.
+    let _node_version = format!(
         "{}-{}",
         vergen_attr("VERGEN_GIT_COMMIT_DATE"),
         vergen_attr("VERGEN_GIT_SHA")
@@ -229,7 +231,7 @@ pub async fn run(
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
-            version: Some(node_version),
+            version: None,
         },
         node_opts,
         consensus,

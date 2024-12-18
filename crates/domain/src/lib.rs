@@ -21,6 +21,8 @@ pub struct Node {
     pub region: NodeRegion,
     pub organization: String,
     pub eth_address: Option<String>,
+
+    #[serde(default)]
     pub version: Option<String>,
 }
 

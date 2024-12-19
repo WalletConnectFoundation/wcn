@@ -8,7 +8,7 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Multiaddr,
         PeerId,
     },
@@ -71,6 +71,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             // TODO: Make these configurable or find good defaults.
             max_concurrent_connections: 500,
             max_concurrent_streams: 100,
+            priority: transport::Priority::High,
         };
 
         let inner = Arc::new(Inner {

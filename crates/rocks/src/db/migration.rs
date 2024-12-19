@@ -71,7 +71,7 @@ impl RocksBackend {
                 }
             };
 
-            batch.put(cf, &key, &value);
+            batch.merge(cf, &key, &value);
 
             // Write batch to database if it is full. Start a new batch.
             total_items_processed += 1;

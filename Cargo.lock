@@ -3483,6 +3483,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "irn_migration_api"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "irn_rpc",
+ "relay_rocks",
+ "serde",
+ "thiserror",
+ "time",
+ "tracing",
+ "wc",
+]
+
+[[package]]
 name = "irn_node"
 version = "0.0.0"
 dependencies = [
@@ -3508,6 +3522,7 @@ dependencies = [
  "irn_client_api",
  "irn_core",
  "irn_domain",
+ "irn_migration_api",
  "irn_replication",
  "irn_rpc",
  "irn_storage_api",
@@ -3579,6 +3594,7 @@ dependencies = [
  "libp2p",
  "libp2p-tls",
  "metrics",
+ "nix",
  "pin-project",
  "quinn",
  "quinn-proto",
@@ -4107,6 +4123,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "metrics"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4295,6 +4320,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]

@@ -1,0 +1,25 @@
+[package]
+name = "irn_migration_api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+client = ["irn_rpc/client"]
+server = ["irn_rpc/server"]
+
+[dependencies]
+wc = { workspace = true, features = ["future"] }
+
+irn_rpc = { workspace = true }
+serde = "1"
+thiserror = "1"
+tracing = "0.1"
+futures = "0.3"
+time = "0.3"
+
+# TODO: remove this dependency
+relay_rocks = { path = "../rocks" }

@@ -913,6 +913,7 @@ impl Network {
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: REPLICA_API_SERVER_NAME,
+                priority: transport::Priority::High,
             })?
             .with_timeouts(rpc_timeouts.clone())
             .metered(),
@@ -922,6 +923,7 @@ impl Network {
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: RAFT_API_SERVER_NAME,
+                priority: transport::Priority::High,
             })?
             .with_timeouts(rpc_timeouts)
             .metered(),
@@ -944,6 +946,7 @@ impl Network {
             keypair: cfg.keypair.clone(),
             max_concurrent_connections: 500,
             max_concurrent_streams: 1000,
+            priority: transport::Priority::High,
         };
 
         let server = RaftRpcServer {
@@ -972,6 +975,7 @@ impl Network {
             keypair: cfg.keypair.clone(),
             max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
             max_concurrent_streams: cfg.replica_api_max_concurrent_rpcs,
+            priority: transport::Priority::High,
         };
 
         let default_timeout = Duration::from_millis(cfg.network_request_timeout);

@@ -8,7 +8,7 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake},
+        transport::{self, BiDirectionalStream, NoHandshake},
     },
     std::{collections::HashSet, future::Future, time::Duration},
 };
@@ -68,6 +68,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             keypair: cfg.keypair,
             max_concurrent_connections: 10,
             max_concurrent_streams: 100,
+            priority: transport::Priority::High,
         };
 
         let rpc_server = RpcServer {

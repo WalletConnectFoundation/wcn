@@ -15,6 +15,14 @@ use {
     tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 
+/// Tranport priority. Transports with higher priority take presedence during
+/// network congestion.
+#[derive(Clone, Copy, Debug)]
+pub enum Priority {
+    High,
+    Low,
+}
+
 /// Untyped bi-directional stream.
 pub struct BiDirectionalStream {
     rx: RawRecvStream,

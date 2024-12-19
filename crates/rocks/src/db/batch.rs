@@ -15,15 +15,6 @@ impl WriteBatch {
         }
     }
 
-    pub(crate) fn put<K, V>(&mut self, cf: ColumnFamilyName, key: K, value: V)
-    where
-        K: AsRef<[u8]>,
-        V: AsRef<[u8]>,
-    {
-        self.write_batch
-            .put_cf(&self.backend.cf_handle(cf), key, value)
-    }
-
     pub(crate) fn _delete<K>(&mut self, cf: ColumnFamilyName, key: K)
     where
         K: AsRef<[u8]>,

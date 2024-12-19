@@ -83,8 +83,13 @@ impl<H: Handshake> Client<H> {
     pub fn new(cfg: Config<H>) -> Result<Client<H>, super::Error> {
         let transport_config = super::new_quinn_transport_config(64u32 * 1024);
         let socket_addr = SocketAddr::new(std::net::Ipv4Addr::new(0, 0, 0, 0).into(), 0);
-        let endpoint =
-            super::new_quinn_endpoint(socket_addr, &cfg.keypair, transport_config, None)?;
+        let endpoint = super::new_quinn_endpoint(
+            socket_addr,
+            &cfg.keypair,
+            transport_config,
+            None,
+            cfg.priority,
+        )?;
 
         let local_peer_id = cfg.keypair.public().to_peer_id();
 

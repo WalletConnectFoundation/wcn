@@ -64,6 +64,7 @@ domain = { package = "irn_domain", path = "crates/domain" }
 storage_api = { package = "irn_storage_api", path = "crates/storage_api", features = ["server"] }
 admin_api = { package = "irn_admin_api", path = "crates/admin_api" }
 client_api = { package = "irn_client_api", path = "crates/client_api" }
+migration_api = { package = "irn_migration_api", path = "crates/migration_api" }
 raft = { path = "crates/raft" }
 irn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
@@ -79,6 +80,7 @@ domain = { workspace = true }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }
+migration_api = { workspace = true, features = ["server", "client"] }
 raft = { workspace = true }
 irn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }

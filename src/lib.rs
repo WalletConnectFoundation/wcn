@@ -9,9 +9,7 @@ use {
     irn::fsm,
     irn_rpc::quic::{self, socketaddr_to_multiaddr},
     metrics_exporter_prometheus::{
-        BuildError as PrometheusBuildError,
-        PrometheusBuilder,
-        PrometheusHandle,
+        BuildError as PrometheusBuildError, PrometheusBuilder, PrometheusHandle,
     },
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
@@ -37,7 +35,6 @@ pub mod signal;
 pub mod storage;
 
 mod contract;
-mod performance;
 
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
@@ -159,31 +156,9 @@ pub async fn run(
         .await
         .map_err(Error::Consensus)?;
 
-    let (performance_tracker, status_reporter) = if let Some(c) = &cfg.smart_contract {
+    let status_reporter = if let Some(c) = &cfg.smart_contract {
         let rpc_url = &c.eth_rpc_url;
         let addr = &c.config_address;
-
-        let pr = if let Some(pr) = &c.performance_reporter {
-            let dir = pr.tracker_dir.clone();
-
-            let reporter = contract::new_performance_reporter(rpc_url, addr, &pr.signer_mnemonic)
-                .await
-                .map_err(Error::Contract)?;
-
-            performance::Tracker::new(
-                network.clone(),
-                consensus.clone(),
-                reporter,
-                dir,
-                NODE_VERSION,
-                NODE_VERSION_UPDATE_DEADLINE,
-            )
-            .await
-            .map(Some)
-            .map_err(Error::PerformanceTracker)?
-        } else {
-            None
-        };
 
         let sr = if let Some(eth_address) = &cfg.eth_address {
             Some(
@@ -195,9 +170,9 @@ pub async fn run(
             None
         };
 
-        (pr, sr)
+        sr
     } else {
-        (None, None)
+        None
     };
 
     let node_opts = irn::NodeOpts {
@@ -239,17 +214,10 @@ pub async fn run(
         };
     };
 
-    let performance_tracker_fut: OptionFuture<_> = if let Some(pt) = performance_tracker {
-        Some(pt.run()).into()
-    } else {
-        None.into()
-    };
-
     Ok(async move {
         let mut shutdown_fut = pin!(shutdown_fut.fuse());
         let mut metrics_server_fut = pin!(metrics_srv.fuse());
         let mut node_fut = pin!(node_fut);
-        let mut performance_tracker_fut = pin!(performance_tracker_fut.fuse());
 
         loop {
             tokio::select! {
@@ -267,10 +235,6 @@ pub async fn run(
 
                 _ = &mut node_fut => {
                     break;
-                }
-
-                _ = &mut performance_tracker_fut, if !performance_tracker_fut.is_terminated() => {
-                    tracing::warn!("performance tracker unexpectedly finished");
                 }
             }
         }

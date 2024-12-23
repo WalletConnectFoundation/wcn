@@ -7,7 +7,6 @@ use {
     derive_more::derive::AsRef,
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
-    wcn_core::cluster,
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
@@ -19,6 +18,7 @@ use {
         FutureExt as _,
         StringLabel,
     },
+    wcn_core::cluster,
 };
 
 mod consistency;

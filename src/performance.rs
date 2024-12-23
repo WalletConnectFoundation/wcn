@@ -4,10 +4,10 @@ use {
     backoff::ExponentialBackoffBuilder,
     chrono::Utc,
     futures::{stream, StreamExt, TryFutureExt},
-    wcn::cluster::Consensus as _,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, io, path::PathBuf, time::Duration},
     time::OffsetDateTime,
+    wcn::cluster::Consensus as _,
 };
 
 pub struct Tracker<R> {

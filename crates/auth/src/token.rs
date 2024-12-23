@@ -1,10 +1,10 @@
 use {
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    std::time::Duration,
     wcn_rpc::{
         identity::ed25519::{Keypair as Ed25519Keypair, PublicKey as Ed25519PublicKey},
         PeerId,
     },
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
-    std::time::Duration,
 };
 
 const JWT_VALIDATION_TIME_LEEWAY_SECS: i64 = 120;

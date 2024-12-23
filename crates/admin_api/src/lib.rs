@@ -1,13 +1,13 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
-    wcn_rpc as rpc,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, time::Duration},
+    wcn_rpc as rpc,
 };
 pub use {
-    wcn_rpc::{identity, Multiaddr, PeerId},
     snap,
+    wcn_rpc::{identity, Multiaddr, PeerId},
 };
 
 #[cfg(feature = "client")]

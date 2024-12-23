@@ -2,6 +2,13 @@ use {
     super::*,
     arc_swap::ArcSwap,
     futures::SinkExt,
+    std::{
+        collections::HashSet,
+        future::Future,
+        result::Result as StdResult,
+        sync::Arc,
+        time::Duration,
+    },
     wcn_rpc::{
         client::middleware::{
             self,
@@ -15,13 +22,6 @@ use {
         identity::Keypair,
         middleware::Metered,
         transport::{self, PendingConnection},
-    },
-    std::{
-        collections::HashSet,
-        future::Future,
-        result::Result as StdResult,
-        sync::Arc,
-        time::Duration,
     },
 };
 

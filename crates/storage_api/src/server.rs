@@ -1,6 +1,7 @@
 use {
     super::*,
     futures::SinkExt as _,
+    std::{collections::HashSet, future::Future, sync::Arc},
     wcn_rpc::{
         middleware::Timeouts,
         server::{
@@ -10,7 +11,6 @@ use {
         },
         transport::{self, BiDirectionalStream, PendingConnection},
     },
-    std::{collections::HashSet, future::Future, sync::Arc},
 };
 
 /// Storage namespace.

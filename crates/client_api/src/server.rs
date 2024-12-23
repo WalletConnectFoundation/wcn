@@ -1,6 +1,13 @@
 use {
     super::*,
     futures_util::{SinkExt, Stream, StreamExt},
+    std::{
+        collections::HashSet,
+        future::Future,
+        pin::pin,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
     wcn_rpc::{
         identity::{ed25519::Keypair as Ed25519Keypair, Keypair},
         middleware::Timeouts,
@@ -11,13 +18,6 @@ use {
         transport::{BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Multiaddr,
         PeerId,
-    },
-    std::{
-        collections::HashSet,
-        future::Future,
-        pin::pin,
-        sync::{Arc, Mutex},
-        time::Duration,
     },
 };
 

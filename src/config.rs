@@ -1,7 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
     domain::NodeRegion,
-    wcn_rpc::{identity::Keypair, Multiaddr},
     libp2p::PeerId,
     serde::{de::Error, Deserialize, Deserializer},
     std::{
@@ -12,6 +11,7 @@ use {
         str::FromStr,
     },
     tap::TapOptional,
+    wcn_rpc::{identity::Keypair, Multiaddr},
 };
 
 /// Local [`Node`] config.

@@ -6,8 +6,6 @@ use {
         future::{FusedFuture, OptionFuture},
         FutureExt,
     },
-    wcn::fsm,
-    wcn_rpc::quic::{self, socketaddr_to_multiaddr},
     metrics_exporter_prometheus::{
         BuildError as PrometheusBuildError,
         PrometheusBuilder,
@@ -17,6 +15,8 @@ use {
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
     tap::Pipe,
     time::{macros::datetime, OffsetDateTime},
+    wcn::fsm,
+    wcn_rpc::quic::{self, socketaddr_to_multiaddr},
 };
 pub use {
     cluster::Cluster,

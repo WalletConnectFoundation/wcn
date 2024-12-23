@@ -1,4 +1,4 @@
-use {anyhow::Context as _, derive_more::Deref, wcn_rpc::Multiaddr, std::str::FromStr};
+use {anyhow::Context as _, derive_more::Deref, std::str::FromStr, wcn_rpc::Multiaddr};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {

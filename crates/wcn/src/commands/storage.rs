@@ -1,8 +1,8 @@
 use {
+    std::{net::SocketAddr, str::FromStr, time::Duration},
     wcn::Keypair,
     wcn_replication::storage,
     wcn_rpc::quic,
-    std::{net::SocketAddr, str::FromStr, time::Duration},
 };
 
 const MIN_TTL: Duration = Duration::from_secs(30);

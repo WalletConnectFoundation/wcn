@@ -1,6 +1,6 @@
 use {
-    wcn::AdminApiArgs,
     std::{str::FromStr, time::Duration},
+    wcn::AdminApiArgs,
 };
 
 #[derive(Debug, clap::Args)]

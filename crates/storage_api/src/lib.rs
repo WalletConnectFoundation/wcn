@@ -5,10 +5,10 @@ pub use {
     wcn_rpc::{identity, Multiaddr, PeerId},
 };
 use {
-    wcn_rpc::{self as rpc, transport},
     serde::{Deserialize, Serialize},
     std::{io, time::Duration},
     time::OffsetDateTime as DateTime,
+    wcn_rpc::{self as rpc, transport},
 };
 
 #[cfg(feature = "client")]

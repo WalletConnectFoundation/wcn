@@ -1,6 +1,7 @@
 use {
     super::*,
     futures::FutureExt as _,
+    std::{collections::HashSet, future::Future, time::Duration},
     wcn_rpc::{
         identity::Keypair,
         middleware::Timeouts,
@@ -10,7 +11,6 @@ use {
         },
         transport::{BiDirectionalStream, NoHandshake},
     },
-    std::{collections::HashSet, future::Future, time::Duration},
 };
 
 /// [`Server`] config.

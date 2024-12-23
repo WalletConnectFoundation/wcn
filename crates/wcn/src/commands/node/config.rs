@@ -1,8 +1,8 @@
 use {
-    wcn_rpc::{identity::Keypair, PeerId},
     node::cluster::NodeRegion,
     serde::{Deserialize, Serialize},
     std::net::{Ipv4Addr, SocketAddr},
+    wcn_rpc::{identity::Keypair, PeerId},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,8 +127,8 @@ impl Config {
 
 mod keypair_as_base64 {
     use {
-        wcn_rpc::identity::Keypair,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
+        wcn_rpc::identity::Keypair,
     };
 
     pub fn serialize<S>(data: &Keypair, serializer: S) -> Result<S::Ok, S::Error>

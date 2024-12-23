@@ -1,4 +1,4 @@
-use {anyhow::Context, wcn_rpc::identity::Keypair, rand_chacha::rand_core::SeedableRng as _};
+use {anyhow::Context, rand_chacha::rand_core::SeedableRng as _, wcn_rpc::identity::Keypair};
 
 #[derive(Debug, clap::Args)]
 pub struct KeyCmd {

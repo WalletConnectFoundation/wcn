@@ -2,6 +2,8 @@ use {
     super::*,
     arc_swap::ArcSwap,
     futures_util::{SinkExt as _, Stream, StreamExt},
+    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
+    tokio::sync::oneshot,
     wcn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
@@ -11,8 +13,6 @@ use {
         transport::NoHandshake,
         Multiaddr,
     },
-    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
-    tokio::sync::oneshot,
 };
 
 const DEFAULT_AUTH_TOKEN_TTL: Duration = Duration::from_secs(30 * 60);

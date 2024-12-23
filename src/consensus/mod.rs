@@ -5,12 +5,6 @@ use {
     backoff::{future::retry, ExponentialBackoff},
     derive_more::{AsRef, Deref, Display},
     futures::FutureExt as _,
-    wcn::fsm::ShutdownReason,
-    wcn_rpc::{
-        quic::{self, socketaddr_to_multiaddr},
-        Client as _,
-        Multiaddr,
-    },
     libp2p::PeerId,
     parking_lot::Mutex,
     raft::{
@@ -30,6 +24,12 @@ use {
     },
     tap::{Pipe, TapFallible},
     tokio::sync::watch,
+    wcn::fsm::ShutdownReason,
+    wcn_rpc::{
+        quic::{self, socketaddr_to_multiaddr},
+        Client as _,
+        Multiaddr,
+    },
 };
 
 mod storage;

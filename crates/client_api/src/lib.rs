@@ -2,9 +2,9 @@
 
 use {
     auth::token,
-    wcn_rpc as rpc,
     serde::{Deserialize, Serialize},
     std::collections::HashSet,
+    wcn_rpc as rpc,
 };
 
 #[cfg(feature = "client")]

@@ -1,11 +1,11 @@
 use {
     super::*,
+    std::{collections::HashSet, convert::Infallible, result::Result as StdResult, time::Duration},
     wcn_rpc::{
         client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
         identity::Keypair,
         transport::NoHandshake,
     },
-    std::{collections::HashSet, convert::Infallible, result::Result as StdResult, time::Duration},
 };
 
 /// Admin API client.

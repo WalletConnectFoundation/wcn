@@ -1,11 +1,11 @@
 use {
     crate::{config::Config, network::rpc, Error, Node},
-    wcn::cluster::Consensus,
     metrics_exporter_prometheus::PrometheusHandle,
     std::{future::Future, net::SocketAddr, path::Path, time::Duration},
     sysinfo::{NetworkExt, NetworksExt},
     tap::{TapFallible, TapOptional},
     tokio::sync::oneshot,
+    wcn::cluster::Consensus,
 };
 
 fn update_loop(

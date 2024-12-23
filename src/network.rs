@@ -15,20 +15,6 @@ use {
         StreamExt,
         TryFutureExt,
     },
-    wcn::cluster::Consensus,
-    wcn_rpc::{
-        client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
-        middleware::{Metered, Timeouts, WithTimeouts},
-        quic::{self, socketaddr_to_multiaddr},
-        server::{
-            self,
-            middleware::{MeteredExt as _, WithTimeoutsExt as _},
-            ClientConnectionInfo,
-        },
-        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
-        Multiaddr,
-        ServerName,
-    },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
     pin_project::{pin_project, pinned_drop},
@@ -60,6 +46,20 @@ use {
     tap::Pipe,
     tokio::sync::mpsc,
     wc::metrics::{future_metrics, FutureExt as _},
+    wcn::cluster::Consensus,
+    wcn_rpc::{
+        client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
+        middleware::{Metered, Timeouts, WithTimeouts},
+        quic::{self, socketaddr_to_multiaddr},
+        server::{
+            self,
+            middleware::{MeteredExt as _, WithTimeoutsExt as _},
+            ClientConnectionInfo,
+        },
+        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        Multiaddr,
+        ServerName,
+    },
 };
 
 pub const RAFT_API_SERVER_NAME: ServerName = ServerName::new("raft_api");
@@ -93,10 +93,10 @@ pub mod rpc {
 
     pub mod migration {
         use {
-            wcn_rpc as rpc,
             relay_rocks::db::migration::ExportItem,
             serde::{Deserialize, Serialize},
             std::ops::RangeInclusive,
+            wcn_rpc as rpc,
         };
 
         #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,9 +123,9 @@ pub mod rpc {
 
     pub mod broadcast {
         use {
-            wcn_rpc as rpc,
             libp2p::PeerId,
             serde::{Deserialize, Serialize},
+            wcn_rpc as rpc,
         };
 
         #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -148,8 +148,8 @@ pub mod rpc {
     pub use health::Health;
     pub mod health {
         use {
-            wcn_rpc as rpc,
             serde::{Deserialize, Serialize},
+            wcn_rpc as rpc,
         };
 
         pub type Request = ();

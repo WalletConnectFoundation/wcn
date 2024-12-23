@@ -1,6 +1,5 @@
 use {
     super::{Error, Lockfile, LogFormat},
-    wcn_rpc::{quic, PeerId},
     metrics_exporter_prometheus::PrometheusBuilder,
     node::RocksdbDatabaseConfig,
     std::{
@@ -9,6 +8,7 @@ use {
         process::{Command, Stdio},
     },
     tap::TapOptional as _,
+    wcn_rpc::{quic, PeerId},
 };
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]

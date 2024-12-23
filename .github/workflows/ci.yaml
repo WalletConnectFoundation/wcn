@@ -172,7 +172,7 @@ jobs:
       fail-fast: false
       matrix:
         images:
-          - repo_name: wcn
+          - repo_name: irn
             aws-access-key-id: AWS_ACCESS_KEY_ID
             aws-secret-access-key: AWS_SECRET_ACCESS_KEY
     steps:

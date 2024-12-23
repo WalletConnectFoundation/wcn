@@ -398,7 +398,7 @@ fn create_db_opts(cfg: &RocksdbDatabaseConfig) -> rocksdb::Options {
     // rate limiter will be refilled (the default 100000 should be good enough for
     // the most cases).
     //
-    // The `fawcness` should be good enough with the default value of 10.
+    // The `fairness` should be good enough with the default value of 10.
     //
     // When rate limiting is enabled, `bytes_per_sync` is automatically adjusted to
     // 1MiB.

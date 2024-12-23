@@ -114,11 +114,11 @@ Default ports are `3010` and `3011`, however you can change them as described in
 
 #### Graceful shutdown
 
-wcn nodes require large graceful shutdown timeout to be configured, depending on the network condition the node may refuse to shutdown after `SIGINT`/`SIGTERM` for quite some time.  
+WCN nodes require large graceful shutdown timeout to be configured, depending on the network condition the node may refuse to shutdown after `SIGINT`/`SIGTERM` for quite some time.  
 Node orchestration is being managed internally by the network itself, if there's an ongoing data migration your node may be forbidden from shutting down. Also, there's a limit on how many nodes can be offline at the same time.   
 
 This is required to achieve high availability.
 
-So, you need to make sure that your infrastructure won't `SIGKILL` the wcn node prematurely.  
+So, you need to make sure that your infrastructure won't `SIGKILL` the WCN node prematurely.  
 WalletConnectFoundation nodes are configured to have `12h` graceful shutdown timeout. But we expect other operator nodes to have at least `1h` of graceful shutdown window.
 

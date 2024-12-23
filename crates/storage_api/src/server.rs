@@ -1,7 +1,7 @@
 use {
     super::*,
     futures::SinkExt as _,
-    irn_rpc::{
+    wcn_rpc::{
         middleware::Timeouts,
         server::{
             middleware::{MeteredExt, WithTimeoutsExt},
@@ -103,7 +103,7 @@ pub trait Server: Clone + Send + Sync + 'static {
     fn into_rpc_server(self, cfg: Config<impl Authenticator>) -> impl rpc::Server {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
-        let rpc_server_config = irn_rpc::server::Config {
+        let rpc_server_config = wcn_rpc::server::Config {
             name: crate::RPC_SERVER_NAME,
             handshake: Handshake {
                 authenticator: cfg.authenticator,
@@ -125,15 +125,15 @@ struct RpcHandler<'a, S> {
 }
 
 impl<S: Server> RpcHandler<'_, S> {
-    fn prepare_key(&self, key: ExtendedKey) -> irn_rpc::Result<Key> {
+    fn prepare_key(&self, key: ExtendedKey) -> wcn_rpc::Result<Key> {
         if let Some(keyspace_version) = key.keyspace_version {
             if keyspace_version != self.api_server.keyspace_version() {
-                return Err(irn_rpc::Error::new(error_code::KEYSPACE_VERSION_MISMATCH));
+                return Err(wcn_rpc::Error::new(error_code::KEYSPACE_VERSION_MISMATCH));
             }
         }
 
         let key = Key::from_raw_bytes(key.inner)
-            .ok_or_else(|| irn_rpc::Error::new(error_code::INVALID_KEY))?;
+            .ok_or_else(|| wcn_rpc::Error::new(error_code::INVALID_KEY))?;
 
         if let Some(namespace) = key.namespace() {
             if !self
@@ -142,14 +142,14 @@ impl<S: Server> RpcHandler<'_, S> {
                 .namespaces
                 .contains(namespace.as_slice())
             {
-                return Err(irn_rpc::Error::new(error_code::UNAUTHORIZED));
+                return Err(wcn_rpc::Error::new(error_code::UNAUTHORIZED));
             }
         }
 
         Ok(key)
     }
 
-    async fn get(&self, req: GetRequest) -> irn_rpc::Result<Option<GetResponse>> {
+    async fn get(&self, req: GetRequest) -> wcn_rpc::Result<Option<GetResponse>> {
         let record = self
             .api_server
             .get(self.prepare_key(req.key)?)
@@ -163,7 +163,7 @@ impl<S: Server> RpcHandler<'_, S> {
         }))
     }
 
-    async fn set(&self, req: SetRequest) -> irn_rpc::Result<()> {
+    async fn set(&self, req: SetRequest) -> wcn_rpc::Result<()> {
         let entry = Entry {
             key: self.prepare_key(req.key)?,
             value: req.value,
@@ -177,14 +177,14 @@ impl<S: Server> RpcHandler<'_, S> {
             .map_err(Error::into_rpc_error)
     }
 
-    async fn del(&self, req: DelRequest) -> irn_rpc::Result<()> {
+    async fn del(&self, req: DelRequest) -> wcn_rpc::Result<()> {
         self.api_server
             .del(self.prepare_key(req.key)?, EntryVersion::from(req.version))
             .await
             .map_err(Error::into_rpc_error)
     }
 
-    async fn get_exp(&self, req: GetExpRequest) -> irn_rpc::Result<Option<GetExpResponse>> {
+    async fn get_exp(&self, req: GetExpRequest) -> wcn_rpc::Result<Option<GetExpResponse>> {
         let expiration = self
             .api_server
             .get_exp(self.prepare_key(req.key)?)
@@ -196,7 +196,7 @@ impl<S: Server> RpcHandler<'_, S> {
         }))
     }
 
-    async fn set_exp(&self, req: SetExpRequest) -> irn_rpc::Result<()> {
+    async fn set_exp(&self, req: SetExpRequest) -> wcn_rpc::Result<()> {
         self.api_server
             .set_exp(
                 self.prepare_key(req.key)?,
@@ -207,7 +207,7 @@ impl<S: Server> RpcHandler<'_, S> {
             .map_err(Error::into_rpc_error)
     }
 
-    async fn hget(&self, req: HGetRequest) -> irn_rpc::Result<Option<HGetResponse>> {
+    async fn hget(&self, req: HGetRequest) -> wcn_rpc::Result<Option<HGetResponse>> {
         let record = self
             .api_server
             .hget(self.prepare_key(req.key)?, req.field)
@@ -221,7 +221,7 @@ impl<S: Server> RpcHandler<'_, S> {
         }))
     }
 
-    async fn hset(&self, req: HSetRequest) -> irn_rpc::Result<()> {
+    async fn hset(&self, req: HSetRequest) -> wcn_rpc::Result<()> {
         let entry = MapEntry {
             key: self.prepare_key(req.key)?,
             field: req.field,
@@ -236,7 +236,7 @@ impl<S: Server> RpcHandler<'_, S> {
             .map_err(Error::into_rpc_error)
     }
 
-    async fn hdel(&self, req: HDelRequest) -> irn_rpc::Result<()> {
+    async fn hdel(&self, req: HDelRequest) -> wcn_rpc::Result<()> {
         self.api_server
             .hdel(
                 self.prepare_key(req.key)?,
@@ -247,7 +247,7 @@ impl<S: Server> RpcHandler<'_, S> {
             .map_err(Error::into_rpc_error)
     }
 
-    async fn hget_exp(&self, req: HGetExpRequest) -> irn_rpc::Result<Option<HGetExpResponse>> {
+    async fn hget_exp(&self, req: HGetExpRequest) -> wcn_rpc::Result<Option<HGetExpResponse>> {
         let expiration = self
             .api_server
             .hget_exp(self.prepare_key(req.key)?, req.field)
@@ -259,7 +259,7 @@ impl<S: Server> RpcHandler<'_, S> {
         }))
     }
 
-    async fn hset_exp(&self, req: HSetExpRequest) -> irn_rpc::Result<()> {
+    async fn hset_exp(&self, req: HSetExpRequest) -> wcn_rpc::Result<()> {
         self.api_server
             .hset_exp(
                 self.prepare_key(req.key)?,
@@ -271,7 +271,7 @@ impl<S: Server> RpcHandler<'_, S> {
             .map_err(Error::into_rpc_error)
     }
 
-    async fn hcard(&self, req: HCardRequest) -> irn_rpc::Result<HCardResponse> {
+    async fn hcard(&self, req: HCardRequest) -> wcn_rpc::Result<HCardResponse> {
         self.api_server
             .hcard(self.prepare_key(req.key)?)
             .await
@@ -279,7 +279,7 @@ impl<S: Server> RpcHandler<'_, S> {
             .map_err(Error::into_rpc_error)
     }
 
-    async fn hscan(&self, req: HScanRequest) -> irn_rpc::Result<HScanResponse> {
+    async fn hscan(&self, req: HScanRequest) -> wcn_rpc::Result<HScanResponse> {
         let page = self
             .api_server
             .hscan(self.prepare_key(req.key)?, req.count, req.cursor)
@@ -316,7 +316,7 @@ where
     type Handshake = Handshake<V>;
     type ConnectionData = ();
 
-    fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
+    fn config(&self) -> &wcn_rpc::server::Config<Self::Handshake> {
         &self.config
     }
 
@@ -365,8 +365,8 @@ impl Error {
         Self(format!("{err}"))
     }
 
-    fn into_rpc_error(self) -> irn_rpc::Error {
-        irn_rpc::Error {
+    fn into_rpc_error(self) -> wcn_rpc::Error {
+        wcn_rpc::Error {
             code: "internal".into(),
             description: Some(self.0.into()),
         }

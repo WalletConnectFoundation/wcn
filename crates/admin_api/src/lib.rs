@@ -1,12 +1,12 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
-    irn_rpc as rpc,
+    wcn_rpc as rpc,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, time::Duration},
 };
 pub use {
-    irn_rpc::{identity, Multiaddr, PeerId},
+    wcn_rpc::{identity, Multiaddr, PeerId},
     snap,
 };
 

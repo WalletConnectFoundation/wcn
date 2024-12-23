@@ -1,6 +1,6 @@
-pub use irn_core::cluster;
+pub use wcn_core::cluster;
 use {
-    irn_rpc::{Multiaddr, PeerId},
+    wcn_rpc::{Multiaddr, PeerId},
     serde::{Deserialize, Serialize},
     xxhash_rust::xxh3::Xxh3Builder,
 };

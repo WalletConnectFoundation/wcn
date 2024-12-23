@@ -15,8 +15,8 @@ use {
         StreamExt,
         TryFutureExt,
     },
-    irn::cluster::Consensus,
-    irn_rpc::{
+    wcn::cluster::Consensus,
+    wcn_rpc::{
         client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
         middleware::{Metered, Timeouts, WithTimeouts},
         quic::{self, socketaddr_to_multiaddr},
@@ -68,7 +68,7 @@ pub const REPLICA_API_SERVER_NAME: ServerName = ServerName::new("replica_api");
 pub mod rpc {
 
     pub mod raft {
-        use {crate::consensus::*, irn_rpc as rpc};
+        use {crate::consensus::*, wcn_rpc as rpc};
 
         pub type AddMember =
             rpc::Unary<{ rpc::id(b"add_member") }, AddMemberRequest, AddMemberResult>;
@@ -93,7 +93,7 @@ pub mod rpc {
 
     pub mod migration {
         use {
-            irn_rpc as rpc,
+            wcn_rpc as rpc,
             relay_rocks::db::migration::ExportItem,
             serde::{Deserialize, Serialize},
             std::ops::RangeInclusive,
@@ -123,7 +123,7 @@ pub mod rpc {
 
     pub mod broadcast {
         use {
-            irn_rpc as rpc,
+            wcn_rpc as rpc,
             libp2p::PeerId,
             serde::{Deserialize, Serialize},
         };
@@ -148,7 +148,7 @@ pub mod rpc {
     pub use health::Health;
     pub mod health {
         use {
-            irn_rpc as rpc,
+            wcn_rpc as rpc,
             serde::{Deserialize, Serialize},
         };
 
@@ -164,7 +164,7 @@ pub mod rpc {
 
     pub use metrics::Metrics;
     pub mod metrics {
-        use irn_rpc as rpc;
+        use wcn_rpc as rpc;
 
         pub type Request = ();
 
@@ -183,10 +183,10 @@ struct ReplicaApiServer {
 
     prometheus: PrometheusHandle,
 
-    config: irn_rpc::server::Config,
+    config: wcn_rpc::server::Config,
 }
 
-impl irn_rpc::Server for ReplicaApiServer {
+impl wcn_rpc::Server for ReplicaApiServer {
     type Handshake = NoHandshake;
     type ConnectionData = ();
 
@@ -196,7 +196,7 @@ impl irn_rpc::Server for ReplicaApiServer {
 
     fn handle_rpc<'a>(
         &'a self,
-        id: irn_rpc::Id,
+        id: wcn_rpc::Id,
         stream: BiDirectionalStream,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
@@ -430,7 +430,7 @@ impl storage_api::Server for StorageApiServer {
 impl ReplicaApiServer {
     async fn handle_internal_rpc(
         &self,
-        id: irn_rpc::Id,
+        id: wcn_rpc::Id,
         stream: BiDirectionalStream,
         conn_info: &ClientConnectionInfo<Self>,
     ) {
@@ -469,13 +469,13 @@ impl ReplicaApiServer {
             id => {
                 return tracing::warn!(
                     "Unexpected internal RPC: {}",
-                    irn_rpc::Name::new(id).as_str()
+                    wcn_rpc::Name::new(id).as_str()
                 )
             }
         }
         .map_err(|err| {
             tracing::debug!(
-                name = irn_rpc::Name::new(id).as_str(),
+                name = wcn_rpc::Name::new(id).as_str(),
                 ?err,
                 "Failed to handle internal RPC"
             )
@@ -488,7 +488,7 @@ impl ReplicaApiServer {
         &self,
         peer_id: &libp2p::PeerId,
         mut rx: RecvStream<rpc::migration::PullDataRequest>,
-        mut tx: SendStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
+        mut tx: SendStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
     ) -> server::Result<()> {
         let req = rx.recv_message().await?;
 
@@ -565,10 +565,10 @@ pub enum PullDataError {
     Rpc(rpc::migration::PullDataError),
 }
 
-impl irn::migration::Network<cluster::Node> for Network {
+impl wcn::migration::Network<cluster::Node> for Network {
     type DataStream = Map<
-        RecvStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
-        fn(io::Result<irn_rpc::Result<rpc::migration::PullDataResponse>>) -> io::Result<ExportItem>,
+        RecvStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+        fn(io::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>) -> io::Result<ExportItem>,
     >;
 
     fn pull_keyrange(
@@ -576,7 +576,7 @@ impl irn::migration::Network<cluster::Node> for Network {
         from: &cluster::Node,
         range: std::ops::RangeInclusive<u64>,
         keyspace_version: u64,
-    ) -> impl Future<Output = Result<Self::DataStream, impl irn::migration::AnyError>> + Send {
+    ) -> impl Future<Output = Result<Self::DataStream, impl wcn::migration::AnyError>> + Send {
         async move {
             let range = &range;
             rpc::migration::PullData::send(
@@ -593,7 +593,7 @@ impl irn::migration::Network<cluster::Node> for Network {
                     let map_fn = |res| match res {
                         Ok(Ok(Ok(item))) => Ok(item),
                         Ok(Ok(Err(err))) => Err(io::Error::other(
-                            irn::migration::PullKeyrangeError::from(err),
+                            wcn::migration::PullKeyrangeError::from(err),
                         )),
                         Ok(Err(err)) => Err(io::Error::other(err)),
                         Err(err) => Err(err),
@@ -612,10 +612,10 @@ impl irn::migration::Network<cluster::Node> for Network {
 #[derive(Clone)]
 struct RaftRpcServer {
     raft: consensus::Raft,
-    config: irn_rpc::server::Config,
+    config: wcn_rpc::server::Config,
 }
 
-impl irn_rpc::Server for RaftRpcServer {
+impl wcn_rpc::Server for RaftRpcServer {
     type Handshake = NoHandshake;
     type ConnectionData = ();
 
@@ -625,7 +625,7 @@ impl irn_rpc::Server for RaftRpcServer {
 
     fn handle_rpc<'a>(
         &'a self,
-        id: irn_rpc::Id,
+        id: wcn_rpc::Id,
         stream: BiDirectionalStream,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
@@ -636,7 +636,7 @@ impl irn_rpc::Server for RaftRpcServer {
 impl RaftRpcServer {
     async fn handle_rpc(
         &self,
-        id: irn_rpc::Id,
+        id: wcn_rpc::Id,
         stream: BiDirectionalStream,
         conn_info: &ClientConnectionInfo<Self>,
     ) {
@@ -696,12 +696,12 @@ impl RaftRpcServer {
             }
 
             id => {
-                return tracing::warn!("Unexpected raft RPC: {}", irn_rpc::Name::new(id).as_str())
+                return tracing::warn!("Unexpected raft RPC: {}", wcn_rpc::Name::new(id).as_str())
             }
         }
         .map_err(|err| {
             tracing::debug!(
-                name = irn_rpc::Name::new(id).as_str(),
+                name = wcn_rpc::Name::new(id).as_str(),
                 ?err,
                 "Failed to handle raft RPC"
             )
@@ -905,7 +905,7 @@ impl Network {
 
         Ok(Self {
             local_id: cfg.id,
-            replica_api_client: quic::Client::new(irn_rpc::client::Config {
+            replica_api_client: quic::Client::new(wcn_rpc::client::Config {
                 keypair: cfg.keypair.clone(),
                 known_peers: cfg.known_peers.values().cloned().collect(),
                 handshake: NoHandshake,
@@ -914,7 +914,7 @@ impl Network {
             })?
             .with_timeouts(rpc_timeouts.clone())
             .metered(),
-            raft_api_client: quic::Client::new(irn_rpc::client::Config {
+            raft_api_client: quic::Client::new(wcn_rpc::client::Config {
                 keypair: cfg.keypair.clone(),
                 known_peers: cfg.known_peers.values().cloned().collect(),
                 handshake: NoHandshake,
@@ -931,12 +931,12 @@ impl Network {
         server_addr: Multiaddr,
         raft: consensus::Raft,
     ) -> Result<tokio::task::JoinHandle<()>, quic::Error> {
-        let server_config = irn_rpc::server::Config {
-            name: const { irn_rpc::ServerName::new("raft_api") },
+        let server_config = wcn_rpc::server::Config {
+            name: const { wcn_rpc::ServerName::new("raft_api") },
             handshake: NoHandshake,
         };
 
-        let quic_server_config = irn_rpc::quic::server::Config {
+        let quic_server_config = wcn_rpc::quic::server::Config {
             name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
@@ -951,7 +951,7 @@ impl Network {
         .with_timeouts(Timeouts::new().with_default(Duration::from_secs(2)))
         .metered();
 
-        irn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
+        wcn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
     }
 
     pub fn spawn_servers<S: StatusReporter>(
@@ -960,11 +960,11 @@ impl Network {
         prometheus: PrometheusHandle,
         status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
-        let replica_api_server_config = irn_rpc::server::Config {
-            name: const { irn_rpc::ServerName::new("replica_api") },
+        let replica_api_server_config = wcn_rpc::server::Config {
+            name: const { wcn_rpc::ServerName::new("replica_api") },
             handshake: NoHandshake,
         };
-        let replica_api_quic_server_config = irn_rpc::quic::server::Config {
+        let replica_api_quic_server_config = wcn_rpc::quic::server::Config {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
@@ -1031,7 +1031,7 @@ impl Network {
             },
         );
 
-        let replica_and_storage_api_servers = irn_rpc::quic::server::multiplex(
+        let replica_and_storage_api_servers = wcn_rpc::quic::server::multiplex(
             (replica_api_server, storage_api_server),
             replica_api_quic_server_config,
         )?;
@@ -1130,10 +1130,10 @@ impl Pubsub {
                 match sub.tx.try_send(evt.clone()) {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        metrics::counter!("irn_pubsub_channel_full").increment(1)
+                        metrics::counter!("wcn_pubsub_channel_full").increment(1)
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        metrics::counter!("irn_pubsub_channel_closed").increment(1)
+                        metrics::counter!("wcn_pubsub_channel_closed").increment(1)
                     }
                 };
             }
@@ -1182,9 +1182,9 @@ impl PinnedDrop for Subscription {
     }
 }
 
-impl From<irn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
-    fn from(err: irn::migration::PullKeyrangeError) -> Self {
-        use irn::migration::PullKeyrangeError as E;
+impl From<wcn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
+    fn from(err: wcn::migration::PullKeyrangeError) -> Self {
+        use wcn::migration::PullKeyrangeError as E;
 
         match err {
             E::KeyspaceVersionMismatch => Self::KeyspaceVersionMismatch,
@@ -1194,7 +1194,7 @@ impl From<irn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
     }
 }
 
-impl From<rpc::migration::PullDataError> for irn::migration::PullKeyrangeError {
+impl From<rpc::migration::PullDataError> for wcn::migration::PullKeyrangeError {
     fn from(err: rpc::migration::PullDataError) -> Self {
         use rpc::migration::PullDataError as E;
 

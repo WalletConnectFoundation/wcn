@@ -35,25 +35,25 @@ just run-docker
 ### Build a release binary of the CLI
 
 ```bash
-cargo build --release -p irn
+cargo build --release -p wcn
 ```
 
 ### Running the CLI binary
 
-The compiled binary is normally located at `target/release/irn`
+The compiled binary is normally located at `target/release/wcn`
 
 ```bash
-chmod +x ./target/release/irn
+chmod +x ./target/release/wcn
 
-./target/release/irn
+./target/release/wcn
 ```
 
 You should see output like this:
 
 ```bash
-Control nodes and clusters in the IRN Network
+Control nodes and clusters in the wcn Network
 
-Usage: irn <COMMAND>
+Usage: wcn <COMMAND>
 
 Commands:
   node     Node control subcommands
@@ -69,13 +69,13 @@ Options:
 Alternatively, to compile and run a debug build of the CLI binary you can do:
 
 ```bash
-cargo run -p irn
+cargo run -p wcn
 ```
 
 ### Generating a keypair
 
 ```bash
-irn key generate
+wcn key generate
 ```
 You should see output like this:
 
@@ -89,13 +89,13 @@ Peer ID: 12D3KooWBQGYh92KEdxUW5UUdy7BvAW96hvYLBMmjzy6X2XsY2HA
 ### Interacting with a running node
 
 ```bash
-irn storage
+wcn storage
 ```
 
 ### Writing values to a node
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     set "user123" "exampleData"
@@ -104,7 +104,7 @@ irn storage \
 ### Reading values
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     get "user123"
@@ -113,7 +113,7 @@ irn storage \
 ### Deleting values
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     del "user123"
@@ -122,7 +122,7 @@ irn storage \
 ### Setting map values
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     hset "userDetails" "email" "user@example.com"
@@ -131,7 +131,7 @@ irn storage \
 ### Reading map values
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     hget "userDetails" "email"
@@ -140,7 +140,7 @@ irn storage \
 ### Deleting a value from a map
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     hdel "userDetails" "email"
@@ -149,7 +149,7 @@ irn storage \
 ### Listing all fields of map
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     hfields "userDetails"
@@ -158,17 +158,17 @@ irn storage \
 ### Listing all values of a map
 
 ```bash
-irn storage \
+wcn storage \
     --address "127.0.0.1:3011" \
     --private-key "<YOUR_PRIVATE_KEY>" \
     hvals "userDetails"
 ```
 
 ### Running a node using the CLI
-Please be advised, running a node via the CLI is intended for development purposes only and subject to change in the future. In production environments, please run either the irn_node binary or one of the docker images our team provides and configure them via environment variables instead.
+Please be advised, running a node via the CLI is intended for development purposes only and subject to change in the future. In production environments, please run either the wcn_node binary or one of the docker images our team provides and configure them via environment variables instead.
 
 ```bash
-irn node start -w ./working-dir -c ./config.toml
+wcn node start -w ./working-dir -c ./config.toml
 ```
 
 Minimal config file for a **non-bootstrap** node would look like the following:
@@ -176,7 +176,7 @@ Minimal config file for a **non-bootstrap** node would look like the following:
 ```toml
 # Node identity.
 [identity]
-# ed25519 private key encoded as base64. Can be generated using `irn key generate` command.
+# ed25519 private key encoded as base64. Can be generated using `wcn key generate` command.
 private_key = "yDt4KicJ5aJF8nS4zYtDPrel2WJcU6cD7hO+u5m5Arg="
 # Replication group this node will belong to. Should correlate with availability zones.
 group = 1
@@ -206,17 +206,17 @@ clients = ["12D3KooWSjVfmYoyEQD4GFR2YXmcRvzZJx1SuNuaLfhmZydSpUzm"]
 ### Running a node in detached mode
 
 ```bash
-irn node start -w ./working-dir -c ./config.toml -d
+wcn node start -w ./working-dir -c ./config.toml -d
 ```
 
 ### Stopping a node for restart
 
 ```bash
-irn node stop -w ./working-dir -r
+wcn node stop -w ./working-dir -r
 ```
 
 ### Stopping and decomissioning node
 
 ```bash
-irn node stop -w ./working-dir
+wcn node stop -w ./working-dir
 ```

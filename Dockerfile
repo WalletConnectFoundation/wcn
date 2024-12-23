@@ -75,12 +75,12 @@ RUN                 apt-get update \
 
 WORKDIR             ${WORK_DIR}
 
-COPY --from=build   ${WORK_DIR}/target/out/irn_node /usr/local/bin/irn_node
+COPY --from=build   ${WORK_DIR}/target/out/wcn_node /usr/local/bin/wcn_node
 
 # Preset the `LOG_LEVEL` env var based on the global log level.
-ENV                 LOG_LEVEL="info,irn_node=${LOG_LEVEL}"
+ENV                 LOG_LEVEL="info,wcn_node=${LOG_LEVEL}"
 
-RUN                 mkdir /irn && chown 1001:1001 /irn
+RUN                 mkdir /wcn && chown 1001:1001 /wcn
 
 USER                1001:1001
-ENTRYPOINT          ["/usr/local/bin/irn_node"]
+ENTRYPOINT          ["/usr/local/bin/wcn_node"]

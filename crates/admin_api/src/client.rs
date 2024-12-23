@@ -1,6 +1,6 @@
 use {
     super::*,
-    irn_rpc::{
+    wcn_rpc::{
         client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
         identity::Keypair,
         transport::NoHandshake,
@@ -15,7 +15,7 @@ pub struct Client {
     server_addr: Multiaddr,
 }
 
-type RpcClient = WithTimeouts<irn_rpc::quic::Client>;
+type RpcClient = WithTimeouts<wcn_rpc::quic::Client>;
 
 /// [`Client`] config.
 #[derive(Clone)]
@@ -53,7 +53,7 @@ impl Config {
 impl Client {
     /// Creates a new [`Client`].
     pub fn new(config: Config) -> StdResult<Self, CreationError> {
-        let rpc_client_config = irn_rpc::client::Config {
+        let rpc_client_config = wcn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: HashSet::new(),
             handshake: NoHandshake,
@@ -67,7 +67,7 @@ impl Client {
                 MEMORY_PROFILE_MAX_DURATION + config.operation_timeout,
             );
 
-        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
+        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
             .with_timeouts(timeouts);
 
@@ -157,15 +157,15 @@ pub enum Error<A = Infallible> {
     Other(String),
 }
 
-impl<A> From<irn_rpc::client::Error> for Error<A> {
-    fn from(err: irn_rpc::client::Error) -> Self {
+impl<A> From<wcn_rpc::client::Error> for Error<A> {
+    fn from(err: wcn_rpc::client::Error) -> Self {
         let rpc_err = match err {
-            irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
-            irn_rpc::client::Error::Rpc { error, .. } => error,
+            wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
+            wcn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {
-            irn_rpc::error_code::TIMEOUT => Self::Timeout,
+            wcn_rpc::error_code::TIMEOUT => Self::Timeout,
             _ => Self::Other(format!("{rpc_err:?}")),
         }
     }

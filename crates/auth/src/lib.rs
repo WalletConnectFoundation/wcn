@@ -1,7 +1,7 @@
 pub use token::Token;
 use {
     derive_more::AsRef,
-    irn_rpc::{
+    wcn_rpc::{
         identity::{self, ed25519},
         PeerId,
     },
@@ -21,7 +21,7 @@ pub const PUBLIC_KEY_LEN: usize = ring::signature::ED25519_PUBLIC_KEY_LEN;
 const INFO_CLIENT_KEY: &[u8] = b"client_auth_key";
 const INFO_NAMESPACE_KEY: &[u8] = b"namespace_auth_key";
 const INFO_ENCRYPTION_KEY: &[u8] = b"encryption_key";
-const KEY_SALT: &[u8] = b"irn_api_client";
+const KEY_SALT: &[u8] = b"wcn_api_client";
 const KEY_LEN_SIG_SEED: usize = 32;
 const KEY_LEN_ENCRYPTION: usize = 32;
 const SIG_LEN_ED25519: usize = 64;

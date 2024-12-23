@@ -5,8 +5,8 @@ use {
     backoff::{future::retry, ExponentialBackoff},
     derive_more::{AsRef, Deref, Display},
     futures::FutureExt as _,
-    irn::fsm::ShutdownReason,
-    irn_rpc::{
+    wcn::fsm::ShutdownReason,
+    wcn_rpc::{
         quic::{self, socketaddr_to_multiaddr},
         Client as _,
         Multiaddr,
@@ -258,7 +258,7 @@ pub enum InitializationError {
     BootstrapNodeAddrMissing(PeerId),
 
     #[error(transparent)]
-    Cluster(irn::cluster::Error),
+    Cluster(wcn::cluster::Error),
 }
 
 impl Consensus {
@@ -616,7 +616,7 @@ pub enum ConsensusError {
     Other(Box<Error<ClientWriteFail>>),
 }
 
-impl TryFrom<ConsensusError> for irn::cluster::Error {
+impl TryFrom<ConsensusError> for wcn::cluster::Error {
     type Error = ConsensusError;
 
     fn try_from(err: ConsensusError) -> Result<Self, Self::Error> {
@@ -627,7 +627,7 @@ impl TryFrom<ConsensusError> for irn::cluster::Error {
     }
 }
 
-impl irn::cluster::Consensus for Consensus {
+impl wcn::cluster::Consensus for Consensus {
     type Node = cluster::Node;
     type Keyspace = cluster::Keyspace;
     type Error = ConsensusError;

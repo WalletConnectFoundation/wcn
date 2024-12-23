@@ -24,14 +24,14 @@ services:
     ports:
       - 8545:8545
 
-  irn-node-1:
-    image: irn:master
+  wcn-node-1:
+    image: wcn:master
     build:
       dockerfile: ./Dockerfile
       context: ./
       args:
         - PROFILE=debug
-    container_name: irn-node-1
+    container_name: wcn-node-1
     networks:
       relay:
         ipv4_address: 172.11.0.101
@@ -51,20 +51,20 @@ services:
       - ADMIN_API_SERVER_PORT=3014
       - CLIENT_API_SERVER_PORT=3015
       - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
-      - RAFT_DIR=/irn/raft
-      - ROCKSDB_DIR=/irn/rocksdb
+      - RAFT_DIR=/wcn/raft
+      - ROCKSDB_DIR=/wcn/rocksdb
       - LOG_LEVEL=info,tarpc=error
       - REGION=eu
       - ORGANIZATION=WalletConnect
-      - NETWORK_ID=irn_local
+      - NETWORK_ID=wcn_local
       - IS_RAFT_VOTER=true
       - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
       - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY=/ip4/172.11.0.102/udp/3020/quic-v1
       - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs=/ip4/172.11.0.103/udp/3030/quic-v1
 
-  irn-node-2:
-    image: irn:master
-    container_name: irn-node-2
+  wcn-node-2:
+    image: wcn:master
+    container_name: wcn-node-2
     networks:
       relay:
         ipv4_address: 172.11.0.102
@@ -84,21 +84,21 @@ services:
       - ADMIN_API_SERVER_PORT=3024
       - CLIENT_API_SERVER_PORT=3025
       - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
-      - RAFT_DIR=/irn/raft
-      - ROCKSDB_DIR=/irn/rocksdb
+      - RAFT_DIR=/wcn/raft
+      - ROCKSDB_DIR=/wcn/rocksdb
       - LOG_LEVEL=info,tarpc=error
       - REGION=us
       - ORGANIZATION=WalletConnect
-      - NETWORK_ID=irn_local
+      - NETWORK_ID=wcn_local
       - IS_RAFT_VOTER=true
       - SECRET_KEY=aAz8/3kOkdukRmWks9/QCgiKBAm+3FnqxXE35U44t/c=
       - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4/172.11.0.101/udp/3010/quic-v1
       - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs=/ip4/172.11.0.103/udp/3030/quic-v1
       - ETH_ADDRESS=0x70997970c51812dc3a010c7d01b50e0d17dc79c8
 
-  irn-node-3:
-    image: irn:master
-    container_name: irn-node-3
+  wcn-node-3:
+    image: wcn:master
+    container_name: wcn-node-3
     networks:
       relay:
         ipv4_address: 172.11.0.103
@@ -118,12 +118,12 @@ services:
       - ADMIN_API_SERVER_PORT=3034
       - CLIENT_API_SERVER_PORT=3035
       - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
-      - RAFT_DIR=/irn/raft
-      - ROCKSDB_DIR=/irn/rocksdb
+      - RAFT_DIR=/wcn/raft
+      - ROCKSDB_DIR=/wcn/rocksdb
       - LOG_LEVEL=info,tarpc=error
       - REGION=ap
       - ORGANIZATION=WalletConnect
-      - NETWORK_ID=irn_local
+      - NETWORK_ID=wcn_local
       - IS_RAFT_VOTER=true
       - SECRET_KEY=Fn+92TJONBeB3ji6jd083wfPiRuZF5ScPSyhfCJy8C0=
       - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4/172.11.0.101/udp/3010/quic-v1

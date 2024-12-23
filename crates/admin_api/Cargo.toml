@@ -1,5 +1,5 @@
 [package]
-name = "irn_admin_api"
+name = "wcn_admin_api"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,11 +8,11 @@ publish = false
 workspace = true
 
 [features]
-client = ["irn_rpc/client"]
-server = ["irn_rpc/server"]
+client = ["wcn_rpc/client"]
+server = ["wcn_rpc/server"]
 
 [dependencies]
-irn_rpc = { workspace = true }
+wcn_rpc = { workspace = true }
 serde = "1"
 postcard = { version = "1.0", default-features = false, features = [
     "alloc",

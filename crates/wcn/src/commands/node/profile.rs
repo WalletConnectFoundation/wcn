@@ -1,5 +1,5 @@
 use {
-    irn::AdminApiArgs,
+    wcn::AdminApiArgs,
     std::{str::FromStr, time::Duration},
 };
 
@@ -20,7 +20,7 @@ pub struct Cmd {
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error(transparent)]
-    Api(#[from] irn_admin_api::client::Error<irn_admin_api::MemoryProfileError>),
+    Api(#[from] wcn_admin_api::client::Error<wcn_admin_api::MemoryProfileError>),
 
     #[error("Failed to parse duration: {0}")]
     DurationFormat(humantime::DurationError),
@@ -42,7 +42,7 @@ impl FromStr for ProfileDuration {
         humantime::parse_duration(s)
             .map_err(Error::DurationFormat)
             .and_then(|duration| {
-                if duration.is_zero() || duration > irn_admin_api::MEMORY_PROFILE_MAX_DURATION {
+                if duration.is_zero() || duration > wcn_admin_api::MEMORY_PROFILE_MAX_DURATION {
                     Err(Error::InvalidDuration)
                 } else {
                     Ok(Self(duration))
@@ -52,7 +52,7 @@ impl FromStr for ProfileDuration {
 }
 
 pub async fn exec(cmd: Cmd) -> anyhow::Result<()> {
-    use irn_admin_api::snap;
+    use wcn_admin_api::snap;
 
     let data = cmd
         .admin_api_args

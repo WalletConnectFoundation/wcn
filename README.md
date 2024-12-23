@@ -1,4 +1,4 @@
-Inter-Relay-Network Node. Implemented in Rust.
+WallectConnect Network Node. Implemented in Rust.
 
 Node operators, see [Node Operator onboarding](docs/node-operator-onboarding.md) doc before joining the network.
 
@@ -15,7 +15,7 @@ Setup:
   ```
 - Fill `.env` file with necessary values - access keys for AWS and other services. No changes are necessary if just running locally.
 
-Running the IRN Node:
+Running the WCN Node:
 
 ```sh
 just run

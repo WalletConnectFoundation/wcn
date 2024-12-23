@@ -1,6 +1,6 @@
 use {
     super::{Error, Lockfile, LogFormat},
-    irn_rpc::{quic, PeerId},
+    wcn_rpc::{quic, PeerId},
     metrics_exporter_prometheus::PrometheusBuilder,
     node::RocksdbDatabaseConfig,
     std::{
@@ -48,9 +48,9 @@ pub struct StartCmd {
     #[clap(long, default_value = "info")]
     /// Log filtering.
     ///
-    /// Can be used to filter per module. Example: `warn,irn_node=info` would
+    /// Can be used to filter per module. Example: `warn,wcn_node=info` would
     /// set the default level for all modules to `warn`, while overriding it
-    /// for `irn_node` to `info`.
+    /// for `wcn_node` to `info`.
     log_filter: String,
 
     #[clap(long, value_enum, default_value_t = LogFormat::Text)]
@@ -80,7 +80,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
 
     let log_file = log_to_file.then(|| {
         let mut log_file = std::env::current_dir().unwrap();
-        log_file.push(format!("irn.{}.log", std::process::id()));
+        log_file.push(format!("wcn.{}.log", std::process::id()));
         log_file
     });
 
@@ -215,7 +215,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-const DETACH_STATE_ENV_VAR: &str = "IRN_INTERNAL_DETACHED";
+const DETACH_STATE_ENV_VAR: &str = "WCN_INTERNAL_DETACHED";
 
 fn set_detached_state() {
     std::env::set_var(DETACH_STATE_ENV_VAR, "true");

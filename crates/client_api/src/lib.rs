@@ -2,7 +2,7 @@
 
 use {
     auth::token,
-    irn_rpc as rpc,
+    wcn_rpc as rpc,
     serde::{Deserialize, Serialize},
     std::collections::HashSet,
 };

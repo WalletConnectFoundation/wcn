@@ -1,4 +1,4 @@
-//! Data structures related to nodes in an IRN cluster.
+//! Data structures related to nodes in an WCN cluster.
 
 use {
     super::{keyspace, Nodes},

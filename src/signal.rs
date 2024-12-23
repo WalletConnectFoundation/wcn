@@ -1,7 +1,7 @@
 use {
     anyhow::Context as _,
     futures::Future,
-    irn::fsm::ShutdownReason,
+    wcn::fsm::ShutdownReason,
     tokio::signal::unix::{self, Signal, SignalKind},
 };
 

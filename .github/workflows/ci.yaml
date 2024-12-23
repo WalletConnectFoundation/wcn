@@ -56,7 +56,7 @@ jobs:
           - name: "tests"
             cmd: |
               cargo test --workspace --doc --all-features \
-              && RUST_LOG=info cargo test --all-features --workspace --exclude irn_node \
+              && RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node \
               && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features --release
             rust: 1.79.0
     env:
@@ -110,16 +110,16 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          tags: irn:tmp
+          tags: wcn:tmp
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/image-irn.tar
+          outputs: type=docker,dest=/tmp/image-wcn.tar
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: image-irn
-          path: /tmp/image-irn.tar
+          name: image-wcn
+          path: /tmp/image-wcn.tar
 
   publish_to_ghcr:
     needs: [tests, build, cargo-deny]
@@ -138,7 +138,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ghcr.io/walletconnectfoundation/irn-node
+            ghcr.io/walletconnectfoundation/wcn-node
           flavor: |
             latest=auto
           tags: |
@@ -150,19 +150,19 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
-          name: image-irn
+          name: image-wcn
           path: /tmp
 
       - name: Push image
         run: |
-          docker load --input /tmp/image-irn.tar
+          docker load --input /tmp/image-wcn.tar
 
           readarray -t tags <<< "${{ steps.meta_ghcr.outputs.tags }}"
           for tag in "${tags[@]}"; do
-              docker tag irn:tmp $tag
+              docker tag wcn:tmp $tag
           done
 
-          docker image push --all-tags ghcr.io/walletconnectfoundation/irn-node
+          docker image push --all-tags ghcr.io/walletconnectfoundation/wcn-node
 
   publish_to_ecr:
     needs: [tests, build, cargo-deny]
@@ -172,7 +172,7 @@ jobs:
       fail-fast: false
       matrix:
         images:
-          - repo_name: irn
+          - repo_name: wcn
             aws-access-key-id: AWS_ACCESS_KEY_ID
             aws-secret-access-key: AWS_SECRET_ACCESS_KEY
     steps:
@@ -204,16 +204,16 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
-          name: image-irn
+          name: image-wcn
           path: /tmp
 
       - name: Push image
         run: |
-          docker load --input /tmp/image-irn.tar
+          docker load --input /tmp/image-wcn.tar
 
           readarray -t tags <<< "${{ steps.meta.outputs.tags }}"
           for tag in "${tags[@]}"; do
-              docker tag irn:tmp $tag
+              docker tag wcn:tmp $tag
           done
 
           docker image push --all-tags ${{ steps.login-ecr.outputs.registry }}/${{ matrix.images.repo_name }}

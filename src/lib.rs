@@ -30,8 +30,6 @@ pub mod network;
 pub mod signal;
 pub mod storage;
 
-mod contract;
-
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
 const NODE_VERSION: u64 = 0;
@@ -132,40 +130,9 @@ pub async fn run(
 
     tracing::info!(addr = %cfg.server_addr, node_id = %cfg.id, "Running");
 
-    let stake_validator = if let Some(c) = &cfg.smart_contract {
-        let rpc_url = &c.eth_rpc_url;
-        let addr = &c.config_address;
-
-        contract::StakeValidator::new(rpc_url, addr)
-            .await
-            .map(Some)
-            .map_err(Error::Contract)?
-    } else {
-        None
-    };
-
-    let consensus = Consensus::new(cfg, network.clone(), stake_validator)
+    let consensus = Consensus::new(cfg, network.clone())
         .await
         .map_err(Error::Consensus)?;
-
-    let status_reporter = if let Some(c) = &cfg.smart_contract {
-        let rpc_url = &c.eth_rpc_url;
-        let addr = &c.config_address;
-
-        let sr = if let Some(eth_address) = &cfg.eth_address {
-            Some(
-                contract::new_status_reporter(rpc_url, addr, eth_address)
-                    .await
-                    .map_err(Error::Contract)?,
-            )
-        } else {
-            None
-        };
-
-        sr
-    } else {
-        None
-    };
 
     let node_opts = irn::NodeOpts {
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
@@ -194,7 +161,7 @@ pub async fn run(
         storage,
     );
 
-    Network::spawn_servers(cfg, node.clone(), prometheus.clone(), status_reporter)?;
+    Network::spawn_servers(cfg, node.clone(), prometheus.clone())?;
 
     let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 

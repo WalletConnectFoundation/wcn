@@ -44,23 +44,23 @@ fn update_loop(
         sys.refresh_cpu();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
-            metrics::gauge!("wcn_cpu_usage_percent_per_core_gauge", "n_core" => n.to_string())
+            metrics::gauge!("irn_cpu_usage_percent_per_core_gauge", "n_core" => n.to_string())
                 .set(cpu.cpu_usage())
         }
 
         sys.refresh_memory();
 
-        metrics::gauge!("wcn_total_memory").set(sys.total_memory() as f64);
-        metrics::gauge!("wcn_free_memory").set(sys.free_memory() as f64);
-        metrics::gauge!("wcn_available_memory").set(sys.available_memory() as f64);
-        metrics::gauge!("wcn_used_memory").set(sys.used_memory() as f64);
+        metrics::gauge!("irn_total_memory").set(sys.total_memory() as f64);
+        metrics::gauge!("irn_free_memory").set(sys.free_memory() as f64);
+        metrics::gauge!("irn_available_memory").set(sys.available_memory() as f64);
+        metrics::gauge!("irn_used_memory").set(sys.used_memory() as f64);
 
         sys.refresh_disks();
 
         for disk in sys.disks() {
             if disk.mount_point() == storage_mount_point {
-                metrics::gauge!("wcn_disk_total_space").set(disk.total_space() as f64);
-                metrics::gauge!("wcn_disk_available_space").set(disk.available_space() as f64);
+                metrics::gauge!("irn_disk_total_space").set(disk.total_space() as f64);
+                metrics::gauge!("irn_disk_available_space").set(disk.available_space() as f64);
                 break;
             }
         }
@@ -68,9 +68,9 @@ fn update_loop(
         sys.refresh_networks();
 
         for (name, net) in sys.networks().iter() {
-            metrics::gauge!("wcn_network_tx_bytes_total", "network" => name.to_owned())
+            metrics::gauge!("irn_network_tx_bytes_total", "network" => name.to_owned())
                 .set(net.total_transmitted() as f64);
-            metrics::gauge!("wcn_network_rx_bytes_total", "network" => name.to_owned())
+            metrics::gauge!("irn_network_rx_bytes_total", "network" => name.to_owned())
                 .set(net.total_received() as f64);
         }
 
@@ -91,11 +91,11 @@ fn update_loop(
 fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend) {
     match db.memory_usage() {
         Ok(s) => {
-            metrics::gauge!("wcn_rocksdb_mem_table_total").set(s.mem_table_total as f64);
-            metrics::gauge!("wcn_rocksdb_mem_table_unflushed").set(s.mem_table_unflushed as f64);
-            metrics::gauge!("wcn_rocksdb_mem_table_readers_total",)
+            metrics::gauge!("irn_rocksdb_mem_table_total").set(s.mem_table_total as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_unflushed").set(s.mem_table_unflushed as f64);
+            metrics::gauge!("irn_rocksdb_mem_table_readers_total",)
                 .set(s.mem_table_readers_total as f64);
-            metrics::gauge!("wcn_rocksdb_cache_total").set(s.cache_total as f64);
+            metrics::gauge!("irn_rocksdb_cache_total").set(s.cache_total as f64);
         }
 
         Err(err) => tracing::warn!(?err, "failed to get rocksdb memory usage stats"),
@@ -114,7 +114,7 @@ fn update_rocksdb_metrics(db: &relay_rocks::RocksBackend) {
     };
 
     for (name, stat) in stats {
-        let name = format!("wcn_{}", name.replace('.', "_"));
+        let name = format!("irn_{}", name.replace('.', "_"));
 
         match stat {
             relay_rocks::db::Statistic::Ticker(count) => {
@@ -157,7 +157,7 @@ fn update_cgroup_stats() {
             continue;
         };
 
-        metrics::gauge!("wcn_memory_stat", "stat" => stat.to_owned()).set(val);
+        metrics::gauge!("irn_memory_stat", "stat" => stat.to_owned()).set(val);
     }
 }
 

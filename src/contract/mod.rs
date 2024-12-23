@@ -1,15 +1,13 @@
 use {
     alloy::{
-        primitives::{Address, Bytes, U256},
-        providers::{network::EthereumSigner, Provider, ProviderBuilder, RootProvider},
-        signers::wallet::{coins_bip39, MnemonicBuilder},
+        primitives::Address,
+        providers::{ProviderBuilder, RootProvider},
         sol,
-        sol_types::SolInterface,
         transports::http::Http,
     },
     anyhow::{Context, Result},
     reqwest::Client,
-    std::{future::Future, str::FromStr, sync::Arc},
+    std::{str::FromStr, sync::Arc},
 };
 
 sol!(
@@ -34,14 +32,6 @@ sol!(
     #[sol(rpc)]
     permissioned_node_registry,
     "src/contract/permissioned_node_registry.json"
-);
-
-sol!(
-    #[allow(clippy::empty_structs_with_brackets)]
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    reward_manager,
-    "src/contract/reward_manager.json"
 );
 
 type Transport = Http<Client>;

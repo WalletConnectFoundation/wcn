@@ -2,10 +2,7 @@
 
 use {
     anyhow::Context,
-    futures::{
-        future::{FusedFuture, OptionFuture},
-        FutureExt,
-    },
+    futures::{future::FusedFuture, FutureExt},
     irn::fsm,
     irn_rpc::quic::{self, socketaddr_to_multiaddr},
     metrics_exporter_prometheus::{
@@ -14,7 +11,6 @@ use {
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
     tap::Pipe,
-    time::{macros::datetime, OffsetDateTime},
 };
 pub use {
     cluster::Cluster,
@@ -39,10 +35,6 @@ mod contract;
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
 const NODE_VERSION: u64 = 0;
-
-/// Deadline after which operator nodes that haven't switched to the updated
-/// [`NODE_VERSION`] are going to receive reduced rewards.
-const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-07-25 12:00:00 -0);
 
 pub type Node = irn::Node<Consensus, Network, Storage>;
 

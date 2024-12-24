@@ -1,5 +1,5 @@
 use {
-    crate::{cluster, consensus, contract::StatusReporter, Config, Error, Node},
+    crate::{cluster, consensus, Config, Error, Node},
     admin_api::Server as _,
     anyerror::AnyError,
     client_api::Server,
@@ -8,12 +8,7 @@ use {
     futures::{
         future,
         stream::{self, Map},
-        Future,
-        FutureExt,
-        SinkExt,
-        Stream,
-        StreamExt,
-        TryFutureExt,
+        Future, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
     },
     irn::cluster::Consensus,
     irn_rpc::{
@@ -26,8 +21,7 @@ use {
             ClientConnectionInfo,
         },
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
-        Multiaddr,
-        ServerName,
+        Multiaddr, ServerName,
     },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
@@ -40,10 +34,7 @@ use {
             migration::ExportItem,
             schema::{self, GenericKey},
             types::{
-                common::iterators::ScanOptions,
-                map::Pair,
-                MapStorage as _,
-                StringStorage as _,
+                common::iterators::ScanOptions, map::Pair, MapStorage as _, StringStorage as _,
             },
         },
     },
@@ -710,13 +701,12 @@ impl RaftRpcServer {
 }
 
 #[derive(Clone)]
-struct AdminApiServer<S> {
+struct AdminApiServer {
     node: Arc<Node>,
-    status_reporter: Option<S>,
     eth_address: Option<Arc<str>>,
 }
 
-impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
+impl admin_api::Server for AdminApiServer {
     fn get_cluster_view(&self) -> impl Future<Output = admin_api::ClusterView> + Send {
         use admin_api::NodeState;
 
@@ -757,20 +747,10 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
     fn get_node_status(
         &self,
     ) -> impl Future<Output = admin_api::server::GetNodeStatusResult> + Send {
-        use admin_api::GetNodeStatusError as Error;
-
         async {
-            let reporter = self.status_reporter.as_ref().ok_or(Error::NotAvailable)?;
-
-            let report = reporter
-                .report_status()
-                .await
-                .map_err(|err| Error::Internal(format!("{err:?}")))?;
-
             Ok(admin_api::NodeStatus {
                 node_version: crate::NODE_VERSION,
                 eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
-                stake_amount: report.stake,
             })
         }
     }
@@ -833,10 +813,13 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
             }
 
             consensus
-                .remove_member(&id, consensus::RemoveMemberRequest {
-                    node_id: consensus::NodeId(id),
-                    is_learner: !consensus.is_voter(&id),
-                })
+                .remove_member(
+                    &id,
+                    consensus::RemoveMemberRequest {
+                        node_id: consensus::NodeId(id),
+                        is_learner: !consensus.is_voter(&id),
+                    },
+                )
                 .await
                 .map(drop)
                 .map_err(|err| Error::Consensus(err.to_string()))
@@ -954,11 +937,10 @@ impl Network {
         irn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
     }
 
-    pub fn spawn_servers<S: StatusReporter>(
+    pub fn spawn_servers(
         cfg: &Config,
         node: Node,
         prometheus: PrometheusHandle,
-        status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let replica_api_server_config = irn_rpc::server::Config {
             name: const { irn_rpc::ServerName::new("replica_api") },
@@ -1015,7 +997,6 @@ impl Network {
 
         let admin_api_server = AdminApiServer {
             node: node.clone(),
-            status_reporter,
             eth_address: cfg.eth_address.clone().map(Into::into),
         }
         .serve(admin_api_server_config)?;

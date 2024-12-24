@@ -76,7 +76,6 @@ pub enum NodeState {
 pub struct NodeStatus {
     pub node_version: u64,
     pub eth_address: Option<String>,
-    pub stake_amount: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

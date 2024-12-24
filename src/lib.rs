@@ -2,10 +2,7 @@
 
 use {
     anyhow::Context,
-    futures::{
-        future::{FusedFuture, OptionFuture},
-        FutureExt,
-    },
+    futures::{future::FusedFuture, FutureExt},
     metrics_exporter_prometheus::{
         BuildError as PrometheusBuildError,
         PrometheusBuilder,
@@ -14,7 +11,6 @@ use {
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
     tap::Pipe,
-    time::{macros::datetime, OffsetDateTime},
     wcn::fsm,
     wcn_rpc::quic::{self, socketaddr_to_multiaddr},
 };
@@ -36,16 +32,9 @@ pub mod network;
 pub mod signal;
 pub mod storage;
 
-mod contract;
-mod performance;
-
 /// Version of the node in the testnet.
 /// For "performance" tracking purposes only.
 const NODE_VERSION: u64 = 0;
-
-/// Deadline after which operator nodes that haven't switched to the updated
-/// [`NODE_VERSION`] are going to receive reduced rewards.
-const NODE_VERSION_UPDATE_DEADLINE: OffsetDateTime = datetime!(2024-07-25 12:00:00 -0);
 
 pub type Node = wcn::Node<Consensus, Network, Storage>;
 
@@ -143,62 +132,9 @@ pub async fn run(
 
     tracing::info!(addr = %cfg.server_addr, node_id = %cfg.id, "Running");
 
-    let stake_validator = if let Some(c) = &cfg.smart_contract {
-        let rpc_url = &c.eth_rpc_url;
-        let addr = &c.config_address;
-
-        contract::StakeValidator::new(rpc_url, addr)
-            .await
-            .map(Some)
-            .map_err(Error::Contract)?
-    } else {
-        None
-    };
-
-    let consensus = Consensus::new(cfg, network.clone(), stake_validator)
+    let consensus = Consensus::new(cfg, network.clone())
         .await
         .map_err(Error::Consensus)?;
-
-    let (performance_tracker, status_reporter) = if let Some(c) = &cfg.smart_contract {
-        let rpc_url = &c.eth_rpc_url;
-        let addr = &c.config_address;
-
-        let pr = if let Some(pr) = &c.performance_reporter {
-            let dir = pr.tracker_dir.clone();
-
-            let reporter = contract::new_performance_reporter(rpc_url, addr, &pr.signer_mnemonic)
-                .await
-                .map_err(Error::Contract)?;
-
-            performance::Tracker::new(
-                network.clone(),
-                consensus.clone(),
-                reporter,
-                dir,
-                NODE_VERSION,
-                NODE_VERSION_UPDATE_DEADLINE,
-            )
-            .await
-            .map(Some)
-            .map_err(Error::PerformanceTracker)?
-        } else {
-            None
-        };
-
-        let sr = if let Some(eth_address) = &cfg.eth_address {
-            Some(
-                contract::new_status_reporter(rpc_url, addr, eth_address)
-                    .await
-                    .map_err(Error::Contract)?,
-            )
-        } else {
-            None
-        };
-
-        (pr, sr)
-    } else {
-        (None, None)
-    };
 
     let node_opts = wcn::NodeOpts {
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
@@ -227,7 +163,7 @@ pub async fn run(
         storage,
     );
 
-    Network::spawn_servers(cfg, node.clone(), prometheus.clone(), status_reporter)?;
+    Network::spawn_servers(cfg, node.clone(), prometheus.clone())?;
 
     let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 
@@ -239,17 +175,10 @@ pub async fn run(
         };
     };
 
-    let performance_tracker_fut: OptionFuture<_> = if let Some(pt) = performance_tracker {
-        Some(pt.run()).into()
-    } else {
-        None.into()
-    };
-
     Ok(async move {
         let mut shutdown_fut = pin!(shutdown_fut.fuse());
         let mut metrics_server_fut = pin!(metrics_srv.fuse());
         let mut node_fut = pin!(node_fut);
-        let mut performance_tracker_fut = pin!(performance_tracker_fut.fuse());
 
         loop {
             tokio::select! {
@@ -267,10 +196,6 @@ pub async fn run(
 
                 _ = &mut node_fut => {
                     break;
-                }
-
-                _ = &mut performance_tracker_fut, if !performance_tracker_fut.is_terminated() => {
-                    tracing::warn!("performance tracker unexpectedly finished");
                 }
             }
         }

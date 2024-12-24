@@ -1,5 +1,5 @@
 use {
-    crate::{cluster, contract, network::rpc, Cluster, Config, Network, RemoteNode, TypeConfig},
+    crate::{cluster, network::rpc, Cluster, Config, Network, RemoteNode, TypeConfig},
     anyhow::Context,
     async_trait::async_trait,
     backoff::{future::retry, ExponentialBackoff},
@@ -221,8 +221,6 @@ pub struct Raft {
 
     bootstrap_nodes: Arc<Option<Vec<PeerId>>>,
     is_voter: bool,
-
-    stake_validator: Option<contract::StakeValidator>,
 }
 
 #[derive(Clone, Deref)]
@@ -263,11 +261,7 @@ pub enum InitializationError {
 
 impl Consensus {
     /// Spawns a new [`Consensus`] task and returns it's handle.
-    pub async fn new(
-        cfg: &Config,
-        network: Network,
-        stake_validator: Option<contract::StakeValidator>,
-    ) -> Result<Consensus, InitializationError> {
+    pub async fn new(cfg: &Config, network: Network) -> Result<Consensus, InitializationError> {
         tokio::fs::create_dir_all(&cfg.raft_dir)
             .await
             .map_err(InitializationError::DirectoryCreation)?;
@@ -333,7 +327,6 @@ impl Consensus {
             initial_membership: Default::default(),
             bootstrap_nodes: Arc::new(cfg.bootstrap_nodes.clone()),
             is_voter: cfg.is_raft_voter,
-            stake_validator,
         };
 
         Network::spawn_raft_server(cfg, server_addr.clone(), raft.clone())?;
@@ -506,19 +499,6 @@ impl Raft {
 
                     if !auth.allowed_candidates.contains(&req.node_id.0) {
                         return Err(unauthorized_error());
-                    }
-
-                    if let Some(validator) = self.stake_validator.as_ref() {
-                        let Some(operator_eth_address) =
-                            req.payload.as_ref().map(|p| &p.operator_eth_address)
-                        else {
-                            tracing::warn!(id = %req.node_id, "Operator didn't provide ETH address");
-                            return Err(unauthorized_error());
-                        };
-                        if let Err(err) = validator.validate_stake(operator_eth_address).await {
-                            tracing::warn!(id = %req.node_id, ?err, "Stake validation failed");
-                            return Err(unauthorized_error());
-                        }
                     }
                 }
                 // otherwise forward the request to a voter.

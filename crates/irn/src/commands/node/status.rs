@@ -16,7 +16,6 @@ pub async fn exec(cmd: StatusCmd) -> anyhow::Result<()> {
 
     println!("Network Version: {}", status.node_version);
     println!("Wallet Address: {}", status.eth_address.unwrap_or_default());
-    println!("Stake: {}", status.stake_amount);
 
     Ok(())
 }

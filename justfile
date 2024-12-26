@@ -54,45 +54,6 @@ clean-tmp:
   @echo '==> Cleaning /tmp/irn'
   rm -rf /tmp/irn
 
-# Build IRN docker image
-build-docker:
-  @echo '=> Build IRN docker image'
-  docker compose -f ./docker-compose.yml build
-
-# Start IRN sandbox cluster on docker
-run-docker:
-  @echo '==> Start IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml up -d
-
-# Stop IRN sandbox cluster on docker
-stop-docker:
-  @echo '==> Stop IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml down
-
-
-run-docker-all:
-  @echo '==> Start IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml --profile oracle up -d
-  @sleep 2
-  @sh ./infra/load_anvil_state.sh
-
-
-stop-docker-all:
-  @echo '==> Stop IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml --profile oracle down
-
-
-# Clean up docker IRN sandbox cluster
-clean-docker:
-  @echo '==> Clean IRN sandbox cluster on docker'
-  docker compose  -f ./docker-compose.yml stop
-  docker compose -f ./docker-compose.yml rm -f
-
-# List services running on docker
-ps-docker:
-  @echo '==> List services on docker'
-  docker compose -f ./docker-compose.yml ps
-
 # Bumps the binary version to the given version
 bump-version to: (_bump-cargo-version to irn-binary-crate + "/Cargo.toml")
 

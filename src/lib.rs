@@ -6,7 +6,9 @@ use {
     irn::fsm,
     irn_rpc::quic::{self, socketaddr_to_multiaddr},
     metrics_exporter_prometheus::{
-        BuildError as PrometheusBuildError, PrometheusBuilder, PrometheusHandle,
+        BuildError as PrometheusBuildError,
+        PrometheusBuilder,
+        PrometheusHandle,
     },
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},

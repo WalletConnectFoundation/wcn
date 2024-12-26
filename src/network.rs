@@ -8,7 +8,12 @@ use {
     futures::{
         future,
         stream::{self, Map},
-        Future, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
+        Future,
+        FutureExt,
+        SinkExt,
+        Stream,
+        StreamExt,
+        TryFutureExt,
     },
     irn::cluster::Consensus,
     irn_rpc::{
@@ -21,7 +26,8 @@ use {
             ClientConnectionInfo,
         },
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
-        Multiaddr, ServerName,
+        Multiaddr,
+        ServerName,
     },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
@@ -34,7 +40,10 @@ use {
             migration::ExportItem,
             schema::{self, GenericKey},
             types::{
-                common::iterators::ScanOptions, map::Pair, MapStorage as _, StringStorage as _,
+                common::iterators::ScanOptions,
+                map::Pair,
+                MapStorage as _,
+                StringStorage as _,
             },
         },
     },
@@ -813,13 +822,10 @@ impl admin_api::Server for AdminApiServer {
             }
 
             consensus
-                .remove_member(
-                    &id,
-                    consensus::RemoveMemberRequest {
-                        node_id: consensus::NodeId(id),
-                        is_learner: !consensus.is_voter(&id),
-                    },
-                )
+                .remove_member(&id, consensus::RemoveMemberRequest {
+                    node_id: consensus::NodeId(id),
+                    is_learner: !consensus.is_voter(&id),
+                })
                 .await
                 .map(drop)
                 .map_err(|err| Error::Consensus(err.to_string()))

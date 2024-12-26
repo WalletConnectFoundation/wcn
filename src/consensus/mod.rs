@@ -8,13 +8,15 @@ use {
     irn::fsm::ShutdownReason,
     irn_rpc::{
         quic::{self, socketaddr_to_multiaddr},
-        Client as _, Multiaddr,
+        Client as _,
+        Multiaddr,
     },
     libp2p::PeerId,
     parking_lot::Mutex,
     raft::{
         storage::{Snapshot, SnapshotMeta},
-        Raft as _, RemoteError,
+        Raft as _,
+        RemoteError,
     },
     serde::{Deserialize, Serialize},
     std::{

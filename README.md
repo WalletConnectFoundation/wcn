@@ -40,11 +40,6 @@ Running dockerized sandbox cluster:
 ```sh
 $ just run-docker
 ```
-
-## Generating Anvil state
-
-To generate an Anvil state snapshot you can load to the Anvil node ran via Docker Compose you first need to generate it using the scripts at https://github.com/WalletConnect/contracts and then place the generated state file at `infra/` and run `just run-docker-all`
-
 ## Contributing
 
 If you would like to contribute to the project, please read

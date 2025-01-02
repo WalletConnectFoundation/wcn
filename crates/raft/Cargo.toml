@@ -18,7 +18,7 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1.0", default-features = false, features = ["alloc"] }
 tokio = { version = "1", default-features = false, features = ["sync"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-irn = { package = "irn_core", path = "../core" }
+wcn = { package = "wcn_core", path = "../core" }
 tracing = "0.1"
 
 [dev-dependencies]

@@ -2,7 +2,7 @@ use clap::Parser;
 
 mod commands;
 
-/// Control nodes and clusters in the IRN Network
+/// Control nodes and clusters in the WCN Network
 #[derive(clap::Parser, Debug)]
 #[clap(
     author,

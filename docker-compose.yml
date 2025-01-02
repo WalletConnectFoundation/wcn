@@ -1,0 +1,137 @@
+version: "3.9"
+
+services:
+  anvil-node-1:
+    image: ghcr.io/foundry-rs/foundry
+    platform: linux/x86_64
+    profiles:
+      - oracle
+    command: anvil
+    container_name: anvil-node-1
+    environment:
+      - ANVIL_IP_ADDR=0.0.0.0
+      - CHAIN_ID=31337
+      - MNEMONIC="test test test test test test test test test test test junk"
+      - API_KEY_OPTIMISTIC_ETHERSCAN="PLACEHOLDER"
+      - API_KEY_ETHERSCAN="PLACEHOLDER"
+      - REWARDS_PER_EPOCH=1000000000000000000000
+      - INITIAL_TREASURY_BALANCE=365000000000000000000000
+      - MAX_NODES=50
+      - MIN_STAKE_AMOUNT=100000000000000000000000
+    networks:
+      relay:
+        ipv4_address: 172.11.0.105
+    ports:
+      - 8545:8545
+
+  wcn-node-1:
+    image: wcn:master
+    build:
+      dockerfile: ./Dockerfile
+      context: ./
+      args:
+        - PROFILE=debug
+    container_name: wcn-node-1
+    networks:
+      relay:
+        ipv4_address: 172.11.0.101
+    ports:
+      - "3010:3010/udp"
+      - "3011:3011/udp"
+      - "3012:3012/tcp"
+      - "3013:3013/udp"
+      - "3014:3014/udp"
+      - "3015:3015/udp"
+    environment:
+      - SERVER_ADDR=172.11.0.101
+      - RAFT_SERVER_PORT=3010
+      - COORDINATOR_API_SERVER_PORT=3011
+      - METRICS_SERVER_PORT=3012
+      - REPLICA_API_SERVER_PORT=3013
+      - ADMIN_API_SERVER_PORT=3014
+      - CLIENT_API_SERVER_PORT=3015
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
+      - RAFT_DIR=/wcn/raft
+      - ROCKSDB_DIR=/wcn/rocksdb
+      - LOG_LEVEL=info,tarpc=error
+      - REGION=eu
+      - ORGANIZATION=WalletConnect
+      - NETWORK_ID=wcn_local
+      - IS_RAFT_VOTER=true
+      - SECRET_KEY=Kz5phRjzWE5yPAs5JagXtNTAjGOy/JhWl+t+SRtU+Lc=
+      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY=/ip4/172.11.0.102/udp/3020/quic-v1
+      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs=/ip4/172.11.0.103/udp/3030/quic-v1
+
+  wcn-node-2:
+    image: wcn:master
+    container_name: wcn-node-2
+    networks:
+      relay:
+        ipv4_address: 172.11.0.102
+    ports:
+      - "3020:3020/udp"
+      - "3021:3021/udp"
+      - "3022:3022/tcp"
+      - "3023:3023/udp"
+      - "3024:3024/udp"
+      - "3025:3025/udp"
+    environment:
+      - SERVER_ADDR=172.11.0.102
+      - RAFT_SERVER_PORT=3020
+      - COORDINATOR_API_SERVER_PORT=3021
+      - METRICS_SERVER_PORT=3022
+      - REPLICA_API_SERVER_PORT=3023
+      - ADMIN_API_SERVER_PORT=3024
+      - CLIENT_API_SERVER_PORT=3025
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
+      - RAFT_DIR=/wcn/raft
+      - ROCKSDB_DIR=/wcn/rocksdb
+      - LOG_LEVEL=info,tarpc=error
+      - REGION=us
+      - ORGANIZATION=WalletConnect
+      - NETWORK_ID=wcn_local
+      - IS_RAFT_VOTER=true
+      - SECRET_KEY=aAz8/3kOkdukRmWks9/QCgiKBAm+3FnqxXE35U44t/c=
+      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4/172.11.0.101/udp/3010/quic-v1
+      - PEER_12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs=/ip4/172.11.0.103/udp/3030/quic-v1
+      - ETH_ADDRESS=0x70997970c51812dc3a010c7d01b50e0d17dc79c8
+
+  wcn-node-3:
+    image: wcn:master
+    container_name: wcn-node-3
+    networks:
+      relay:
+        ipv4_address: 172.11.0.103
+    ports:
+      - "3030:3030/udp"
+      - "3031:3031/udp"
+      - "3032:3032/tcp"
+      - "3033:3033/udp"
+      - "3034:3034/udp"
+      - "3035:3035/udp"
+    environment:
+      - SERVER_ADDR=172.11.0.103
+      - RAFT_SERVER_PORT=3030
+      - COORDINATOR_API_SERVER_PORT=3031
+      - METRICS_SERVER_PORT=3032
+      - REPLICA_API_SERVER_PORT=3033
+      - ADMIN_API_SERVER_PORT=3034
+      - CLIENT_API_SERVER_PORT=3035
+      - BOOTSTRAP_NODES=12D3KooWE5w9ksamQEejyYn2sY2MixqCn4RYQ8Cfy3Ad3MRiBjHs,12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp,12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY
+      - RAFT_DIR=/wcn/raft
+      - ROCKSDB_DIR=/wcn/rocksdb
+      - LOG_LEVEL=info,tarpc=error
+      - REGION=ap
+      - ORGANIZATION=WalletConnect
+      - NETWORK_ID=wcn_local
+      - IS_RAFT_VOTER=true
+      - SECRET_KEY=Fn+92TJONBeB3ji6jd083wfPiRuZF5ScPSyhfCJy8C0=
+      - PEER_12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp=/ip4/172.11.0.101/udp/3010/quic-v1
+      - PEER_12D3KooWE79egFys7LW8NyUDicrnxUBnABXqXKU9PK9HF4xaBCuY=/ip4/172.11.0.102/udp/3020/quic-v1
+      - ETH_ADDRESS=0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc
+
+networks:
+  relay:
+    ipam:
+      config:
+        - subnet: 172.11.0.0/16

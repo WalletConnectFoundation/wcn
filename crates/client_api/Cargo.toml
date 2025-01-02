@@ -1,5 +1,5 @@
 [package]
-name = "irn_client_api"
+name = "wcn_client_api"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,11 +8,11 @@ publish = false
 workspace = true
 
 [features]
-client = ["irn_rpc/client"]
-server = ["irn_rpc/server"]
+client = ["wcn_rpc/client"]
+server = ["wcn_rpc/server"]
 
 [dependencies]
-irn_rpc = { workspace = true }
+wcn_rpc = { workspace = true }
 wc = { workspace = true, features = ["metrics"] }
 auth = { workspace = true }
 domain = { workspace = true }

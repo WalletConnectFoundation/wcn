@@ -1,26 +1,26 @@
 [package]
-name = "irn"
+name = "wcn"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "irn"
+name = "wcn"
 path = "src/main.rs"
 
 [dependencies]
-irn_rpc = { path = "../rpc" }
-irn_replication = { path = "../replication" }
-irn_auth = { path = "../auth" }
-irn_admin_api = { path = "../admin_api", features = ["client"] }
-irn_core = { path = "../core" }
+wcn_rpc = { path = "../rpc" }
+wcn_replication = { path = "../replication" }
+wcn_auth = { path = "../auth" }
+wcn_admin_api = { path = "../admin_api", features = ["client"] }
+wcn_core = { path = "../core" }
 
 derive_more = { workspace = true, features = ["deref"] }
 
 clap = { version = "4", features = ["derive"] }
 eyre = "0.6"
 tracing = "0.1"
-node = { package = "irn_node", path = "../../." }
+node = { package = "wcn_node", path = "../../." }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 anyhow = "1"
 thiserror = "1.0"

@@ -99,7 +99,7 @@ fn init_file_writer(mut log_file: PathBuf) -> RollingFileAppender {
     let file_name = log_file
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("irn.log")
+        .unwrap_or("wcn.log")
         .to_string();
 
     // Turn file name into directory name.

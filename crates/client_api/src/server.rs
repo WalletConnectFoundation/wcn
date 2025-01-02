@@ -1,7 +1,14 @@
 use {
     super::*,
     futures_util::{SinkExt, Stream, StreamExt},
-    irn_rpc::{
+    std::{
+        collections::HashSet,
+        future::Future,
+        pin::pin,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
+    wcn_rpc::{
         identity::{ed25519::Keypair as Ed25519Keypair, Keypair},
         middleware::Timeouts,
         server::{
@@ -11,13 +18,6 @@ use {
         transport::{BiDirectionalStream, NoHandshake, RecvStream, SendStream},
         Multiaddr,
         PeerId,
-    },
-    std::{
-        collections::HashSet,
-        future::Future,
-        pin::pin,
-        sync::{Arc, Mutex},
-        time::Duration,
     },
 };
 
@@ -59,12 +59,12 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
-        let rpc_server_config = irn_rpc::server::Config {
+        let rpc_server_config = wcn_rpc::server::Config {
             name: crate::RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
 
-        let quic_server_config = irn_rpc::quic::server::Config {
+        let quic_server_config = wcn_rpc::quic::server::Config {
             name: const { crate::RPC_SERVER_NAME.as_str() },
             addr: cfg.addr,
             keypair: cfg.keypair.clone(),
@@ -99,7 +99,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with_timeouts(timeouts)
             .metered();
 
-        irn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(ServeError::Quic)
+        wcn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(ServeError::Quic)
     }
 }
 
@@ -176,8 +176,8 @@ impl<S: Server> RpcServer<S> {
 
     async fn handle_cluster_updates(
         &self,
-        mut tx: SendStream<irn_rpc::Result<ClusterUpdate>>,
-    ) -> Result<(), irn_rpc::server::Error> {
+        mut tx: SendStream<wcn_rpc::Result<ClusterUpdate>>,
+    ) -> Result<(), wcn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
         loop {
@@ -187,11 +187,11 @@ impl<S: Server> RpcServer<S> {
                     Some(_) => {
                         let snapshot = self
                             .cluster_snapshot()
-                            .map_err(|err| irn_rpc::transport::Error::Other(err.to_string()))?;
+                            .map_err(|err| wcn_rpc::transport::Error::Other(err.to_string()))?;
 
                         tx.send(Ok(snapshot))
                             .await
-                            .map_err(|err| irn_rpc::transport::Error::IO(err.kind()))?;
+                            .map_err(|err| wcn_rpc::transport::Error::IO(err.kind()))?;
                     }
                     None => return Ok(()),
                 }
@@ -209,8 +209,8 @@ impl<S: Server> RpcServer<S> {
     async fn subscribe(
         &self,
         mut rx: RecvStream<SubscribeRequest>,
-        mut tx: SendStream<irn_rpc::Result<SubscribeResponse>>,
-    ) -> irn_rpc::server::Result<()> {
+        mut tx: SendStream<wcn_rpc::Result<SubscribeResponse>>,
+    ) -> wcn_rpc::server::Result<()> {
         let req = rx.recv_message().await?;
 
         let events = match self.inner.api_server.subscribe(req.channels).await {
@@ -244,7 +244,7 @@ where
     type Handshake = NoHandshake;
     type ConnectionData = Arc<Storage>;
 
-    fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
+    fn config(&self) -> &wcn_rpc::server::Config<Self::Handshake> {
         &self.inner.config
     }
 
@@ -295,7 +295,7 @@ where
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
     #[error("{0:?}")]
-    Quic(irn_rpc::quic::Error),
+    Quic(wcn_rpc::quic::Error),
 
     #[error("Invalid server keypair")]
     Key,
@@ -306,8 +306,8 @@ pub enum ServeError {
 pub struct Error(String);
 
 impl Error {
-    fn into_rpc_error(self) -> irn_rpc::Error {
-        irn_rpc::Error {
+    fn into_rpc_error(self) -> wcn_rpc::Error {
+        wcn_rpc::Error {
             code: "internal".into(),
             description: Some(self.0.into()),
         }

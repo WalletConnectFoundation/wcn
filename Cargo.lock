@@ -3339,280 +3339,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
-name = "irn"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "anyhow",
- "chrono",
- "clap 4.5.4",
- "config",
- "data-encoding",
- "derive_more 1.0.0",
- "ed25519-dalek",
- "eyre",
- "fork",
- "humantime",
- "irn_admin_api",
- "irn_auth",
- "irn_core",
- "irn_node",
- "irn_replication",
- "irn_rpc",
- "metrics-exporter-prometheus",
- "nix",
- "pidlock",
- "rand_chacha 0.3.1",
- "serde",
- "serde_json",
- "tap",
- "thiserror",
- "tokio",
- "tracing",
- "vergen-pretty",
-]
-
-[[package]]
-name = "irn_admin_api"
-version = "0.1.0"
-dependencies = [
- "futures",
- "irn_rpc",
- "postcard",
- "serde",
- "snap",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "irn_auth"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "data-encoding",
- "derive_more 1.0.0",
- "ed25519-dalek",
- "irn_rpc",
- "rand 0.8.5",
- "ring 0.17.8",
- "serde",
- "serde-big-array",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "irn_client_api"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "futures-util",
- "irn_auth",
- "irn_domain",
- "irn_rpc",
- "postcard",
- "rand 0.8.5",
- "serde",
- "thiserror",
- "tokio",
- "tracing",
- "wc",
-]
-
-[[package]]
-name = "irn_core"
-version = "0.1.0"
-dependencies = [
- "alloc_counter",
- "anyhow",
- "arc-swap",
- "async-trait",
- "backoff",
- "better-panic",
- "bitflags 2.6.0",
- "bytes",
- "chrono",
- "criterion",
- "dashmap",
- "derivative",
- "derive_more 1.0.0",
- "difference",
- "env_logger 0.10.2",
- "fnv",
- "futures",
- "futures-util",
- "hex",
- "itertools 0.12.1",
- "libp2p",
- "metrics",
- "num-traits",
- "once_cell",
- "pin-project",
- "rand 0.7.3",
- "rstest",
- "serde",
- "serde_json",
- "sharding",
- "smallvec",
- "structopt",
- "tap",
- "test-log",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tui",
- "wc",
- "xxhash-rust",
-]
-
-[[package]]
-name = "irn_domain"
-version = "0.1.0"
-dependencies = [
- "irn_core",
- "irn_rpc",
- "serde",
- "sharding",
- "thiserror",
- "xxhash-rust",
-]
-
-[[package]]
-name = "irn_node"
-version = "0.0.0"
-dependencies = [
- "alloy",
- "anyerror",
- "anyhow",
- "async-trait",
- "atty",
- "axum",
- "backoff",
- "base64 0.20.0",
- "chrono",
- "clap 4.5.4",
- "derivative",
- "derive_more 1.0.0",
- "env_logger 0.10.2",
- "envy",
- "futures",
- "hyper 0.14.28",
- "if-addrs",
- "irn_admin_api",
- "irn_auth",
- "irn_client_api",
- "irn_core",
- "irn_domain",
- "irn_replication",
- "irn_rpc",
- "irn_storage_api",
- "itertools 0.11.0",
- "libp2p",
- "metrics",
- "metrics-exporter-prometheus",
- "nix",
- "once_cell",
- "parking_lot",
- "pin-project",
- "postcard",
- "proc-mounts",
- "raft",
- "rand 0.8.5",
- "relay_rocks",
- "reqwest",
- "rmp-serde",
- "rstest",
- "serde",
- "serde_json",
- "sharding",
- "smallvec",
- "sysinfo",
- "tap",
- "tempfile",
- "test-log",
- "thiserror",
- "time",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "vergen",
- "vergen-pretty",
- "wc",
- "xxhash-rust",
-]
-
-[[package]]
-name = "irn_replication"
-version = "0.1.0"
-dependencies = [
- "derive_more 1.0.0",
- "futures",
- "irn_client_api",
- "irn_core",
- "irn_domain",
- "irn_storage_api",
- "smallvec",
- "tap",
- "thiserror",
- "tokio",
- "tracing",
- "wc",
-]
-
-[[package]]
-name = "irn_rpc"
-version = "0.1.0"
-dependencies = [
- "backoff",
- "derivative",
- "derive_more 1.0.0",
- "futures",
- "indexmap",
- "libp2p",
- "libp2p-tls",
- "metrics",
- "pin-project",
- "quinn",
- "quinn-proto",
- "rand 0.8.5",
- "serde",
- "socket2",
- "tap",
- "thiserror",
- "tokio",
- "tokio-serde",
- "tokio-serde-postcard",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "wc",
-]
-
-[[package]]
-name = "irn_storage_api"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "futures",
- "irn_auth",
- "irn_rpc",
- "serde",
- "thiserror",
- "time",
- "tracing",
- "wc",
-]
-
-[[package]]
 name = "is-terminal"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4989,7 +4715,6 @@ dependencies = [
  "async-trait",
  "derive_more 1.0.0",
  "futures",
- "irn_core",
  "openraft",
  "postcard",
  "serde",
@@ -4998,6 +4723,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
+ "wcn_core",
 ]
 
 [[package]]
@@ -6867,6 +6593,280 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "smallvec",
+]
+
+[[package]]
+name = "wcn"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "chrono",
+ "clap 4.5.4",
+ "config",
+ "data-encoding",
+ "derive_more 1.0.0",
+ "ed25519-dalek",
+ "eyre",
+ "fork",
+ "humantime",
+ "metrics-exporter-prometheus",
+ "nix",
+ "pidlock",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "vergen-pretty",
+ "wcn_admin_api",
+ "wcn_auth",
+ "wcn_core",
+ "wcn_node",
+ "wcn_replication",
+ "wcn_rpc",
+]
+
+[[package]]
+name = "wcn_admin_api"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "postcard",
+ "serde",
+ "snap",
+ "thiserror",
+ "tracing",
+ "wcn_rpc",
+]
+
+[[package]]
+name = "wcn_auth"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "derive_more 1.0.0",
+ "ed25519-dalek",
+ "rand 0.8.5",
+ "ring 0.17.8",
+ "serde",
+ "serde-big-array",
+ "serde_json",
+ "thiserror",
+ "wcn_rpc",
+]
+
+[[package]]
+name = "wcn_client_api"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "futures-util",
+ "postcard",
+ "rand 0.8.5",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wc",
+ "wcn_auth",
+ "wcn_domain",
+ "wcn_rpc",
+]
+
+[[package]]
+name = "wcn_core"
+version = "0.1.0"
+dependencies = [
+ "alloc_counter",
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "backoff",
+ "better-panic",
+ "bitflags 2.6.0",
+ "bytes",
+ "chrono",
+ "criterion",
+ "dashmap",
+ "derivative",
+ "derive_more 1.0.0",
+ "difference",
+ "env_logger 0.10.2",
+ "fnv",
+ "futures",
+ "futures-util",
+ "hex",
+ "itertools 0.12.1",
+ "libp2p",
+ "metrics",
+ "num-traits",
+ "once_cell",
+ "pin-project",
+ "rand 0.7.3",
+ "rstest",
+ "serde",
+ "serde_json",
+ "sharding",
+ "smallvec",
+ "structopt",
+ "tap",
+ "test-log",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tui",
+ "wc",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "wcn_domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sharding",
+ "thiserror",
+ "wcn_core",
+ "wcn_rpc",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "wcn_node"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "anyerror",
+ "anyhow",
+ "async-trait",
+ "atty",
+ "axum",
+ "backoff",
+ "base64 0.20.0",
+ "chrono",
+ "clap 4.5.4",
+ "derivative",
+ "derive_more 1.0.0",
+ "env_logger 0.10.2",
+ "envy",
+ "futures",
+ "hyper 0.14.28",
+ "if-addrs",
+ "itertools 0.11.0",
+ "libp2p",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "nix",
+ "once_cell",
+ "parking_lot",
+ "pin-project",
+ "postcard",
+ "proc-mounts",
+ "raft",
+ "rand 0.8.5",
+ "relay_rocks",
+ "reqwest",
+ "rmp-serde",
+ "rstest",
+ "serde",
+ "serde_json",
+ "sharding",
+ "smallvec",
+ "sysinfo",
+ "tap",
+ "tempfile",
+ "test-log",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "vergen",
+ "vergen-pretty",
+ "wc",
+ "wcn_admin_api",
+ "wcn_auth",
+ "wcn_client_api",
+ "wcn_core",
+ "wcn_domain",
+ "wcn_replication",
+ "wcn_rpc",
+ "wcn_storage_api",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "wcn_replication"
+version = "0.1.0"
+dependencies = [
+ "derive_more 1.0.0",
+ "futures",
+ "smallvec",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wc",
+ "wcn_client_api",
+ "wcn_core",
+ "wcn_domain",
+ "wcn_storage_api",
+]
+
+[[package]]
+name = "wcn_rpc"
+version = "0.1.0"
+dependencies = [
+ "backoff",
+ "derivative",
+ "derive_more 1.0.0",
+ "futures",
+ "indexmap",
+ "libp2p",
+ "libp2p-tls",
+ "metrics",
+ "pin-project",
+ "quinn",
+ "quinn-proto",
+ "rand 0.8.5",
+ "serde",
+ "socket2",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tokio-serde",
+ "tokio-serde-postcard",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "wc",
+]
+
+[[package]]
+name = "wcn_storage_api"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "futures",
+ "serde",
+ "thiserror",
+ "time",
+ "tracing",
+ "wc",
+ "wcn_auth",
+ "wcn_rpc",
 ]
 
 [[package]]

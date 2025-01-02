@@ -1,4 +1,4 @@
-use {anyhow::Context, irn_rpc::identity::Keypair, rand_chacha::rand_core::SeedableRng as _};
+use {anyhow::Context, rand_chacha::rand_core::SeedableRng as _, wcn_rpc::identity::Keypair};
 
 #[derive(Debug, clap::Args)]
 pub struct KeyCmd {
@@ -102,14 +102,14 @@ fn validate(args: ValidateCmd) -> anyhow::Result<()> {
     let data = args.key.as_bytes();
 
     let private_key = if args.secret {
-        irn_auth::client_key_from_secret(data).context("Failed to expand secret into key")?
+        wcn_auth::client_key_from_secret(data).context("Failed to expand secret into key")?
     } else {
-        irn_auth::client_key_from_bytes(data, irn_auth::Encoding::Base64)
+        wcn_auth::client_key_from_bytes(data, wcn_auth::Encoding::Base64)
             .context("Failed to decode key")?
     };
 
     let public_key = private_key.verifying_key();
-    let peer_id = irn_auth::peer_id(&public_key);
+    let peer_id = wcn_auth::peer_id(&public_key);
 
     println!(
         "Public key: {}",

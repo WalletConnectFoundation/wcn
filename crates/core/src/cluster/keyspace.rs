@@ -1,4 +1,4 @@
-//! Keyspace functionality required by an IRN cluster.
+//! Keyspace functionality required by an WCN cluster.
 
 use {
     super::{node, Node, Nodes},

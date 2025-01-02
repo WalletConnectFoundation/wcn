@@ -5,9 +5,6 @@ use {
         FutureExt,
         StreamExt as _,
     },
-    irn::fsm::ShutdownReason,
-    irn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
-    irn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr},
     itertools::Itertools,
     libp2p::{Multiaddr, PeerId},
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
@@ -23,10 +20,13 @@ use {
     tap::Pipe,
     tokio::sync::oneshot,
     tracing_subscriber::EnvFilter,
+    wcn::fsm::ShutdownReason,
+    wcn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
+    wcn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr},
 };
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
-const NETWORK_ID: &str = "irn_integration_tests";
+const NETWORK_ID: &str = "wcn_integration_tests";
 
 fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::Relaxed)
@@ -356,7 +356,7 @@ impl TestCluster {
         let tasks = FuturesUnordered::new();
 
         // Publish a message to each channel.
-        // Subscribers need to be polled in order to connect to the IRN backend, so we
+        // Subscribers need to be polled in order to connect to the WCN backend, so we
         // wait a bit before publishing.
         tasks.push(
             async {
@@ -850,7 +850,7 @@ fn new_node_config() -> Config {
 
     let keypair = Keypair::generate_ed25519();
     let id = PeerId::from_public_key(&keypair.public());
-    let dir: PathBuf = format!("/tmp/irn/test-node/{}", id).parse().unwrap();
+    let dir: PathBuf = format!("/tmp/wcn/test-node/{}", id).parse().unwrap();
 
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let region = match n % 3 {
@@ -932,9 +932,9 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
             .build()
             .unwrap()
             .block_on(async move {
-                irn_node::run(rx, prometheus, &config)
+                wcn_node::run(rx, prometheus, &config)
                     .await
-                    .map_err(|err| tracing::error!(?err, "irn_node::run() failed"))
+                    .map_err(|err| tracing::error!(?err, "wcn_node::run() failed"))
                     .unwrap()
                     .await;
 

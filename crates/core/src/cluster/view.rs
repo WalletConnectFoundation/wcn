@@ -1,4 +1,4 @@
-//! Viewable IRN cluster state.
+//! Viewable WCN cluster state.
 
 use {
     super::{Cluster, Node},

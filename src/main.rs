@@ -1,3 +1,3 @@
 fn main() -> anyhow::Result<()> {
-    irn_node::exec()
+    wcn_node::exec()
 }

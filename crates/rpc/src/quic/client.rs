@@ -191,7 +191,7 @@ fn new_connection<H: Handshake>(
 
     backoff::future::retry_notify(backoff, connect, |err: String, _| {
         tracing::debug!(?err, "failed to connect");
-        metrics::counter!("irn_network_connection_failures").increment(1);
+        metrics::counter!("wcn_network_connection_failures").increment(1);
     })
     .map(move |res| {
         tracing::info!(%addr, "connection established");
@@ -288,7 +288,7 @@ impl<H: Handshake> ConnectionHandler<H> {
             .filter(|conn| conn.stable_id() == prev_connection_id)
             .is_some()
         {
-            metrics::counter!("irn_network_reconnects").increment(1);
+            metrics::counter!("wcn_network_reconnects").increment(1);
             this.connection = new_connection(
                 this.addr,
                 this.server_name,

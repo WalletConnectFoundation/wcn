@@ -1,4 +1,4 @@
-//! Machinery responsible for managing the state of the IRN cluster.
+//! Machinery responsible for managing the state of the WCN cluster.
 
 pub use {
     consensus::Consensus,

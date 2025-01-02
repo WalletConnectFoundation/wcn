@@ -1,5 +1,5 @@
 {
-  description = "IRN dev environment";
+  description = "WCN dev environment";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";

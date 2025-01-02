@@ -54,45 +54,6 @@ clean-tmp:
   @echo '==> Cleaning /tmp/wcn'
   rm -rf /tmp/wcn
 
-# Build WCN docker image
-build-docker:
-  @echo '=> Build WCN docker image'
-  docker compose -f ./docker-compose.yml build
-
-# Start WCN sandbox cluster on docker
-run-docker:
-  @echo '==> Start WCN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml up -d
-
-# Stop WCN sandbox cluster on docker
-stop-docker:
-  @echo '==> Stop WCN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml down
-
-
-run-docker-all:
-  @echo '==> Start WCN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml --profile oracle up -d
-  @sleep 2
-  @sh ./infra/load_anvil_state.sh
-
-
-stop-docker-all:
-  @echo '==> Stop WCN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml --profile oracle down
-
-
-# Clean up docker WCN sandbox cluster
-clean-docker:
-  @echo '==> Clean WCN sandbox cluster on docker'
-  docker compose  -f ./docker-compose.yml stop
-  docker compose -f ./docker-compose.yml rm -f
-
-# List services running on docker
-ps-docker:
-  @echo '==> List services on docker'
-  docker compose -f ./docker-compose.yml ps
-
 # Bumps the binary version to the given version
 bump-version to: (_bump-cargo-version to wcn-binary-crate + "/Cargo.toml")
 

@@ -1,8 +1,8 @@
 use {
     anyhow::Context as _,
     futures::Future,
-    irn::fsm::ShutdownReason,
     tokio::signal::unix::{self, Signal, SignalKind},
+    wcn::fsm::ShutdownReason,
 };
 
 pub fn shutdown_listener() -> anyhow::Result<impl Future<Output = ShutdownReason>> {

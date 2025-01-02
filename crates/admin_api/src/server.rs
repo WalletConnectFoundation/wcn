@@ -1,7 +1,8 @@
 use {
     super::*,
     futures::FutureExt as _,
-    irn_rpc::{
+    std::{collections::HashSet, future::Future, time::Duration},
+    wcn_rpc::{
         identity::Keypair,
         middleware::Timeouts,
         server::{
@@ -10,7 +11,6 @@ use {
         },
         transport::{BiDirectionalStream, NoHandshake},
     },
-    std::{collections::HashSet, future::Future, time::Duration},
 };
 
 /// [`Server`] config.
@@ -57,12 +57,12 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with::<{ GetMemoryProfile::ID }>(MEMORY_PROFILE_MAX_DURATION)
             .with_default(cfg.operation_timeout);
 
-        let rpc_server_config = irn_rpc::server::Config {
+        let rpc_server_config = wcn_rpc::server::Config {
             name: crate::RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
 
-        let quic_server_config = irn_rpc::quic::server::Config {
+        let quic_server_config = wcn_rpc::quic::server::Config {
             name: const { crate::RPC_SERVER_NAME.as_str() },
             addr: cfg.addr,
             keypair: cfg.keypair,
@@ -78,7 +78,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         .with_timeouts(timeouts)
         .metered();
 
-        irn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(Error)
+        wcn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(Error)
     }
 }
 
@@ -143,4 +143,4 @@ where
 
 #[derive(Debug, thiserror::Error)]
 #[error("{_0:?}")]
-pub struct Error(irn_rpc::quic::Error);
+pub struct Error(wcn_rpc::quic::Error);

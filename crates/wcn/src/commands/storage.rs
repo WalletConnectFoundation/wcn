@@ -1,8 +1,8 @@
 use {
-    irn::Keypair,
-    irn_replication::storage,
-    irn_rpc::quic,
     std::{net::SocketAddr, str::FromStr, time::Duration},
+    wcn::Keypair,
+    wcn_replication::storage,
+    wcn_rpc::quic,
 };
 
 const MIN_TTL: Duration = Duration::from_secs(30);
@@ -23,7 +23,7 @@ enum Error {
     Decoding(&'static str),
 
     #[error("Failed to execute storage request: {0}")]
-    Client(#[from] irn_replication::Error),
+    Client(#[from] wcn_replication::Error),
 
     #[error("Failed to write data to stdout")]
     Io(#[from] std::io::Error),
@@ -44,28 +44,28 @@ pub struct StorageCmd {
     #[command(subcommand)]
     commands: StorageSub,
 
-    #[clap(short, long, env = "IRN_STORAGE_ADDRESS")]
-    /// IRN node address to connect.
+    #[clap(short, long, env = "WCN_STORAGE_ADDRESS")]
+    /// WCN node address to connect.
     ///
     /// The address is specified in format `{IP_ADDR}`.
     address: SocketAddr,
 
-    #[clap(long, env = "IRN_STORAGE_PRIVATE_KEY")]
+    #[clap(long, env = "WCN_STORAGE_PRIVATE_KEY")]
     /// Client private key used for authorization.
     private_key: Keypair,
 
-    #[clap(long, env = "IRN_STORAGE_NAMESPACE_SECRET")]
+    #[clap(long, env = "WCN_STORAGE_NAMESPACE_SECRET")]
     /// Secret key to initialize namespaces.
     ///
     /// Single secret key can be used for multiple namespaces, while specific
     /// namespace is set with the `namespace` parameter.
     namespace_secret: Option<String>,
 
-    #[clap(long, env = "IRN_STORAGE_NAMESPACE", requires("namespace_secret"))]
+    #[clap(long, env = "WCN_STORAGE_NAMESPACE", requires("namespace_secret"))]
     /// Namespace to store and retrieve data from.
     namespace: Option<String>,
 
-    #[clap(short, long, env = "IRN_STORAGE_ENCODING", value_enum, default_value_t = Encoding::Text)]
+    #[clap(short, long, env = "WCN_STORAGE_ENCODING", value_enum, default_value_t = Encoding::Text)]
     /// Encoding to use when parsing input parameters (`key`, `field`, `value`)
     /// and the output data.
     ///
@@ -171,8 +171,8 @@ struct HValsCmd {
 }
 
 struct Storage {
-    namespace: Option<irn_auth::PublicKey>,
-    driver: irn_replication::Driver,
+    namespace: Option<wcn_auth::PublicKey>,
+    driver: wcn_replication::Driver,
     encoding: Encoding,
 }
 
@@ -292,7 +292,7 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     let namespaces = initialize_namespaces(&cmd)?;
     let namespace = namespaces.first().map(|ns| ns.public_key());
 
-    let client = irn_replication::Driver::new(irn_replication::Config {
+    let client = wcn_replication::Driver::new(wcn_replication::Config {
         keypair: cmd.private_key.0,
         connection_timeout: Duration::from_secs(1),
         operation_timeout: Duration::from_millis(2500),
@@ -320,12 +320,12 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn initialize_namespaces(cmd: &StorageCmd) -> Result<Vec<irn_auth::Auth>, Error> {
+fn initialize_namespaces(cmd: &StorageCmd) -> Result<Vec<wcn_auth::Auth>, Error> {
     let mut result = Vec::new();
 
     if let (Some(ns), Some(ns_secret)) = (cmd.namespace.as_deref(), cmd.namespace_secret.as_deref())
     {
-        let auth = irn_auth::Auth::from_secret(ns_secret.as_bytes(), ns.as_bytes())
+        let auth = wcn_auth::Auth::from_secret(ns_secret.as_bytes(), ns.as_bytes())
             .map_err(|_| Error::Namespace)?;
 
         result.push(auth);

@@ -2,7 +2,9 @@ use {
     super::*,
     arc_swap::ArcSwap,
     futures_util::{SinkExt as _, Stream, StreamExt},
-    irn_rpc::{
+    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
+    tokio::sync::oneshot,
+    wcn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
@@ -11,8 +13,6 @@ use {
         transport::NoHandshake,
         Multiaddr,
     },
-    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
-    tokio::sync::oneshot,
 };
 
 const DEFAULT_AUTH_TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
@@ -83,7 +83,7 @@ impl Config {
 }
 
 struct Inner {
-    rpc_client: WithTimeouts<irn_rpc::quic::Client>,
+    rpc_client: WithTimeouts<wcn_rpc::quic::Client>,
     namespaces: Vec<auth::Auth>,
     auth_ttl: Duration,
     auth_token: Arc<ArcSwap<token::Token>>,
@@ -171,7 +171,7 @@ async fn cluster_update(inner: &Inner) {
             Err(err) => {
                 tracing::error!(?err, "failed to subscribe to any peer");
 
-                wc::metrics::counter!("irn_client_api_cluster_connection_failed").increment(1);
+                wc::metrics::counter!("wcn_client_api_cluster_connection_failed").increment(1);
 
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
@@ -185,7 +185,7 @@ async fn cluster_update(inner: &Inner) {
                         tracing::warn!(?err, "failed to apply cluster update");
                     }
 
-                    wc::metrics::counter!("irn_client_api_cluster_updates").increment(1);
+                    wc::metrics::counter!("wcn_client_api_cluster_updates").increment(1);
                 }
 
                 res @ (Ok(Err(_)) | Err(_)) => {
@@ -194,7 +194,7 @@ async fn cluster_update(inner: &Inner) {
                         "failed to receive cluster update frame, resubscribing..."
                     );
 
-                    wc::metrics::counter!("irn_client_api_cluster_updates_failed").increment(1);
+                    wc::metrics::counter!("wcn_client_api_cluster_updates_failed").increment(1);
 
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     break;
@@ -221,11 +221,11 @@ async fn auth_token_update(inner: &Inner) {
         if let Err(err) = inner.refresh_auth_token().await {
             tracing::warn!(?err, "failed to refresh auth token");
 
-            wc::metrics::counter!("irn_client_api_token_updates_failed").increment(1);
+            wc::metrics::counter!("wcn_client_api_token_updates_failed").increment(1);
 
             next_delay = Duration::from_secs(1);
         } else {
-            wc::metrics::counter!("irn_client_api_token_updates").increment(1);
+            wc::metrics::counter!("wcn_client_api_token_updates").increment(1);
 
             next_delay = normal_delay;
         }
@@ -248,7 +248,7 @@ impl Client {
 
         let nodes = config.nodes.iter().cloned().collect();
 
-        let rpc_client_config = irn_rpc::client::Config {
+        let rpc_client_config = wcn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: config.nodes,
             handshake: NoHandshake,
@@ -261,7 +261,7 @@ impl Client {
             .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
-        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
+        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| Error::Other(err.to_string()))?
             .with_timeouts(timeouts);
 
@@ -392,15 +392,15 @@ pub enum Error<A = Infallible> {
     Other(String),
 }
 
-impl<A> From<irn_rpc::client::Error> for Error<A> {
-    fn from(err: irn_rpc::client::Error) -> Self {
+impl<A> From<wcn_rpc::client::Error> for Error<A> {
+    fn from(err: wcn_rpc::client::Error) -> Self {
         let rpc_err = match err {
-            irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
-            irn_rpc::client::Error::Rpc { error, .. } => error,
+            wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
+            wcn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {
-            irn_rpc::error_code::TIMEOUT => Self::Timeout,
+            wcn_rpc::error_code::TIMEOUT => Self::Timeout,
             _ => Self::Other(format!("{rpc_err:?}")),
         }
     }

@@ -1,7 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
     domain::NodeRegion,
-    irn_rpc::{identity::Keypair, Multiaddr},
     libp2p::PeerId,
     serde::{de::Error, Deserialize, Deserializer},
     std::{
@@ -12,6 +11,7 @@ use {
         str::FromStr,
     },
     tap::TapOptional,
+    wcn_rpc::{identity::Keypair, Multiaddr},
 };
 
 /// Local [`Node`] config.
@@ -118,7 +118,7 @@ pub struct Config {
     /// Organization that operates this node.
     pub organization: String,
 
-    /// Network ID. E.g. `irn_mainnet` or `irn_testnet`.
+    /// Network ID. E.g. `wcn_mainnet` or `wcn_testnet`.
     pub network_id: String,
 }
 

@@ -2,7 +2,6 @@ pub use relay_rocks::StorageError as Error;
 use {
     crate::Config,
     futures::{future, stream::BoxStream, Stream, StreamExt, TryFutureExt as _},
-    irn::migration::{self, AnyError},
     raft::Infallible,
     relay_rocks::{
         db::{cf::DbColumn, migration::ExportItem, schema},
@@ -16,6 +15,7 @@ use {
         future::Future,
         ops::RangeInclusive,
     },
+    wcn::migration::{self, AnyError},
 };
 
 /// [`Storage`] backend.
@@ -91,7 +91,7 @@ fn map_err(err: relay_rocks::Error) -> StorageError {
         Error::InvalidColumnFamily | Error::WorkerChannelClosed | Error::WorkerQueueOverrun => {
             StorageError::DbEngine(err.to_string())
         }
-        Error::Backend { kind, message } => StorageError::IrnBackend { kind, message },
+        Error::Backend { kind, message } => StorageError::WcnBackend { kind, message },
         Error::Other(message) => StorageError::DbEngine(message),
     }
 }

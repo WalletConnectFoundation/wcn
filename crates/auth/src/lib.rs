@@ -1,10 +1,6 @@
 pub use token::Token;
 use {
     derive_more::AsRef,
-    irn_rpc::{
-        identity::{self, ed25519},
-        PeerId,
-    },
     ring::{
         aead,
         hkdf,
@@ -12,6 +8,10 @@ use {
     },
     serde::{Deserialize, Serialize},
     std::sync::Arc,
+    wcn_rpc::{
+        identity::{self, ed25519},
+        PeerId,
+    },
 };
 
 pub mod token;

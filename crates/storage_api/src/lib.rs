@@ -2,13 +2,13 @@
 
 pub use {
     auth,
-    irn_rpc::{identity, Multiaddr, PeerId},
+    wcn_rpc::{identity, Multiaddr, PeerId},
 };
 use {
-    irn_rpc::{self as rpc, transport},
     serde::{Deserialize, Serialize},
     std::{io, time::Duration},
     time::OffsetDateTime as DateTime,
+    wcn_rpc::{self as rpc, transport},
 };
 
 #[cfg(feature = "client")]

@@ -1,7 +1,7 @@
-# IRN Justfile
-irn-binary-crate            := "."
+# WCN Justfile
+wcn-binary-crate            := "."
 
-export IRN_JUST_ROOT        := justfile_directory()
+export WCN_JUST_ROOT        := justfile_directory()
 
 # Default to listing recipes
 _default:
@@ -51,11 +51,11 @@ clean:
 
 # Clean /tmp test folder
 clean-tmp:
-  @echo '==> Cleaning /tmp/irn'
-  rm -rf /tmp/irn
+  @echo '==> Cleaning /tmp/wcn'
+  rm -rf /tmp/wcn
 
 # Bumps the binary version to the given version
-bump-version to: (_bump-cargo-version to irn-binary-crate + "/Cargo.toml")
+bump-version to: (_bump-cargo-version to wcn-binary-crate + "/Cargo.toml")
 
 # Lint the project for any quality issues
 lint: check fmt clippy commit-check clean-tmp
@@ -106,13 +106,13 @@ update-docs: (_regenerate-metrics "docs/Metrics.md")
 
 # Build project documentation
 _build-docs $open="" $nodeps="":
-  @echo "==> Building project documentation @$IRN_JUST_ROOT/target/doc"
+  @echo "==> Building project documentation @$WCN_JUST_ROOT/target/doc"
   @cargo doc --all-features --document-private-items ${nodeps:+--no-deps} ${open:+--open}
 
 # Update the metrics documentation with current metrics
 _regenerate-metrics file temp=`mktemp`: build
   @echo '==> Regenerating metrics to @{{file}}'
-  @cd scripts && ./metrics-apply.awk <(./metrics-fetch.sh | ./metrics-doc.pl | ./metrics-format.pl) < $IRN_JUST_ROOT/{{file}} > {{temp}}
+  @cd scripts && ./metrics-apply.awk <(./metrics-fetch.sh | ./metrics-doc.pl | ./metrics-format.pl) < $WCN_JUST_ROOT/{{file}} > {{temp}}
   @mv -f {{temp}} {{file}}
 
 # Bump the version field of a given Cargo.toml file

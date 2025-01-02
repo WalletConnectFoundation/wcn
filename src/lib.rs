@@ -3,8 +3,6 @@
 use {
     anyhow::Context,
     futures::{future::FusedFuture, FutureExt},
-    irn::fsm,
-    irn_rpc::quic::{self, socketaddr_to_multiaddr},
     metrics_exporter_prometheus::{
         BuildError as PrometheusBuildError,
         PrometheusBuilder,
@@ -13,6 +11,8 @@ use {
     serde::{Deserialize, Serialize},
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
     tap::Pipe,
+    wcn::fsm,
+    wcn_rpc::quic::{self, socketaddr_to_multiaddr},
 };
 pub use {
     cluster::Cluster,
@@ -36,7 +36,7 @@ pub mod storage;
 /// For "performance" tracking purposes only.
 const NODE_VERSION: u64 = 0;
 
-pub type Node = irn::Node<Consensus, Network, Storage>;
+pub type Node = wcn::Node<Consensus, Network, Storage>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -136,7 +136,7 @@ pub async fn run(
         .await
         .map_err(Error::Consensus)?;
 
-    let node_opts = irn::NodeOpts {
+    let node_opts = wcn::NodeOpts {
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),
         replication_concurrency_limit: cfg.request_concurrency_limit,
         replication_request_queue: cfg.request_limiter_queue,
@@ -144,12 +144,12 @@ pub async fn run(
         authorization: cfg
             .authorized_clients
             .as_ref()
-            .map(|ids| irn::AuthorizationOpts {
+            .map(|ids| wcn::AuthorizationOpts {
                 allowed_coordinator_clients: ids.clone(),
             }),
     };
 
-    let node = irn::Node::new(
+    let node = wcn::Node::new(
         cluster::Node {
             id: cfg.id,
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),

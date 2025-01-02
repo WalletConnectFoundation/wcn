@@ -8,7 +8,7 @@ bootstrap_nodes = []
 # region = "eu"
 # organization = "WalletConnect"
 # eth_address = "0xeD380b8da6012c20856CEc076C348AC44fA50f63"
-# network_id = "irn_mainnet"
+# network_id = "wcn_mainnet"
 
 [server]
 bind_address = ""

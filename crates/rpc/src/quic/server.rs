@@ -120,7 +120,7 @@ where
 
     fn accept_connection(&self, connecting: quinn::Connecting) {
         let Ok(conn_permit) = self.connection_permits.clone().try_acquire_owned() else {
-            metrics::counter!("irn_rpc_quic_server_connections_dropped").increment(1);
+            metrics::counter!("wcn_rpc_quic_server_connections_dropped").increment(1);
             return;
         };
 
@@ -143,7 +143,7 @@ where
             this.route_connection(header.server_name, conn).await
         }
         .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
-        .with_metrics(future_metrics!("irn_rpc_quic_server_inbound_connection"))
+        .with_metrics(future_metrics!("wcn_rpc_quic_server_inbound_connection"))
         .pipe(tokio::spawn);
     }
 
@@ -174,7 +174,7 @@ where
                 .with_timeout(Duration::from_millis(1000))
                 .await
                 .map_err(|_| {
-                    metrics::counter!("irn_rpc_quic_server_handshake_timeout", StringLabel<"server_name"> => server_name)
+                    metrics::counter!("wcn_rpc_quic_server_handshake_timeout", StringLabel<"server_name"> => server_name)
                         .increment(1);
 
                     Error::Timeout
@@ -212,13 +212,13 @@ where
                 let stream = BiDirectionalStream::new(tx, rx);
                 rpc_server.handle_rpc(rpc_id, stream, &conn_info).await
             }
-            .with_metrics(future_metrics!("irn_rpc_quic_server_inbound_stream"))
+            .with_metrics(future_metrics!("wcn_rpc_quic_server_inbound_stream"))
             .pipe(tokio::spawn);
         }
     }
 
     fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
-        metrics::gauge!("irn_rpc_quic_server_available_stream_permits", StringLabel<"server_name"> => self.name)
+        metrics::gauge!("wcn_rpc_quic_server_available_stream_permits", StringLabel<"server_name"> => self.name)
             .set(self.stream_permits.available_permits() as f64);
 
         self.stream_permits
@@ -226,7 +226,7 @@ where
             .try_acquire_owned()
             .ok()
             .tap_none(|| {
-                metrics::counter!("irn_rpc_quic_server_throttled_streams", StringLabel<"server_name"> => self.name)
+                metrics::counter!("wcn_rpc_quic_server_throttled_streams", StringLabel<"server_name"> => self.name)
                     .increment(1);
             })
     }

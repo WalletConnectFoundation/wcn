@@ -59,7 +59,7 @@ pub enum StorageError {
     #[error("Entry not found")]
     EntryNotFound,
 
-    /// Data encryption error from using private namespaces of the IRN.
+    /// Data encryption error from using private namespaces of the WCN.
     #[error("Data encryption failed: {0}")]
     Encryption(String),
 
@@ -95,10 +95,10 @@ pub enum StorageError {
     #[error("Other error: {0}")]
     Other(String),
 
-    /// Temporary, separate error type to represent IRN storage backend specific
+    /// Temporary, separate error type to represent WCN storage backend specific
     /// errors (rocksdb). This is required to collect metrics per error kind in
     /// data shadowing. Once the shadowing is no longer needed, this error will
     /// likely be removed or redesigned.
-    #[error("IRN storage backend error: {message}")]
-    IrnBackend { kind: String, message: String },
+    #[error("WCN storage backend error: {message}")]
+    WcnBackend { kind: String, message: String },
 }

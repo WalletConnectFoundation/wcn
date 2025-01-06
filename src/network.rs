@@ -910,7 +910,7 @@ impl admin_api::Server for AdminApiServer {
             {
                 use {
                     admin_api::{snap, MemoryProfile},
-                    io::Write,
+                    std::io::Write,
                 };
 
                 if duration.is_zero() || duration > admin_api::MEMORY_PROFILE_MAX_DURATION {

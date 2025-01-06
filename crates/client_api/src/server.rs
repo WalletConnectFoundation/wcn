@@ -39,6 +39,10 @@ pub struct Config {
     pub network_id: String,
 
     pub cluster_view: domain::ClusterView,
+
+    pub max_concurrent_connections: u32,
+
+    pub max_concurrent_streams: u32,
 }
 
 /// API server.
@@ -68,9 +72,8 @@ pub trait Server: Clone + Send + Sync + 'static {
             name: const { crate::RPC_SERVER_NAME.as_str() },
             addr: cfg.addr,
             keypair: cfg.keypair.clone(),
-            // TODO: Make these configurable or find good defaults.
-            max_concurrent_connections: 500,
-            max_concurrent_streams: 100,
+            max_concurrent_connections: cfg.max_concurrent_connections,
+            max_concurrent_streams: cfg.max_concurrent_streams,
         };
 
         let inner = Arc::new(Inner {

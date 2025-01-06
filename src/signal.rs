@@ -38,5 +38,5 @@ pub fn decommission(pid: i32) -> anyhow::Result<()> {
 }
 
 fn listener(kind: SignalKind) -> anyhow::Result<Signal> {
-    unix::signal(kind).context("Failed to initialize {kind:?} listener")
+    unix::signal(kind).context("Failed to initialize listener")
 }

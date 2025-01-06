@@ -13,6 +13,7 @@ use {
         },
         transport::{BiDirectionalStream, JsonCodec, NoHandshake},
         PeerId,
+        Rpc as _,
     },
 };
 

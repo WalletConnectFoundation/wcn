@@ -4,7 +4,7 @@ use {
         self as rpc,
         quic,
         server::ConnectionInfo,
-        transport::{BiDirectionalStream, Handshake, PendingConnection, PostcardCodec},
+        transport::{BiDirectionalStream, Handshake, PendingConnection},
         ServerName,
     },
     derive_more::derive::Deref,

@@ -16,7 +16,7 @@ use {
         VoteRequest,
         VoteResult,
     },
-    wcn_rpc as rpc,
+    wcn_rpc::{self as rpc, transport::JsonCodec},
 };
 
 #[cfg(feature = "client")]
@@ -30,21 +30,20 @@ pub use server::Server;
 
 const RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("raftApi");
 
-type AddMember<C> = rpc::Unary<{ rpc::id(b"addMember") }, AddMemberRequest<C>, AddMemberResult<C>>;
+type Rpc<const ID: rpc::Id, Req, Resp> = rpc::Unary<ID, Req, Resp, JsonCodec>;
+
+type AddMember<C> = Rpc<{ rpc::id(b"addMember") }, AddMemberRequest<C>, AddMemberResult<C>>;
 
 type RemoveMember<C> =
-    rpc::Unary<{ rpc::id(b"removeMember") }, RemoveMemberRequest<C>, RemoveMemberResult<C>>;
+    Rpc<{ rpc::id(b"removeMember") }, RemoveMemberRequest<C>, RemoveMemberResult<C>>;
 
 type ProposeChange<C> =
-    rpc::Unary<{ rpc::id(b"proposeChange") }, ProposeChangeRequest<C>, ProposeChangeResult<C>>;
+    Rpc<{ rpc::id(b"proposeChange") }, ProposeChangeRequest<C>, ProposeChangeResult<C>>;
 
 type AppendEntries<C> =
-    rpc::Unary<{ rpc::id(b"appendEntries") }, AppendEntriesRequest<C>, AppendEntriesResult<C>>;
+    Rpc<{ rpc::id(b"appendEntries") }, AppendEntriesRequest<C>, AppendEntriesResult<C>>;
 
-type InstallSnapshot<C> = rpc::Unary<
-    { rpc::id(b"installSnapshot") },
-    InstallSnapshotRequest<C>,
-    InstallSnapshotResult<C>,
->;
+type InstallSnapshot<C> =
+    Rpc<{ rpc::id(b"installSnapshot") }, InstallSnapshotRequest<C>, InstallSnapshotResult<C>>;
 
-type Vote<C> = rpc::Unary<{ rpc::id(b"vote") }, VoteRequest<C>, VoteResult<C>>;
+type Vote<C> = Rpc<{ rpc::id(b"vote") }, VoteRequest<C>, VoteResult<C>>;

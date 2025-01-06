@@ -54,7 +54,7 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     ) -> impl Future<Output = Result<RPC::Response>> + Send + 'a {
         async move {
             self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
+                let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request, RPC::Codec>();
                 tx.send(request).await?;
                 Ok(rx.recv_message().await??)
             })
@@ -67,14 +67,20 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     fn send_streaming<'a, RPC: Rpc<Kind = kind::Streaming>, Fut, Ok: Send>(
         &'a self,
         addr: &'a A,
-        f: &'a (impl Fn(SendStream<RPC::Request>, RecvStream<RpcResult<RPC>>) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(
+            SendStream<RPC::Request, RPC::Codec>,
+            RecvStream<RpcResult<RPC>, RPC::Codec>,
+        ) -> Fut
+                 + Send
+                 + Sync
+                 + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a
     where
         Fut: Future<Output = Result<Ok>> + Send,
     {
         async move {
             self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
+                let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request, RPC::Codec>();
                 f(tx, rx).await.map_err(Into::into)
             })
             .force_send_impl()
@@ -90,7 +96,7 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     ) -> impl Future<Output = Result<()>> + Send + 'a {
         async move {
             self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+                let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request, RPC::Codec>();
                 tx.send(msg).await?;
                 Ok(())
             })

@@ -5,7 +5,7 @@ use {
         identity::Keypair,
         quic,
         server::{self, ClientConnectionInfo},
-        transport::{BiDirectionalStream, NoHandshake},
+        transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
         Id as RpcId,
         Multiaddr,
         PeerId,
@@ -31,6 +31,7 @@ pub struct Node {
 impl crate::Server for Node {
     type Handshake = NoHandshake;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.rpc_server_config

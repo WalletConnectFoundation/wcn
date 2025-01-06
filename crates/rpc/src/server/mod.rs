@@ -3,6 +3,7 @@ use {
         transport::{
             self,
             BiDirectionalStream,
+            Codec,
             Handshake,
             HandshakeData,
             NoHandshake,
@@ -58,6 +59,9 @@ pub trait Server: Clone + Send + Sync + 'static {
     /// Local data storage for stateful connections.
     type ConnectionData: Default + Clone + Send + Sync;
 
+    /// Serialization codec.
+    type Codec: Codec;
+
     /// Returns [`Config`] of this [`Server`].
     fn config(&self) -> &Config<Self::Handshake>;
 
@@ -95,17 +99,18 @@ impl From<io::Error> for Error {
 /// RPC [`Server`] result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-impl<const ID: RpcId, Req, Resp> super::Unary<ID, Req, Resp>
+impl<const ID: RpcId, Req, Resp, C> super::Unary<ID, Req, Resp, C>
 where
     Req: Message,
     Resp: Message,
+    C: Codec,
 {
     pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
     where
         F: FnOnce(Req) -> Fut,
         Fut: Future<Output = RpcResult<Resp>>,
     {
-        let (mut rx, mut tx) = stream.upgrade::<Req, RpcResult<Resp>>();
+        let (mut rx, mut tx) = stream.upgrade::<Req, RpcResult<Resp>, C>();
         let req = rx.recv_message().await?;
         let resp = f(req).await;
         tx.send(&resp).await?;
@@ -113,14 +118,15 @@ where
     }
 }
 
-impl<const ID: RpcId, Req, Resp> super::Streaming<ID, Req, Resp>
+impl<const ID: RpcId, Req, Resp, C> super::Streaming<ID, Req, Resp, C>
 where
     Req: Message,
     Resp: Message,
+    C: Codec,
 {
     pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
     where
-        F: FnOnce(RecvStream<Req>, SendStream<RpcResult<Resp>>) -> Fut,
+        F: FnOnce(RecvStream<Req, C>, SendStream<RpcResult<Resp>, C>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
         let (rx, tx) = stream.upgrade();
@@ -128,16 +134,17 @@ where
     }
 }
 
-impl<const ID: RpcId, Msg> super::Oneshot<ID, Msg>
+impl<const ID: RpcId, Msg, C> super::Oneshot<ID, Msg, C>
 where
     Msg: Message,
+    C: Codec,
 {
     pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
     where
         F: FnOnce(Msg) -> Fut,
         Fut: Future<Output = ()>,
     {
-        let (mut rx, _) = stream.upgrade::<Msg, ()>();
+        let (mut rx, _) = stream.upgrade::<Msg, (), C>();
         let req = rx.recv_message().await?;
         f(req).await;
         Ok(())

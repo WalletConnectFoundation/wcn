@@ -9,7 +9,7 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake},
+        transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
     },
 };
 
@@ -98,6 +98,7 @@ where
 {
     type Handshake = NoHandshake;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &rpc::server::Config {
         &self.config

@@ -19,7 +19,7 @@ pub use {
     config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
     logger::Logger,
-    network::{Network, RemoteNode},
+    network::Network,
     storage::Storage,
 };
 
@@ -132,9 +132,7 @@ pub async fn run(
 
     tracing::info!(addr = %cfg.server_addr, node_id = %cfg.id, "Running");
 
-    let consensus = Consensus::new(cfg, network.clone())
-        .await
-        .map_err(Error::Consensus)?;
+    let consensus = Consensus::new(cfg).await.map_err(Error::Consensus)?;
 
     let node_opts = wcn::NodeOpts {
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),

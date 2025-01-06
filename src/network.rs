@@ -34,7 +34,6 @@ use {
         },
     },
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         fmt::Debug,
         hash::BuildHasher,
@@ -946,7 +945,6 @@ pub type Client = Metered<WithTimeouts<quic::Client>>;
 pub struct Network {
     pub local_id: PeerId,
     pub replica_api_client: Client,
-    pub raft_api_client: Client,
 }
 
 impl Network {
@@ -964,15 +962,6 @@ impl Network {
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: REPLICA_API_SERVER_NAME,
-            })?
-            .with_timeouts(rpc_timeouts.clone())
-            .metered(),
-            raft_api_client: quic::Client::new(wcn_rpc::client::Config {
-                keypair: cfg.keypair.clone(),
-                known_peers: cfg.known_peers.values().cloned().collect(),
-                handshake: NoHandshake,
-                connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
-                server_name: RAFT_API_SERVER_NAME,
             })?
             .with_timeouts(rpc_timeouts)
             .metered(),
@@ -1107,41 +1096,6 @@ impl Network {
         }
         .map(drop)
         .pipe(tokio::spawn))
-    }
-
-    pub(crate) fn get_peer<'a>(
-        &self,
-        node_id: &'a PeerId,
-        multiaddr: &'a Multiaddr,
-    ) -> RemoteNode<'a> {
-        RemoteNode {
-            id: Cow::Borrowed(node_id),
-            multiaddr: Cow::Borrowed(multiaddr),
-            client: self.raft_api_client.clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct RemoteNode<'a> {
-    pub id: Cow<'a, PeerId>,
-    pub multiaddr: Cow<'a, Multiaddr>,
-    pub client: Client,
-}
-
-impl RemoteNode<'_> {
-    pub fn into_owned(self) -> RemoteNode<'static> {
-        RemoteNode {
-            id: Cow::Owned(self.id.into_owned()),
-            multiaddr: Cow::Owned(self.multiaddr.into_owned()),
-            client: self.client,
-        }
-    }
-}
-
-impl RemoteNode<'_> {
-    pub fn id(&self) -> PeerId {
-        self.id.clone().into_owned()
     }
 }
 

@@ -77,7 +77,7 @@ wcn = { package = "wcn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
 auth = { workspace = true }
 domain = { workspace = true }
-raft_api = { workspace = true, features = ["server"] }
+raft_api = { workspace = true, features = ["server", "client"] }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }

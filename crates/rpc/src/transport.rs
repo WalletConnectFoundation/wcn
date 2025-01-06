@@ -172,7 +172,9 @@ where
 /// [`Stream`] of inbound [`Message`]s.
 #[pin_project]
 pub struct RecvStream<T: Message, C: Codec = PostcardCodec>(
-    #[pin] Framed<MapErr<RawRecvStream, fn(io::Error) -> Error>, T, T, C::Deserializer<T>>,
+    #[allow(clippy::type_complexity)]
+    #[pin]
+    Framed<MapErr<RawRecvStream, fn(io::Error) -> Error>, T, T, C::Deserializer<T>>,
 );
 
 impl<T: Message, C: Codec> Stream for RecvStream<T, C>

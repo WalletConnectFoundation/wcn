@@ -25,7 +25,7 @@ pub struct Config {
 
 /// Raft API server.
 pub trait Server<C: TypeConfig>: Clone + Send + Sync + 'static {
-    /// Indicates whether the specified node is member.
+    /// Indicates whether the specified node is a member.
     fn is_member(&self, peer_id: &PeerId) -> bool;
 
     /// Adds a member to the Raft network.

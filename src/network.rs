@@ -67,35 +67,9 @@ use {
     },
 };
 
-pub const RAFT_API_SERVER_NAME: ServerName = ServerName::new("raft_api");
 pub const REPLICA_API_SERVER_NAME: ServerName = ServerName::new("replica_api");
 
 pub mod rpc {
-
-    pub mod raft {
-        use {crate::consensus::*, wcn_rpc as rpc};
-
-        pub type AddMember =
-            rpc::Unary<{ rpc::id(b"add_member") }, AddMemberRequest, AddMemberResult>;
-
-        pub type RemoveMember =
-            rpc::Unary<{ rpc::id(b"remove_member") }, RemoveMemberRequest, RemoveMemberResult>;
-
-        pub type ProposeChange =
-            rpc::Unary<{ rpc::id(b"propose_change") }, ProposeChangeRequest, ProposeChangeResult>;
-
-        pub type AppendEntries =
-            rpc::Unary<{ rpc::id(b"append_entries") }, AppendEntriesRequest, AppendEntriesResult>;
-
-        pub type InstallSnapshot = rpc::Unary<
-            { rpc::id(b"install_snapshot") },
-            InstallSnapshotRequest,
-            InstallSnapshotResult,
-        >;
-
-        pub type Vote = rpc::Unary<{ rpc::id(b"vote") }, VoteRequest, VoteResult>;
-    }
-
     pub mod migration {
         use {
             relay_rocks::db::migration::ExportItem,
@@ -624,7 +598,6 @@ impl wcn::migration::Network<cluster::Node> for Network {
 #[derive(Clone)]
 struct RaftRpcServer {
     raft: consensus::Raft,
-    config: wcn_rpc::server::Config,
 }
 
 impl raft_api::Server<TypeConfig> for RaftRpcServer {
@@ -674,101 +647,6 @@ impl raft_api::Server<TypeConfig> for RaftRpcServer {
         req: consensus::VoteRequest,
     ) -> impl Future<Output = consensus::VoteResult> + Send {
         self.raft.vote(req)
-    }
-}
-
-impl wcn_rpc::Server for RaftRpcServer {
-    type Handshake = NoHandshake;
-    type ConnectionData = ();
-    type Codec = PostcardCodec;
-
-    fn config(&self) -> &server::Config<Self::Handshake> {
-        &self.config
-    }
-
-    fn handle_rpc<'a>(
-        &'a self,
-        id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &'a ClientConnectionInfo<Self>,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        Self::handle_rpc(self, id, stream, conn_info)
-    }
-}
-
-impl RaftRpcServer {
-    async fn handle_rpc(
-        &self,
-        id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &ClientConnectionInfo<Self>,
-    ) {
-        let peer_id = &conn_info.peer_id;
-
-        let _ = match id {
-            rpc::raft::AddMember::ID => {
-                rpc::raft::AddMember::handle(stream, |req| {
-                    self.raft.add_member(peer_id, req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::RemoveMember::ID => {
-                rpc::raft::RemoveMember::handle(stream, |req| {
-                    self.raft.remove_member(peer_id, req).map(Ok)
-                })
-                .await
-            }
-
-            // Adding `Unauthorized` error to responses of these RPCs is total PITA, as the types
-            // are defined in `openraft` itself.
-            // So if the requestor is not a member we just drop the request.
-            // This should generally never happen under normal circumstances, unless we are dealing
-            // with a malicious actor.
-            rpc::raft::ProposeChange::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::ProposeChange::handle(stream, |req| {
-                    self.raft.propose_change(req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::AppendEntries::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::AppendEntries::handle(stream, |req| {
-                    self.raft.append_entries(req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::InstallSnapshot::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::InstallSnapshot::handle(stream, |req| {
-                    self.raft.install_snapshot(req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::Vote::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::Vote::handle(stream, |req| self.raft.vote(req).map(Ok)).await
-            }
-
-            id => {
-                return tracing::warn!("Unexpected raft RPC: {}", wcn_rpc::Name::new(id).as_str())
-            }
-        }
-        .map_err(|err| {
-            tracing::debug!(
-                name = wcn_rpc::Name::new(id).as_str(),
-                ?err,
-                "Failed to handle raft RPC"
-            )
-        });
     }
 }
 
@@ -973,11 +851,6 @@ impl Network {
         server_addr: Multiaddr,
         raft: consensus::Raft,
     ) -> Result<tokio::task::JoinHandle<()>, quic::Error> {
-        let server_config = wcn_rpc::server::Config {
-            name: const { wcn_rpc::ServerName::new("raft_api") },
-            handshake: NoHandshake,
-        };
-
         let quic_server_config = wcn_rpc::quic::server::Config {
             name: "raft_api",
             addr: server_addr,
@@ -986,25 +859,16 @@ impl Network {
             max_concurrent_streams: 1000,
         };
 
-        let server = RaftRpcServer {
-            raft,
-            config: server_config,
-        };
+        let server = RaftRpcServer { raft };
 
         let operation_timeout = Duration::from_secs(2);
 
-        let old_server = server
-            .clone()
-            .with_timeouts(Timeouts::new().with_default(operation_timeout))
-            .metered();
-
-        let new_server =
+        let server =
             raft_api::Server::<TypeConfig>::into_rpc_server(server, raft_api::server::Config {
                 operation_timeout,
             });
 
-        wcn_rpc::quic::server::multiplex((old_server, new_server), quic_server_config)
-            .map(tokio::spawn)
+        wcn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
     }
 
     pub fn spawn_servers(

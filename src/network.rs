@@ -993,6 +993,8 @@ impl Network {
             authorized_clients: cfg.authorized_clients.clone(),
             network_id: cfg.network_id.clone(),
             cluster_view: node.consensus().cluster_view().clone(),
+            max_concurrent_connections: cfg.client_api_max_concurrent_connections,
+            max_concurrent_streams: cfg.client_api_max_concurrent_rpcs,
         };
 
         let client_api_server = ClientApiServer {
@@ -1110,9 +1112,9 @@ impl Pubsub {
     fn publish(&self, evt: rpc::broadcast::PubsubEventPayload) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
-        let subscribers = self.inner.read().unwrap().subscribers.clone();
+        let inner = self.inner.read().unwrap();
 
-        for sub in subscribers.values() {
+        for sub in inner.subscribers.values() {
             if sub.channels.contains(&evt.channel) {
                 match sub.tx.try_send(evt.clone()) {
                     Ok(_) => {}

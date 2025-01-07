@@ -149,7 +149,7 @@ fn parse_kv<C: cf::Column>(
 
 #[inline]
 fn parse_key<C: cf::Column>((key, _): &KVBytes) -> Result<(C::KeyType, C::SubKeyType), Error> {
-    C::parse_ext_key(key).map_err(Into::into)
+    C::parse_ext_key(key)
 }
 
 #[inline]

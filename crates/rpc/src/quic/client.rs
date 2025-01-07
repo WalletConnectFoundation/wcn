@@ -379,7 +379,6 @@ impl<H: Handshake> Client<H> {
             .with_timeout(Duration::from_secs(5))
             .await
             .map_err(|_| ConnectionHandlerError::ConnectionTimeout)?
-            .map_err(Into::into)
     }
 
     /// Establishes a [`BiDirectionalStream`] with one of the remote peers.

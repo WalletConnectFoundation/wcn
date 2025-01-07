@@ -75,7 +75,7 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         async move {
             self.send_rpc(addr, RPC::ID, &move |stream| async move {
                 let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
-                f(tx, rx).await.map_err(Into::into)
+                f(tx, rx).await
             })
             .force_send_impl()
             .await

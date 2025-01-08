@@ -138,7 +138,7 @@ impl Inner {
 
     async fn apply_cluster_update(&self, update: ClusterUpdate) -> Result<(), super::Error> {
         let cluster = tokio::task::spawn_blocking(move || {
-            let snapshot = postcard::from_bytes(&update.0).map_err(|_| Error::Serialization)?;
+            let snapshot = serde_json::from_slice(&update.0).map_err(|_| Error::Serialization)?;
             let cluster =
                 Arc::new(domain::Cluster::from_snapshot(snapshot).map_err(Error::Cluster)?);
             Ok::<_, Error<super::Error>>(cluster)

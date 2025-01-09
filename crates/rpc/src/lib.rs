@@ -6,6 +6,7 @@ use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, marker::PhantomData},
+    transport::Codec,
 };
 
 #[cfg(feature = "client")]
@@ -54,6 +55,9 @@ pub trait Rpc {
 
     /// Response type of this [`Rpc`].
     type Response: Message;
+
+    /// Serialization codec of this [`Rpc`].
+    type Codec: Codec;
 }
 
 /// [`Rpc`] kinds.
@@ -127,7 +131,7 @@ impl ServerName {
     ///
     /// If the provided string is larger than `16` bytes.
     pub const fn new(s: &'static str) -> Self {
-        assert!(s.len() <= 16, "`ServiceName` should be <= 16 bytes");
+        assert!(s.len() <= 16, "`ServerName` should be <= 16 bytes");
 
         Self(copy_slice_recursive(0, s.as_bytes(), [0u8; 16]))
     }
@@ -146,49 +150,56 @@ pub trait Message: Serialize + for<'de> Deserialize<'de> + Unpin + Sync + Send +
 impl<M> Message for M where M: Serialize + for<'de> Deserialize<'de> + Unpin + Sync + Send + 'static {}
 
 /// Unary (request-response) RPC.
-pub struct Unary<const ID: Id, Req, Resp>(PhantomData<(Req, Resp)>);
+pub struct Unary<const ID: Id, Req, Resp, C = transport::PostcardCodec>(
+    PhantomData<(Req, Resp, C)>,
+);
 
 impl<const ID: Id, Req, Resp> Unary<ID, Req, Resp> {
     pub const ID: Id = ID;
 }
 
-impl<const ID: Id, Req: Message, Resp: Message> Rpc for Unary<ID, Req, Resp> {
+impl<const ID: Id, Req: Message, Resp: Message, C: Codec> Rpc for Unary<ID, Req, Resp, C> {
     const ID: Id = ID;
 
     type Kind = kind::Unary;
     type Request = Req;
     type Response = Resp;
+    type Codec = C;
 }
 
 /// RPC with bi-directional streaming.
-pub struct Streaming<const ID: Id, Req, Resp>(PhantomData<(Req, Resp)>);
+pub struct Streaming<const ID: Id, Req, Resp, C = transport::PostcardCodec>(
+    PhantomData<(Req, Resp, C)>,
+);
 
 impl<const ID: Id, Req, Resp> Streaming<ID, Req, Resp> {
     pub const ID: Id = ID;
 }
 
-impl<const ID: Id, Req: Message, Resp: Message> Rpc for Streaming<ID, Req, Resp> {
+impl<const ID: Id, Req: Message, Resp: Message, C: Codec> Rpc for Streaming<ID, Req, Resp, C> {
     const ID: Id = ID;
 
     type Kind = kind::Streaming;
     type Request = Req;
     type Response = Resp;
+    type Codec = C;
 }
 
 /// "Fire and forget" RPC, which sends a request and doesn't wait for any
 /// response.
-pub struct Oneshot<const ID: Id, Msg>(PhantomData<Msg>);
+pub struct Oneshot<const ID: Id, Msg, C = transport::PostcardCodec>(PhantomData<(Msg, C)>);
 
 impl<const ID: Id, Msg> Oneshot<ID, Msg> {
     pub const ID: Id = ID;
 }
 
-impl<const ID: Id, Msg: Message> Rpc for Oneshot<ID, Msg> {
+impl<const ID: Id, Msg: Message, C: Codec> Rpc for Oneshot<ID, Msg, C> {
     const ID: Id = ID;
 
     type Kind = kind::Oneshot;
     type Request = Msg;
     type Response = ();
+    type Codec = C;
 }
 
 /// RPC error.

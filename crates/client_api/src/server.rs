@@ -15,7 +15,7 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        transport::{BiDirectionalStream, NoHandshake, PostcardCodec, RecvStream, SendStream},
         Multiaddr,
         PeerId,
     },
@@ -193,8 +193,7 @@ impl<S: Server> RpcServer<S> {
                             .map_err(|err| wcn_rpc::transport::Error::Other(err.to_string()))?;
 
                         tx.send(Ok(snapshot))
-                            .await
-                            .map_err(|err| wcn_rpc::transport::Error::IO(err.kind()))?;
+                            .await?;
                     }
                     None => return Ok(()),
                 }
@@ -246,6 +245,7 @@ where
 {
     type Handshake = NoHandshake;
     type ConnectionData = Arc<Storage>;
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &wcn_rpc::server::Config<Self::Handshake> {
         &self.inner.config

@@ -1,5 +1,5 @@
 use {
-    crate::{cluster, consensus, Config, Error, Node},
+    crate::{cluster, consensus, Config, Error, Node, TypeConfig},
     admin_api::Server as _,
     anyerror::AnyError,
     client_api::Server,
@@ -38,7 +38,6 @@ use {
         collections::{HashMap, HashSet},
         fmt::Debug,
         hash::BuildHasher,
-        io,
         pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
@@ -56,7 +55,14 @@ use {
             middleware::{MeteredExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        transport::{
+            self,
+            BiDirectionalStream,
+            NoHandshake,
+            PostcardCodec,
+            RecvStream,
+            SendStream,
+        },
         Multiaddr,
         ServerName,
     },
@@ -189,6 +195,7 @@ struct ReplicaApiServer {
 impl wcn_rpc::Server for ReplicaApiServer {
     type Handshake = NoHandshake;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.config
@@ -568,7 +575,9 @@ pub enum PullDataError {
 impl wcn::migration::Network<cluster::Node> for Network {
     type DataStream = Map<
         RecvStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
-        fn(io::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>) -> io::Result<ExportItem>,
+        fn(
+            transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+        ) -> transport::Result<ExportItem>,
     >;
 
     fn pull_keyrange(
@@ -590,15 +599,19 @@ impl wcn::migration::Network<cluster::Node> for Network {
                     .await?;
 
                     // flatten error by converting the inner ones into the outer `io::Error`
-                    let map_fn = |res| match res {
-                        Ok(Ok(Ok(item))) => Ok(item),
-                        Ok(Ok(Err(err))) => Err(io::Error::other(
-                            wcn::migration::PullKeyrangeError::from(err),
-                        )),
-                        Ok(Err(err)) => Err(io::Error::other(err)),
-                        Err(err) => Err(err),
-                    };
-                    let rx = rx.map(map_fn as fn(_) -> _);
+                    fn flatten_err(
+                        res: transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+                    ) -> transport::Result<ExportItem> {
+                        match res {
+                            Ok(Ok(Ok(item))) => Ok(item),
+                            Ok(Ok(Err(err))) => Err(transport::Error::Other(
+                                wcn::migration::PullKeyrangeError::from(err).to_string(),
+                            )),
+                            Ok(Err(err)) => Err(transport::Error::Other(err.to_string())),
+                            Err(err) => Err(err),
+                        }
+                    }
+                    let rx = rx.map(flatten_err as _);
 
                     Ok(rx)
                 },
@@ -615,9 +628,60 @@ struct RaftRpcServer {
     config: wcn_rpc::server::Config,
 }
 
+impl raft_api::Server<TypeConfig> for RaftRpcServer {
+    fn is_member(&self, peer_id: &PeerId) -> bool {
+        self.raft.is_member(peer_id)
+    }
+
+    fn add_member(
+        &self,
+        peer_id: &PeerId,
+        req: consensus::AddMemberRequest,
+    ) -> impl Future<Output = consensus::AddMemberResult> + Send {
+        self.raft.add_member(peer_id, req)
+    }
+
+    fn remove_member(
+        &self,
+        peer_id: &PeerId,
+        req: consensus::RemoveMemberRequest,
+    ) -> impl Future<Output = consensus::RemoveMemberResult> + Send {
+        self.raft.remove_member(peer_id, req)
+    }
+
+    fn propose_change(
+        &self,
+        req: consensus::ProposeChangeRequest,
+    ) -> impl Future<Output = consensus::ProposeChangeResult> + Send {
+        self.raft.propose_change(req)
+    }
+
+    fn append_entries(
+        &self,
+        req: consensus::AppendEntriesRequest,
+    ) -> impl Future<Output = consensus::AppendEntriesResult> + Send {
+        self.raft.append_entries(req)
+    }
+
+    fn install_snapshot(
+        &self,
+        req: consensus::InstallSnapshotRequest,
+    ) -> impl Future<Output = consensus::InstallSnapshotResult> + Send {
+        self.raft.install_snapshot(req)
+    }
+
+    fn vote(
+        &self,
+        req: consensus::VoteRequest,
+    ) -> impl Future<Output = consensus::VoteResult> + Send {
+        self.raft.vote(req)
+    }
+}
+
 impl wcn_rpc::Server for RaftRpcServer {
     type Handshake = NoHandshake;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.config
@@ -846,7 +910,7 @@ impl admin_api::Server for AdminApiServer {
             {
                 use {
                     admin_api::{snap, MemoryProfile},
-                    io::Write,
+                    std::io::Write,
                 };
 
                 if duration.is_zero() || duration > admin_api::MEMORY_PROFILE_MAX_DURATION {
@@ -936,11 +1000,22 @@ impl Network {
         let server = RaftRpcServer {
             raft,
             config: server_config,
-        }
-        .with_timeouts(Timeouts::new().with_default(Duration::from_secs(2)))
-        .metered();
+        };
 
-        wcn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
+        let operation_timeout = Duration::from_secs(2);
+
+        let old_server = server
+            .clone()
+            .with_timeouts(Timeouts::new().with_default(operation_timeout))
+            .metered();
+
+        let new_server =
+            raft_api::Server::<TypeConfig>::into_rpc_server(server, raft_api::server::Config {
+                operation_timeout,
+            });
+
+        wcn_rpc::quic::server::multiplex((old_server, new_server), quic_server_config)
+            .map(tokio::spawn)
     }
 
     pub fn spawn_servers(

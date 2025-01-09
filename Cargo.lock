@@ -1979,6 +1979,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "educe"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4bd92664bf78c4d3dba9b7cdafce6fa15b13ed3ed16175218196942e99168a8"
+dependencies = [
+ "enum-ordinalize",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.55",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6041,21 +6053,22 @@ dependencies = [
 
 [[package]]
 name = "tokio-serde"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911a61637386b789af998ee23f50aa30d5fd7edcec8d6d3dedae5e5815205466"
+version = "0.9.0"
+source = "git+https://github.com/xDarksome/tokio-serde.git?rev=6df9ff9#6df9ff9ca8896dfa2b83347bbeb2bb00e9b294a0"
 dependencies = [
  "bytes",
+ "educe",
  "futures-core",
  "futures-sink",
  "pin-project",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "tokio-serde-postcard"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9bc47334cd92ae09ac4ae741108a3a7437c3d2c75c38c957b93dbc066984329"
+source = "git+https://github.com/xDarksome/tokio-serde-postcard.git?rev=5e1b77a#5e1b77a687eb80e3c37b9038025e4897d71f720d"
 dependencies = [
  "bytes",
  "postcard",
@@ -6800,10 +6813,24 @@ dependencies = [
  "wcn_client_api",
  "wcn_core",
  "wcn_domain",
+ "wcn_raft_api",
  "wcn_replication",
  "wcn_rpc",
  "wcn_storage_api",
  "xxhash-rust",
+]
+
+[[package]]
+name = "wcn_raft_api"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "raft",
+ "serde",
+ "thiserror",
+ "tracing",
+ "wc",
+ "wcn_rpc",
 ]
 
 [[package]]
@@ -6841,6 +6868,7 @@ dependencies = [
  "quinn-proto",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "socket2",
  "tap",
  "thiserror",

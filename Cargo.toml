@@ -61,6 +61,7 @@ derive_more = { version = "1.0.0", features = [
 core = { package = "wcn_core", path = "crates/core" }
 auth = { package = "wcn_auth", path = "crates/auth" }
 domain = { package = "wcn_domain", path = "crates/domain" }
+raft_api = { package = "wcn_raft_api", path = "crates/raft_api", features = ["server"] }
 storage_api = { package = "wcn_storage_api", path = "crates/storage_api", features = ["server"] }
 admin_api = { package = "wcn_admin_api", path = "crates/admin_api" }
 client_api = { package = "wcn_client_api", path = "crates/client_api" }
@@ -76,6 +77,7 @@ wcn = { package = "wcn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
 auth = { workspace = true }
 domain = { workspace = true }
+raft_api = { workspace = true, features = ["server"] }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }

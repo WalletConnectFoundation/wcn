@@ -438,9 +438,7 @@ impl transport::Handshake for Handshake {
                 access_token: self.access_token.load().as_ref().to_owned(),
             };
 
-            tx.send(req)
-                .await
-                .map_err(|err| HandshakeError::Transport(err.into()))?;
+            tx.send(req).await.map_err(HandshakeError::Transport)?;
 
             rx.recv_message().await?.map_err(Into::into)
         }

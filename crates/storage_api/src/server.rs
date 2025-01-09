@@ -9,7 +9,7 @@ use {
             ClientConnectionInfo,
             ConnectionInfo,
         },
-        transport::{self, BiDirectionalStream, PendingConnection},
+        transport::{self, BiDirectionalStream, PendingConnection, PostcardCodec},
     },
 };
 
@@ -315,6 +315,7 @@ where
 {
     type Handshake = Handshake<V>;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &wcn_rpc::server::Config<Self::Handshake> {
         &self.config

@@ -48,7 +48,7 @@ pub fn run(rpc_server: impl rpc::Server, cfg: Config) -> Result<impl Future<Outp
 
 /// Runs multiple [`rpc::Server`]s on top of a single QUIC server.
 ///
-/// `server` argument is expected to be a tuple of [`rpc::Server`] impls.
+/// `rpc_servers` argument is expected to be a tuple of [`rpc::Server`] impls.
 pub fn multiplex<S>(rpc_servers: S, cfg: Config) -> Result<impl Future<Output = ()>, Error>
 where
     S: Send + Sync + 'static,
@@ -147,10 +147,10 @@ where
         .pipe(tokio::spawn);
     }
 
-    async fn handle_connection(
+    async fn handle_connection<R: rpc::Server>(
         &self,
         conn: quinn::Connection,
-        rpc_server: &impl rpc::Server,
+        rpc_server: &R,
     ) -> Result<(), ConnectionError> {
         use ConnectionError as Error;
 
@@ -190,7 +190,7 @@ where
                 static THROTTLED_RESULT: &crate::Result<()> = &Err(crate::Error::THROTTLED);
 
                 let (_, mut tx) =
-                    BiDirectionalStream::new(tx, rx).upgrade::<(), crate::Result<()>>();
+                    BiDirectionalStream::new(tx, rx).upgrade::<(), crate::Result<()>, R::Codec>();
 
                 // The send buffer is large enough to write the whole response.
                 tx.send(THROTTLED_RESULT).now_or_never();

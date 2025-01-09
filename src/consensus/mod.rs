@@ -68,28 +68,19 @@ impl raft::State<TypeConfig> for State {
             raft::LogEntryPayload::Normal(change) => match change {
                 Change::AddNode(c) => self
                     .cluster
-                    .modify(|cluster| cluster.add_node(c.node.clone()).map(|()| true))
-                    .map_err(Into::into),
-
+                    .modify(|cluster| cluster.add_node(c.node.clone()).map(|()| true)),
                 Change::CompletePull(c) => self
                     .cluster
-                    .modify(|cluster| cluster.complete_pull(&c.node_id, c.keyspace_version))
-                    .map_err(Into::into),
-
-                Change::ShutdownNode(c) => self
-                    .cluster
-                    .modify(|cluster| cluster.shutdown_node(&c.id))
-                    .map_err(Into::into),
-
+                    .modify(|cluster| cluster.complete_pull(&c.node_id, c.keyspace_version)),
+                Change::ShutdownNode(c) => {
+                    self.cluster.modify(|cluster| cluster.shutdown_node(&c.id))
+                }
                 Change::StartupNode(c) => self
                     .cluster
-                    .modify(|cluster| cluster.startup_node(c.node.clone()).map(|()| true))
-                    .map_err(Into::into),
-
+                    .modify(|cluster| cluster.startup_node(c.node.clone()).map(|()| true)),
                 Change::DecommissionNode(c) => self
                     .cluster
-                    .modify(|cluster| cluster.decommission_node(&c.id).map(|()| true))
-                    .map_err(Into::into),
+                    .modify(|cluster| cluster.decommission_node(&c.id).map(|()| true)),
             },
             raft::LogEntryPayload::Membership(membership) => {
                 self.membership = StoredMembership::new(Some(entry.log_id), membership.clone());

@@ -98,15 +98,20 @@ mod alloc {
 pub fn exec() -> anyhow::Result<()> {
     let _logger = Logger::init(logger::LogFormat::Json, None, None);
 
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(Error::Prometheus)?;
+
     for (key, value) in vergen_pretty::vergen_pretty_env!() {
         if let Some(value) = value {
             tracing::warn!(key, value, "build info");
         }
-    }
 
-    let prometheus = PrometheusBuilder::new()
-        .install_recorder()
-        .map_err(Error::Prometheus)?;
+        if key == "VERGEN_GIT_COMMIT_TIMESTAMP" {
+            let version = node_timestamp_version(value.unwrap_or_default());
+            wc::metrics::gauge!("wcn_node_version").set(version as f64);
+        }
+    }
 
     let cfg = Config::from_env().context("failed to parse config")?;
 
@@ -206,3 +211,20 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
+
+fn node_timestamp_version(rfc3339: &str) -> u64 {
+    rfc3339
+        .chars()
+        .filter(|char| char.is_numeric())
+        .collect::<String>()
+        .parse()
+        .unwrap_or_default()
+}
+
+#[test]
+fn test_node_timestamp_version() {
+    assert_eq!(
+        node_timestamp_version("2025-01-09T17:56:12"),
+        20250109175612
+    )
+}

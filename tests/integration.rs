@@ -13,7 +13,10 @@ use {
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
-        sync::atomic::{AtomicU16, Ordering},
+        sync::{
+            atomic::{AtomicU16, AtomicUsize, Ordering},
+            Arc,
+        },
         thread,
         time::Duration,
     },
@@ -318,35 +321,26 @@ impl TestCluster {
     }
 
     async fn test_pubsub(&self) {
-        tracing::info!("PubSub");
+        let channel = b"channel";
+        let payload = b"payload";
+        let num_clients = 10;
+        let num_messages = 100;
+        let num_messages_total_per_client = num_clients * num_messages;
 
-        let channel1 = b"channel1";
-        let channel2 = b"channel2";
-        let payload1 = b"payload1";
-        let payload2 = b"payload2";
-
-        let clients = (0..2)
+        let clients = (0..num_clients)
             .map(|n| {
-                self.new_replication_driver(move |cfg| cfg.keypair = authorized_client_keypair(n))
+                self.new_replication_driver(move |cfg| {
+                    cfg.keypair = authorized_client_keypair(n as u8 % 2)
+                })
             })
             .pipe(stream::iter)
-            .buffer_unordered(2)
+            .buffer_unordered(num_clients)
             .collect::<Vec<_>>()
             .await;
 
-        // Subscribe 2 groups of clients to different channels.
-        let mut subscriptions1 = stream::iter(&clients)
+        let mut subscriptions = stream::iter(&clients)
             .then(|c| async {
-                c.subscribe([channel1.to_vec()].into_iter().collect())
-                    .await
-                    .unwrap()
-            })
-            .collect::<Vec<_>>()
-            .await;
-
-        let mut subscriptions2 = stream::iter(&clients)
-            .then(|c| async {
-                c.subscribe([channel2.to_vec()].into_iter().collect())
+                c.subscribe([channel.to_vec()].into_iter().collect())
                     .await
                     .unwrap()
             })
@@ -355,58 +349,50 @@ impl TestCluster {
 
         let tasks = FuturesUnordered::new();
 
-        // Publish a message to each channel.
-        // Subscribers need to be polled in order to connect to the WCN backend, so we
-        // wait a bit before publishing.
-        tasks.push(
-            async {
-                let publisher = &clients[0];
-
-                tokio::time::sleep(Duration::from_secs(3)).await;
-
-                publisher
-                    .publish(channel1.to_vec(), payload1.to_vec())
-                    .await
-                    .unwrap();
-                publisher
-                    .publish(channel2.to_vec(), payload2.to_vec())
-                    .await
-                    .unwrap();
-            }
-            .boxed_local(),
-        );
-
-        // All subscriber groups should receive their messages.
-        for sub in subscriptions1.iter_mut() {
+        for client in &clients {
             tasks.push(
-                async {
-                    let data = sub.next().await.unwrap().unwrap();
+                async move {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
 
-                    assert_eq!(&data.channel, channel1);
-                    assert_eq!(&data.message, payload1);
+                    for _ in 0..num_messages {
+                        client
+                            .publish(channel.to_vec(), payload.to_vec())
+                            .await
+                            .unwrap();
+                    }
                 }
                 .boxed_local(),
             )
         }
 
-        for sub in subscriptions2.iter_mut() {
-            tasks.push(
-                async {
-                    let data = sub.next().await.unwrap().unwrap();
+        let num_received = Arc::new(AtomicUsize::new(0));
 
-                    assert_eq!(&data.channel, channel2);
-                    assert_eq!(&data.message, payload2);
+        for sub in subscriptions.iter_mut() {
+            let num_received = num_received.clone();
+
+            tasks.push(
+                async move {
+                    for _ in 0..num_messages_total_per_client {
+                        let data = sub.next().await.unwrap().unwrap();
+                        assert_eq!(&data.channel, channel);
+                        assert_eq!(&data.message, payload);
+                        num_received.fetch_add(1, Ordering::SeqCst);
+                        // tracing::error!("receiving {i} {j}");
+                    }
                 }
                 .boxed_local(),
-            )
+            );
         }
 
-        // Await all tasks.
         tasks.count().await;
 
+        assert_eq!(
+            num_received.load(Ordering::SeqCst),
+            num_messages_total_per_client * num_clients
+        );
+
         // Verify there's no more messages to receive.
-        stream::iter(subscriptions1)
-            .chain(stream::iter(subscriptions2))
+        stream::iter(subscriptions)
             .for_each_concurrent(None, |mut subscriber| async move {
                 let result = tokio::time::timeout(Duration::from_secs(3), subscriber.next()).await;
 
@@ -876,6 +862,8 @@ fn new_node_config() -> Config {
         replica_api_server_port: next_port(),
         client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
+        client_api_max_concurrent_connections: 500,
+        client_api_max_concurrent_rpcs: 10000,
         replica_api_max_concurrent_connections: 500,
         replica_api_max_concurrent_rpcs: 10000,
         coordinator_api_max_concurrent_connections: 500,

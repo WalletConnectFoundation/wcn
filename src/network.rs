@@ -60,8 +60,10 @@ use {
             BiDirectionalStream,
             NoHandshake,
             PostcardCodec,
+            Read,
             RecvStream,
             SendStream,
+            Write,
         },
         Multiaddr,
         ServerName,
@@ -204,7 +206,7 @@ impl wcn_rpc::Server for ReplicaApiServer {
     fn handle_rpc<'a>(
         &'a self,
         id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         Self::handle_internal_rpc(self, id, stream, conn_info)
@@ -438,7 +440,7 @@ impl ReplicaApiServer {
     async fn handle_internal_rpc(
         &self,
         id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &ClientConnectionInfo<Self>,
     ) {
         let peer_id = &conn_info.peer_id;
@@ -494,8 +496,8 @@ impl ReplicaApiServer {
     async fn handle_pull_data(
         &self,
         peer_id: &libp2p::PeerId,
-        mut rx: RecvStream<rpc::migration::PullDataRequest>,
-        mut tx: SendStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+        mut rx: RecvStream<impl Read, rpc::migration::PullDataRequest>,
+        mut tx: SendStream<impl Write, wcn_rpc::Result<rpc::migration::PullDataResponse>>,
     ) -> server::Result<()> {
         let req = rx.recv_message().await?;
 
@@ -566,7 +568,7 @@ impl client_api::Server for ClientApiServer {
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum PullDataError {
     #[error(transparent)]
-    Transport(#[from] transport::Error),
+    Transport(#[from] transport::StreamError),
 
     #[error(transparent)]
     Rpc(rpc::migration::PullDataError),
@@ -574,7 +576,7 @@ pub enum PullDataError {
 
 impl wcn::migration::Network<cluster::Node> for Network {
     type DataStream = Map<
-        RecvStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+        RecvStream<quic::Read, wcn_rpc::Result<rpc::migration::PullDataResponse>>,
         fn(
             transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
         ) -> transport::Result<ExportItem>,
@@ -604,10 +606,10 @@ impl wcn::migration::Network<cluster::Node> for Network {
                     ) -> transport::Result<ExportItem> {
                         match res {
                             Ok(Ok(Ok(item))) => Ok(item),
-                            Ok(Ok(Err(err))) => Err(transport::Error::Other(
+                            Ok(Ok(Err(err))) => Err(transport::StreamError::Other(
                                 wcn::migration::PullKeyrangeError::from(err).to_string(),
                             )),
-                            Ok(Err(err)) => Err(transport::Error::Other(err.to_string())),
+                            Ok(Err(err)) => Err(transport::StreamError::Other(err.to_string())),
                             Err(err) => Err(err),
                         }
                     }
@@ -690,7 +692,7 @@ impl wcn_rpc::Server for RaftRpcServer {
     fn handle_rpc<'a>(
         &'a self,
         id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         Self::handle_rpc(self, id, stream, conn_info)
@@ -701,7 +703,7 @@ impl RaftRpcServer {
     async fn handle_rpc(
         &self,
         id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &ClientConnectionInfo<Self>,
     ) {
         let peer_id = &conn_info.peer_id;
@@ -939,14 +941,14 @@ impl admin_api::Server for AdminApiServer {
     }
 }
 
-pub type Client = Metered<WithTimeouts<quic::Client>>;
+pub type Client<T> = Metered<WithTimeouts<wcn_rpc::ClientImpl<T>>>;
 
 /// Network adapter.
 #[derive(Debug, Clone)]
 pub struct Network {
     pub local_id: PeerId,
-    pub replica_api_client: Client,
-    pub raft_api_client: Client,
+    pub replica_api_client: Client<quic::client::Socket>,
+    pub raft_api_client: Client<quic::client::Socket>,
 }
 
 impl Network {
@@ -956,24 +958,24 @@ impl Network {
             .with_default(Duration::from_millis(cfg.network_request_timeout))
             .with::<{ rpc::migration::PullData::ID }>(None);
 
+        let socket = quic::client::Socket::new(cfg.keypair.clone()).map_err(Error::Network)?;
+
         Ok(Self {
             local_id: cfg.id,
-            replica_api_client: quic::Client::new(wcn_rpc::client::Config {
-                keypair: cfg.keypair.clone(),
+            replica_api_client: wcn_rpc::client::new(socket.clone(), wcn_rpc::client::Config {
                 known_peers: cfg.known_peers.values().cloned().collect(),
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: REPLICA_API_SERVER_NAME,
-            })?
+            })
             .with_timeouts(rpc_timeouts.clone())
             .metered(),
-            raft_api_client: quic::Client::new(wcn_rpc::client::Config {
-                keypair: cfg.keypair.clone(),
+            raft_api_client: wcn_rpc::client::new(socket, wcn_rpc::client::Config {
                 known_peers: cfg.known_peers.values().cloned().collect(),
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: RAFT_API_SERVER_NAME,
-            })?
+            })
             .with_timeouts(rpc_timeouts)
             .metered(),
         })
@@ -984,17 +986,15 @@ impl Network {
         server_addr: Multiaddr,
         raft: consensus::Raft,
     ) -> Result<tokio::task::JoinHandle<()>, quic::Error> {
-        let server_config = wcn_rpc::server::Config {
-            name: const { wcn_rpc::ServerName::new("raft_api") },
-            handshake: NoHandshake,
-        };
-
-        let quic_server_config = wcn_rpc::quic::server::Config {
-            name: "raft_api",
+        let socket = quic::server::Socket::new(wcn_rpc::quic::server::Config {
             addr: server_addr,
             keypair: cfg.keypair.clone(),
-            max_concurrent_connections: 500,
             max_concurrent_streams: 1000,
+        })?;
+
+        let server_config = wcn_rpc::server::Config {
+            name: &const { wcn_rpc::ServerName::new("raft_api") },
+            handshake: NoHandshake,
         };
 
         let server = RaftRpcServer {
@@ -1014,8 +1014,16 @@ impl Network {
                 operation_timeout,
             });
 
-        wcn_rpc::quic::server::multiplex((old_server, new_server), quic_server_config)
-            .map(tokio::spawn)
+        let transport_config = wcn_rpc::server::TransportConfig {
+            max_concurrent_connections: 500,
+            max_concurrent_streams: 1000,
+        };
+
+        Ok(tokio::spawn(wcn_rpc::server::multiplex(
+            (old_server, new_server),
+            socket,
+            transport_config,
+        )))
     }
 
     pub fn spawn_servers(
@@ -1024,22 +1032,18 @@ impl Network {
         prometheus: PrometheusHandle,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
         let replica_api_server_config = wcn_rpc::server::Config {
-            name: const { wcn_rpc::ServerName::new("replica_api") },
+            name: &const { wcn_rpc::ServerName::new("replica_api") },
             handshake: NoHandshake,
         };
         let replica_api_quic_server_config = wcn_rpc::quic::server::Config {
-            name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
-            max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
             max_concurrent_streams: cfg.replica_api_max_concurrent_rpcs,
         };
 
         let default_timeout = Duration::from_millis(cfg.network_request_timeout);
 
         let admin_api_server_config = admin_api::server::Config {
-            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.admin_api_server_port)),
-            keypair: cfg.keypair.clone(),
             operation_timeout: default_timeout,
             authorized_clients: cfg.authorized_admin_api_clients.clone(),
         };
@@ -1061,9 +1065,19 @@ impl Network {
         .with_timeouts(rpc_timeouts)
         .metered();
 
-        let client_api_cfg = client_api::server::Config {
+        let client_api_socket = quic::server::Socket::new(quic::server::Config {
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.client_api_server_port)),
             keypair: cfg.keypair.clone(),
+            max_concurrent_streams: cfg.client_api_max_concurrent_rpcs,
+        })
+        .map_err(Error::ClientApiServer)?;
+
+        let client_api_cfg = client_api::server::Config {
+            keypair: cfg
+                .keypair
+                .clone()
+                .try_into_ed25519()
+                .map_err(|_| Error::InvalidKeypair)?,
             operation_timeout: default_timeout,
             authorized_clients: cfg.authorized_clients.clone(),
             network_id: cfg.network_id.clone(),
@@ -1076,13 +1090,20 @@ impl Network {
             node: node.clone(),
             pubsub,
         }
-        .serve(client_api_cfg)?;
+        .serve(client_api_socket, client_api_cfg);
+
+        let admin_api_socket = quic::server::Socket::new(quic::server::Config {
+            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.admin_api_server_port)),
+            keypair: cfg.keypair.clone(),
+            max_concurrent_streams: 100,
+        })
+        .map_err(Error::AdminApiServer)?;
 
         let admin_api_server = AdminApiServer {
             node: node.clone(),
             eth_address: cfg.eth_address.clone().map(Into::into),
         }
-        .serve(admin_api_server_config)?;
+        .serve(admin_api_socket, admin_api_server_config);
 
         let storage_api_server = storage_api::Server::into_rpc_server(
             StorageApiServer { node: node.clone() },
@@ -1095,10 +1116,19 @@ impl Network {
             },
         );
 
-        let replica_and_storage_api_servers = wcn_rpc::quic::server::multiplex(
+        let replica_api_storage_api_socket =
+            quic::server::Socket::new(replica_api_quic_server_config).map_err(Error::Network)?;
+
+        let replica_api_transport_config = wcn_rpc::server::TransportConfig {
+            max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
+            max_concurrent_streams: cfg.replica_api_max_concurrent_rpcs,
+        };
+
+        let replica_and_storage_api_servers = wcn_rpc::server::multiplex(
             (replica_api_server, storage_api_server),
-            replica_api_quic_server_config,
-        )?;
+            replica_api_storage_api_socket,
+            replica_api_transport_config,
+        );
 
         Ok(async move {
             tokio::join!(
@@ -1128,7 +1158,7 @@ impl Network {
 pub struct RemoteNode<'a> {
     pub id: Cow<'a, PeerId>,
     pub multiaddr: Cow<'a, Multiaddr>,
-    pub client: Client,
+    pub client: Client<quic::client::Socket>,
 }
 
 impl RemoteNode<'_> {

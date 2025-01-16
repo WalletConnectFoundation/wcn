@@ -5,10 +5,11 @@ use {
         identity::Keypair,
         quic,
         server::{self, ClientConnectionInfo},
-        transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
+        transport::{BiDirectionalStream, NoHandshake, PostcardCodec, Read, Write},
         Id as RpcId,
         Multiaddr,
         PeerId,
+        Server,
         ServerName,
     },
     futures::{lock::Mutex, Future, SinkExt, StreamExt},
@@ -40,7 +41,7 @@ impl crate::Server for Node {
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         _: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
@@ -108,7 +109,6 @@ async fn suite() {
 
     for (id, addr, keypair) in &peers {
         let client_config = client::Config {
-            keypair: keypair.clone(),
             known_peers: peers
                 .iter()
                 .filter_map(|p| (&p.0 != id).then_some(p.1.clone()))
@@ -118,19 +118,12 @@ async fn suite() {
             server_name: RPC_SERVER_NAME,
         };
 
-        let client = quic::Client::new(client_config).expect("Client::new");
+        let client_socket = quic::client::Socket::new(keypair.clone()).unwrap();
+        let client = crate::client::new(client_socket, client_config);
 
         let server_config = server::Config {
-            name: RPC_SERVER_NAME,
+            name: &RPC_SERVER_NAME,
             handshake: NoHandshake,
-        };
-
-        let quic_server_config = quic::server::Config {
-            name: "test_server",
-            addr: addr.clone(),
-            keypair: keypair.clone(),
-            max_concurrent_connections: 500,
-            max_concurrent_streams: 10000,
         };
 
         clients.push(client.clone());
@@ -141,8 +134,19 @@ async fn suite() {
         };
         nodes.push(node.clone());
 
-        quic::server::run(node, quic_server_config)
-            .expect("run_server")
+        let server_socket = quic::server::Socket::new(quic::server::Config {
+            addr: addr.clone(),
+            keypair: keypair.clone(),
+            max_concurrent_streams: 100,
+        })
+        .unwrap();
+
+        let transport_config = server::TransportConfig {
+            max_concurrent_connections: 100,
+            max_concurrent_streams: 100,
+        };
+
+        node.serve(server_socket, transport_config)
             .pipe(tokio::spawn);
     }
 
@@ -160,10 +164,10 @@ async fn suite() {
             // unary
 
             let res = UnaryRpc::send(client, to, &"ping".to_string()).await;
-            assert_eq!(res, Ok("pong".to_string()));
+            assert_eq!(res.unwrap(), "pong".to_string());
 
             let res = UnaryRpc::send(client, &AnyPeer, &"ping".to_string()).await;
-            assert_eq!(res, Ok("pong".to_string()));
+            assert_eq!(res.unwrap(), "pong".to_string());
 
             // streaming
 

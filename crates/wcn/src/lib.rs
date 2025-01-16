@@ -1,4 +1,8 @@
-use {anyhow::Context as _, derive_more::Deref, std::str::FromStr, wcn_rpc::Multiaddr};
+use {
+    derive_more::Deref,
+    std::str::FromStr,
+    wcn_rpc::{quic, Multiaddr},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -55,8 +59,9 @@ pub struct AdminApiArgs {
 }
 
 impl AdminApiArgs {
-    pub fn new_client(self) -> anyhow::Result<wcn_admin_api::Client> {
-        let cfg = wcn_admin_api::client::Config::new(self.address).with_keypair(self.keypair.0);
-        wcn_admin_api::Client::new(cfg).context("wcn_admin_api::Client::new")
+    pub fn new_client(self) -> anyhow::Result<wcn_admin_api::Client<quic::client::Socket>> {
+        let socket = quic::client::Socket::new(self.keypair.0)?;
+        let cfg = wcn_admin_api::client::Config::new(self.address);
+        Ok(wcn_admin_api::Client::new(socket, cfg))
     }
 }

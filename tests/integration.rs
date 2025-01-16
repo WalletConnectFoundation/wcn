@@ -25,7 +25,10 @@ use {
     tracing_subscriber::EnvFilter,
     wcn::fsm::ShutdownReason,
     wcn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
-    wcn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr},
+    wcn_rpc::{
+        identity::Keypair,
+        quic::{self, socketaddr_to_multiaddr},
+    },
 };
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
@@ -87,7 +90,7 @@ struct TestCluster {
     nodes: HashMap<PeerId, NodeHandle>,
     prometheus: PrometheusHandle,
 
-    admin_api_client: admin_api::Client,
+    admin_api_client: admin_api::Client<quic::client::Socket>,
 
     version: u128,
     keyspace_version: u64,
@@ -120,11 +123,10 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
-        let admin_api_client = admin_api::Client::new(
-            admin_api::client::Config::new(local_multiaddr(0))
-                .with_keypair(authorized_client_keypair(0)),
-        )
-        .unwrap();
+        let socket = quic::client::Socket::new(authorized_client_keypair(0)).unwrap();
+
+        let admin_api_client =
+            admin_api::Client::new(socket, admin_api::client::Config::new(local_multiaddr(0)));
 
         let mut cluster = Self {
             nodes,
@@ -296,28 +298,26 @@ impl TestCluster {
         replication::Driver::new(cfg).await.unwrap()
     }
 
-    async fn new_client_api_client(&self) -> client_api::Client {
+    async fn new_client_api_client(&self) -> client_api::Client<quic::client::Socket> {
         let nodes: HashSet<_> = self
             .nodes
             .values()
             .map(|node| local_multiaddr(node.config.client_api_server_port))
             .collect();
 
-        client_api::Client::new(
-            client_api::client::Config::new(nodes).with_keypair(authorized_client_keypair(0)),
-        )
-        .await
-        .unwrap()
+        let socket = quic::client::Socket::new(authorized_client_keypair(0)).unwrap();
+
+        client_api::Client::new(socket, client_api::client::Config::new(nodes))
+            .await
+            .unwrap()
     }
 
-    async fn new_storage_api_client(&self) -> storage_api::Client {
+    async fn new_storage_api_client(&self) -> storage_api::Client<quic::client::Socket> {
         let client_api = self.new_client_api_client().await;
         let token = client_api.auth_token();
 
-        storage_api::Client::new(
-            storage_api::client::Config::new(token).with_keypair(authorized_client_keypair(0)),
-        )
-        .unwrap()
+        let socket = quic::client::Socket::new(authorized_client_keypair(0)).unwrap();
+        storage_api::Client::new(socket, storage_api::client::Config::new(token))
     }
 
     async fn test_pubsub(&self) {
@@ -788,9 +788,9 @@ impl TestCluster {
             .collect::<Vec<_>>();
 
         let client = new_client_api_client(|cfg| {
-            cfg.keypair = client_keypair;
             cfg.nodes.insert(node_addr);
             cfg.namespaces = namespaces.iter().map(|(auth, _)| auth.clone()).collect();
+            client_keypair
         })
         .await;
 
@@ -896,13 +896,15 @@ fn new_node_config() -> Config {
 }
 
 async fn new_client_api_client(
-    f: impl FnOnce(&mut client_api::client::Config),
-) -> client_api::Client {
+    f: impl FnOnce(&mut client_api::client::Config) -> Keypair,
+) -> client_api::Client<quic::client::Socket> {
     let mut config = client_api::client::Config::new([]);
 
-    f(&mut config);
+    let keypair = f(&mut config);
 
-    client_api::Client::new(config).await.unwrap()
+    let socket = quic::client::Socket::new(keypair).unwrap();
+
+    client_api::Client::new(socket, config).await.unwrap()
 }
 
 fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {

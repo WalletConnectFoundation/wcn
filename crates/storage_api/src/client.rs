@@ -1,38 +1,37 @@
 use {
     super::*,
     arc_swap::ArcSwap,
-    futures::SinkExt,
-    std::{
-        collections::HashSet,
-        future::Future,
-        result::Result as StdResult,
-        sync::Arc,
-        time::Duration,
-    },
+    futures::{SinkExt, TryFutureExt as _},
+    std::{collections::HashSet, future::Future, sync::Arc, time::Duration},
     wcn_rpc::{
-        client::middleware::{
-            self,
-            MeteredExt,
-            Timeouts,
-            WithRetries,
-            WithRetriesExt,
-            WithTimeouts,
-            WithTimeoutsExt as _,
+        client::{
+            middleware::{
+                self,
+                MeteredExt,
+                Timeouts,
+                WithRetries,
+                WithRetriesExt,
+                WithTimeouts,
+                WithTimeoutsExt as _,
+            },
+            Connection,
+            Transport,
+            TransportError,
+            TransportResult,
         },
-        identity::Keypair,
         middleware::Metered,
-        transport::{self, PendingConnection},
+        transport::{BiDirectionalStream, PostcardCodec},
     },
 };
 
 /// Storage API client.
 #[derive(Clone)]
-pub struct Client {
-    rpc: RpcClient,
+pub struct Client<T: Transport> {
+    rpc: RpcClient<T>,
 }
 
-type RpcClient =
-    WithRetries<Metered<WithTimeouts<wcn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
+type RpcClient<T> =
+    WithRetries<Metered<WithTimeouts<wcn_rpc::ClientImpl<T, Handshake>>>, RetryStrategy>;
 
 /// Storage API access token.
 pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
@@ -40,9 +39,6 @@ pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
 /// [`Client`] config.
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// [`Keypair`] of the [`Client`].
-    pub keypair: Keypair,
-
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
 
@@ -59,18 +55,11 @@ pub struct Config {
 impl Config {
     pub fn new(access_token: AccessToken) -> Self {
         Self {
-            keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             access_token,
             max_attempts: 3,
         }
-    }
-
-    /// Overwrites [`Config::keypair`].
-    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = keypair;
-        self
     }
 
     /// Overwrites [`Config::connection_timeout`].
@@ -91,15 +80,14 @@ impl Config {
     }
 }
 
-impl Client {
+impl<T: Transport> Client<T> {
     /// Creates a new [`Client`].
-    pub fn new(config: Config) -> StdResult<Self, CreationError> {
+    pub fn new(transport: T, config: Config) -> Self {
         let handshake = Handshake {
             access_token: config.access_token,
         };
 
         let rpc_client_config = wcn_rpc::client::Config {
-            keypair: config.keypair,
             known_peers: HashSet::new(),
             handshake,
             connection_timeout: config.connection_timeout,
@@ -108,16 +96,15 @@ impl Client {
 
         let timeouts = Timeouts::new().with_default(config.operation_timeout);
 
-        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
-            .map_err(|err| CreationError(err.to_string()))?
+        let rpc_client = wcn_rpc::client::new(transport, rpc_client_config)
             .with_timeouts(timeouts)
             .metered()
             .with_retries(RetryStrategy::new(config.max_attempts));
 
-        Ok(Self { rpc: rpc_client })
+        Self { rpc: rpc_client }
     }
 
-    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a> {
+    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a, T> {
         RemoteStorage {
             client: self,
             server_addr,
@@ -144,15 +131,16 @@ impl middleware::RetryStrategy for RetryStrategy {
         error: &wcn_rpc::client::Error,
         attempt: usize,
     ) -> Option<Duration> {
-        use crate::error_code;
+        use {crate::error_code, wcn_rpc::client::Error as Err};
 
         if attempt >= self.max_attempts {
             return None;
         }
 
         let rpc_error = match error {
-            wcn_rpc::client::Error::Transport(_) => return Some(Duration::from_millis(50)),
-            wcn_rpc::client::Error::Rpc { error, .. } => error,
+            Err::NoAvailablePeers | Err::Lock | Err::Rng => return None,
+            Err::Transport(_) => return Some(Duration::from_millis(50)),
+            Err::Rpc { error, .. } => error,
         };
 
         Some(match rpc_error.code.as_ref() {
@@ -172,13 +160,13 @@ impl middleware::RetryStrategy for RetryStrategy {
 
 /// Handle to a remote Storage API (Server).
 #[derive(Clone, Copy)]
-pub struct RemoteStorage<'a> {
-    client: &'a Client,
+pub struct RemoteStorage<'a, T: Transport> {
+    client: &'a Client<T>,
     server_addr: &'a Multiaddr,
     expected_keyspace_version: Option<u64>,
 }
 
-impl RemoteStorage<'_> {
+impl<T: Transport> RemoteStorage<'_, T> {
     fn extended_key(&self, key: Key) -> ExtendedKey {
         ExtendedKey {
             inner: key.0,
@@ -186,7 +174,7 @@ impl RemoteStorage<'_> {
         }
     }
 
-    fn rpc_client(&self) -> &RpcClient {
+    fn rpc_client(&self) -> &RpcClient<T> {
         &self.client.rpc
     }
 
@@ -362,11 +350,6 @@ impl RemoteStorage<'_> {
     }
 }
 
-/// Error of [`Client::new`].
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("{_0}")]
-pub struct CreationError(String);
-
 /// Error of a [`Client`] operation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum Error {
@@ -397,9 +380,12 @@ pub enum Error {
 
 impl From<wcn_rpc::client::Error> for Error {
     fn from(err: wcn_rpc::client::Error) -> Self {
+        use wcn_rpc::client::Error as Err;
+
         let rpc_err = match err {
             wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
             wcn_rpc::client::Error::Rpc { error, .. } => error,
+            Err::NoAvailablePeers | Err::Lock | Err::Rng => return Self::Other(err.to_string()),
         };
 
         match rpc_err.code.as_ref() {
@@ -420,27 +406,32 @@ struct Handshake {
     access_token: AccessToken,
 }
 
-impl transport::Handshake for Handshake {
-    type Ok = ();
-    type Err = HandshakeError;
+impl wcn_rpc::client::Handshake for Handshake {
+    type Data = ();
 
     fn handle(
         &self,
-        _peer_id: PeerId,
-        conn: PendingConnection,
-    ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
+        conn: &impl Connection,
+    ) -> impl Future<Output = TransportResult<Self::Data>> + Send {
         async move {
             let (mut rx, mut tx) = conn
-                .initiate_handshake::<HandshakeRequest, HandshakeResponse>()
-                .await?;
+                .establish_stream()
+                .map_ok(|(rx, tx)| BiDirectionalStream::new(rx, tx))
+                .await?
+                .upgrade::<HandshakeResponse, HandshakeRequest, PostcardCodec>();
 
             let req = HandshakeRequest {
                 access_token: self.access_token.load().as_ref().to_owned(),
             };
 
-            tx.send(req).await.map_err(HandshakeError::Transport)?;
+            tx.send(req).await?;
 
-            rx.recv_message().await?.map_err(Into::into)
+            rx.recv_message()
+                .await?
+                .map_err(|err| TransportError::Other {
+                    kind: "handshake",
+                    details: format!("{err:?}"),
+                })
         }
     }
 }

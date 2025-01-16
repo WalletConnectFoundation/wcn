@@ -1,6 +1,10 @@
 use {
     super::{ClientConnectionInfo, Server},
-    crate::{transport::BiDirectionalStream, Id as RpcId, Name as RpcName},
+    crate::{
+        transport::{BiDirectionalStream, Read, Write},
+        Id as RpcId,
+        Name as RpcName,
+    },
     libp2p::PeerId,
     std::{collections::HashSet, future::Future, sync::Arc},
     wc::{
@@ -36,7 +40,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         self.inner
@@ -76,7 +80,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {
@@ -152,7 +156,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + 'a {
         async move {

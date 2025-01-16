@@ -47,13 +47,13 @@ pub enum Error {
     MetricsServer(#[from] hyper::Error),
 
     #[error("Failed to start Client API server: {0:?}")]
-    ClientApiServer(#[from] client_api::server::ServeError),
+    ClientApiServer(quic::Error),
 
     #[error("Failed to start Admin API server: {0:?}")]
-    AdminApiServer(#[from] admin_api::server::Error),
+    AdminApiServer(#[from] quic::Error),
 
     #[error("Failed to initialize networking: {0:?}")]
-    Network(#[from] quic::Error),
+    Network(quic::Error),
 
     #[error("Failed to initialize storage: {0:?}")]
     Storage(storage::Error),
@@ -78,6 +78,9 @@ pub enum Error {
 
     #[error("Failed to find a public IP of this node")]
     NoPublicIp,
+
+    #[error("Keypair should be Ed25519")]
+    InvalidKeypair,
 }
 
 #[cfg(feature = "memory_profiler")]

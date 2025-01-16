@@ -1,5 +1,7 @@
+pub use quinn::{RecvStream as Read, SendStream as Write};
 use {
-    crate::ServerName,
+    crate::transport,
+    futures::FutureExt,
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
     quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
@@ -12,8 +14,6 @@ use {
 
 #[cfg(feature = "client")]
 pub mod client;
-#[cfg(feature = "client")]
-pub use client::Client;
 
 #[cfg(feature = "server")]
 pub mod server;
@@ -21,13 +21,6 @@ pub mod server;
 // TODO: Consider re-enabling
 #[allow(dead_code)]
 mod metrics;
-
-const PROTOCOL_VERSION: u32 = 1;
-
-#[derive(Default)]
-struct ConnectionHeader {
-    server_name: Option<ServerName>,
-}
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 #[error("{0}: invalid QUIC Multiaddr")]
@@ -180,4 +173,24 @@ pub enum ExtractPeerIdError {
 
     #[error("Failed to parse TLS certificate: {0:?}")]
     ParseTlsCertificate(libp2p_tls::certificate::ParseError),
+}
+
+fn connection_error_kind(err: &quinn::ConnectionError) -> &'static str {
+    use quinn::ConnectionError as Err;
+    match err {
+        Err::VersionMismatch => "quic_version_mismatch",
+        Err::TransportError(_) => "transport",
+        Err::ConnectionClosed(_) => "connection_closed",
+        Err::ApplicationClosed(_) => "appliciation_closed",
+        Err::Reset => "reset",
+        Err::TimedOut => "timed_out",
+        Err::LocallyClosed => "locally_closed",
+        Err::CidsExhausted => "cids_exhausted",
+    }
+}
+
+impl transport::Write for quinn::SendStream {
+    fn wait_closed(&mut self) -> impl std::future::Future<Output = ()> + Send + '_ {
+        self.stopped().map(drop)
+    }
 }

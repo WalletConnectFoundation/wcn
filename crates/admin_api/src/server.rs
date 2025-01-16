@@ -3,24 +3,19 @@ use {
     futures::FutureExt as _,
     std::{collections::HashSet, future::Future, time::Duration},
     wcn_rpc::{
-        identity::Keypair,
         middleware::Timeouts,
         server::{
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
+            Transport,
         },
-        transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
+        transport::{BiDirectionalStream, NoHandshake, PostcardCodec, Read, Write},
+        Server as _,
     },
 };
 
 /// [`Server`] config.
 pub struct Config {
-    /// [`Multiaddr`] of the server.
-    pub addr: Multiaddr,
-
-    /// [`Keypair`] of the server.
-    pub keypair: Keypair,
-
     /// Timeout of a [`Server`] operation.
     pub operation_timeout: Duration,
 
@@ -52,33 +47,29 @@ pub trait Server: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = MemoryProfileResult> + Send;
 
     /// Runs this [`Server`] using the provided [`Config`].
-    fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, Error> {
+    fn serve(self, transport: impl Transport, cfg: Config) -> impl Future<Output = ()> {
         let timeouts = Timeouts::new()
             .with::<{ GetMemoryProfile::ID }>(MEMORY_PROFILE_MAX_DURATION)
             .with_default(cfg.operation_timeout);
 
         let rpc_server_config = wcn_rpc::server::Config {
-            name: crate::RPC_SERVER_NAME,
+            name: &crate::RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
 
-        let quic_server_config = wcn_rpc::quic::server::Config {
-            name: const { crate::RPC_SERVER_NAME.as_str() },
-            addr: cfg.addr,
-            keypair: cfg.keypair,
+        let transport_config = wcn_rpc::server::TransportConfig {
             max_concurrent_connections: 10,
             max_concurrent_streams: 100,
         };
 
-        let rpc_server = RpcServer {
+        RpcServer {
             api_server: self,
             config: rpc_server_config,
         }
         .with_auth(Auth::new(cfg.authorized_clients))
         .with_timeouts(timeouts)
-        .metered();
-
-        wcn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(Error)
+        .metered()
+        .serve(transport, transport_config)
     }
 }
 
@@ -107,7 +98,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         _conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {

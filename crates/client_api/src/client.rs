@@ -8,8 +8,8 @@ use {
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
+            Transport,
         },
-        identity::Keypair,
         transport::NoHandshake,
         Multiaddr,
     },
@@ -21,9 +21,6 @@ const MIN_AUTH_TOKEN_TTL: Duration = Duration::from_secs(5 * 60);
 /// [`Client`] config.
 #[derive(Clone)]
 pub struct Config {
-    /// [`Keypair`] of the [`Client`].
-    pub keypair: Keypair,
-
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
 
@@ -43,7 +40,6 @@ pub struct Config {
 impl Config {
     pub fn new(nodes: impl Into<HashSet<Multiaddr>>) -> Self {
         Self {
-            keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             nodes: nodes.into(),
@@ -51,12 +47,6 @@ impl Config {
             auth_token_ttl: DEFAULT_AUTH_TOKEN_TTL,
             namespaces: Default::default(),
         }
-    }
-
-    /// Overwrites [`Config::keypair`].
-    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = keypair;
-        self
     }
 
     /// Overwrites [`Config::connection_timeout`].
@@ -82,8 +72,8 @@ impl Config {
     }
 }
 
-struct Inner {
-    rpc_client: WithTimeouts<wcn_rpc::quic::Client>,
+struct Inner<T: Transport> {
+    rpc_client: WithTimeouts<wcn_rpc::ClientImpl<T>>,
     namespaces: Vec<auth::Auth>,
     auth_ttl: Duration,
     auth_token: Arc<ArcSwap<token::Token>>,
@@ -91,7 +81,7 @@ struct Inner {
     nodes: Vec<Multiaddr>,
 }
 
-impl Inner {
+impl<T: Transport> Inner<T> {
     async fn refresh_auth_token(&self) -> Result<(), token::Error> {
         let address = rand::seq::SliceRandom::choose(&self.nodes[..], &mut rand::thread_rng())
             .ok_or(Error::NodeNotAvailable)?;
@@ -152,7 +142,7 @@ impl Inner {
     }
 }
 
-async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
+async fn updater<T: Transport>(inner: Arc<Inner<T>>, shutdown_rx: oneshot::Receiver<()>) {
     tokio::select! {
         _ = cluster_update(&inner) => {},
         _ = auth_token_update(&inner) => {},
@@ -160,7 +150,7 @@ async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
     }
 }
 
-async fn cluster_update(inner: &Inner) {
+async fn cluster_update<T: Transport>(inner: &Inner<T>) {
     loop {
         let stream =
             ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) }).await;
@@ -204,7 +194,7 @@ async fn cluster_update(inner: &Inner) {
     }
 }
 
-async fn auth_token_update(inner: &Inner) {
+async fn auth_token_update<T: Transport>(inner: &Inner<T>) {
     // Subtract 2 minutes from the token duration to refresh it before it expires.
     let normal_delay = inner
         .auth_ttl
@@ -234,14 +224,14 @@ async fn auth_token_update(inner: &Inner) {
 
 /// API client.
 #[derive(Clone)]
-pub struct Client {
-    inner: Arc<Inner>,
+pub struct Client<T: Transport> {
+    inner: Arc<Inner<T>>,
     _shutdown_tx: Arc<oneshot::Sender<()>>,
 }
 
-impl Client {
+impl<T: Transport> Client<T> {
     /// Creates a new [`Client`].
-    pub async fn new(config: Config) -> Result<Self> {
+    pub async fn new(transport: T, config: Config) -> Result<Self> {
         if config.auth_token_ttl < MIN_AUTH_TOKEN_TTL {
             return Err(Error::TokenTtl);
         }
@@ -249,7 +239,6 @@ impl Client {
         let nodes = config.nodes.iter().cloned().collect();
 
         let rpc_client_config = wcn_rpc::client::Config {
-            keypair: config.keypair,
             known_peers: config.nodes,
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
@@ -261,9 +250,7 @@ impl Client {
             .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
-        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
-            .map_err(|err| Error::Other(err.to_string()))?
-            .with_timeouts(timeouts);
+        let rpc_client = wcn_rpc::client::new(transport, rpc_client_config).with_timeouts(timeouts);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -397,6 +384,7 @@ impl<A> From<wcn_rpc::client::Error> for Error<A> {
         let rpc_err = match err {
             wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
             wcn_rpc::client::Error::Rpc { error, .. } => error,
+            err => return Self::Other(err.to_string()),
         };
 
         match rpc_err.code.as_ref() {

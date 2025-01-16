@@ -6848,6 +6848,7 @@ dependencies = [
  "wcn_client_api",
  "wcn_core",
  "wcn_domain",
+ "wcn_rpc",
  "wcn_storage_api",
 ]
 

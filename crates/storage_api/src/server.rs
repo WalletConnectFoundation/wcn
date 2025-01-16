@@ -7,9 +7,12 @@ use {
         server::{
             middleware::{MeteredExt, WithTimeoutsExt},
             ClientConnectionInfo,
+            Connection,
             ConnectionInfo,
+            TransportError,
+            TransportResult,
         },
-        transport::{self, BiDirectionalStream, PendingConnection, PostcardCodec},
+        transport::{BiDirectionalStream, PostcardCodec, Read, Write},
     },
 };
 
@@ -104,7 +107,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
         let rpc_server_config = wcn_rpc::server::Config {
-            name: crate::RPC_SERVER_NAME,
+            name: &crate::RPC_SERVER_NAME,
             handshake: Handshake {
                 authenticator: cfg.authenticator,
             },
@@ -324,7 +327,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
@@ -388,19 +391,20 @@ pub struct HandshakeData {
     pub namespaces: Arc<HashSet<Namespace>>,
 }
 
-impl<A: Authenticator> transport::Handshake for Handshake<A> {
-    type Ok = HandshakeData;
-    type Err = HandshakeError;
+impl<A: Authenticator> wcn_rpc::server::Handshake for Handshake<A> {
+    type Data = HandshakeData;
 
     fn handle(
         &self,
-        peer_id: PeerId,
-        conn: PendingConnection,
-    ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
+        peer_id: &PeerId,
+        conn: &impl Connection,
+    ) -> impl Future<Output = TransportResult<Self::Data>> + Send {
         async move {
             let (mut rx, mut tx) = conn
-                .accept_handshake::<HandshakeRequest, HandshakeResponse>()
-                .await?;
+                .accept_stream()
+                .await
+                .map(|(rx, tx)| BiDirectionalStream::new(rx, tx))?
+                .upgrade::<HandshakeRequest, HandshakeResponse, PostcardCodec>();
 
             let req = rx.recv_message().await?;
 
@@ -423,7 +427,7 @@ impl<A: Authenticator> transport::Handshake for Handshake<A> {
             };
 
             tx.send(Err(err_resp.clone())).await?;
-            Err(err_resp.into())
+            Err(TransportError::Handshake(format!("{err_resp:?}]")))
         }
     }
 }
@@ -441,7 +445,7 @@ pub trait Authenticator: Clone + Send + Sync + 'static {
     fn validate_access_token(
         &self,
         token: &auth::Token,
-        client_peer_id: PeerId,
+        client_peer_id: &PeerId,
     ) -> Result<auth::token::Claims, String> {
         let claims = token.decode().map_err(|err| err.to_string())?;
 
@@ -461,7 +465,7 @@ pub trait Authenticator: Clone + Send + Sync + 'static {
             return Err("Unauthorized token issuer".to_string());
         }
 
-        if claims.client_peer_id() != client_peer_id {
+        if &claims.client_peer_id() != client_peer_id {
             return Err("Wrong PeerId".to_string());
         }
 

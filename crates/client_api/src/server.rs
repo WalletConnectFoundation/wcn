@@ -9,25 +9,31 @@ use {
         time::Duration,
     },
     wcn_rpc::{
-        identity::{ed25519::Keypair as Ed25519Keypair, Keypair},
+        identity::ed25519::Keypair as Ed25519Keypair,
         middleware::Timeouts,
         server::{
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
+            Transport,
         },
-        transport::{BiDirectionalStream, NoHandshake, PostcardCodec, RecvStream, SendStream},
-        Multiaddr,
+        transport::{
+            BiDirectionalStream,
+            NoHandshake,
+            PostcardCodec,
+            Read,
+            RecvStream,
+            SendStream,
+            Write,
+        },
         PeerId,
+        Server as _,
     },
 };
 
 /// [`Server`] config.
 pub struct Config {
-    /// [`Multiaddr`] of the server.
-    pub addr: Multiaddr,
-
     /// [`Keypair`] of the server.
-    pub keypair: Keypair,
+    pub keypair: Ed25519Keypair,
 
     /// Timeout of a [`Server`] operation.
     pub operation_timeout: Duration,
@@ -57,31 +63,24 @@ pub trait Server: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<impl Stream<Item = SubscriptionEvent> + Send + 'static>> + Send;
 
     /// Runs this [`Server`] using the provided [`Config`].
-    fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>, ServeError> {
+    fn serve(self, transport: impl Transport, cfg: Config) -> impl Future<Output = ()> {
         let timeouts = Timeouts::new()
             .with_default(cfg.operation_timeout)
             .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
         let rpc_server_config = wcn_rpc::server::Config {
-            name: crate::RPC_SERVER_NAME,
+            name: &crate::RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
 
-        let quic_server_config = wcn_rpc::quic::server::Config {
-            name: const { crate::RPC_SERVER_NAME.as_str() },
-            addr: cfg.addr,
-            keypair: cfg.keypair.clone(),
+        let transport_config = wcn_rpc::server::TransportConfig {
             max_concurrent_connections: cfg.max_concurrent_connections,
             max_concurrent_streams: cfg.max_concurrent_streams,
         };
 
         let inner = Arc::new(Inner {
-            keypair: cfg
-                .keypair
-                .clone()
-                .try_into_ed25519()
-                .map_err(|_| ServeError::Key)?,
+            keypair: cfg.keypair,
             network_id: cfg.network_id,
             cluster_view: cfg.cluster_view,
             api_server: self,
@@ -97,12 +96,11 @@ pub trait Server: Clone + Send + Sync + 'static {
             Auth::disabled()
         };
 
-        let rpc_server = RpcServer { inner }
+        RpcServer { inner }
             .with_auth(auth)
             .with_timeouts(timeouts)
-            .metered();
-
-        wcn_rpc::quic::server::run(rpc_server, quic_server_config).map_err(ServeError::Quic)
+            .metered()
+            .serve(transport, transport_config)
     }
 }
 
@@ -179,7 +177,7 @@ impl<S: Server> RpcServer<S> {
 
     async fn handle_cluster_updates(
         &self,
-        mut tx: SendStream<wcn_rpc::Result<ClusterUpdate>>,
+        mut tx: SendStream<impl Write, wcn_rpc::Result<ClusterUpdate>>,
     ) -> Result<(), wcn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
@@ -190,7 +188,7 @@ impl<S: Server> RpcServer<S> {
                     Some(_) => {
                         let snapshot = self
                             .cluster_snapshot()
-                            .map_err(|err| wcn_rpc::transport::Error::Other(err.to_string()))?;
+                            .map_err(|err| wcn_rpc::transport::StreamError::Other(err.to_string()))?;
 
                         tx.send(Ok(snapshot))
                             .await?;
@@ -210,8 +208,8 @@ impl<S: Server> RpcServer<S> {
 
     async fn subscribe(
         &self,
-        mut rx: RecvStream<SubscribeRequest>,
-        mut tx: SendStream<wcn_rpc::Result<SubscribeResponse>>,
+        mut rx: RecvStream<impl Read, SubscribeRequest>,
+        mut tx: SendStream<impl Write, wcn_rpc::Result<SubscribeResponse>>,
     ) -> wcn_rpc::server::Result<()> {
         let req = rx.recv_message().await?;
 
@@ -254,7 +252,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {
@@ -292,16 +290,6 @@ where
             });
         }
     }
-}
-
-/// Error of [`Server::serve`]
-#[derive(Debug, thiserror::Error)]
-pub enum ServeError {
-    #[error("{0:?}")]
-    Quic(wcn_rpc::quic::Error),
-
-    #[error("Invalid server keypair")]
-    Key,
 }
 
 /// Error of a [`Server`] operation.

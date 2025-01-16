@@ -1,12 +1,6 @@
 use {
-    super::{Client, Error, Result},
-    crate::{
-        error_code,
-        transport::BiDirectionalStream,
-        ForceSendFuture as _,
-        Id as RpcId,
-        Name as RpcName,
-    },
+    super::{BiDirectionalStream, Client, Error, Result},
+    crate::{error_code, ForceSendFuture as _, Id as RpcId, Name as RpcName},
     futures::FutureExt as _,
     libp2p::Multiaddr,
     std::{future::Future, sync::Arc, time::Duration},
@@ -32,11 +26,13 @@ impl<C> Client for Metered<C>
 where
     C: Client,
 {
+    type Transport = C::Transport;
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a Multiaddr,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.inner
             .send_rpc(addr, rpc_id, f)
@@ -48,7 +44,10 @@ where
             .map(move |res| {
                 let error_kind = match &res {
                     Ok(_) => return res,
-                    Err(Error::Transport(err)) => err.as_str(),
+                    Err(Error::NoAvailablePeers) => "no_available_peers",
+                    Err(Error::Lock) => "lock",
+                    Err(Error::Rng) => "rng",
+                    Err(Error::Transport(err)) => err.kind(),
                     Err(Error::Rpc { error, .. }) => error.code.as_ref(),
                 };
 
@@ -85,11 +84,13 @@ where
     A: Sync,
     C: Client<A>,
 {
+    type Transport = C::Transport;
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         async move {
             if let Some(timeout) = self.timeouts.get(rpc_id) {
@@ -154,11 +155,13 @@ where
     C: Client<A>,
     R: RetryStrategy,
 {
+    type Transport = C::Transport;
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         async move {
             let mut attempt = 1;

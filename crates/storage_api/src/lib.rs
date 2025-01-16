@@ -509,7 +509,7 @@ type HandshakeResponse = Result<(), HandshakeErrorResponse>;
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum HandshakeError {
     #[error(transparent)]
-    Transport(#[from] transport::Error),
+    Transport(#[from] transport::StreamError),
 
     #[error("Invalid token: {_0}")]
     InvalidToken(String),

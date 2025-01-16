@@ -1,6 +1,8 @@
-use anyhow::Context as _;
+use {anyhow::Context as _, wcn_rpc::quic};
 
-pub(super) async fn exec(admin_api_client: &wcn_admin_api::Client) -> anyhow::Result<()> {
+pub(super) async fn exec(
+    admin_api_client: &wcn_admin_api::Client<quic::client::Socket>,
+) -> anyhow::Result<()> {
     let view = admin_api_client
         .get_cluster_view()
         .await

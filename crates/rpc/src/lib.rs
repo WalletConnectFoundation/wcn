@@ -12,20 +12,23 @@ use {
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
-pub use client::Client;
+pub use client::{Client, ClientImpl};
 
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
-pub use server::{IntoServer, Server};
+pub use server::Server;
 
 pub mod middleware;
 
 pub mod quic;
+pub mod tcp;
 pub mod transport;
 
 #[cfg(test)]
 mod test;
+
+const PROTOCOL_VERSION: u32 = 1;
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -242,3 +245,12 @@ trait ForceSendFuture: core::future::Future {
 }
 
 impl<T: core::future::Future> ForceSendFuture for T {}
+
+#[derive(Clone, Debug, Default)]
+pub struct ConnectionHeader {
+    // not being used after reading, is here to represent complete header structure
+    #[allow(dead_code)]
+    protocol_version: u32,
+
+    server_name: Option<ServerName>,
+}

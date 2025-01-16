@@ -1,28 +1,27 @@
 use {
     super::*,
-    std::{collections::HashSet, convert::Infallible, result::Result as StdResult, time::Duration},
+    std::{collections::HashSet, convert::Infallible, time::Duration},
     wcn_rpc::{
-        client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
-        identity::Keypair,
+        client::{
+            middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
+            Transport,
+        },
         transport::NoHandshake,
     },
 };
 
 /// Admin API client.
 #[derive(Clone)]
-pub struct Client {
-    rpc_client: RpcClient,
+pub struct Client<T: Transport> {
+    rpc_client: RpcClient<T>,
     server_addr: Multiaddr,
 }
 
-type RpcClient = WithTimeouts<wcn_rpc::quic::Client>;
+type RpcClient<T> = WithTimeouts<wcn_rpc::ClientImpl<T>>;
 
 /// [`Client`] config.
 #[derive(Clone)]
 pub struct Config {
-    /// [`Keypair`] of the [`Client`].
-    pub keypair: Keypair,
-
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
 
@@ -36,25 +35,17 @@ pub struct Config {
 impl Config {
     pub fn new(server_addr: Multiaddr) -> Self {
         Self {
-            keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
             operation_timeout: Duration::from_secs(10),
             server_addr,
         }
     }
-
-    /// Overwrites [`Config::keypair`].
-    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
-        self.keypair = keypair;
-        self
-    }
 }
 
-impl Client {
+impl<T: Transport> Client<T> {
     /// Creates a new [`Client`].
-    pub fn new(config: Config) -> StdResult<Self, CreationError> {
+    pub fn new(transport: T, config: Config) -> Self {
         let rpc_client_config = wcn_rpc::client::Config {
-            keypair: config.keypair,
             known_peers: HashSet::new(),
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
@@ -67,14 +58,12 @@ impl Client {
                 MEMORY_PROFILE_MAX_DURATION + config.operation_timeout,
             );
 
-        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
-            .map_err(|err| CreationError(err.to_string()))?
-            .with_timeouts(timeouts);
+        let rpc_client = wcn_rpc::client::new(transport, rpc_client_config).with_timeouts(timeouts);
 
-        Ok(Self {
+        Self {
             rpc_client,
             server_addr: config.server_addr,
-        })
+        }
     }
 
     pub fn set_server_addr(&mut self, addr: Multiaddr) {
@@ -128,11 +117,6 @@ impl Client {
     }
 }
 
-/// Error of [`Client::new`].
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("{_0}")]
-pub struct CreationError(String);
-
 /// Error of a [`Client`] operation.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum Error<A = Infallible> {
@@ -162,6 +146,7 @@ impl<A> From<wcn_rpc::client::Error> for Error<A> {
         let rpc_err = match err {
             wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
             wcn_rpc::client::Error::Rpc { error, .. } => error,
+            err => return Self::Other(err.to_string()),
         };
 
         match rpc_err.code.as_ref() {

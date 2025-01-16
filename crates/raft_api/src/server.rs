@@ -11,7 +11,7 @@ use {
             middleware::{MeteredExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{BiDirectionalStream, JsonCodec, NoHandshake},
+        transport::{BiDirectionalStream, JsonCodec, NoHandshake, Read, Write},
         PeerId,
         Rpc as _,
     },
@@ -68,7 +68,7 @@ pub trait Server<C: TypeConfig>: Clone + Send + Sync + 'static {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
         let rpc_server_config = wcn_rpc::server::Config {
-            name: crate::RPC_SERVER_NAME,
+            name: &crate::RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
 
@@ -105,7 +105,7 @@ where
     fn handle_rpc<'a>(
         &'a self,
         id: wcn_rpc::Id,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
         async move {

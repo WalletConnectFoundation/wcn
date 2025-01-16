@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 wc = { workspace = true, features = ["metrics"] }
+rpc = { package = "wcn_rpc", path = "../rpc", features = ["client"] }
 storage_api = { package = "wcn_storage_api", path = "../storage_api", features = ["client"] }
 client_api = { package = "wcn_client_api", path = "../client_api", features = ["client"] }
 domain = { workspace = true }

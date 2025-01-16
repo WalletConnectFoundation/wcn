@@ -1,23 +1,35 @@
 use {
+    super::ConnectionHeader,
     crate::{
+        self as rpc,
         transport::{
-            self,
             BiDirectionalStream,
             Codec,
-            Handshake,
-            HandshakeData,
             NoHandshake,
+            Read,
             RecvStream,
             SendStream,
+            StreamError,
+            Write,
         },
         Id as RpcId,
         Message,
         Result as RpcResult,
         ServerName,
     },
-    futures::{Future, SinkExt as _},
+    derive_more::derive::Deref,
+    futures::{Future, FutureExt, SinkExt as _, TryFutureExt as _},
     libp2p::{Multiaddr, PeerId},
-    std::io,
+    std::{io, sync::Arc, time::Duration},
+    tap::{Pipe as _, TapOptional},
+    tokio::{
+        io::AsyncReadExt,
+        sync::{OwnedSemaphorePermit, Semaphore},
+    },
+    wc::{
+        future::FutureExt as _,
+        metrics::{self, future_metrics, FutureExt as _, StringLabel},
+    },
 };
 
 pub mod middleware;
@@ -26,10 +38,44 @@ pub mod middleware;
 #[derive(Clone, Debug)]
 pub struct Config<H = NoHandshake> {
     /// Name of the server.
-    pub name: ServerName,
+    pub name: &'static ServerName,
 
     /// [`Handshake`] implementation of the server.
     pub handshake: H,
+}
+
+/// [`Transport`] config.
+#[derive(Clone, Debug)]
+pub struct TransportConfig {
+    /// Maximum allowed amount of concurrent connections.
+    pub max_concurrent_connections: u32,
+
+    /// Maximum allowed amount of concurrent streams.
+    pub max_concurrent_streams: u32,
+}
+
+pub trait Handshake: Clone + Send + Sync + 'static {
+    type Data: Clone + Send + Sync + 'static;
+
+    fn handle(
+        &self,
+        peer_id: &PeerId,
+        conn: &impl Connection,
+    ) -> impl Future<Output = Result<Self::Data, TransportError>> + Send;
+}
+
+pub type HandshakeData<H> = <H as Handshake>::Data;
+
+impl Handshake for NoHandshake {
+    type Data = ();
+
+    fn handle(
+        &self,
+        _peer_id: &PeerId,
+        _conn: &impl Connection,
+    ) -> impl Future<Output = Result<Self::Data, TransportError>> + Send {
+        async { Ok(()) }
+    }
 }
 
 /// Info about an inbound connection.
@@ -69,17 +115,14 @@ pub trait Server: Clone + Send + Sync + 'static {
     fn handle_rpc<'a>(
         &'a self,
         id: RpcId,
-        stream: BiDirectionalStream,
+        stream: BiDirectionalStream<impl Read, impl Write>,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a;
-}
 
-/// Into [`Server`] converter.
-pub trait IntoServer {
-    type Server: Server;
-
-    /// Converts `self` into [`Server`].
-    fn into_rpc_server(self) -> Self::Server;
+    /// Runs this [`Server`] using the provided [`Transport`].
+    fn serve(self, transport: impl Transport, cfg: TransportConfig) -> impl Future<Output = ()> {
+        multiplex((self,), transport, cfg)
+    }
 }
 
 /// RPC [`Server`] error.
@@ -87,7 +130,13 @@ pub trait IntoServer {
 pub enum Error {
     /// Transport error.
     #[error(transparent)]
-    Transport(#[from] transport::Error),
+    Transport(#[from] TransportError),
+}
+
+impl From<StreamError> for Error {
+    fn from(err: StreamError) -> Self {
+        Error::Transport(err.into())
+    }
 }
 
 impl From<io::Error> for Error {
@@ -105,7 +154,10 @@ where
     Resp: Message,
     C: Codec,
 {
-    pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
+    pub async fn handle<F, Fut>(
+        stream: BiDirectionalStream<impl Read, impl Write>,
+        f: F,
+    ) -> Result<()>
     where
         F: FnOnce(Req) -> Fut,
         Fut: Future<Output = RpcResult<Resp>>,
@@ -124,9 +176,12 @@ where
     Resp: Message,
     C: Codec,
 {
-    pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
+    pub async fn handle<R: Read, W: Write, F, Fut>(
+        stream: BiDirectionalStream<R, W>,
+        f: F,
+    ) -> Result<()>
     where
-        F: FnOnce(RecvStream<Req, C>, SendStream<RpcResult<Resp>, C>) -> Fut,
+        F: FnOnce(RecvStream<R, Req, C>, SendStream<W, RpcResult<Resp>, C>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
         let (rx, tx) = stream.upgrade();
@@ -139,7 +194,10 @@ where
     Msg: Message,
     C: Codec,
 {
-    pub async fn handle<F, Fut>(stream: BiDirectionalStream, f: F) -> Result<()>
+    pub async fn handle<F, Fut>(
+        stream: BiDirectionalStream<impl Read, impl Write>,
+        f: F,
+    ) -> Result<()>
     where
         F: FnOnce(Msg) -> Fut,
         Fut: Future<Output = ()>,
@@ -148,5 +206,338 @@ where
         let req = rx.recv_message().await?;
         f(req).await;
         Ok(())
+    }
+}
+
+pub trait Transport: Send + Sync + 'static {
+    fn address(&self) -> &Multiaddr;
+
+    fn accept_connection(
+        &self,
+    ) -> impl Future<
+        Output = Option<impl Future<Output = TransportResult<impl Connection>> + Send + 'static>,
+    >;
+}
+
+/// [`Transport`] error.
+#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
+pub enum TransportError {
+    #[error("IO: {0}")]
+    IO(io::ErrorKind),
+
+    #[error("Stream unexpectedly finished")]
+    StreamFinished,
+
+    #[error("Timeout accepting inbound connection")]
+    ConnectionTimeout,
+
+    #[error("Handshake error: {0}")]
+    Handshake(String),
+
+    #[error("Handshake timeout")]
+    HandshakeTimeout,
+
+    #[error("Unknown Rpc server")]
+    UnknownRpcServer,
+
+    #[error("Unsupported protocol version")]
+    UnsupportedProtocolVersion(u32),
+
+    #[error("Codec: {_0}")]
+    Codec(String),
+
+    #[error("{kind}: {details}")]
+    Other { kind: &'static str, details: String },
+}
+
+impl From<io::Error> for TransportError {
+    fn from(err: io::Error) -> Self {
+        TransportError::IO(err.kind())
+    }
+}
+
+impl From<StreamError> for TransportError {
+    fn from(err: StreamError) -> Self {
+        match err {
+            StreamError::IO(kind) => Self::IO(kind),
+            StreamError::Finished => Self::StreamFinished,
+            StreamError::Codec(err) => Self::Codec(err),
+            StreamError::Other(err) => Self::Other {
+                kind: "stream",
+                details: err,
+            },
+        }
+    }
+}
+
+pub type TransportResult<T> = Result<T, TransportError>;
+
+/// Inbound connection.
+pub trait Connection: Send + Sync + 'static {
+    type Read: Read;
+    type Write: Write;
+
+    /// Returns [`ConnectionHeader`] of this [`Connection`].
+    fn header(&self) -> &ConnectionHeader;
+
+    /// Returns [`PeerId`] and [`Multiaddr`] of the peer connected via this
+    /// [`Connection`].
+    fn peer_info(&self) -> TransportResult<(PeerId, Multiaddr)>;
+
+    /// Accepts an inbound [`BiDirectionalStream`].
+    fn accept_stream(
+        &self,
+    ) -> impl Future<Output = TransportResult<(Self::Read, Self::Write)>> + Send;
+}
+
+/// Runs multiple [`rpc::Server`]s on top of a single [`Transport`].
+///
+/// `rpc_servers` argument is expected to be a tuple of [`rpc::Server`] impls.
+pub fn multiplex<T, S>(
+    rpc_servers: S,
+    transport: T,
+    cfg: TransportConfig,
+) -> impl Future<Output = ()>
+where
+    T: Transport,
+    S: Send + Sync + 'static,
+    Multiplexer<T, S>: ConnectionHandler,
+{
+    Multiplexer::new(transport, rpc_servers, cfg).serve()
+}
+
+/// RPC [`Server`] multiplexer.
+#[derive(Debug, Deref)]
+pub struct Multiplexer<T, S>(#[deref] Arc<Inner<T, S>>);
+
+impl<T, S> Clone for Multiplexer<T, S> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct Inner<T, S> {
+    transport: T,
+    rpc_servers: S,
+
+    connection_permits: Arc<Semaphore>,
+    stream_permits: Arc<Semaphore>,
+}
+
+impl<T, S> Multiplexer<T, S>
+where
+    T: Transport,
+    S: Send + Sync + 'static,
+    Self: ConnectionHandler,
+{
+    fn new(transport: T, rpc_servers: S, cfg: TransportConfig) -> Self {
+        Self(Arc::new(Inner {
+            transport,
+            rpc_servers,
+            connection_permits: Arc::new(Semaphore::new(cfg.max_concurrent_connections as usize)),
+            stream_permits: Arc::new(Semaphore::new(cfg.max_concurrent_streams as usize)),
+        }))
+    }
+
+    async fn serve(self) {
+        while let Some(fut) = self.transport.accept_connection().await {
+            self.accept_connection(fut)
+        }
+    }
+
+    fn accept_connection(
+        &self,
+        fut: impl Future<Output = TransportResult<impl Connection>> + Send + 'static,
+    ) {
+        let Ok(conn_permit) = self.connection_permits.clone().try_acquire_owned() else {
+            metrics::counter!("wcn_rpc_server_connections_dropped").increment(1);
+            return;
+        };
+
+        let this = self.clone();
+
+        async move {
+            let conn = fut
+                .with_timeout(Duration::from_millis(2000))
+                .await
+                .map_err(|_| TransportError::ConnectionTimeout)??;
+
+            let header = conn.header();
+
+            let _conn_permit = conn_permit;
+
+            ConnectionHandler::handle_connection(&this, header.server_name, conn).await
+        }
+        .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
+        .with_metrics(future_metrics!("wcn_rpc_quic_server_inbound_connection"))
+        .pipe(tokio::spawn);
+    }
+
+    async fn handle_connection<R: rpc::Server>(
+        &self,
+        conn: impl Connection,
+        rpc_server: &R,
+    ) -> Result<(), TransportError> {
+        use TransportError as Error;
+
+        let cfg = rpc_server.config();
+
+        let (peer_id, remote_address) = conn.peer_info()?;
+
+        let remote_address = match remote_address.with_p2p(peer_id) {
+            Ok(addr) => addr,
+            Err(addr) => addr,
+        };
+
+        let conn_info = ConnectionInfo {
+            peer_id,
+            remote_address,
+            handshake_data: cfg
+                .handshake
+                .handle(&peer_id, &conn)
+                .with_timeout(Duration::from_millis(1000))
+                .await
+                .map_err(|_| Error::HandshakeTimeout)??,
+            storage: Default::default(),
+        };
+
+        loop {
+            let (mut rx, tx) = conn.accept_stream().await?;
+
+            let Some(stream_permit) = self.acquire_stream_permit() else {
+                static THROTTLED_RESULT: &crate::Result<()> = &Err(crate::Error::THROTTLED);
+
+                let (_, mut tx) =
+                    BiDirectionalStream::new(rx, tx).upgrade::<(), crate::Result<()>, R::Codec>();
+
+                // The send buffer is large enough to write the whole response.
+                tx.send(THROTTLED_RESULT).now_or_never();
+
+                continue;
+            };
+
+            let rpc_server = rpc_server.clone();
+            let conn_info = conn_info.clone();
+
+            async move {
+                let _permit = stream_permit;
+
+                let rpc_id = match read_rpc_id(&mut rx).await {
+                    Ok(id) => id,
+                    Err(err) => return tracing::warn!(%err, "Failed to read inbound RPC ID"),
+                };
+
+                rpc_server
+                    .handle_rpc(rpc_id, BiDirectionalStream::new(rx, tx), &conn_info)
+                    .await
+            }
+            .with_metrics(future_metrics!("wcn_rpc_quic_server_inbound_stream"))
+            .pipe(tokio::spawn);
+        }
+    }
+
+    fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
+        metrics::gauge!("wcn_rpc_server_available_stream_permits", StringLabel<"server_addr", Multiaddr> => self.transport.address())
+            .set(self.stream_permits.available_permits() as f64);
+
+        self.stream_permits
+            .clone()
+            .try_acquire_owned()
+            .ok()
+            .tap_none(|| {
+                metrics::counter!("wcn_rpc_server_throttled_streams", StringLabel<"server_addr", Multiaddr> => &self.transport.address())
+                    .increment(1);
+            })
+    }
+}
+
+impl ConnectionHeader {
+    pub async fn read(rx: &mut impl Read) -> Result<Self, TransportError> {
+        let protocol_version = rx.read_u32().await?;
+
+        let (protocol_version, server_name) = match protocol_version {
+            0 => (0, None),
+            super::PROTOCOL_VERSION => {
+                let mut buf = [0; 16];
+                rx.read_exact(&mut buf).await?;
+                (super::PROTOCOL_VERSION, Some(ServerName(buf)))
+            }
+            ver => return Err(TransportError::UnsupportedProtocolVersion(ver)),
+        };
+
+        Ok(ConnectionHeader {
+            protocol_version,
+            server_name,
+        })
+    }
+}
+
+async fn read_rpc_id(rx: &mut impl Read) -> Result<crate::Id, String> {
+    rx.read_u128()
+        .with_timeout(Duration::from_millis(500))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(|err| format!("{err:?}"))
+}
+
+pub trait ConnectionHandler: Clone + Sized {
+    fn handle_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: impl Connection,
+    ) -> impl Future<Output = Result<(), TransportError>> + Send;
+}
+
+impl<T, A> ConnectionHandler for Multiplexer<T, (A,)>
+where
+    T: Transport,
+    A: rpc::Server,
+{
+    fn handle_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: impl Connection,
+    ) -> impl Future<Output = Result<(), TransportError>> + Send {
+        async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
+            if self.rpc_servers.0.config().name == &server_name {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            }
+
+            Err(TransportError::UnknownRpcServer)
+        }
+    }
+}
+
+impl<T, A, B> ConnectionHandler for Multiplexer<T, (A, B)>
+where
+    T: Transport,
+    A: rpc::Server,
+    B: rpc::Server,
+{
+    fn handle_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: impl Connection,
+    ) -> impl Future<Output = Result<(), TransportError>> + Send {
+        async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
+            if self.rpc_servers.0.config().name == &server_name {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            }
+
+            if self.rpc_servers.1.config().name == &server_name {
+                return self.handle_connection(conn, &self.rpc_servers.1).await;
+            }
+
+            Err(TransportError::UnknownRpcServer)
+        }
     }
 }

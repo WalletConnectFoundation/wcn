@@ -132,7 +132,3 @@ where
         }
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-#[error("{_0:?}")]
-pub struct Error(wcn_rpc::quic::Error);

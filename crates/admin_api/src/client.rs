@@ -4,7 +4,7 @@ use {
     wcn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
-            Transport,
+            Connector,
         },
         transport::NoHandshake,
     },
@@ -12,7 +12,7 @@ use {
 
 /// Admin API client.
 #[derive(Clone)]
-pub struct Client<T: Transport> {
+pub struct Client<T: Connector> {
     rpc_client: RpcClient<T>,
     server_addr: Multiaddr,
 }
@@ -42,7 +42,7 @@ impl Config {
     }
 }
 
-impl<T: Transport> Client<T> {
+impl<T: Connector> Client<T> {
     /// Creates a new [`Client`].
     pub fn new(transport: T, config: Config) -> Self {
         let rpc_client_config = wcn_rpc::client::Config {
@@ -144,7 +144,7 @@ pub enum Error<A = Infallible> {
 impl<A> From<wcn_rpc::client::Error> for Error<A> {
     fn from(err: wcn_rpc::client::Error) -> Self {
         let rpc_err = match err {
-            wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
+            wcn_rpc::client::Error::Connection(err) => return Self::Transport(err.to_string()),
             wcn_rpc::client::Error::Rpc { error, .. } => error,
             err => return Self::Other(err.to_string()),
         };

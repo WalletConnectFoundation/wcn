@@ -12,7 +12,10 @@ use {
     std::{fmt::Debug, future::Future, io, pin::pin, time::Duration},
     tap::Pipe,
     wcn::fsm,
-    wcn_rpc::quic::{self, socketaddr_to_multiaddr},
+    wcn_rpc::{
+        quic::{self, socketaddr_to_multiaddr},
+        tcp,
+    },
 };
 pub use {
     cluster::Cluster,
@@ -51,6 +54,9 @@ pub enum Error {
 
     #[error("Failed to start Admin API server: {0:?}")]
     AdminApiServer(#[from] quic::Error),
+
+    #[error("Failed to start Admin API server: {0:?}")]
+    StorageApiTcpServer(tcp::Error),
 
     #[error("Failed to initialize networking: {0:?}")]
     Network(quic::Error),
@@ -171,7 +177,7 @@ pub async fn run(
         storage,
     );
 
-    Network::spawn_servers(cfg, node.clone(), prometheus.clone())?;
+    Network::spawn_servers(cfg, node.clone(), prometheus.clone()).await?;
 
     let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 

@@ -13,8 +13,8 @@ use {
         middleware::Timeouts,
         server::{
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
+            Acceptor,
             ClientConnectionInfo,
-            Transport,
         },
         transport::{
             BiDirectionalStream,
@@ -63,7 +63,7 @@ pub trait Server: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<impl Stream<Item = SubscriptionEvent> + Send + 'static>> + Send;
 
     /// Runs this [`Server`] using the provided [`Config`].
-    fn serve(self, transport: impl Transport, cfg: Config) -> impl Future<Output = ()> {
+    fn serve(self, acceptor: impl Acceptor, cfg: Config) -> impl Future<Output = ()> {
         let timeouts = Timeouts::new()
             .with_default(cfg.operation_timeout)
             .with::<{ Subscribe::ID }>(None)
@@ -74,7 +74,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             handshake: NoHandshake,
         };
 
-        let transport_config = wcn_rpc::server::TransportConfig {
+        let acceptor_config = wcn_rpc::AcceptorConfig {
             max_concurrent_connections: cfg.max_concurrent_connections,
             max_concurrent_streams: cfg.max_concurrent_streams,
         };
@@ -100,7 +100,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             .with_auth(auth)
             .with_timeouts(timeouts)
             .metered()
-            .serve(transport, transport_config)
+            .serve(acceptor, acceptor_config)
     }
 }
 
@@ -177,13 +177,15 @@ impl<S: Server> RpcServer<S> {
 
     async fn handle_cluster_updates(
         &self,
+        mut rx: RecvStream<impl Read, ()>,
         mut tx: SendStream<impl Write, wcn_rpc::Result<ClusterUpdate>>,
     ) -> Result<(), wcn_rpc::server::Error> {
         let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
 
         loop {
             tokio::select! {
-                _ = tx.wait_closed() => return Ok(()),
+                // Make sure that we stop when the connection terminates.
+                None | Some(Err(_)) = rx.next() => return Ok(()),
                 update = updates.next() => match update {
                     Some(_) => {
                         let snapshot = self
@@ -276,7 +278,8 @@ where
                 }
 
                 ClusterUpdates::ID => {
-                    ClusterUpdates::handle(stream, |_, tx| self.handle_cluster_updates(tx)).await
+                    ClusterUpdates::handle(stream, |rx, tx| self.handle_cluster_updates(rx, tx))
+                        .await
                 }
 
                 Publish::ID => Publish::handle(stream, |req| self.publish(req)).await,

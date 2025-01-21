@@ -14,10 +14,10 @@ use {
                 WithTimeouts,
                 WithTimeoutsExt as _,
             },
-            Connection,
-            Transport,
-            TransportError,
-            TransportResult,
+            Connector,
+            OutboundConnection,
+            OutboundConnectionError,
+            OutboundConnectionResult,
         },
         middleware::Metered,
         transport::{BiDirectionalStream, PostcardCodec},
@@ -26,12 +26,12 @@ use {
 
 /// Storage API client.
 #[derive(Clone)]
-pub struct Client<T: Transport> {
-    rpc: RpcClient<T>,
+pub struct Client<C: Connector> {
+    rpc: RpcClient<C>,
 }
 
-type RpcClient<T> =
-    WithRetries<Metered<WithTimeouts<wcn_rpc::ClientImpl<T, Handshake>>>, RetryStrategy>;
+type RpcClient<C> =
+    WithRetries<Metered<WithTimeouts<wcn_rpc::ClientImpl<C, Handshake>>>, RetryStrategy>;
 
 /// Storage API access token.
 pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
@@ -80,9 +80,9 @@ impl Config {
     }
 }
 
-impl<T: Transport> Client<T> {
+impl<C: Connector> Client<C> {
     /// Creates a new [`Client`].
-    pub fn new(transport: T, config: Config) -> Self {
+    pub fn new(transport: C, config: Config) -> Self {
         let handshake = Handshake {
             access_token: config.access_token,
         };
@@ -104,7 +104,7 @@ impl<T: Transport> Client<T> {
         Self { rpc: rpc_client }
     }
 
-    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a, T> {
+    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a, C> {
         RemoteStorage {
             client: self,
             server_addr,
@@ -139,7 +139,7 @@ impl middleware::RetryStrategy for RetryStrategy {
 
         let rpc_error = match error {
             Err::NoAvailablePeers | Err::Lock | Err::Rng => return None,
-            Err::Transport(_) => return Some(Duration::from_millis(50)),
+            Err::Connection(_) => return Some(Duration::from_millis(50)),
             Err::Rpc { error, .. } => error,
         };
 
@@ -160,13 +160,13 @@ impl middleware::RetryStrategy for RetryStrategy {
 
 /// Handle to a remote Storage API (Server).
 #[derive(Clone, Copy)]
-pub struct RemoteStorage<'a, T: Transport> {
+pub struct RemoteStorage<'a, T: Connector> {
     client: &'a Client<T>,
     server_addr: &'a Multiaddr,
     expected_keyspace_version: Option<u64>,
 }
 
-impl<T: Transport> RemoteStorage<'_, T> {
+impl<T: Connector> RemoteStorage<'_, T> {
     fn extended_key(&self, key: Key) -> ExtendedKey {
         ExtendedKey {
             inner: key.0,
@@ -383,7 +383,7 @@ impl From<wcn_rpc::client::Error> for Error {
         use wcn_rpc::client::Error as Err;
 
         let rpc_err = match err {
-            wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
+            wcn_rpc::client::Error::Connection(err) => return Self::Transport(err.to_string()),
             wcn_rpc::client::Error::Rpc { error, .. } => error,
             Err::NoAvailablePeers | Err::Lock | Err::Rng => return Self::Other(err.to_string()),
         };
@@ -411,8 +411,8 @@ impl wcn_rpc::client::Handshake for Handshake {
 
     fn handle(
         &self,
-        conn: &impl Connection,
-    ) -> impl Future<Output = TransportResult<Self::Data>> + Send {
+        conn: &impl OutboundConnection,
+    ) -> impl Future<Output = OutboundConnectionResult<Self::Data>> + Send {
         async move {
             let (mut rx, mut tx) = conn
                 .establish_stream()
@@ -428,7 +428,7 @@ impl wcn_rpc::client::Handshake for Handshake {
 
             rx.recv_message()
                 .await?
-                .map_err(|err| TransportError::Other {
+                .map_err(|err| OutboundConnectionError::Other {
                     kind: "handshake",
                     details: format!("{err:?}"),
                 })

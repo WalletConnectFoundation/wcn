@@ -7,7 +7,7 @@ use {
     derive_more::derive::AsRef,
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
-    rpc::{client::Transport, quic::client::Socket as QuicSocket},
+    rpc::{quic, tcp, Connector},
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
@@ -28,8 +28,8 @@ mod reconciliation;
 /// WCN replication driver.
 #[derive(Clone)]
 pub struct Driver {
-    client_api: client_api::Client<QuicSocket>,
-    storage_api: storage_api::Client<QuicSocket>,
+    client_api: client_api::Client<quic::Connector>,
+    storage_api: storage_api::Client<tcp::Connector>,
 }
 
 /// Replication config.
@@ -96,14 +96,18 @@ pub struct CreationError(String);
 impl Driver {
     /// Creates a new replication [`Driver`].
     pub async fn new(cfg: Config) -> Result<Self, CreationError> {
-        let socket = QuicSocket::new(cfg.keypair).map_err(|err| CreationError(err.to_string()))?;
+        let quic_connector = quic::Connector::new(cfg.keypair.clone())
+            .map_err(|err| CreationError(err.to_string()))?;
+
+        let tcp_connector =
+            tcp::Connector::new(cfg.keypair).map_err(|err| CreationError(err.to_string()))?;
 
         let client_api_cfg = client_api::client::Config::new(cfg.nodes)
             .with_connection_timeout(cfg.connection_timeout)
             .with_operation_timeout(cfg.operation_timeout)
             .with_namespaces(cfg.namespaces);
 
-        let client_api = client_api::Client::new(socket.clone(), client_api_cfg)
+        let client_api = client_api::Client::new(quic_connector, client_api_cfg)
             .await
             .map_err(|err| CreationError(err.to_string()))?;
 
@@ -111,7 +115,7 @@ impl Driver {
             .with_connection_timeout(cfg.connection_timeout)
             .with_operation_timeout(cfg.operation_timeout);
 
-        let storage_api = storage_api::Client::new(socket, storage_api_cfg);
+        let storage_api = storage_api::Client::new(tcp_connector, storage_api_cfg);
 
         Ok(Self {
             client_api,
@@ -394,15 +398,21 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
                 self.operation
                     .repair(self.driver.storage_api.remote_storage(addr), value)
                     .map(|res| match res {
-                        Ok(true) => metrics::counter!("wcn_replication_driver_read_repairs",
-                            EnumLabel<"operation_name", OperationName> => Op::NAME
-                        )
-                        .increment(1),
+                        Ok(true) => {
+                            tracing::debug!("repaired");
+                            metrics::counter!("wcn_replication_driver_read_repairs",
+                                EnumLabel<"operation_name", OperationName> => Op::NAME
+                            )
+                            .increment(1);
+                        }
                         Ok(false) => {}
-                        Err(_) => metrics::counter!("wcn_replication_driver_read_repair_errors",
-                            EnumLabel<"operation_name", OperationName> => Op::NAME
-                        )
-                        .increment(1),
+                        Err(err) => {
+                            tracing::debug!(?err, "repair failed");
+                            metrics::counter!("wcn_replication_driver_read_repair_errors",
+                                EnumLabel<"operation_name", OperationName> => Op::NAME
+                            )
+                            .increment(1);
+                        }
                     })
             })
             .collect();
@@ -475,12 +485,12 @@ trait StorageOperation: AsRef<storage::Key> + Send + Sync + 'static {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> + Send;
 
     fn repair(
         &self,
-        _storage: RemoteStorage<'_, impl Transport>,
+        _storage: RemoteStorage<'_, impl Connector>,
         _output: &Self::Output,
     ) -> impl Future<Output = storage_api::client::Result<bool>> + Send {
         async { Ok(false) }
@@ -508,14 +518,14 @@ impl StorageOperation for Get {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.get(self.key.clone())
     }
 
     fn repair(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
         output: &Self::Output,
     ) -> impl Future<Output = storage_api::client::Result<bool>> {
         let entry = output.as_ref().map(|rec| storage::Entry {
@@ -553,7 +563,7 @@ impl StorageOperation for Set {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.set(self.entry.clone())
     }
@@ -574,7 +584,7 @@ impl StorageOperation for Del {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.del(self.key.clone(), self.version)
     }
@@ -594,7 +604,7 @@ impl StorageOperation for GetExp {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.get_exp(self.key.clone())
     }
@@ -616,7 +626,7 @@ impl StorageOperation for SetExp {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.set_exp(self.key.clone(), self.expiration, self.version)
     }
@@ -637,14 +647,14 @@ impl StorageOperation for HGet {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hget(self.key.clone(), self.field.clone())
     }
 
     fn repair(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
         output: &Self::Output,
     ) -> impl Future<Output = storage_api::client::Result<bool>> {
         let entry = output.as_ref().map(|rec| storage::MapEntry {
@@ -683,7 +693,7 @@ impl StorageOperation for HSet {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hset(self.entry.clone())
     }
@@ -705,7 +715,7 @@ impl StorageOperation for HDel {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hdel(self.key.clone(), self.field.clone(), self.version)
     }
@@ -726,7 +736,7 @@ impl StorageOperation for HGetExp {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hget_exp(self.key.clone(), self.field.clone())
     }
@@ -749,7 +759,7 @@ impl StorageOperation for HSetExp {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hset_exp(
             self.key.clone(),
@@ -774,7 +784,7 @@ impl StorageOperation for HCard {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hcard(self.key.clone())
     }
@@ -806,7 +816,7 @@ impl StorageOperation for HScan {
 
     fn execute(
         &self,
-        storage: RemoteStorage<'_, impl Transport>,
+        storage: RemoteStorage<'_, impl Connector>,
     ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
         storage.hscan(self.key.clone(), self.count, self.cursor.clone())
     }

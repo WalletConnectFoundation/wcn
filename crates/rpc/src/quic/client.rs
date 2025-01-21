@@ -1,20 +1,19 @@
 use {
-    crate::{
-        client::{self, TransportError, TransportResult},
-        ConnectionHeader,
-    },
+    crate::{client, ConnectionHeader, OutboundConnectionError, OutboundConnectionResult},
     derive_more::From,
     futures::TryFutureExt as _,
     libp2p::{identity::Keypair, Multiaddr},
     std::{future::Future, net::SocketAddr},
 };
 
+/// Transport responsible for establishing outbound QUIC connections.
 #[derive(Clone, Debug)]
-pub struct Socket {
+pub struct Connector {
     endpoint: quinn::Endpoint,
 }
 
-impl Socket {
+impl Connector {
+    /// Creates a new [`Connector`].
     pub fn new(keypair: Keypair) -> Result<Self, super::Error> {
         let transport_config = super::new_quinn_transport_config(64u32 * 1024);
         let socket_addr = SocketAddr::new(std::net::Ipv4Addr::new(0, 0, 0, 0).into(), 0);
@@ -23,17 +22,17 @@ impl Socket {
     }
 }
 
-impl client::Transport for Socket {
+impl client::Connector for Connector {
     type Connection = quinn::Connection;
 
-    fn establish_connection(
+    fn connect(
         &self,
         multiaddr: &Multiaddr,
         header: ConnectionHeader,
-    ) -> impl Future<Output = TransportResult<Self::Connection>> {
+    ) -> impl Future<Output = OutboundConnectionResult<Self::Connection>> {
         async move {
             let addr = super::try_multiaddr_to_socketaddr(multiaddr)
-                .ok_or(TransportError::InvalidMultiaddr)?;
+                .ok_or(OutboundConnectionError::InvalidMultiaddr)?;
 
             // `libp2p_tls` uses this "l" placeholder as server_name.
             let conn = self.endpoint.connect(addr, "l")?.await?;
@@ -45,7 +44,7 @@ impl client::Transport for Socket {
     }
 }
 
-impl client::Connection for quinn::Connection {
+impl client::OutboundConnection for quinn::Connection {
     type Read = quinn::RecvStream;
     type Write = quinn::SendStream;
 
@@ -55,14 +54,14 @@ impl client::Connection for quinn::Connection {
 
     fn establish_stream(
         &self,
-    ) -> impl Future<Output = TransportResult<(Self::Read, Self::Write)>> + Send {
+    ) -> impl Future<Output = OutboundConnectionResult<(Self::Read, Self::Write)>> + Send {
         self.open_bi()
             .map_ok(|(tx, rx)| (rx, tx))
             .map_err(Into::into)
     }
 }
 
-impl From<quinn::ConnectError> for TransportError {
+impl From<quinn::ConnectError> for OutboundConnectionError {
     fn from(err: quinn::ConnectError) -> Self {
         use quinn::ConnectError as Err;
 
@@ -75,16 +74,16 @@ impl From<quinn::ConnectError> for TransportError {
             Err::UnsupportedVersion => "quic_unsupported_version",
         };
 
-        TransportError::Other {
+        OutboundConnectionError::Other {
             kind,
             details: err.to_string(),
         }
     }
 }
 
-impl From<quinn::ConnectionError> for TransportError {
+impl From<quinn::ConnectionError> for OutboundConnectionError {
     fn from(err: quinn::ConnectionError) -> Self {
-        TransportError::Other {
+        OutboundConnectionError::Other {
             kind: super::connection_error_kind(&err),
             details: err.to_string(),
         }

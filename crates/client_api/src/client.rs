@@ -8,7 +8,7 @@ use {
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
             AnyPeer,
-            Transport,
+            Connector,
         },
         transport::NoHandshake,
         Multiaddr,
@@ -72,7 +72,7 @@ impl Config {
     }
 }
 
-struct Inner<T: Transport> {
+struct Inner<T: Connector> {
     rpc_client: WithTimeouts<wcn_rpc::ClientImpl<T>>,
     namespaces: Vec<auth::Auth>,
     auth_ttl: Duration,
@@ -81,7 +81,7 @@ struct Inner<T: Transport> {
     nodes: Vec<Multiaddr>,
 }
 
-impl<T: Transport> Inner<T> {
+impl<T: Connector> Inner<T> {
     async fn refresh_auth_token(&self) -> Result<(), token::Error> {
         let address = rand::seq::SliceRandom::choose(&self.nodes[..], &mut rand::thread_rng())
             .ok_or(Error::NodeNotAvailable)?;
@@ -142,7 +142,7 @@ impl<T: Transport> Inner<T> {
     }
 }
 
-async fn updater<T: Transport>(inner: Arc<Inner<T>>, shutdown_rx: oneshot::Receiver<()>) {
+async fn updater<T: Connector>(inner: Arc<Inner<T>>, shutdown_rx: oneshot::Receiver<()>) {
     tokio::select! {
         _ = cluster_update(&inner) => {},
         _ = auth_token_update(&inner) => {},
@@ -150,13 +150,16 @@ async fn updater<T: Transport>(inner: Arc<Inner<T>>, shutdown_rx: oneshot::Recei
     }
 }
 
-async fn cluster_update<T: Transport>(inner: &Inner<T>) {
+async fn cluster_update<T: Connector>(inner: &Inner<T>) {
     loop {
-        let stream =
-            ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) }).await;
+        let stream = ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|tx, rx| async move {
+            Ok((tx, rx))
+        })
+        .await;
 
-        let mut rx = match stream {
-            Ok(rx) => rx,
+        // Don't drop tx, otherwise the peer will consider the stream to be stopped.
+        let (_tx, mut rx) = match stream {
+            Ok(st) => st,
 
             Err(err) => {
                 tracing::error!(?err, "failed to subscribe to any peer");
@@ -194,7 +197,7 @@ async fn cluster_update<T: Transport>(inner: &Inner<T>) {
     }
 }
 
-async fn auth_token_update<T: Transport>(inner: &Inner<T>) {
+async fn auth_token_update<T: Connector>(inner: &Inner<T>) {
     // Subtract 2 minutes from the token duration to refresh it before it expires.
     let normal_delay = inner
         .auth_ttl
@@ -224,12 +227,12 @@ async fn auth_token_update<T: Transport>(inner: &Inner<T>) {
 
 /// API client.
 #[derive(Clone)]
-pub struct Client<T: Transport> {
+pub struct Client<T: Connector> {
     inner: Arc<Inner<T>>,
     _shutdown_tx: Arc<oneshot::Sender<()>>,
 }
 
-impl<T: Transport> Client<T> {
+impl<T: Connector> Client<T> {
     /// Creates a new [`Client`].
     pub async fn new(transport: T, config: Config) -> Result<Self> {
         if config.auth_token_ttl < MIN_AUTH_TOKEN_TTL {
@@ -382,7 +385,7 @@ pub enum Error<A = Infallible> {
 impl<A> From<wcn_rpc::client::Error> for Error<A> {
     fn from(err: wcn_rpc::client::Error) -> Self {
         let rpc_err = match err {
-            wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
+            wcn_rpc::client::Error::Connection(err) => return Self::Transport(err.to_string()),
             wcn_rpc::client::Error::Rpc { error, .. } => error,
             err => return Self::Other(err.to_string()),
         };

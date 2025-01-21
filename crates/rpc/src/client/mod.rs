@@ -28,7 +28,10 @@ use {
         sync::{Arc, PoisonError},
         time::Duration,
     },
-    tokio::{io::AsyncWriteExt as _, sync::RwLock},
+    tokio::{
+        io::{AsyncWrite, AsyncWriteExt as _},
+        sync::RwLock,
+    },
     wc::{
         future::FutureExt as _,
         metrics::{self, StringLabel},
@@ -53,19 +56,21 @@ pub struct Config<H = NoHandshake> {
     pub server_name: ServerName,
 }
 
-pub trait Transport: Clone + Send + Sync + 'static {
-    type Connection: Connection;
+/// Transport responsible for establishing outbound connections.
+pub trait Connector: Clone + Send + Sync + 'static {
+    type Connection: OutboundConnection;
 
-    fn establish_connection(
+    /// Establishes outbound [`Connection`] to the provided [`Multiaddr`].
+    fn connect(
         &self,
         multiaddr: &Multiaddr,
         header: ConnectionHeader,
-    ) -> impl Future<Output = TransportResult<Self::Connection>> + Send;
+    ) -> impl Future<Output = OutboundConnectionResult<Self::Connection>> + Send;
 }
 
-/// [`Transport`] error.
+/// [`OutboundConnection`] error.
 #[derive(Debug, thiserror::Error)]
-pub enum TransportError {
+pub enum OutboundConnectionError {
     #[error("IO: {0}")]
     IO(io::ErrorKind),
 
@@ -76,7 +81,10 @@ pub enum TransportError {
     InvalidMultiaddr,
 
     #[error("Timeout establishing outbound connection")]
-    ConnectionTimeout,
+    Timeout,
+
+    #[error("Timeout establishing outbound stream")]
+    StreamTimeout,
 
     #[error("Handshake error: {0}")]
     Handshake(String),
@@ -88,13 +96,22 @@ pub enum TransportError {
     Other { kind: &'static str, details: String },
 }
 
-impl From<io::Error> for TransportError {
-    fn from(err: io::Error) -> Self {
-        TransportError::IO(err.kind())
+impl OutboundConnectionError {
+    pub fn other(kind: &'static str) -> Self {
+        Self::Other {
+            kind,
+            details: String::new(),
+        }
     }
 }
 
-impl From<StreamError> for TransportError {
+impl From<io::Error> for OutboundConnectionError {
+    fn from(err: io::Error) -> Self {
+        OutboundConnectionError::IO(err.kind())
+    }
+}
+
+impl From<StreamError> for OutboundConnectionError {
     fn from(err: StreamError) -> Self {
         match err {
             StreamError::IO(kind) => Self::IO(kind),
@@ -108,10 +125,10 @@ impl From<StreamError> for TransportError {
     }
 }
 
-pub type TransportResult<T> = Result<T, TransportError>;
+pub type OutboundConnectionResult<T> = Result<T, OutboundConnectionError>;
 
 /// Outbound connection.
-pub trait Connection: Clone + Send + Sync + 'static {
+pub trait OutboundConnection: Clone + Send + Sync + 'static {
     type Read: Read;
     type Write: Write;
 
@@ -121,16 +138,18 @@ pub trait Connection: Clone + Send + Sync + 'static {
     /// Accepts an inbound [`BiDirectionalStream`].
     fn establish_stream(
         &self,
-    ) -> impl Future<Output = TransportResult<(Self::Read, Self::Write)>> + Send;
+    ) -> impl Future<Output = OutboundConnectionResult<(Self::Read, Self::Write)>> + Send;
 }
 
+/// Client part of an application layer handshake.
 pub trait Handshake: Clone + Send + Sync + 'static {
     type Data: Clone + Send + Sync + 'static;
 
+    /// Handles the handshake.
     fn handle(
         &self,
-        conn: &impl Connection,
-    ) -> impl Future<Output = TransportResult<Self::Data>> + Send;
+        conn: &impl OutboundConnection,
+    ) -> impl Future<Output = OutboundConnectionResult<Self::Data>> + Send;
 }
 
 impl Handshake for NoHandshake {
@@ -138,20 +157,20 @@ impl Handshake for NoHandshake {
 
     fn handle(
         &self,
-        _conn: &impl Connection,
-    ) -> impl Future<Output = TransportResult<Self::Data>> + Send {
+        _conn: &impl OutboundConnection,
+    ) -> impl Future<Output = OutboundConnectionResult<Self::Data>> + Send {
         async { Ok(()) }
     }
 }
 
-type ConnectionRead<T> = <<T as Transport>::Connection as Connection>::Read;
-type ConnectionWrite<T> = <<T as Transport>::Connection as Connection>::Write;
+type ConnectionRead<T> = <<T as Connector>::Connection as OutboundConnection>::Read;
+type ConnectionWrite<T> = <<T as Connector>::Connection as OutboundConnection>::Write;
 
 type BiDirectionalStream<T> = transport::BiDirectionalStream<ConnectionRead<T>, ConnectionWrite<T>>;
 
 /// RPC client.
 pub trait Client<A: Sync = Multiaddr>: Send + Sync {
-    type Transport: Transport;
+    type Transport: Connector;
 
     /// Sends an outbound RPC.
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
@@ -237,9 +256,9 @@ pub enum Error {
     #[error("RNG failed")]
     Rng,
 
-    // Transport error.
+    // Connection error.
     #[error(transparent)]
-    Transport(#[from] TransportError),
+    Connection(#[from] OutboundConnectionError),
 
     /// RPC error.
     #[error("{source} RPC: {error:?}")]
@@ -252,7 +271,7 @@ pub enum Error {
 
 impl From<StreamError> for Error {
     fn from(err: StreamError) -> Self {
-        Error::Transport(err.into())
+        Error::Connection(err.into())
     }
 }
 
@@ -284,7 +303,7 @@ pub enum RpcErrorSource {
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
-        Self::Transport(err.into())
+        Self::Connection(err.into())
     }
 }
 
@@ -308,7 +327,7 @@ where
     Resp: Message,
     C: Codec,
 {
-    pub fn send<'a, A: Sync, T: Transport, F, Fut, Ok: Send>(
+    pub fn send<'a, A: Sync, T: Connector, F, Fut, Ok: Send>(
         client: &'a impl Client<A, Transport = T>,
         addr: &'a A,
         f: &'a F,
@@ -345,7 +364,7 @@ pub struct AnyPeer;
 
 /// Base [`Client`] impl.
 #[derive(Clone, Debug)]
-pub struct ClientImpl<T: Transport, H = NoHandshake> {
+pub struct ClientImpl<T: Connector, H = NoHandshake> {
     // peer_id: PeerId,
     transport: T,
     handshake: H,
@@ -356,9 +375,9 @@ pub struct ClientImpl<T: Transport, H = NoHandshake> {
     connection_timeout: Duration,
 }
 
-impl<T: Transport, H> Marker for ClientImpl<T, H> {}
+impl<T: Connector, H> Marker for ClientImpl<T, H> {}
 
-impl<T: Transport, H: Handshake> Client for ClientImpl<T, H> {
+impl<T: Connector, H: Handshake> Client for ClientImpl<T, H> {
     type Transport = T;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
@@ -373,7 +392,7 @@ impl<T: Transport, H: Handshake> Client for ClientImpl<T, H> {
     }
 }
 
-impl<T: Transport, H: Handshake> Client<AnyPeer> for ClientImpl<T, H> {
+impl<T: Connector, H: Handshake> Client<AnyPeer> for ClientImpl<T, H> {
     type Transport = T;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
@@ -388,18 +407,10 @@ impl<T: Transport, H: Handshake> Client<AnyPeer> for ClientImpl<T, H> {
     }
 }
 
-// impl From<EstablishStreamError> for client::Error {
-//     fn from(err: EstablishStreamError) -> Self {
-//         Self::Transport(transport::Error::Other(format!(
-//             "Connection handler: {err:?}"
-//         )))
-//     }
-// }
-
 type OutboundConnectionHandlers<T, H> = IndexMap<Multiaddr, ConnectionHandler<T, H>>;
 
 /// Builds a new [`Client`] using the provided [`Config`].
-pub fn new<T: Transport, H: Handshake>(transport: T, cfg: Config<H>) -> ClientImpl<T, H> {
+pub fn new<T: Connector, H: Handshake>(transport: T, cfg: Config<H>) -> ClientImpl<T, H> {
     let handlers = cfg
         .known_peers
         .into_iter()
@@ -426,26 +437,26 @@ pub fn new<T: Transport, H: Handshake>(transport: T, cfg: Config<H>) -> ClientIm
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ConnectionHandler<T: Transport, H> {
-    inner: Arc<std::sync::RwLock<ConnectionHandlerInner<T>>>,
+pub(super) struct ConnectionHandler<C: Connector, H> {
+    inner: Arc<std::sync::RwLock<ConnectionHandlerInner<C>>>,
     handshake: H,
 }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct ConnectionHandlerInner<T: Transport> {
+struct ConnectionHandlerInner<T: Connector> {
     addr: Multiaddr,
     server_name: ServerName,
-    transport: T,
+    connector: T,
 
     #[derivative(Debug = "ignore")]
     connection: SharedConnection<T>,
     connection_timeout: Duration,
 }
 
-type SharedConnection<T> = Shared<BoxFuture<'static, <T as Transport>::Connection>>;
+type SharedConnection<T> = Shared<BoxFuture<'static, <T as Connector>::Connection>>;
 
-fn new_connection<T: Transport, H: Handshake>(
+fn new_connection<T: Connector, H: Handshake>(
     multiaddr: Multiaddr,
     server_name: ServerName,
     transport: T,
@@ -473,22 +484,22 @@ fn new_connection<T: Transport, H: Handshake>(
                 };
 
                 let conn = transport
-                    .establish_connection(multiaddr, header)
+                    .connect(multiaddr, header)
                     .with_timeout(timeout)
                     .await
-                    .map_err(|_| TransportError::ConnectionTimeout)??;
+                    .map_err(|_| OutboundConnectionError::Timeout)??;
 
                 handshake
                     .handle(&conn)
                     .await
-                    .map_err(|e| TransportError::Handshake(format!("{e:?}")))?;
+                    .map_err(|e| OutboundConnectionError::Handshake(format!("{e:?}")))?;
 
                 Ok(conn)
             }
             .map_err(backoff::Error::transient)
         };
 
-        backoff::future::retry_notify(backoff, connect, move |err: TransportError, _| {
+        backoff::future::retry_notify(backoff, connect, move |err: OutboundConnectionError, _| {
             tracing::debug!(?err, "failed to connect");
             metrics::counter!(
                 "wcn_network_connection_failures",
@@ -508,22 +519,22 @@ fn new_connection<T: Transport, H: Handshake>(
     .shared()
 }
 
-impl<T: Transport, H: Handshake> ConnectionHandler<T, H> {
+impl<C: Connector, H: Handshake> ConnectionHandler<C, H> {
     pub(super) fn new(
         addr: Multiaddr,
         server_name: ServerName,
-        transport: T,
+        connector: C,
         handshake: H,
         connection_timeout: Duration,
     ) -> Self {
         let inner = ConnectionHandlerInner {
             addr: addr.clone(),
             server_name,
-            transport: transport.clone(),
+            connector: connector.clone(),
             connection: new_connection(
                 addr,
                 server_name,
-                transport,
+                connector,
                 handshake.clone(),
                 connection_timeout,
             ),
@@ -536,7 +547,7 @@ impl<T: Transport, H: Handshake> ConnectionHandler<T, H> {
         }
     }
 
-    async fn establish_stream(&self, rpc_id: RpcId) -> Result<BiDirectionalStream<T>> {
+    async fn establish_stream(&self, rpc_id: RpcId) -> Result<BiDirectionalStream<C>> {
         let fut = self.inner.write()?.connection.clone();
         let conn = fut.await;
 
@@ -547,10 +558,10 @@ impl<T: Transport, H: Handshake> ConnectionHandler<T, H> {
 
         tx.write_u128(rpc_id).await?;
 
-        Ok(BiDirectionalStream::<T>::new(rx, tx))
+        Ok(BiDirectionalStream::<C>::new(rx, tx))
     }
 
-    async fn try_establish_stream(&self, rpc_id: RpcId) -> Option<BiDirectionalStream<T>> {
+    async fn try_establish_stream(&self, rpc_id: RpcId) -> Option<BiDirectionalStream<C>> {
         let conn = self
             .inner
             .try_read()
@@ -570,14 +581,14 @@ impl<T: Transport, H: Handshake> ConnectionHandler<T, H> {
 
         tx.write_u128(rpc_id).await.map_err(|e| e.kind()).ok()?;
 
-        Some(BiDirectionalStream::<T>::new(rx, tx))
+        Some(BiDirectionalStream::<C>::new(rx, tx))
     }
 
     /// Replaces the current connection with a new one.
     ///
     /// No-op if the current connection id doesn't match the provided one,
     /// meaning the connection was already replaced.
-    fn reconnect(&self, prev_connection_id: usize) -> Result<SharedConnection<T>> {
+    fn reconnect(&self, prev_connection_id: usize) -> Result<SharedConnection<C>> {
         let mut this = self.inner.write()?;
 
         if this
@@ -590,7 +601,7 @@ impl<T: Transport, H: Handshake> ConnectionHandler<T, H> {
             this.connection = new_connection(
                 this.addr.clone(),
                 this.server_name,
-                this.transport.clone(),
+                this.connector.clone(),
                 self.handshake.clone(),
                 this.connection_timeout,
             );
@@ -606,13 +617,14 @@ impl<G> From<PoisonError<G>> for Error {
     }
 }
 
-impl TransportError {
+impl OutboundConnectionError {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::IO(_) => "io",
             Self::StreamFinished => "stream_finished",
             Self::InvalidMultiaddr => "invalid_multiaddr",
-            Self::ConnectionTimeout => "connection_timeout",
+            Self::Timeout => "connection_timeout",
+            Self::StreamTimeout => "stream_timeout",
             Self::Handshake(_) => "handshake",
             Self::Codec(_) => "codec",
             Self::Other { kind, .. } => kind,
@@ -620,7 +632,7 @@ impl TransportError {
     }
 }
 
-impl<T: Transport, H: Handshake> ClientImpl<T, H> {
+impl<T: Connector, H: Handshake> ClientImpl<T, H> {
     /// Establishes a [`BiDirectionalStream`] with the requested remote peer.
     pub async fn establish_stream(
         &self,
@@ -657,7 +669,7 @@ impl<T: Transport, H: Handshake> ClientImpl<T, H> {
             .establish_stream(rpc_id)
             .with_timeout(Duration::from_secs(5))
             .await
-            .map_err(|_| TransportError::ConnectionTimeout)?
+            .map_err(|_| OutboundConnectionError::StreamTimeout)?
     }
 
     /// Establishes a [`BiDirectionalStream`] with one of the remote peers.
@@ -696,7 +708,7 @@ impl<T: Transport, H: Handshake> ClientImpl<T, H> {
 }
 
 impl ConnectionHeader {
-    pub async fn write(&self, tx: &mut impl Write) -> TransportResult<()> {
+    pub async fn write(&self, tx: &mut (impl AsyncWrite + Unpin)) -> OutboundConnectionResult<()> {
         tx.write_u32(PROTOCOL_VERSION).await?;
 
         if let Some(server_name) = &self.server_name {

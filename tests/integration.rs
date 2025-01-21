@@ -90,7 +90,7 @@ struct TestCluster {
     nodes: HashMap<PeerId, NodeHandle>,
     prometheus: PrometheusHandle,
 
-    admin_api_client: admin_api::Client<quic::client::Socket>,
+    admin_api_client: admin_api::Client<quic::Connector>,
 
     version: u128,
     keyspace_version: u64,
@@ -123,7 +123,7 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
-        let socket = quic::client::Socket::new(authorized_client_keypair(0)).unwrap();
+        let socket = quic::client::Connector::new(authorized_client_keypair(0)).unwrap();
 
         let admin_api_client =
             admin_api::Client::new(socket, admin_api::client::Config::new(local_multiaddr(0)));
@@ -298,25 +298,25 @@ impl TestCluster {
         replication::Driver::new(cfg).await.unwrap()
     }
 
-    async fn new_client_api_client(&self) -> client_api::Client<quic::client::Socket> {
+    async fn new_client_api_client(&self) -> client_api::Client<quic::client::Connector> {
         let nodes: HashSet<_> = self
             .nodes
             .values()
             .map(|node| local_multiaddr(node.config.client_api_server_port))
             .collect();
 
-        let socket = quic::client::Socket::new(authorized_client_keypair(0)).unwrap();
+        let socket = quic::client::Connector::new(authorized_client_keypair(0)).unwrap();
 
         client_api::Client::new(socket, client_api::client::Config::new(nodes))
             .await
             .unwrap()
     }
 
-    async fn new_storage_api_client(&self) -> storage_api::Client<quic::client::Socket> {
+    async fn new_storage_api_client(&self) -> storage_api::Client<quic::client::Connector> {
         let client_api = self.new_client_api_client().await;
         let token = client_api.auth_token();
 
-        let socket = quic::client::Socket::new(authorized_client_keypair(0)).unwrap();
+        let socket = quic::client::Connector::new(authorized_client_keypair(0)).unwrap();
         storage_api::Client::new(socket, storage_api::client::Config::new(token))
     }
 
@@ -643,6 +643,9 @@ impl TestCluster {
                     .map(|n| async {
                         let storage = storage_api_client.remote_storage(&n.replica_api_server_addr);
                         let output = storage.get(key.clone()).await.unwrap().map(|rec| rec.value);
+                        // if c.expected_output != output {
+                        //     tracing::debug!(expected = ?c.expected_output, ?output);
+                        // }
                         usize::from(c.expected_output == output)
                     })
                     .buffer_unordered(self.nodes.len())
@@ -650,6 +653,10 @@ impl TestCluster {
                     .await
                     .into_iter()
                     .sum();
+
+                // if replicas != REPLICATION_FACTOR {
+                //     tracing::debug!(replicas, REPLICATION_FACTOR);
+                // }
 
                 usize::from(replicas != REPLICATION_FACTOR)
             })
@@ -897,12 +904,12 @@ fn new_node_config() -> Config {
 
 async fn new_client_api_client(
     f: impl FnOnce(&mut client_api::client::Config) -> Keypair,
-) -> client_api::Client<quic::client::Socket> {
+) -> client_api::Client<quic::client::Connector> {
     let mut config = client_api::client::Config::new([]);
 
     let keypair = f(&mut config);
 
-    let socket = quic::client::Socket::new(keypair).unwrap();
+    let socket = quic::client::Connector::new(keypair).unwrap();
 
     client_api::Client::new(socket, config).await.unwrap()
 }

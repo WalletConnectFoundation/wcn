@@ -12,12 +12,26 @@ use {
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
-pub use client::{Client, ClientImpl};
+pub use client::{
+    Client,
+    ClientImpl,
+    Connector,
+    OutboundConnection,
+    OutboundConnectionError,
+    OutboundConnectionResult,
+};
 
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]
-pub use server::Server;
+pub use server::{
+    Acceptor,
+    AcceptorConfig,
+    InboundConnection,
+    InboundConnectionError,
+    InboundConnectionResult,
+    Server,
+};
 
 pub mod middleware;
 

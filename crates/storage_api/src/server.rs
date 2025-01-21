@@ -7,10 +7,10 @@ use {
         server::{
             middleware::{MeteredExt, WithTimeoutsExt},
             ClientConnectionInfo,
-            Connection,
             ConnectionInfo,
-            TransportError,
-            TransportResult,
+            InboundConnection,
+            InboundConnectionError,
+            InboundConnectionResult,
         },
         transport::{BiDirectionalStream, PostcardCodec, Read, Write},
     },
@@ -397,8 +397,8 @@ impl<A: Authenticator> wcn_rpc::server::Handshake for Handshake<A> {
     fn handle(
         &self,
         peer_id: &PeerId,
-        conn: &impl Connection,
-    ) -> impl Future<Output = TransportResult<Self::Data>> + Send {
+        conn: &mut impl InboundConnection,
+    ) -> impl Future<Output = InboundConnectionResult<Self::Data>> + Send {
         async move {
             let (mut rx, mut tx) = conn
                 .accept_stream()
@@ -427,7 +427,8 @@ impl<A: Authenticator> wcn_rpc::server::Handshake for Handshake<A> {
             };
 
             tx.send(Err(err_resp.clone())).await?;
-            Err(TransportError::Handshake(format!("{err_resp:?}]")))
+
+            Err(InboundConnectionError::Handshake(format!("{err_resp:?}]")))
         }
     }
 }

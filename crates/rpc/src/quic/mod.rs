@@ -1,7 +1,5 @@
 pub use quinn::{RecvStream as Read, SendStream as Write};
 use {
-    crate::transport,
-    futures::FutureExt,
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
     quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
@@ -14,9 +12,13 @@ use {
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "client")]
+pub use client::Connector;
 
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(feature = "server")]
+pub use server::{Acceptor, AcceptorConfig};
 
 // TODO: Consider re-enabling
 #[allow(dead_code)]
@@ -186,11 +188,5 @@ fn connection_error_kind(err: &quinn::ConnectionError) -> &'static str {
         Err::TimedOut => "timed_out",
         Err::LocallyClosed => "locally_closed",
         Err::CidsExhausted => "cids_exhausted",
-    }
-}
-
-impl transport::Write for quinn::SendStream {
-    fn wait_closed(&mut self) -> impl std::future::Future<Output = ()> + Send + '_ {
-        self.stopped().map(drop)
     }
 }

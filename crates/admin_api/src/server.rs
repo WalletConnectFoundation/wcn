@@ -6,8 +6,8 @@ use {
         middleware::Timeouts,
         server::{
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
+            Acceptor,
             ClientConnectionInfo,
-            Transport,
         },
         transport::{BiDirectionalStream, NoHandshake, PostcardCodec, Read, Write},
         Server as _,
@@ -47,7 +47,7 @@ pub trait Server: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = MemoryProfileResult> + Send;
 
     /// Runs this [`Server`] using the provided [`Config`].
-    fn serve(self, transport: impl Transport, cfg: Config) -> impl Future<Output = ()> {
+    fn serve(self, acceptor: impl Acceptor, cfg: Config) -> impl Future<Output = ()> {
         let timeouts = Timeouts::new()
             .with::<{ GetMemoryProfile::ID }>(MEMORY_PROFILE_MAX_DURATION)
             .with_default(cfg.operation_timeout);
@@ -57,7 +57,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             handshake: NoHandshake,
         };
 
-        let transport_config = wcn_rpc::server::TransportConfig {
+        let acceptor_config = wcn_rpc::AcceptorConfig {
             max_concurrent_connections: 10,
             max_concurrent_streams: 100,
         };
@@ -69,7 +69,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         .with_auth(Auth::new(cfg.authorized_clients))
         .with_timeouts(timeouts)
         .metered()
-        .serve(transport, transport_config)
+        .serve(acceptor, acceptor_config)
     }
 }
 

@@ -5,7 +5,11 @@ use {
         identity::Keypair,
         quic,
         server::{self, ClientConnectionInfo},
+        tcp,
         transport::{BiDirectionalStream, NoHandshake, PostcardCodec, Read, Write},
+        Acceptor,
+        AcceptorConfig,
+        Connector,
         Id as RpcId,
         Multiaddr,
         PeerId,
@@ -83,20 +87,82 @@ impl crate::Server for Node {
     }
 }
 
+trait Transport {
+    type Connector: Connector;
+    type Acceptor: Acceptor;
+
+    fn multiaddr(n: usize) -> Multiaddr;
+    fn connector(keypair: Keypair) -> Self::Connector;
+    async fn acceptor(keypair: Keypair, addr: Multiaddr, port: u16) -> Self::Acceptor;
+}
+
+struct Quic;
+
+impl Transport for Quic {
+    type Connector = quic::Connector;
+    type Acceptor = quic::Acceptor;
+
+    fn multiaddr(n: usize) -> Multiaddr {
+        Multiaddr::from_str(&format!("/ip4/127.0.0.1/udp/300{n}/quic-v1")).unwrap()
+    }
+
+    fn connector(keypair: Keypair) -> Self::Connector {
+        quic::Connector::new(keypair).unwrap()
+    }
+
+    async fn acceptor(keypair: Keypair, addr: Multiaddr, _port: u16) -> Self::Acceptor {
+        quic::Acceptor::new(quic::AcceptorConfig {
+            addr,
+            keypair,
+            max_concurrent_streams: 100,
+        })
+        .unwrap()
+    }
+}
+
+struct Tcp;
+
+impl Transport for Tcp {
+    type Connector = tcp::Connector;
+    type Acceptor = tcp::Acceptor;
+
+    fn multiaddr(n: usize) -> Multiaddr {
+        Multiaddr::from_str(&format!("/ip4/127.0.0.1/tcp/300{n}")).unwrap()
+    }
+
+    fn connector(keypair: Keypair) -> Self::Connector {
+        tcp::Connector::new(keypair).unwrap()
+    }
+
+    async fn acceptor(keypair: Keypair, _addr: Multiaddr, port: u16) -> Self::Acceptor {
+        tcp::Acceptor::new(tcp::AcceptorConfig { port, keypair })
+            .await
+            .unwrap()
+    }
+}
+
 #[tokio::test]
 async fn suite() {
     // Left here on purpose, uncomment to quickly debug.
-
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
+    tracing::info!("Testing QUIC transport");
+    test_transport::<Quic>().await;
+
+    tracing::info!("Testing TCP transport");
+    test_transport::<Tcp>().await;
+}
+
+async fn test_transport<T: Transport>() {
     let gen_peer = |n: usize| {
         let keypair = Keypair::generate_ed25519();
         (
             PeerId::from_public_key(&keypair.public()),
-            Multiaddr::from_str(&format!("/ip4/127.0.0.1/udp/300{n}/quic-v1")).unwrap(),
+            T::multiaddr(n),
+            3000u16 + n as u16,
             keypair,
         )
     };
@@ -107,7 +173,7 @@ async fn suite() {
 
     let mut nodes = Vec::new();
 
-    for (id, addr, keypair) in &peers {
+    for (id, addr, port, keypair) in &peers {
         let client_config = client::Config {
             known_peers: peers
                 .iter()
@@ -118,8 +184,8 @@ async fn suite() {
             server_name: RPC_SERVER_NAME,
         };
 
-        let client_socket = quic::client::Socket::new(keypair.clone()).unwrap();
-        let client = crate::client::new(client_socket, client_config);
+        let client_socket = T::connector(keypair.clone());
+        let client = client::new(client_socket, client_config);
 
         let server_config = server::Config {
             name: &RPC_SERVER_NAME,
@@ -134,27 +200,21 @@ async fn suite() {
         };
         nodes.push(node.clone());
 
-        let server_socket = quic::server::Socket::new(quic::server::Config {
-            addr: addr.clone(),
-            keypair: keypair.clone(),
-            max_concurrent_streams: 100,
-        })
-        .unwrap();
+        let acceptor = T::acceptor(keypair.clone(), addr.clone(), *port).await;
 
-        let transport_config = server::TransportConfig {
+        let acceptor_config = AcceptorConfig {
             max_concurrent_connections: 100,
             max_concurrent_streams: 100,
         };
 
-        node.serve(server_socket, transport_config)
-            .pipe(tokio::spawn);
+        node.serve(acceptor, acceptor_config).pipe(tokio::spawn);
     }
 
     // wait a bit for sockets opening
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     for (i, ((local_id, ..), client)) in peers.iter().zip(&clients).enumerate() {
-        for (remote_id, remote_addr, _) in &peers {
+        for (remote_id, remote_addr, _, _) in &peers {
             if local_id == remote_id {
                 continue;
             }

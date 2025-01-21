@@ -3,7 +3,6 @@ use {
     futures::{stream::MapErr, Sink, StreamExt as _, TryStreamExt},
     pin_project::pin_project,
     std::{
-        future::Future,
         io,
         pin::Pin,
         task::{self, ready},
@@ -19,10 +18,9 @@ pub trait Read: AsyncRead + Unpin + Send + Sync + 'static {}
 
 impl<R> Read for R where R: AsyncRead + Unpin + Send + Sync + 'static {}
 
-pub trait Write: AsyncWrite + Unpin + Send + Sync + 'static {
-    /// Waits until this [`Write`] is closed.
-    fn wait_closed(&mut self) -> impl Future<Output = ()> + Send + '_;
-}
+pub trait Write: AsyncWrite + Unpin + Send + Sync + 'static {}
+
+impl<W> Write for W where W: AsyncWrite + Unpin + Send + Sync + 'static {}
 
 /// Serialization codec.
 pub trait Codec: Send + Sync + 'static {
@@ -95,13 +93,6 @@ pub struct SendStream<W: Write, T: Message, C: Codec = PostcardCodec> {
     inner: RawSendStream<W>,
     #[pin]
     codec: C::Serializer<T>,
-}
-
-impl<W: Write, T: Message> SendStream<W, T> {
-    /// Waits until this [`SendStream`] is closed.
-    pub async fn wait_closed(&mut self) {
-        self.inner.get_mut().wait_closed().await
-    }
 }
 
 impl<W: Write, T: Message, C: Codec> Sink<&T> for SendStream<W, T, C>

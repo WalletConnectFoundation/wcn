@@ -1,17 +1,14 @@
 use {
     super::Error,
-    crate::{
-        server::{self, TransportError, TransportResult},
-        ConnectionHeader,
-    },
+    crate::{server, ConnectionHeader, InboundConnectionError, InboundConnectionResult},
     futures::{FutureExt, TryFutureExt as _},
     libp2p::{identity::Keypair, Multiaddr, PeerId},
     quinn::crypto::rustls::QuicServerConfig,
     std::{future::Future, net::SocketAddr, sync::Arc},
 };
 
-/// QUIC server config.
-pub struct Config {
+/// [`Acceptor`] config.
+pub struct AcceptorConfig {
     /// [`Multiaddr`] to bind the server to.
     pub addr: Multiaddr,
 
@@ -22,16 +19,16 @@ pub struct Config {
     pub max_concurrent_streams: u32,
 }
 
-/// QUIC server socket.
+/// QUIC connection acceptor.
 #[derive(Clone, Debug)]
-pub struct Socket {
+pub struct Acceptor {
     address: Multiaddr,
     endpoint: quinn::Endpoint,
 }
 
-impl Socket {
+impl Acceptor {
     /// Creates a new [`Socket`] using the provided [`Config`].
-    pub fn new(cfg: Config) -> Result<Self, Error> {
+    pub fn new(cfg: AcceptorConfig) -> Result<Self, Error> {
         let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_streams);
 
         let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)
@@ -61,16 +58,18 @@ impl Socket {
     }
 }
 
-impl server::Transport for Socket {
+impl server::Acceptor for Acceptor {
     fn address(&self) -> &Multiaddr {
         &self.address
     }
 
-    fn accept_connection(
+    fn accept(
         &self,
     ) -> impl Future<
         Output = Option<
-            impl Future<Output = TransportResult<impl server::Connection>> + Send + 'static,
+            impl Future<Output = InboundConnectionResult<impl server::InboundConnection>>
+                + Send
+                + 'static,
         >,
     > {
         self.endpoint.accept().map(|opt| {
@@ -94,7 +93,7 @@ pub struct Connection {
     inner: quinn::Connection,
 }
 
-impl server::Connection for Connection {
+impl server::InboundConnection for Connection {
     type Read = quinn::RecvStream;
     type Write = quinn::SendStream;
 
@@ -102,22 +101,20 @@ impl server::Connection for Connection {
         &self.header
     }
 
-    fn peer_info(&self) -> TransportResult<(PeerId, Multiaddr)> {
+    fn peer_info(&self) -> InboundConnectionResult<(PeerId, Multiaddr)> {
         super::connection_peer_id(&self.inner)
             .map(|peer_id| {
                 let addr = super::socketaddr_to_multiaddr(self.inner.remote_address());
                 (peer_id, addr)
             })
-            .map_err(|err| TransportError::Other {
-                kind: "extract_peer_id",
-                details: err.to_string(),
-            })
+            .map_err(|err| InboundConnectionError::ExtractPeerId(err.to_string()))
     }
 
     fn accept_stream(
-        &self,
-    ) -> impl Future<Output = server::Result<(Self::Read, Self::Write), server::TransportError>> + Send
-    {
+        &mut self,
+    ) -> impl Future<
+        Output = server::Result<(Self::Read, Self::Write), server::InboundConnectionError>,
+    > + Send {
         self.inner
             .accept_bi()
             .map_ok(|(tx, rx)| (rx, tx))
@@ -125,9 +122,9 @@ impl server::Connection for Connection {
     }
 }
 
-impl From<quinn::ConnectionError> for server::TransportError {
+impl From<quinn::ConnectionError> for server::InboundConnectionError {
     fn from(err: quinn::ConnectionError) -> Self {
-        server::TransportError::Other {
+        server::InboundConnectionError::Other {
             kind: super::connection_error_kind(&err),
             details: err.to_string(),
         }

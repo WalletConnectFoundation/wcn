@@ -47,7 +47,7 @@ where
                     Err(Error::NoAvailablePeers) => "no_available_peers",
                     Err(Error::Lock) => "lock",
                     Err(Error::Rng) => "rng",
-                    Err(Error::Transport(err)) => err.kind(),
+                    Err(Error::Connection(err)) => err.kind(),
                     Err(Error::Rpc { error, .. }) => error.code.as_ref(),
                 };
 

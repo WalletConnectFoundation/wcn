@@ -53,7 +53,7 @@ pub struct Acceptor {
 
 impl Acceptor {
     /// Creates a new [`Acceptor`] using the provided [`Config`].
-    pub async fn new(cfg: AcceptorConfig) -> Result<Self, Error> {
+    pub fn new(cfg: AcceptorConfig) -> Result<Self, Error> {
         let tls_config = libp2p_tls::make_server_config(&cfg.keypair)
             .map_err(|err| Error::Tls(err.to_string()))?;
 

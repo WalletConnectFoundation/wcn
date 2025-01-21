@@ -255,65 +255,11 @@ impl From<io::Error> for StreamError {
     }
 }
 
-// impl From<quinn::ConnectionError> for Error {
-//     fn from(err: quinn::ConnectionError) -> Self {
-//         Self::Other(format!("Connection: {err:?}"))
-//     }
-// }
-
 pub type Result<T, E = StreamError> = std::result::Result<T, E>;
-
-// /// Connection state before the [`Handshake`].
-// pub struct PendingConnection(pub(crate) quinn::Connection);
-
-// impl PendingConnection {
-//     /// Initiates the [`Handshake`].
-//     pub async fn initiate_handshake<Req: Message, Resp: Message>(
-//         &self,
-//     ) -> Result<(RecvStream<Resp>, SendStream<Req>)> {
-//         let (tx, rx) = self.0.open_bi().await?;
-//         Ok(BiDirectionalStream::new(tx, rx).upgrade())
-//     }
-
-//     /// Accepts the [`Handshake`].
-//     pub async fn accept_handshake<Req: Message, Resp: Message>(
-//         &self,
-//     ) -> Result<(RecvStream<Req>, SendStream<Resp>)> {
-//         let (tx, rx) = self.0.accept_bi().await?;
-//         Ok(BiDirectionalStream::new(tx, rx).upgrade())
-//     }
-// }
-
-// /// Application layer protocol specific handshake.
-// pub trait Handshake: Clone + Send + Sync + 'static {
-//     type Ok: Clone + Send + Sync + 'static;
-//     type Err: std::error::Error + Send;
-
-//     fn handle(
-//         &self,
-//         peer_id: PeerId,
-//         conn: PendingConnection,
-//     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send;
-// }
-
-// pub type HandshakeData<H> = <H as Handshake>::Ok;
 
 /// No-op [`Handshake`] implementation.
 #[derive(Clone, Debug, Default)]
 pub struct NoHandshake;
-
-// impl Handshake for NoHandshake {
-//     type Ok = ();
-//     type Err = Infallible;
-
-//     fn handle(
-//         &self,
-//         _: PeerId,
-//         _: PendingConnection,
-//     ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
-//         async { Ok(()) }
-//     }
-// }
 
 // Makes sure that an error serialized under different `Result` types has the
 // same byte representation.

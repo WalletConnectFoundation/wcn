@@ -26,13 +26,13 @@ impl<C> Client for Metered<C>
 where
     C: Client,
 {
-    type Transport = C::Transport;
+    type Connector = C::Connector;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a Multiaddr,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Connector>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.inner
             .send_rpc(addr, rpc_id, f)
@@ -84,13 +84,13 @@ where
     A: Sync,
     C: Client<A>,
 {
-    type Transport = C::Transport;
+    type Connector = C::Connector;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Connector>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         async move {
             if let Some(timeout) = self.timeouts.get(rpc_id) {
@@ -155,13 +155,13 @@ where
     C: Client<A>,
     R: RetryStrategy,
 {
-    type Transport = C::Transport;
+    type Connector = C::Connector;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Connector>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         async move {
             let mut attempt = 1;

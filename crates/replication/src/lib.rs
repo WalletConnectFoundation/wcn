@@ -398,21 +398,15 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
                 self.operation
                     .repair(self.driver.storage_api.remote_storage(addr), value)
                     .map(|res| match res {
-                        Ok(true) => {
-                            tracing::debug!("repaired");
-                            metrics::counter!("wcn_replication_driver_read_repairs",
-                                EnumLabel<"operation_name", OperationName> => Op::NAME
-                            )
-                            .increment(1);
-                        }
+                        Ok(true) => metrics::counter!("wcn_replication_driver_read_repairs",
+                            EnumLabel<"operation_name", OperationName> => Op::NAME
+                        )
+                        .increment(1),
                         Ok(false) => {}
-                        Err(err) => {
-                            tracing::debug!(?err, "repair failed");
-                            metrics::counter!("wcn_replication_driver_read_repair_errors",
-                                EnumLabel<"operation_name", OperationName> => Op::NAME
-                            )
-                            .increment(1);
-                        }
+                        Err(_) => metrics::counter!("wcn_replication_driver_read_repair_errors",
+                            EnumLabel<"operation_name", OperationName> => Op::NAME
+                        )
+                        .increment(1),
                     })
             })
             .collect();

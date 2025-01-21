@@ -1028,7 +1028,7 @@ impl Network {
         )))
     }
 
-    pub async fn spawn_servers(
+    pub fn spawn_servers(
         cfg: &Config,
         node: Node,
         prometheus: PrometheusHandle,
@@ -1136,7 +1136,6 @@ impl Network {
             port: cfg.replica_api_server_port,
             keypair: cfg.keypair.clone(),
         })
-        .await
         .map_err(Error::StorageApiTcpServer)?;
 
         let storage_api_tcp_server =
@@ -1171,7 +1170,7 @@ impl Network {
 pub struct RemoteNode<'a> {
     pub id: Cow<'a, PeerId>,
     pub multiaddr: Cow<'a, Multiaddr>,
-    pub client: Client<quic::client::Connector>,
+    pub client: Client<quic::Connector>,
 }
 
 impl RemoteNode<'_> {

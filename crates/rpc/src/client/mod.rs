@@ -56,11 +56,11 @@ pub struct Config<H = NoHandshake> {
     pub server_name: ServerName,
 }
 
-/// Transport responsible for establishing outbound connections.
+/// Transport responsible for establishing [`OutboundConnection`]s.
 pub trait Connector: Clone + Send + Sync + 'static {
     type Connection: OutboundConnection;
 
-    /// Establishes outbound [`Connection`] to the provided [`Multiaddr`].
+    /// Establishes [`OutboundConnection`] to the provided [`Multiaddr`].
     fn connect(
         &self,
         multiaddr: &Multiaddr,
@@ -132,7 +132,7 @@ pub trait OutboundConnection: Clone + Send + Sync + 'static {
     type Read: Read;
     type Write: Write;
 
-    /// Returns unique ID of this [`Connection`].
+    /// Returns unique ID of this [`OutboundConnection`].
     fn id(&self) -> usize;
 
     /// Accepts an inbound [`BiDirectionalStream`].
@@ -170,14 +170,14 @@ type BiDirectionalStream<T> = transport::BiDirectionalStream<ConnectionRead<T>, 
 
 /// RPC client.
 pub trait Client<A: Sync = Multiaddr>: Send + Sync {
-    type Transport: Connector;
+    type Connector: Connector;
 
     /// Sends an outbound RPC.
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream<Self::Transport>) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<Self::Connector>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a;
 
     /// Sends an unary RPC.
@@ -203,8 +203,8 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         &'a self,
         addr: &'a A,
         f: &'a (impl Fn(
-            SendStream<ConnectionWrite<Self::Transport>, RPC::Request, RPC::Codec>,
-            RecvStream<ConnectionRead<Self::Transport>, RpcResult<RPC>, RPC::Codec>,
+            SendStream<ConnectionWrite<Self::Connector>, RPC::Request, RPC::Codec>,
+            RecvStream<ConnectionRead<Self::Connector>, RpcResult<RPC>, RPC::Codec>,
         ) -> Fut
                  + Send
                  + Sync
@@ -328,7 +328,7 @@ where
     C: Codec,
 {
     pub fn send<'a, A: Sync, T: Connector, F, Fut, Ok: Send>(
-        client: &'a impl Client<A, Transport = T>,
+        client: &'a impl Client<A, Connector = T>,
         addr: &'a A,
         f: &'a F,
     ) -> impl Future<Output = Result<Ok>> + Send + 'a
@@ -365,7 +365,6 @@ pub struct AnyPeer;
 /// Base [`Client`] impl.
 #[derive(Clone, Debug)]
 pub struct ClientImpl<T: Connector, H = NoHandshake> {
-    // peer_id: PeerId,
     transport: T,
     handshake: H,
 
@@ -378,7 +377,7 @@ pub struct ClientImpl<T: Connector, H = NoHandshake> {
 impl<T: Connector, H> Marker for ClientImpl<T, H> {}
 
 impl<T: Connector, H: Handshake> Client for ClientImpl<T, H> {
-    type Transport = T;
+    type Connector = T;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
         &'a self,
@@ -392,14 +391,14 @@ impl<T: Connector, H: Handshake> Client for ClientImpl<T, H> {
     }
 }
 
-impl<T: Connector, H: Handshake> Client<AnyPeer> for ClientImpl<T, H> {
-    type Transport = T;
+impl<C: Connector, H: Handshake> Client<AnyPeer> for ClientImpl<C, H> {
+    type Connector = C;
 
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
         &'a self,
         _: &'a AnyPeer,
         rpc_id: RpcId,
-        f: &'a (impl Fn(BiDirectionalStream<T>) -> Fut + Send + Sync + 'a),
+        f: &'a (impl Fn(BiDirectionalStream<C>) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.establish_stream_any(rpc_id)
             .map_err(Into::into)
@@ -410,7 +409,7 @@ impl<T: Connector, H: Handshake> Client<AnyPeer> for ClientImpl<T, H> {
 type OutboundConnectionHandlers<T, H> = IndexMap<Multiaddr, ConnectionHandler<T, H>>;
 
 /// Builds a new [`Client`] using the provided [`Config`].
-pub fn new<T: Connector, H: Handshake>(transport: T, cfg: Config<H>) -> ClientImpl<T, H> {
+pub fn new<C: Connector, H: Handshake>(transport: C, cfg: Config<H>) -> ClientImpl<C, H> {
     let handlers = cfg
         .known_peers
         .into_iter()
@@ -444,25 +443,25 @@ pub(super) struct ConnectionHandler<C: Connector, H> {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct ConnectionHandlerInner<T: Connector> {
+struct ConnectionHandlerInner<C: Connector> {
     addr: Multiaddr,
     server_name: ServerName,
-    connector: T,
+    connector: C,
 
     #[derivative(Debug = "ignore")]
-    connection: SharedConnection<T>,
+    connection: SharedConnection<C>,
     connection_timeout: Duration,
 }
 
 type SharedConnection<T> = Shared<BoxFuture<'static, <T as Connector>::Connection>>;
 
-fn new_connection<T: Connector, H: Handshake>(
+fn new_connection<C: Connector, H: Handshake>(
     multiaddr: Multiaddr,
     server_name: ServerName,
-    transport: T,
+    connector: C,
     handshake: H,
     timeout: Duration,
-) -> SharedConnection<T> {
+) -> SharedConnection<C> {
     // We want to reconnect as fast as possible, otherwise it may lead to a lot of
     // lost requests, especially on cluster startup.
     let backoff = ExponentialBackoffBuilder::new()
@@ -472,7 +471,7 @@ fn new_connection<T: Connector, H: Handshake>(
         .build();
 
     async move {
-        let transport = &transport;
+        let connector = &connector;
         let handshake = &handshake;
         let multiaddr = &multiaddr;
 
@@ -483,7 +482,7 @@ fn new_connection<T: Connector, H: Handshake>(
                     server_name: Some(server_name),
                 };
 
-                let conn = transport
+                let conn = connector
                     .connect(multiaddr, header)
                     .with_timeout(timeout)
                     .await

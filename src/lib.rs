@@ -177,7 +177,7 @@ pub async fn run(
         storage,
     );
 
-    Network::spawn_servers(cfg, node.clone(), prometheus.clone()).await?;
+    Network::spawn_servers(cfg, node.clone(), prometheus.clone())?;
 
     let metrics_srv = metrics::serve(cfg.clone(), node.clone(), prometheus)?.pipe(tokio::spawn);
 

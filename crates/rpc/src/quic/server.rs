@@ -27,7 +27,7 @@ pub struct Acceptor {
 }
 
 impl Acceptor {
-    /// Creates a new [`Socket`] using the provided [`Config`].
+    /// Creates a new [`Acceptor`] using the provided [`Config`].
     pub fn new(cfg: AcceptorConfig) -> Result<Self, Error> {
         let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_streams);
 

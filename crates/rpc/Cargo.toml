@@ -45,7 +45,7 @@ tap = "1"
 socket2 = "0.5.5"
 yamux = "0.13"
 tokio-rustls = "0.26"
-rustls = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

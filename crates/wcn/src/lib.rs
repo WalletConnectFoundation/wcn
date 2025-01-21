@@ -60,7 +60,7 @@ pub struct AdminApiArgs {
 
 impl AdminApiArgs {
     pub fn new_client(self) -> anyhow::Result<wcn_admin_api::Client<quic::Connector>> {
-        let socket = quic::client::Connector::new(self.keypair.0)?;
+        let socket = quic::Connector::new(self.keypair.0)?;
         let cfg = wcn_admin_api::client::Config::new(self.address);
         Ok(wcn_admin_api::Client::new(socket, cfg))
     }

@@ -82,7 +82,7 @@ impl Config {
 
 impl<C: Connector> Client<C> {
     /// Creates a new [`Client`].
-    pub fn new(transport: C, config: Config) -> Self {
+    pub fn new(connector: C, config: Config) -> Self {
         let handshake = Handshake {
             access_token: config.access_token,
         };
@@ -96,7 +96,7 @@ impl<C: Connector> Client<C> {
 
         let timeouts = Timeouts::new().with_default(config.operation_timeout);
 
-        let rpc_client = wcn_rpc::client::new(transport, rpc_client_config)
+        let rpc_client = wcn_rpc::client::new(connector, rpc_client_config)
             .with_timeouts(timeouts)
             .metered()
             .with_retries(RetryStrategy::new(config.max_attempts));
@@ -160,13 +160,13 @@ impl middleware::RetryStrategy for RetryStrategy {
 
 /// Handle to a remote Storage API (Server).
 #[derive(Clone, Copy)]
-pub struct RemoteStorage<'a, T: Connector> {
-    client: &'a Client<T>,
+pub struct RemoteStorage<'a, C: Connector> {
+    client: &'a Client<C>,
     server_addr: &'a Multiaddr,
     expected_keyspace_version: Option<u64>,
 }
 
-impl<T: Connector> RemoteStorage<'_, T> {
+impl<C: Connector> RemoteStorage<'_, C> {
     fn extended_key(&self, key: Key) -> ExtendedKey {
         ExtendedKey {
             inner: key.0,
@@ -174,7 +174,7 @@ impl<T: Connector> RemoteStorage<'_, T> {
         }
     }
 
-    fn rpc_client(&self) -> &RpcClient<T> {
+    fn rpc_client(&self) -> &RpcClient<C> {
         &self.client.rpc
     }
 

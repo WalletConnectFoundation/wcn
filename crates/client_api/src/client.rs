@@ -72,8 +72,8 @@ impl Config {
     }
 }
 
-struct Inner<T: Connector> {
-    rpc_client: WithTimeouts<wcn_rpc::ClientImpl<T>>,
+struct Inner<C: Connector> {
+    rpc_client: WithTimeouts<wcn_rpc::ClientImpl<C>>,
     namespaces: Vec<auth::Auth>,
     auth_ttl: Duration,
     auth_token: Arc<ArcSwap<token::Token>>,
@@ -81,7 +81,7 @@ struct Inner<T: Connector> {
     nodes: Vec<Multiaddr>,
 }
 
-impl<T: Connector> Inner<T> {
+impl<C: Connector> Inner<C> {
     async fn refresh_auth_token(&self) -> Result<(), token::Error> {
         let address = rand::seq::SliceRandom::choose(&self.nodes[..], &mut rand::thread_rng())
             .ok_or(Error::NodeNotAvailable)?;
@@ -142,7 +142,7 @@ impl<T: Connector> Inner<T> {
     }
 }
 
-async fn updater<T: Connector>(inner: Arc<Inner<T>>, shutdown_rx: oneshot::Receiver<()>) {
+async fn updater<C: Connector>(inner: Arc<Inner<C>>, shutdown_rx: oneshot::Receiver<()>) {
     tokio::select! {
         _ = cluster_update(&inner) => {},
         _ = auth_token_update(&inner) => {},
@@ -150,7 +150,7 @@ async fn updater<T: Connector>(inner: Arc<Inner<T>>, shutdown_rx: oneshot::Recei
     }
 }
 
-async fn cluster_update<T: Connector>(inner: &Inner<T>) {
+async fn cluster_update<C: Connector>(inner: &Inner<C>) {
     loop {
         let stream = ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|tx, rx| async move {
             Ok((tx, rx))
@@ -197,7 +197,7 @@ async fn cluster_update<T: Connector>(inner: &Inner<T>) {
     }
 }
 
-async fn auth_token_update<T: Connector>(inner: &Inner<T>) {
+async fn auth_token_update<C: Connector>(inner: &Inner<C>) {
     // Subtract 2 minutes from the token duration to refresh it before it expires.
     let normal_delay = inner
         .auth_ttl
@@ -227,14 +227,14 @@ async fn auth_token_update<T: Connector>(inner: &Inner<T>) {
 
 /// API client.
 #[derive(Clone)]
-pub struct Client<T: Connector> {
-    inner: Arc<Inner<T>>,
+pub struct Client<C: Connector> {
+    inner: Arc<Inner<C>>,
     _shutdown_tx: Arc<oneshot::Sender<()>>,
 }
 
-impl<T: Connector> Client<T> {
+impl<C: Connector> Client<C> {
     /// Creates a new [`Client`].
-    pub async fn new(transport: T, config: Config) -> Result<Self> {
+    pub async fn new(connector: C, config: Config) -> Result<Self> {
         if config.auth_token_ttl < MIN_AUTH_TOKEN_TTL {
             return Err(Error::TokenTtl);
         }
@@ -253,7 +253,7 @@ impl<T: Connector> Client<T> {
             .with::<{ Subscribe::ID }>(None)
             .with::<{ ClusterUpdates::ID }>(None);
 
-        let rpc_client = wcn_rpc::client::new(transport, rpc_client_config).with_timeouts(timeouts);
+        let rpc_client = wcn_rpc::client::new(connector, rpc_client_config).with_timeouts(timeouts);
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 

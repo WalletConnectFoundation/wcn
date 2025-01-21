@@ -93,7 +93,7 @@ trait Transport {
 
     fn multiaddr(n: usize) -> Multiaddr;
     fn connector(keypair: Keypair) -> Self::Connector;
-    async fn acceptor(keypair: Keypair, addr: Multiaddr, port: u16) -> Self::Acceptor;
+    fn acceptor(keypair: Keypair, addr: Multiaddr, port: u16) -> Self::Acceptor;
 }
 
 struct Quic;
@@ -110,7 +110,7 @@ impl Transport for Quic {
         quic::Connector::new(keypair).unwrap()
     }
 
-    async fn acceptor(keypair: Keypair, addr: Multiaddr, _port: u16) -> Self::Acceptor {
+    fn acceptor(keypair: Keypair, addr: Multiaddr, _port: u16) -> Self::Acceptor {
         quic::Acceptor::new(quic::AcceptorConfig {
             addr,
             keypair,
@@ -134,10 +134,8 @@ impl Transport for Tcp {
         tcp::Connector::new(keypair).unwrap()
     }
 
-    async fn acceptor(keypair: Keypair, _addr: Multiaddr, port: u16) -> Self::Acceptor {
-        tcp::Acceptor::new(tcp::AcceptorConfig { port, keypair })
-            .await
-            .unwrap()
+    fn acceptor(keypair: Keypair, _addr: Multiaddr, port: u16) -> Self::Acceptor {
+        tcp::Acceptor::new(tcp::AcceptorConfig { port, keypair }).unwrap()
     }
 }
 
@@ -200,7 +198,7 @@ async fn test_transport<T: Transport>() {
         };
         nodes.push(node.clone());
 
-        let acceptor = T::acceptor(keypair.clone(), addr.clone(), *port).await;
+        let acceptor = T::acceptor(keypair.clone(), addr.clone(), *port);
 
         let acceptor_config = AcceptorConfig {
             max_concurrent_connections: 100,

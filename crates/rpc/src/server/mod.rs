@@ -17,7 +17,6 @@ use {
         Result as RpcResult,
         ServerName,
     },
-    derive_more::derive::Deref,
     futures::{Future, FutureExt, SinkExt as _, TryFutureExt as _},
     libp2p::{Multiaddr, PeerId},
     std::{io, sync::Arc, time::Duration},
@@ -54,14 +53,16 @@ pub struct AcceptorConfig {
     pub max_concurrent_streams: u32,
 }
 
+/// Server part of an application layer handshake.
 pub trait Handshake: Clone + Send + Sync + 'static {
     type Data: Clone + Send + Sync + 'static;
 
+    /// Handles the handshake.
     fn handle(
         &self,
         peer_id: &PeerId,
         conn: &mut impl InboundConnection,
-    ) -> impl Future<Output = Result<Self::Data, InboundConnectionError>> + Send;
+    ) -> impl Future<Output = InboundConnectionResult<Self::Data>> + Send;
 }
 
 pub type HandshakeData<H> = <H as Handshake>::Data;
@@ -73,7 +74,7 @@ impl Handshake for NoHandshake {
         &self,
         _peer_id: &PeerId,
         _conn: &mut impl InboundConnection,
-    ) -> impl Future<Output = Result<Self::Data, InboundConnectionError>> + Send {
+    ) -> impl Future<Output = InboundConnectionResult<Self::Data>> + Send {
         async { Ok(()) }
     }
 }
@@ -119,33 +120,33 @@ pub trait Server: Clone + Send + Sync + 'static {
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a;
 
-    /// Runs this [`Server`] using the provided [`Transport`].
+    /// Runs this [`Server`] using the provided [`Acceptor`].
     fn serve(
         self,
-        transport: impl Acceptor,
+        acceptor: impl Acceptor,
         cfg: AcceptorConfig,
     ) -> impl Future<Output = ()> + Send {
-        multiplex((self,), transport, cfg)
+        multiplex((self,), acceptor, cfg)
     }
 }
 
 /// RPC [`Server`] error.
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 pub enum Error {
-    /// Transport error.
+    /// Conection error.
     #[error(transparent)]
-    Transport(#[from] InboundConnectionError),
+    Connection(#[from] InboundConnectionError),
 }
 
 impl From<StreamError> for Error {
     fn from(err: StreamError) -> Self {
-        Error::Transport(err.into())
+        Error::Connection(err.into())
     }
 }
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
-        Self::Transport(err.into())
+        Self::Connection(err.into())
     }
 }
 
@@ -314,7 +315,7 @@ pub trait InboundConnection: Send + 'static {
     ) -> impl Future<Output = InboundConnectionResult<(Self::Read, Self::Write)>> + Send;
 }
 
-/// Runs multiple [`rpc::Server`]s on using a single [`Acceptor`] transport.
+/// Runs multiple [`rpc::Server`]s using a single [`Acceptor`] transport.
 ///
 /// `rpc_servers` argument is expected to be a tuple of [`rpc::Server`] impls.
 pub fn multiplex<A, S>(
@@ -331,8 +332,8 @@ where
 }
 
 /// RPC [`Server`] multiplexer.
-#[derive(Debug, Deref)]
-pub struct Multiplexer<T, S>(#[deref] Arc<Inner<T, S>>);
+#[derive(Debug)]
+pub struct Multiplexer<T, S>(Arc<Inner<T, S>>);
 
 impl<T, S> Clone for Multiplexer<T, S> {
     fn clone(&self) -> Self {
@@ -341,23 +342,23 @@ impl<T, S> Clone for Multiplexer<T, S> {
 }
 
 #[derive(Debug)]
-pub struct Inner<T, S> {
-    transport: T,
+struct Inner<C, S> {
+    acceptor: C,
     rpc_servers: S,
 
     connection_permits: Arc<Semaphore>,
     stream_permits: Arc<Semaphore>,
 }
 
-impl<T, S> Multiplexer<T, S>
+impl<C, S> Multiplexer<C, S>
 where
-    T: Acceptor,
+    C: Acceptor,
     S: Send + Sync + 'static,
     Self: ConnectionHandler,
 {
-    fn new(transport: T, rpc_servers: S, cfg: AcceptorConfig) -> Self {
+    fn new(acceptor: C, rpc_servers: S, cfg: AcceptorConfig) -> Self {
         Self(Arc::new(Inner {
-            transport,
+            acceptor,
             rpc_servers,
             connection_permits: Arc::new(Semaphore::new(cfg.max_concurrent_connections as usize)),
             stream_permits: Arc::new(Semaphore::new(cfg.max_concurrent_streams as usize)),
@@ -365,7 +366,7 @@ where
     }
 
     async fn serve(self) {
-        while let Some(fut) = self.transport.accept().await {
+        while let Some(fut) = self.0.acceptor.accept().await {
             self.accept_connection(fut)
         }
     }
@@ -374,7 +375,7 @@ where
         &self,
         fut: impl Future<Output = InboundConnectionResult<impl InboundConnection>> + Send + 'static,
     ) {
-        let Ok(conn_permit) = self.connection_permits.clone().try_acquire_owned() else {
+        let Ok(conn_permit) = self.0.connection_permits.clone().try_acquire_owned() else {
             metrics::counter!("wcn_rpc_server_connections_dropped").increment(1);
             return;
         };
@@ -462,15 +463,15 @@ where
     }
 
     fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
-        metrics::gauge!("wcn_rpc_server_available_stream_permits", StringLabel<"server_addr", Multiaddr> => self.transport.address())
-            .set(self.stream_permits.available_permits() as f64);
+        metrics::gauge!("wcn_rpc_server_available_stream_permits", StringLabel<"server_addr", Multiaddr> => self.0.acceptor.address())
+            .set(self.0.stream_permits.available_permits() as f64);
 
-        self.stream_permits
+        self.0.stream_permits
             .clone()
             .try_acquire_owned()
             .ok()
             .tap_none(|| {
-                metrics::counter!("wcn_rpc_server_throttled_streams", StringLabel<"server_addr", Multiaddr> => &self.transport.address())
+                metrics::counter!("wcn_rpc_server_throttled_streams", StringLabel<"server_addr", Multiaddr> => &self.0.acceptor.address())
                     .increment(1);
             })
     }
@@ -525,11 +526,11 @@ where
     ) -> impl Future<Output = Result<(), InboundConnectionError>> + Send {
         async move {
             let Some(server_name) = server_name else {
-                return self.handle_connection(conn, &self.rpc_servers.0).await;
+                return self.handle_connection(conn, &self.0.rpc_servers.0).await;
             };
 
-            if self.rpc_servers.0.config().name == &server_name {
-                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            if self.0.rpc_servers.0.config().name == &server_name {
+                return self.handle_connection(conn, &self.0.rpc_servers.0).await;
             }
 
             Err(InboundConnectionError::UnknownRpcServer)
@@ -550,15 +551,15 @@ where
     ) -> impl Future<Output = Result<(), InboundConnectionError>> + Send {
         async move {
             let Some(server_name) = server_name else {
-                return self.handle_connection(conn, &self.rpc_servers.0).await;
+                return self.handle_connection(conn, &self.0.rpc_servers.0).await;
             };
 
-            if self.rpc_servers.0.config().name == &server_name {
-                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            if self.0.rpc_servers.0.config().name == &server_name {
+                return self.handle_connection(conn, &self.0.rpc_servers.0).await;
             }
 
-            if self.rpc_servers.1.config().name == &server_name {
-                return self.handle_connection(conn, &self.rpc_servers.1).await;
+            if self.0.rpc_servers.1.config().name == &server_name {
+                return self.handle_connection(conn, &self.0.rpc_servers.1).await;
             }
 
             Err(InboundConnectionError::UnknownRpcServer)

@@ -17,7 +17,7 @@ pub struct Client<T: Connector> {
     server_addr: Multiaddr,
 }
 
-type RpcClient<T> = WithTimeouts<wcn_rpc::ClientImpl<T>>;
+type RpcClient<C> = WithTimeouts<wcn_rpc::ClientImpl<C>>;
 
 /// [`Client`] config.
 #[derive(Clone)]
@@ -42,9 +42,9 @@ impl Config {
     }
 }
 
-impl<T: Connector> Client<T> {
+impl<C: Connector> Client<C> {
     /// Creates a new [`Client`].
-    pub fn new(transport: T, config: Config) -> Self {
+    pub fn new(connector: C, config: Config) -> Self {
         let rpc_client_config = wcn_rpc::client::Config {
             known_peers: HashSet::new(),
             handshake: NoHandshake,
@@ -58,7 +58,7 @@ impl<T: Connector> Client<T> {
                 MEMORY_PROFILE_MAX_DURATION + config.operation_timeout,
             );
 
-        let rpc_client = wcn_rpc::client::new(transport, rpc_client_config).with_timeouts(timeouts);
+        let rpc_client = wcn_rpc::client::new(connector, rpc_client_config).with_timeouts(timeouts);
 
         Self {
             rpc_client,

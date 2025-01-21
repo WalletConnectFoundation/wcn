@@ -108,8 +108,9 @@ pub fn exec() -> anyhow::Result<()> {
         }
 
         if key == "VERGEN_GIT_COMMIT_TIMESTAMP" {
-            let version = node_timestamp_version(value.unwrap_or_default());
-            wc::metrics::gauge!("wcn_node_version").set(version as f64);
+            if let Some(timestamp) = value.and_then(|str| rfc3339_to_timestamp(str)) {
+                wc::metrics::gauge!("wcn_node_git_commit_timestamp").set(timestamp as f64);
+            };
         }
     }
 
@@ -212,19 +213,8 @@ pub async fn run(
 )]
 pub struct TypeConfig;
 
-fn node_timestamp_version(rfc3339: &str) -> u64 {
-    rfc3339
-        .chars()
-        .filter(|char| char.is_numeric())
-        .collect::<String>()
-        .parse()
-        .unwrap_or_default()
-}
-
-#[test]
-fn test_node_timestamp_version() {
-    assert_eq!(
-        node_timestamp_version("2025-01-09T17:56:12"),
-        20250109175612
-    )
+fn rfc3339_to_timestamp(rfc3339: &str) -> Option<u64> {
+    chrono::DateTime::<chrono::FixedOffset>::parse_from_rfc3339(rfc3339)
+        .ok()
+        .map(|dt| dt.to_utc().timestamp() as u64)
 }

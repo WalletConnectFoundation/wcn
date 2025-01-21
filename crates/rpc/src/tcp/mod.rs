@@ -46,10 +46,6 @@ fn try_multiaddr_to_socketaddr(addr: &Multiaddr) -> Option<SocketAddr> {
     Some(match (proto1, proto2) {
         (Protocol::Ip4(ip), Protocol::Tcp(port)) => SocketAddr::new(ip.into(), port),
         (Protocol::Ip6(ip), Protocol::Tcp(port)) => SocketAddr::new(ip.into(), port),
-
-        // TODO: Remove. Temporary
-        (Protocol::Ip4(ip), Protocol::Udp(port)) => SocketAddr::new(ip.into(), port),
-        (Protocol::Ip6(ip), Protocol::Udp(port)) => SocketAddr::new(ip.into(), port),
         _ => return None,
     })
 }

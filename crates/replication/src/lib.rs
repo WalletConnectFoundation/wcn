@@ -7,7 +7,7 @@ use {
     derive_more::derive::AsRef,
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
-    rpc::{quic, tcp, Connector},
+    rpc::{quic, Connector},
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
@@ -29,7 +29,7 @@ mod reconciliation;
 #[derive(Clone)]
 pub struct Driver {
     client_api: client_api::Client<quic::Connector>,
-    storage_api: storage_api::Client<tcp::Connector>,
+    storage_api: storage_api::Client<quic::Connector>,
 }
 
 /// Replication config.
@@ -99,15 +99,12 @@ impl Driver {
         let quic_connector = quic::Connector::new(cfg.keypair.clone())
             .map_err(|err| CreationError(err.to_string()))?;
 
-        let tcp_connector =
-            tcp::Connector::new(cfg.keypair).map_err(|err| CreationError(err.to_string()))?;
-
         let client_api_cfg = client_api::client::Config::new(cfg.nodes)
             .with_connection_timeout(cfg.connection_timeout)
             .with_operation_timeout(cfg.operation_timeout)
             .with_namespaces(cfg.namespaces);
 
-        let client_api = client_api::Client::new(quic_connector, client_api_cfg)
+        let client_api = client_api::Client::new(quic_connector.clone(), client_api_cfg)
             .await
             .map_err(|err| CreationError(err.to_string()))?;
 
@@ -115,7 +112,7 @@ impl Driver {
             .with_connection_timeout(cfg.connection_timeout)
             .with_operation_timeout(cfg.operation_timeout);
 
-        let storage_api = storage_api::Client::new(tcp_connector, storage_api_cfg);
+        let storage_api = storage_api::Client::new(quic_connector, storage_api_cfg);
 
         Ok(Self {
             client_api,

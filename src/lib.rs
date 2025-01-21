@@ -108,7 +108,7 @@ pub fn exec() -> anyhow::Result<()> {
         }
 
         if key == "VERGEN_GIT_COMMIT_TIMESTAMP" {
-            if let Some(timestamp) = value.and_then(|str| rfc3339_to_timestamp(str)) {
+            if let Some(timestamp) = value.and_then(rfc3339_to_timestamp) {
                 wc::metrics::gauge!("wcn_node_git_commit_timestamp").set(timestamp as f64);
             };
         }

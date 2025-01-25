@@ -536,8 +536,17 @@ impl TestCluster {
             // Validate `hscan`.
             let page = client0.hscan(key, 10, None).await.unwrap();
             assert_eq!(
-                crate::sort_data(page.records.into_iter().map(|rec| rec.value).collect()),
-                crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
+                crate::sort_data(
+                    page.records
+                        .into_iter()
+                        .map(|rec| (rec.field, rec.value))
+                        .collect()
+                ),
+                crate::sort_data(
+                    data.iter()
+                        .map(|v| (v.0 .0.clone(), v.1 .0.clone()))
+                        .collect::<Vec<_>>()
+                )
             );
         }
 
@@ -560,8 +569,17 @@ impl TestCluster {
             // Validate `hscan`.
             let page = client0.hscan(key, 10, None).await.unwrap();
             assert_eq!(
-                crate::sort_data(page.records.into_iter().map(|rec| rec.value).collect()),
-                crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
+                crate::sort_data(
+                    page.records
+                        .into_iter()
+                        .map(|rec| (rec.field, rec.value))
+                        .collect()
+                ),
+                crate::sort_data(
+                    data.iter()
+                        .map(|v| (v.0 .0.clone(), v.1 .0.clone()))
+                        .collect::<Vec<_>>()
+                )
             );
         }
     }
@@ -976,7 +994,7 @@ impl Data {
     }
 }
 
-fn sort_data(mut data: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+fn sort_data<T: Ord>(mut data: Vec<T>) -> Vec<T> {
     data.sort();
     data
 }

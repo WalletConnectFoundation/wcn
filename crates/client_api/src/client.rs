@@ -3,7 +3,9 @@ use {
     arc_swap::ArcSwap,
     futures_util::{SinkExt as _, Stream, StreamExt},
     std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
+    surge_ping::SurgeError,
     tokio::sync::oneshot,
+    wc::metrics::{self, StringLabel},
     wcn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
@@ -152,10 +154,58 @@ impl Inner {
     }
 }
 
+async fn peer_liveness_check(inner: &Inner) {
+    loop {
+        let cluster = inner.cluster.load_full();
+
+        futures_util::stream::iter(cluster.nodes())
+            .for_each_concurrent(None, |node| async {
+                let Ok(addr) = wcn_rpc::quic::multiaddr_to_socketaddr(&node.addr) else {
+                    return;
+                };
+
+                match surge_ping::ping(addr.ip(), &[0; 8]).await {
+                    Ok((_, duration)) => {
+                        metrics::gauge!(
+                            "wcn_client_api_peer_latency",
+                            StringLabel<"destination", Multiaddr> => &node.addr
+                        )
+                        .set(duration.as_secs_f64());
+                    }
+
+                    Err(err) => {
+                        metrics::counter!(
+                            "wcn_client_api_peer_unreachable",
+                            StringLabel<"destination", Multiaddr> => &node.addr,
+                            StringLabel<"error_kind"> => ping_err_as_str(&err)
+                        )
+                        .increment(1);
+                    }
+                }
+            })
+            .await;
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
+fn ping_err_as_str(err: &SurgeError) -> &'static str {
+    match err {
+        SurgeError::IncorrectBufferSize => "incorrect_buffer_size",
+        SurgeError::MalformedPacket(_) => "malformed_packet",
+        SurgeError::IOError(_) => "io",
+        SurgeError::Timeout { .. } => "timeout",
+        SurgeError::EchoRequestPacket => "echo_request_packet",
+        SurgeError::NetworkError => "network",
+        SurgeError::IdenticalRequests { .. } => "identical_requests",
+    }
+}
+
 async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
     tokio::select! {
         _ = cluster_update(&inner) => {},
         _ = auth_token_update(&inner) => {},
+        _ = peer_liveness_check(&inner) => {},
         _ = shutdown_rx => {}
     }
 }

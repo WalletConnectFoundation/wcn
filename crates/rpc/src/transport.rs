@@ -198,10 +198,7 @@ where
 impl<T: Message, C: Codec> RecvStream<T, C> {
     /// Tries to receive the next message from this [`RecvStream`].
     pub async fn recv_message(&mut self) -> Result<T> {
-        self.next()
-            .await
-            .ok_or(Error::StreamFinished)?
-            .map_err(Into::into)
+        self.next().await.ok_or(Error::StreamFinished)?
     }
 
     /// Changes the type of this [`RecvStream`].

@@ -92,7 +92,7 @@ fn new_udp_socket(addr: SocketAddr) -> io::Result<UdpSocket> {
     Ok(socket.into())
 }
 
-fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
+pub fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
     try_multiaddr_to_socketaddr(addr).ok_or_else(|| InvalidMultiaddrError(addr.clone()))
 }
 

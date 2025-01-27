@@ -1,7 +1,7 @@
 use {
     crate::{
         db::{cf, migration::ExportFrame, schema::ColumnFamilyName, types::map},
-        util::serde::deserialize,
+        util::serde::{deserialize, serialize},
         DataContext,
         Error,
         RocksBackend,
@@ -43,12 +43,12 @@ impl<'a> IntoIterator for DbIterator<'a> {
 pub type GenericCursor = Vec<u8>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScanResult<T = Vec<u8>> {
-    pub items: Vec<map::Record<GenericCursor, T>>,
+pub struct ScanResult<F, V> {
+    pub items: Vec<map::Record<F, V>>,
     pub has_more: bool,
 }
 
-impl<T> ScanResult<T> {
+impl<F, V> ScanResult<F, V> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             items: Vec::with_capacity(capacity),
@@ -162,9 +162,10 @@ fn parse_value<C: cf::Column>((_, value): &KVBytes) -> Result<Option<C::ValueTyp
     deserialize::<DataContext<C::ValueType>>(value).map(DataContext::into_payload)
 }
 
-pub struct MapRecords;
+// TODO: Remove after migrating to the new API.
+pub struct MapRecordsGeneric;
 
-impl<C> IterTransform<C> for MapRecords
+impl<C> IterTransform<C> for MapRecordsGeneric
 where
     C: cf::Column,
 {
@@ -183,6 +184,33 @@ where
 
         Ok(data.into_payload().map(|value| map::Record {
             field: subkey_slice.to_vec(),
+            value,
+            expiration: exp,
+            version,
+        }))
+    }
+}
+
+pub struct MapRecords;
+
+impl<C> IterTransform<C> for MapRecords
+where
+    C: cf::Column,
+{
+    type Value = map::Record<C::SubKeyType, C::ValueType>;
+
+    fn map(data: &KVBytes) -> Result<Option<Self::Value>, Error> {
+        let subkey_slice = C::split_ext_key(&data.0)?;
+        let field = deserialize(subkey_slice)?;
+        let data = deserialize::<DataContext<C::ValueType>>(&data.1)?;
+        let exp = data.expiration_timestamp();
+
+        let version = data
+            .modification_timestamp()
+            .unwrap_or_else(|| data.creation_timestamp());
+
+        Ok(data.into_payload().map(|value| map::Record {
+            field,
             value,
             expiration: exp,
             version,
@@ -212,12 +240,12 @@ pub trait IterTransform<C: cf::Column> {
     fn map(data: &KVBytes) -> Result<Option<Self::Value>, Error>;
 }
 
-// TODO: This code should be merged with `KeyValueIterator` or replaced by it.
+// TODO: Remove after migrating to the new API.
 pub fn scan<C, T, V>(
     backend: &RocksBackend,
     key: &C::KeyType,
     opts: ScanOptions<GenericCursor>,
-) -> Result<ScanResult<V>, Error>
+) -> Result<ScanResult<GenericCursor, V>, Error>
 where
     C: cf::Column,
     T: IterTransform<C, Value = map::Record<GenericCursor, V>>,
@@ -226,6 +254,60 @@ where
         // If we have a cursor, use a different version of the iterator, which skips to
         // the first key.
         let key = C::ext_key_from_slice(key, cursor)?;
+        backend.prefix_iterator_with_cursor::<C, _>(key)
+    } else {
+        // If we don't have a cursor, use the regular prefix iterator.
+        let key = C::storage_key(key)?;
+        backend.prefix_iterator::<C, _>(key)
+    };
+
+    let mut iter = KeyValueIterator::<C>::new(iter)
+        .map_ok(|data| T::map(&data))
+        .flatten()
+        .filter_map(Result::transpose)
+        .peekable();
+
+    let mut result = ScanResult::with_capacity(opts.count);
+
+    // The start cursor points to the last item returned by the previous scan. So we
+    // should skip if it's the same item. But if it was removed, the iterator will
+    // start from the next item.
+    let is_same_cursor = matches!(
+        (iter.peek(), &opts.cursor),
+        (Some(Ok(rec)), Some(start_cursor)) if &rec.field == start_cursor
+    );
+
+    if is_same_cursor {
+        // Skip the same item we've returned in the previous scan.
+        iter.next();
+    }
+
+    while let Some(item) = iter.next() {
+        result.items.push(item?);
+
+        if result.items.len() >= opts.count {
+            result.has_more = iter.next().is_some();
+            break;
+        }
+    }
+
+    Ok(result)
+}
+
+pub fn scan_v2<C, T, V>(
+    backend: &RocksBackend,
+    key: &C::KeyType,
+    opts: ScanOptions<C::SubKeyType>,
+) -> Result<ScanResult<C::SubKeyType, V>, Error>
+where
+    C: cf::Column,
+    T: IterTransform<C, Value = map::Record<C::SubKeyType, V>>,
+{
+    let iter = if let Some(cursor) = &opts.cursor {
+        // If we have a cursor, use a different version of the iterator, which skips to
+        // the first key.
+        let cursor = serialize(cursor)?;
+        let key = C::ext_key_from_slice(key, &cursor)?;
         backend.prefix_iterator_with_cursor::<C, _>(key)
     } else {
         // If we don't have a cursor, use the regular prefix iterator.

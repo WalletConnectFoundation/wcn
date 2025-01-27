@@ -46,7 +46,7 @@ pub trait Column: 'static + Debug + Send + Sync + Sized {
     ///
     /// Maps are stored as `(key, sub-key) -> value`, where `sub-key` is a field
     /// name within a map identified by `key`.
-    type SubKeyType: Serialize + DeserializeOwned + Send + Sync;
+    type SubKeyType: Serialize + DeserializeOwned + PartialEq + Send + Sync;
 
     /// Defines how column family values are stored.
     type ValueType: Serialize + DeserializeOwned + Send + Sync;

@@ -338,7 +338,7 @@ impl RemoteStorage<'_> {
     /// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
     /// the provided [`Key`].
     pub async fn hscan(self, key: Key, count: u32, cursor: Option<Field>) -> Result<MapPage> {
-        let resp = HScan::send(self.rpc_client(), self.server_addr, &HScanRequest {
+        let resp = HScanV2::send(self.rpc_client(), self.server_addr, &HScanRequest {
             key: self.extended_key(key),
             count,
             cursor,

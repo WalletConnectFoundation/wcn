@@ -99,6 +99,14 @@ pub trait Server: Clone + Send + Sync + 'static {
         cursor: Option<Field>,
     ) -> impl Future<Output = Result<MapPage>> + Send;
 
+    // TODO: Remove after migrating to the new API.
+    fn hscan_v2(
+        &self,
+        key: Key,
+        count: u32,
+        cursor: Option<Field>,
+    ) -> impl Future<Output = Result<MapPage>> + Send;
+
     /// Converts this Storage API [`Server`] into an [`rpc::Server`].
     fn into_rpc_server(self, cfg: Config<impl Authenticator>) -> impl rpc::Server {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
@@ -300,6 +308,29 @@ impl<S: Server> RpcHandler<'_, S> {
             has_more: page.has_next,
         })
     }
+
+    // TODO: Remove after migrating to the new API.
+    async fn hscan_v2(&self, req: HScanRequest) -> wcn_rpc::Result<HScanResponse> {
+        let page = self
+            .api_server
+            .hscan_v2(self.prepare_key(req.key)?, req.count, req.cursor)
+            .await
+            .map_err(Error::into_rpc_error)?;
+
+        Ok(HScanResponse {
+            records: page
+                .records
+                .into_iter()
+                .map(|rec| HScanResponseRecord {
+                    field: rec.field,
+                    value: rec.value,
+                    expiration: rec.expiration.timestamp(),
+                    version: rec.version.timestamp(),
+                })
+                .collect(),
+            has_more: page.has_next,
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -347,6 +378,7 @@ where
                 HSetExp::ID => HSetExp::handle(stream, |req| handler.hset_exp(req)).await,
                 HCard::ID => HCard::handle(stream, |req| handler.hcard(req)).await,
                 HScan::ID => HScan::handle(stream, |req| handler.hscan(req)).await,
+                HScanV2::ID => HScanV2::handle(stream, |req| handler.hscan_v2(req)).await,
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),
             }

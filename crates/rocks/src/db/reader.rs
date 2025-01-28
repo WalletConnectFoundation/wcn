@@ -168,6 +168,9 @@ fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
 
     tracing::trace!(?thread_id, ?thread_name, "batch reader thread started");
 
+    let mut opts = rocksdb::ReadOptions::default();
+    opts.set_async_io(true);
+
     // Use blocking `recv()` here to let the thread suspend if there's no work.
     while let Ok(req) = rx.recv() {
         // Pull all pending requests from the queue.
@@ -183,7 +186,9 @@ fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
         for (cf_name, reqs) in groups {
             if let Some(cf_handle) = db.cf_handle(cf_name) {
                 let keys = reqs.iter().map(|req| &req.key);
-                let result = db.batched_multi_get_cf(cf_handle, keys, false).into_iter();
+                let result = db
+                    .batched_multi_get_cf_opt(cf_handle, keys, false, &opts)
+                    .into_iter();
 
                 for (req, res) in reqs.into_iter().zip(result) {
                     (req.callback)(res.map_err(Into::into));

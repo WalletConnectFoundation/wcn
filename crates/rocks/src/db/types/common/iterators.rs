@@ -250,16 +250,16 @@ where
     C: cf::Column,
     T: IterTransform<C, Value = map::Record<GenericCursor, V>>,
 {
-    let iter = if let Some(cursor) = &opts.cursor {
+    let key = if let Some(cursor) = &opts.cursor {
         // If we have a cursor, use a different version of the iterator, which skips to
         // the first key.
-        let key = C::ext_key_from_slice(key, cursor)?;
-        backend.prefix_iterator_with_cursor::<C, _>(key)
+        C::ext_key_from_slice(key, cursor)?
     } else {
         // If we don't have a cursor, use the regular prefix iterator.
-        let key = C::storage_key(key)?;
-        backend.prefix_iterator::<C, _>(key)
+        C::storage_key(key)?
     };
+
+    let iter = backend.prefix_iterator::<C, _>(key);
 
     let mut iter = KeyValueIterator::<C>::new(iter)
         .map_ok(|data| T::map(&data))
@@ -303,17 +303,17 @@ where
     C: cf::Column,
     T: IterTransform<C, Value = map::Record<C::SubKeyType, V>>,
 {
-    let iter = if let Some(cursor) = &opts.cursor {
+    let key = if let Some(cursor) = &opts.cursor {
         // If we have a cursor, use a different version of the iterator, which skips to
         // the first key.
         let cursor = serialize(cursor)?;
-        let key = C::ext_key_from_slice(key, &cursor)?;
-        backend.prefix_iterator_with_cursor::<C, _>(key)
+        C::ext_key_from_slice(key, &cursor)?
     } else {
         // If we don't have a cursor, use the regular prefix iterator.
-        let key = C::storage_key(key)?;
-        backend.prefix_iterator::<C, _>(key)
+        C::storage_key(key)?
     };
+
+    let iter = backend.prefix_iterator::<C, _>(key);
 
     let mut iter = KeyValueIterator::<C>::new(iter)
         .map_ok(|data| T::map(&data))

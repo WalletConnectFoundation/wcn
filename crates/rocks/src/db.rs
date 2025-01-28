@@ -160,21 +160,15 @@ impl RocksBackend {
     where
         C: cf::Column,
     {
-        self.db.prefix_iterator_cf(&self.cf_handle(C::NAME), prefix)
-    }
-
-    fn prefix_iterator_with_cursor<C, K: AsRef<[u8]>>(&self, cursor: K) -> rocksdb::DBIterator
-    where
-        C: cf::Column,
-    {
-        let mut ro = rocksdb::ReadOptions::default();
-        ro.set_total_order_seek(false);
-        ro.set_prefix_same_as_start(true);
+        let mut opts = rocksdb::ReadOptions::default();
+        opts.set_total_order_seek(false);
+        opts.set_prefix_same_as_start(true);
+        opts.set_async_io(true);
 
         self.db.iterator_cf_opt(
             &self.cf_handle(C::NAME),
-            ro,
-            rocksdb::IteratorMode::From(cursor.as_ref(), rocksdb::Direction::Forward),
+            opts,
+            rocksdb::IteratorMode::From(prefix.as_ref(), rocksdb::Direction::Forward),
         )
     }
 

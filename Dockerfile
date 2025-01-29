@@ -4,7 +4,7 @@
 #
 ################################################################################
 ARG                 BASE="rust:1.84-bookworm"
-ARG                 RUNTIME="debian:bookworm-slim"
+ARG                 RUNTIME="debian:bookworm"
 ARG                 VERSION="unknown"
 ARG                 SHA="unknown"
 ARG                 MAINTAINER="WalletConnect"

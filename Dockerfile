@@ -40,7 +40,7 @@ FROM                build-${PROFILE} AS build
 ARG                 LOG_LEVEL
 ARG                 WORK_DIR
 
-RUN                 apt-get update && apt-get install -y --no-install-recommends clang liburing-dev
+RUN                 apt-get update && apt-get install -y --no-install-recommends clang linux-libc-dev
 
 WORKDIR             ${WORK_DIR}
 

@@ -40,7 +40,7 @@ FROM                build-${PROFILE} AS build
 ARG                 LOG_LEVEL
 ARG                 WORK_DIR
 
-RUN                 apt-get update && apt-get install -y --no-install-recommends clang
+RUN                 apt-get update && apt-get install -y --no-install-recommends clang liburing-dev
 
 WORKDIR             ${WORK_DIR}
 
@@ -69,7 +69,7 @@ LABEL               sha=${SHA}
 LABEL               maintainer=${MAINTAINER}
 
 RUN                 apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates libssl-dev procps linux-perf liburing \
+  && apt-get install -y --no-install-recommends ca-certificates libssl-dev procps linux-perf \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 

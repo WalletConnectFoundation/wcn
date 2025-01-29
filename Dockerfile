@@ -69,7 +69,7 @@ LABEL               sha=${SHA}
 LABEL               maintainer=${MAINTAINER}
 
 RUN                 apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates libssl-dev procps linux-perf \
+  && apt-get install -y --no-install-recommends ca-certificates libssl-dev procps linux-perf liburing-dev \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 

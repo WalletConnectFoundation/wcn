@@ -55,8 +55,7 @@ jobs:
             rust: nightly-2024-06-13
           - name: "tests"
             cmd: |
-              sudo apt-get update && sudo apt-get install -y liburing-dev \
-              && cargo test --workspace --doc --all-features \
+              cargo test --workspace --doc --all-features \
               && RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node \
               && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features --release
             rust: 1.79.0
@@ -79,6 +78,9 @@ jobs:
       - uses: taiki-e/install-action@v1
         with:
           tool: nextest
+
+      - name: install liburing
+        cmd: sudo apt-get update && sudo apt-get install -y liburing-dev
 
       - name: "Validate ${{ matrix.cargo.name }}"
         run: ${{ matrix.cargo.cmd }}

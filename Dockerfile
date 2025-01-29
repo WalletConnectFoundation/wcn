@@ -3,8 +3,8 @@
 # Build args
 #
 ################################################################################
-ARG                 BASE="rust:1.79-buster"
-ARG                 RUNTIME="debian:buster-slim"
+ARG                 BASE="rust:1.84-bookworm"
+ARG                 RUNTIME="debian:bookworm-slim"
 ARG                 VERSION="unknown"
 ARG                 SHA="unknown"
 ARG                 MAINTAINER="WalletConnect"
@@ -40,7 +40,7 @@ FROM                build-${PROFILE} AS build
 ARG                 LOG_LEVEL
 ARG                 WORK_DIR
 
-RUN                 apt-get update && apt-get install -y --no-install-recommends clang linux-libc-dev
+RUN                 apt-get update && apt-get install -y --no-install-recommends clang iouring-dev
 
 WORKDIR             ${WORK_DIR}
 
@@ -69,7 +69,7 @@ LABEL               sha=${SHA}
 LABEL               maintainer=${MAINTAINER}
 
 RUN                 apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates libssl-dev procps linux-perf \
+  && apt-get install -y --no-install-recommends ca-certificates libssl-dev procps linux-perf iouring-dev \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 

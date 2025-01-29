@@ -55,7 +55,8 @@ jobs:
             rust: nightly-2024-06-13
           - name: "tests"
             cmd: |
-              cargo test --workspace --doc --all-features \
+              apt-get install -y liburing-dev \
+              && cargo test --workspace --doc --all-features \
               && RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node \
               && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features --release
             rust: 1.79.0

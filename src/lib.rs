@@ -106,13 +106,11 @@ pub fn exec() -> anyhow::Result<()> {
         if let Some(value) = value {
             tracing::warn!(key, value, "build info");
         }
-
-        if key == "VERGEN_GIT_COMMIT_TIMESTAMP" {
-            if let Some(timestamp) = value.and_then(rfc3339_to_timestamp) {
-                wc::metrics::gauge!("wcn_node_git_commit_timestamp").set(timestamp as f64);
-            };
-        }
     }
+
+    // TODO: Make this version consistent with the version in the repo, and find a
+    // way to set it automatically.
+    wc::metrics::gauge!("wcn_node_version").set(240204.0);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 
@@ -212,9 +210,3 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
-
-fn rfc3339_to_timestamp(rfc3339: &str) -> Option<u64> {
-    chrono::DateTime::<chrono::FixedOffset>::parse_from_rfc3339(rfc3339)
-        .ok()
-        .map(|dt| dt.to_utc().timestamp() as u64)
-}

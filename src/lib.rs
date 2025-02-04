@@ -98,15 +98,19 @@ mod alloc {
 pub fn exec() -> anyhow::Result<()> {
     let _logger = Logger::init(logger::LogFormat::Json, None, None);
 
+    let prometheus = PrometheusBuilder::new()
+        .install_recorder()
+        .map_err(Error::Prometheus)?;
+
     for (key, value) in vergen_pretty::vergen_pretty_env!() {
         if let Some(value) = value {
             tracing::warn!(key, value, "build info");
         }
     }
 
-    let prometheus = PrometheusBuilder::new()
-        .install_recorder()
-        .map_err(Error::Prometheus)?;
+    // TODO: Make this version consistent with the version in the repo, and find a
+    // way to set it automatically.
+    wc::metrics::gauge!("wcn_node_version").set(240204.0);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 

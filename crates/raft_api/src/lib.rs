@@ -32,8 +32,7 @@ const RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("raftApi");
 
 type Rpc<const ID: rpc::Id, Req, Resp> = rpc::Unary<ID, Req, Resp, JsonCodec>;
 
-type AddMember<C> =
-    rpc::Unary<{ rpc::id(b"addMember") }, AddMemberRequest<C>, AddMemberResult<C>, JsonCodec>;
+type AddMember<C> = Rpc<{ rpc::id(b"addMember") }, AddMemberRequest<C>, AddMemberResult<C>>;
 
 type RemoveMember<C> =
     Rpc<{ rpc::id(b"removeMember") }, RemoveMemberRequest<C>, RemoveMemberResult<C>>;

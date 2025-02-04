@@ -106,13 +106,11 @@ pub fn exec() -> anyhow::Result<()> {
         if let Some(value) = value {
             tracing::warn!(key, value, "build info");
         }
-
-        if key == "VERGEN_GIT_COMMIT_TIMESTAMP" {
-            if let Some(timestamp) = value.and_then(rfc3339_to_timestamp) {
-                wc::metrics::gauge!("wcn_node_git_commit_timestamp").set(timestamp as f64);
-            };
-        }
     }
+
+    // TODO: Make this version consistent with the version in the repo, and find a
+    // way to set it automatically.
+    wc::metrics::gauge!("wcn_node_version").set(240204.0);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 

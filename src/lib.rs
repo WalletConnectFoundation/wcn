@@ -210,9 +210,3 @@ pub async fn run(
     Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize,
 )]
 pub struct TypeConfig;
-
-fn rfc3339_to_timestamp(rfc3339: &str) -> Option<u64> {
-    chrono::DateTime::<chrono::FixedOffset>::parse_from_rfc3339(rfc3339)
-        .ok()
-        .map(|dt| dt.to_utc().timestamp() as u64)
-}

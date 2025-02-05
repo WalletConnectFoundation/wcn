@@ -19,7 +19,7 @@ pub use {
     config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
     logger::Logger,
-    network::{Network, RemoteNode},
+    network::Network,
     storage::Storage,
 };
 
@@ -110,7 +110,7 @@ pub fn exec() -> anyhow::Result<()> {
 
     // TODO: Make this version consistent with the version in the repo, and find a
     // way to set it automatically.
-    wc::metrics::gauge!("wcn_node_version").set(240204.0);
+    wc::metrics::gauge!("wcn_node_version").set(240204.1);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 
@@ -136,9 +136,7 @@ pub async fn run(
 
     tracing::info!(addr = %cfg.server_addr, node_id = %cfg.id, "Running");
 
-    let consensus = Consensus::new(cfg, network.clone())
-        .await
-        .map_err(Error::Consensus)?;
+    let consensus = Consensus::new(cfg).await.map_err(Error::Consensus)?;
 
     let node_opts = wcn::NodeOpts {
         replication_request_timeout: Duration::from_millis(cfg.replication_request_timeout),

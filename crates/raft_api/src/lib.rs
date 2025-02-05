@@ -19,6 +19,10 @@ use {
     wcn_rpc::{self as rpc, transport::JsonCodec},
 };
 
+#[cfg(feature = "client")]
+pub mod client;
+#[cfg(feature = "client")]
+pub use client::Client;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "server")]

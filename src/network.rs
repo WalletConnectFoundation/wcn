@@ -405,6 +405,36 @@ impl storage_api::Server for StorageApiServer {
             })
             .map_err(storage_api::server::Error::new)
     }
+
+    // TODO: Remove after migrating to the new API.
+    fn hscan_v2(
+        &self,
+        key: storage_api::Key,
+        count: u32,
+        cursor: Option<storage_api::Field>,
+    ) -> impl Future<Output = storage_api::server::Result<storage_api::MapPage>> + Send {
+        let key = generic_key(key);
+        let opts = ScanOptions::new(count as usize).with_cursor(cursor);
+
+        async move { self.map_storage().hscan_v2(&key, opts).await }
+            .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
+            .map_ok(|res| storage_api::MapPage {
+                records: res
+                    .items
+                    .into_iter()
+                    .map(|rec| storage_api::MapRecord {
+                        field: rec.field,
+                        value: rec.value,
+                        expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(
+                            rec.expiration,
+                        ),
+                        version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
+                    })
+                    .collect(),
+                has_next: res.has_more,
+            })
+            .map_err(storage_api::server::Error::new)
+    }
 }
 
 impl ReplicaApiServer {
@@ -921,6 +951,8 @@ impl Network {
             authorized_clients: cfg.authorized_clients.clone(),
             network_id: cfg.network_id.clone(),
             cluster_view: node.consensus().cluster_view().clone(),
+            max_concurrent_connections: cfg.client_api_max_concurrent_connections,
+            max_concurrent_streams: cfg.client_api_max_concurrent_rpcs,
         };
 
         let client_api_server = ClientApiServer {
@@ -1003,9 +1035,9 @@ impl Pubsub {
     fn publish(&self, evt: rpc::broadcast::PubsubEventPayload) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
-        let subscribers = self.inner.read().unwrap().subscribers.clone();
+        let inner = self.inner.read().unwrap();
 
-        for sub in subscribers.values() {
+        for sub in inner.subscribers.values() {
             if sub.channels.contains(&evt.channel) {
                 match sub.tx.try_send(evt.clone()) {
                     Ok(_) => {}

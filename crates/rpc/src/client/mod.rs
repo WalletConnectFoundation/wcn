@@ -1,7 +1,7 @@
 use {
     crate::{
         kind,
-        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        transport::{self, BiDirectionalStream, Codec, NoHandshake, RecvStream, SendStream},
         Error as RpcError,
         ForceSendFuture,
         Id as RpcId,
@@ -161,20 +161,22 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 type RpcResult<RPC> = Result<<RPC as Rpc>::Response, crate::Error>;
 
-impl<const ID: RpcId, Req, Resp> super::Unary<ID, Req, Resp>
+impl<const ID: RpcId, Req, Resp, C> super::Unary<ID, Req, Resp, C>
 where
     Req: Message,
     Resp: Message,
+    C: Codec,
 {
     pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, req: &Req) -> Result<Resp> {
         client.send_unary::<Self>(addr, req).await
     }
 }
 
-impl<const ID: RpcId, Req, Resp> super::Streaming<ID, Req, Resp>
+impl<const ID: RpcId, Req, Resp, C> super::Streaming<ID, Req, Resp, C>
 where
     Req: Message,
     Resp: Message,
+    C: Codec,
 {
     pub fn send<'a, A: Sync, F, Fut, Ok: Send>(
         client: &'a impl Client<A>,
@@ -182,16 +184,17 @@ where
         f: &'a F,
     ) -> impl Future<Output = Result<Ok>> + Send + 'a
     where
-        F: Fn(SendStream<Req>, RecvStream<RpcResult<Self>>) -> Fut + Send + Sync + 'a,
+        F: Fn(SendStream<Req, C>, RecvStream<RpcResult<Self>, C>) -> Fut + Send + Sync + 'a,
         Fut: Future<Output = Result<Ok>> + Send,
     {
         client.send_streaming::<Self, _, _>(addr, f)
     }
 }
 
-impl<const ID: RpcId, Msg> super::Oneshot<ID, Msg>
+impl<const ID: RpcId, Msg, C> super::Oneshot<ID, Msg, C>
 where
     Msg: Message,
+    C: Codec,
 {
     pub fn send<'a, A: Sync>(
         client: &'a impl Client<A>,

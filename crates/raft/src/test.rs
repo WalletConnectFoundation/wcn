@@ -31,9 +31,16 @@ use {
     async_trait::async_trait,
     futures::TryFutureExt,
     serde::{Deserialize, Serialize},
-    std::{convert::Infallible, error::Error as StdError, io::Cursor, sync::Arc, time::Duration},
+    std::{
+        convert::Infallible,
+        error::Error as StdError,
+        future::Future,
+        io::Cursor,
+        sync::{Arc, Mutex},
+        time::Duration,
+    },
     tokio::{
-        sync::{mpsc, oneshot, Mutex},
+        sync::{mpsc, oneshot},
         time::sleep,
     },
 };
@@ -380,7 +387,7 @@ impl ServerSpawner<C> for TestNetwork {
         let this = self.clone();
 
         tokio::spawn(async move {
-            let mut rx = this.nodes.lock().await[(node_id - 1) as usize]
+            let mut rx = this.nodes.lock().unwrap()[(node_id - 1) as usize]
                 .receiver
                 .take()
                 .unwrap();
@@ -413,10 +420,10 @@ impl ServerSpawner<C> for TestNetwork {
 impl Network<C> for TestNetwork {
     type Client = Client;
 
-    async fn new_client(&self, target: u64, _node: &()) -> Self::Client {
+    fn new_client(&self, target: u64, _node: &()) -> Self::Client {
         Client {
             node_id: target,
-            sender: self.nodes.lock().await[(target - 1) as usize]
+            sender: self.nodes.lock().unwrap()[(target - 1) as usize]
                 .sender
                 .clone(),
         }
@@ -437,62 +444,79 @@ impl Client {
     }
 }
 
-#[async_trait]
 impl Raft<C, RpcApi> for Client {
-    async fn add_member(&self, req: AddMemberRequest<C>) -> AddMemberRpcResult<C> {
-        match self.send_rpc(Request::AddMember(req)).await {
-            Response::AddMember(resp) => {
-                resp.map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e)))
+    fn add_member(
+        &self,
+        req: AddMemberRequest<C>,
+    ) -> impl Future<Output = AddMemberRpcResult<C>> + Send {
+        async move {
+            match self.send_rpc(Request::AddMember(req)).await {
+                Response::AddMember(resp) => resp
+                    .map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e))),
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 
-    async fn remove_member(&self, req: RemoveMemberRequest<C>) -> RemoveMemberRpcResult<C> {
-        match self.send_rpc(Request::RemoveMember(req)).await {
-            Response::RemoveMember(resp) => {
-                resp.map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e)))
+    fn remove_member(
+        &self,
+        req: RemoveMemberRequest<C>,
+    ) -> impl Future<Output = RemoveMemberRpcResult<C>> {
+        async move {
+            match self.send_rpc(Request::RemoveMember(req)).await {
+                Response::RemoveMember(resp) => resp
+                    .map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e))),
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 
-    async fn propose_change(&self, req: ProposeChangeRequest<C>) -> ProposeChangeRpcResult<C> {
-        match self.send_rpc(Request::ProposeChange(req)).await {
-            Response::ProposeChange(resp) => {
-                resp.map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e)))
+    fn propose_change(
+        &self,
+        req: ProposeChangeRequest<C>,
+    ) -> impl Future<Output = ProposeChangeRpcResult<C>> + Send {
+        async move {
+            match self.send_rpc(Request::ProposeChange(req)).await {
+                Response::ProposeChange(resp) => resp
+                    .map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e))),
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 
-    async fn append_entries(&self, req: AppendEntriesRequest<C>) -> AppendEntriesRpcResult<C> {
-        match self.send_rpc(Request::AppendEntries(req)).await {
-            Response::AppendEntries(resp) => {
-                resp.map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e)))
+    fn append_entries(
+        &self,
+        req: AppendEntriesRequest<C>,
+    ) -> impl Future<Output = AppendEntriesRpcResult<C>> + Send {
+        async move {
+            match self.send_rpc(Request::AppendEntries(req)).await {
+                Response::AppendEntries(resp) => resp
+                    .map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e))),
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 
-    async fn install_snapshot(
+    fn install_snapshot(
         &self,
         req: InstallSnapshotRequest<C>,
-    ) -> InstallSnapshotRpcResult<C> {
-        match self.send_rpc(Request::InstallSnapshot(req)).await {
-            Response::InstallSnapshot(resp) => {
-                resp.map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e)))
+    ) -> impl Future<Output = InstallSnapshotRpcResult<C>> {
+        async move {
+            match self.send_rpc(Request::InstallSnapshot(req)).await {
+                Response::InstallSnapshot(resp) => resp
+                    .map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e))),
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 
-    async fn vote(&self, req: VoteRequest<C>) -> VoteRpcResult<C> {
-        match self.send_rpc(Request::Vote(req)).await {
-            Response::Vote(resp) => {
-                resp.map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e)))
+    fn vote(&self, req: VoteRequest<C>) -> impl Future<Output = VoteRpcResult<C>> + Send {
+        async move {
+            match self.send_rpc(Request::Vote(req)).await {
+                Response::Vote(resp) => resp
+                    .map_err(|e| RpcError::<C, _>::RemoteError(RemoteError::new(self.node_id, e))),
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
     }
 }

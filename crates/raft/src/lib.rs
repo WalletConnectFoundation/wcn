@@ -1,3 +1,5 @@
+#![allow(clippy::manual_async_fn)]
+
 pub use {
     self::{
         network::Network,
@@ -24,7 +26,6 @@ pub use {
     std::fmt::Debug,
 };
 use {
-    async_trait::async_trait,
     futures::stream,
     openraft::{
         error::{RPCError, RaftError},
@@ -75,26 +76,39 @@ pub trait TypeConfig:
 }
 
 /// [`Raft`] consensus algorithm.
-#[async_trait]
 pub trait Raft<C: TypeConfig, A: ApiType<C> = Api>: Clone + Send + Sync + 'static {
     /// Adds a member to the [`Raft`] network.
-    async fn add_member(&self, req: AddMemberRequest<C>) -> AddMemberResult<C, A>;
+    fn add_member(
+        &self,
+        req: AddMemberRequest<C>,
+    ) -> impl Future<Output = AddMemberResult<C, A>> + Send;
 
     /// Removes a member from the [`Raft`] network.
-    async fn remove_member(&self, req: RemoveMemberRequest<C>) -> RemoveMemberResult<C, A>;
+    fn remove_member(
+        &self,
+        req: RemoveMemberRequest<C>,
+    ) -> impl Future<Output = RemoveMemberResult<C, A>> + Send;
 
     /// Proposes a change to the [`Raft`] state.
-    async fn propose_change(&self, req: ProposeChangeRequest<C>) -> ProposeChangeResult<C, A>;
+    fn propose_change(
+        &self,
+        req: ProposeChangeRequest<C>,
+    ) -> impl Future<Output = ProposeChangeResult<C, A>> + Send;
 
     /// Appends entries to the [`Raft`] log.
-    async fn append_entries(&self, req: AppendEntriesRequest<C>) -> AppendEntriesResult<C, A>;
+    fn append_entries(
+        &self,
+        req: AppendEntriesRequest<C>,
+    ) -> impl Future<Output = AppendEntriesResult<C, A>> + Send;
 
     /// Installs a new snapshot of the [`Raft`] state.
-    async fn install_snapshot(&self, req: InstallSnapshotRequest<C>)
-        -> InstallSnapshotResult<C, A>;
+    fn install_snapshot(
+        &self,
+        req: InstallSnapshotRequest<C>,
+    ) -> impl Future<Output = InstallSnapshotResult<C, A>> + Send;
 
     /// Makes a candidate vote.
-    async fn vote(&self, req: VoteRequest<C>) -> VoteResult<C, A>;
+    fn vote(&self, req: VoteRequest<C>) -> impl Future<Output = VoteResult<C, A>> + Send;
 }
 
 /// Raft log entry.
@@ -581,7 +595,7 @@ where
             return Err(Api(Local(NoLeader)));
         };
 
-        match leader(self.network.new_client(node_id, &node).await).await {
+        match leader(self.network.new_client(node_id, &node)).await {
             Ok(resp) => Ok(resp),
             Err(Timeout(t)) => Err(Api(Rpc(Timeout(t)))),
             Err(Unreachable(u)) => Err(Api(Rpc(Unreachable(u)))),
@@ -627,7 +641,6 @@ where
     }
 }
 
-#[async_trait]
 impl<C, N> Raft<C> for RaftImpl<C, N>
 where
     C: TypeConfig,

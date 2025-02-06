@@ -646,89 +646,68 @@ where
     C: TypeConfig,
     N: Network<C>,
 {
-    fn add_member(
-        &self,
-        req: AddMemberRequest<C>,
-    ) -> impl Future<Output = AddMemberResult<C>> + Send {
-        async move {
-            let mut nodes = std::collections::BTreeMap::new();
-            nodes.insert(req.node_id, req.node.clone());
+    async fn add_member(&self, req: AddMemberRequest<C>) -> AddMemberResult<C> {
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(req.node_id, req.node.clone());
 
-            let is_member = self
-                .metrics()
-                .membership_config
-                .nodes()
-                .any(|(id, _)| id == &req.node_id);
+        let is_member = self
+            .metrics()
+            .membership_config
+            .nodes()
+            .any(|(id, _)| id == &req.node_id);
 
-            let change_members = if is_member {
-                openraft::ChangeMembers::SetNodes(nodes)
-            } else if req.learner_only {
-                openraft::ChangeMembers::AddNodes(nodes)
-            } else {
-                openraft::ChangeMembers::AddVoters(nodes)
-            };
+        let change_members = if is_member {
+            openraft::ChangeMembers::SetNodes(nodes)
+        } else if req.learner_only {
+            openraft::ChangeMembers::AddNodes(nodes)
+        } else {
+            openraft::ChangeMembers::AddVoters(nodes)
+        };
 
-            self.client_write(
-                |local| local.change_membership(change_members, false),
-                |leader| async move { leader.add_member(req).await },
-            )
-            .await
-        }
+        self.client_write(
+            |local| local.change_membership(change_members, false),
+            |leader| async move { leader.add_member(req).await },
+        )
+        .await
     }
 
-    fn remove_member(
-        &self,
-        req: RemoveMemberRequest<C>,
-    ) -> impl Future<Output = RemoveMemberResult<C>> + Send {
-        async move {
-            let mut nodes = std::collections::BTreeSet::new();
-            nodes.insert(req.node_id);
+    async fn remove_member(&self, req: RemoveMemberRequest<C>) -> RemoveMemberResult<C> {
+        let mut nodes = std::collections::BTreeSet::new();
+        nodes.insert(req.node_id);
 
-            let change_members = if req.is_learner {
-                openraft::ChangeMembers::RemoveNodes(nodes)
-            } else {
-                openraft::ChangeMembers::RemoveVoters(nodes)
-            };
+        let change_members = if req.is_learner {
+            openraft::ChangeMembers::RemoveNodes(nodes)
+        } else {
+            openraft::ChangeMembers::RemoveVoters(nodes)
+        };
 
-            self.client_write(
-                |local| local.change_membership(change_members, false),
-                |leader| async move { leader.remove_member(req).await },
-            )
-            .await
-        }
+        self.client_write(
+            |local| local.change_membership(change_members, false),
+            |leader| async move { leader.remove_member(req).await },
+        )
+        .await
     }
 
-    fn propose_change(
-        &self,
-        req: ProposeChangeRequest<C>,
-    ) -> impl Future<Output = ProposeChangeResult<C>> + Send {
-        async move {
-            let change = req.change.clone();
+    async fn propose_change(&self, req: ProposeChangeRequest<C>) -> ProposeChangeResult<C> {
+        let change = req.change.clone();
 
-            self.client_write(
-                |local| local.client_write(change),
-                |leader| async move { leader.propose_change(req).await },
-            )
-            .await
-        }
+        self.client_write(
+            |local| local.client_write(change),
+            |leader| async move { leader.propose_change(req).await },
+        )
+        .await
     }
 
-    fn append_entries(
-        &self,
-        req: AppendEntriesRequest<C>,
-    ) -> impl Future<Output = AppendEntriesResult<C>> + Send {
-        async move { self.raft.append_entries(req).await }
+    async fn append_entries(&self, req: AppendEntriesRequest<C>) -> AppendEntriesResult<C> {
+        self.raft.append_entries(req).await
     }
 
-    fn install_snapshot(
-        &self,
-        req: InstallSnapshotRequest<C>,
-    ) -> impl Future<Output = InstallSnapshotResult<C>> + Send {
-        async move { self.raft.install_snapshot(req).await }
+    async fn install_snapshot(&self, req: InstallSnapshotRequest<C>) -> InstallSnapshotResult<C> {
+        self.raft.install_snapshot(req).await
     }
 
-    fn vote(&self, req: VoteRequest<C>) -> impl Future<Output = VoteResult<C>> + Send {
-        async move { self.raft.vote(req).await }
+    async fn vote(&self, req: VoteRequest<C>) -> VoteResult<C> {
+        self.raft.vote(req).await
     }
 }
 

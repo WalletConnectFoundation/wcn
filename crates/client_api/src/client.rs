@@ -126,7 +126,7 @@ impl Inner {
     }
 
     async fn update_cluster(&self) -> Result<(), super::Error> {
-        let update = GetCluster::send(&self.rpc_client, &AnyPeer, &())
+        let update = GetClusterV2::send(&self.rpc_client, &AnyPeer, &())
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
@@ -138,7 +138,7 @@ impl Inner {
 
     async fn apply_cluster_update(&self, update: ClusterUpdate) -> Result<(), super::Error> {
         let cluster = tokio::task::spawn_blocking(move || {
-            let snapshot = postcard::from_bytes(&update.0).map_err(|_| Error::Serialization)?;
+            let snapshot = serde_json::from_slice(&update.0).map_err(|_| Error::Serialization)?;
             let cluster =
                 Arc::new(domain::Cluster::from_snapshot(snapshot).map_err(Error::Cluster)?);
             Ok::<_, Error<super::Error>>(cluster)
@@ -163,7 +163,8 @@ async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
 async fn cluster_update(inner: &Inner) {
     loop {
         let stream =
-            ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) }).await;
+            ClusterUpdatesV2::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) })
+                .await;
 
         let mut rx = match stream {
             Ok(rx) => rx,
@@ -259,7 +260,7 @@ impl Client {
         let timeouts = Timeouts::new()
             .with_default(config.operation_timeout)
             .with::<{ Subscribe::ID }>(None)
-            .with::<{ ClusterUpdates::ID }>(None);
+            .with::<{ ClusterUpdatesV2::ID }>(None);
 
         let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| Error::Other(err.to_string()))?

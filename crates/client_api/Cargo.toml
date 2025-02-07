@@ -18,6 +18,7 @@ auth = { workspace = true }
 domain = { workspace = true }
 
 serde = "1"
+serde_json = "1"
 thiserror = "1"
 tracing = "0.1"
 futures-util = "0.3"

@@ -25,8 +25,12 @@ pub struct ClusterUpdate(Vec<u8>);
 type CreateAuthNonce = rpc::Unary<{ rpc::id(b"create_nonce") }, (), auth::Nonce>;
 type CreateAuthToken =
     rpc::Unary<{ rpc::id(b"create_auth") }, token::Config, Result<token::Token, token::Error>>;
+
 type GetCluster = rpc::Unary<{ rpc::id(b"get_cluster") }, (), Result<ClusterUpdate, Error>>;
+type GetClusterV2 = rpc::Unary<{ rpc::id(b"getCluster") }, (), Result<ClusterUpdate, Error>>;
+
 type ClusterUpdates = rpc::Streaming<{ rpc::id(b"cluster_updates") }, (), ClusterUpdate>;
+type ClusterUpdatesV2 = rpc::Streaming<{ rpc::id(b"clusterUpdates") }, (), ClusterUpdate>;
 
 #[derive(Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum Error {

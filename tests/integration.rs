@@ -880,6 +880,7 @@ fn new_node_config() -> Config {
         replica_api_server_port: next_port(),
         client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
+        migration_api_server_port: next_port(),
         client_api_max_concurrent_connections: 500,
         client_api_max_concurrent_rpcs: 10000,
         replica_api_max_concurrent_connections: 500,

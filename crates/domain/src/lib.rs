@@ -21,6 +21,9 @@ pub struct Node {
     pub region: NodeRegion,
     pub organization: String,
     pub eth_address: Option<String>,
+
+    #[serde(default)]
+    pub migration_api_addr: Option<Multiaddr>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

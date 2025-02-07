@@ -40,6 +40,7 @@ pub struct Server {
     pub raft_port: u16,
     pub auth_port: u16,
     pub admin_port: u16,
+    pub migration_api_port: u16,
     pub metrics_port: u16,
     pub warmup_delay: u64,
 }

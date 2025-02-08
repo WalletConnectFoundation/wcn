@@ -8,7 +8,7 @@ use {
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
-    storage_api::client::RemoteStorage,
+    storage_api::{client::RemoteStorage, PeerAddr},
     tap::{Pipe, TapFallible as _},
     wc::metrics::{
         self,
@@ -42,8 +42,8 @@ pub struct Config {
     /// Timeout of an API operation.
     pub operation_timeout: Duration,
 
-    /// [`Multiaddr`]s of the nodes to connect to.
-    pub nodes: HashSet<Multiaddr>,
+    /// [`PeerAddr`]s of the nodes to connect to.
+    pub nodes: HashSet<PeerAddr>,
 
     /// A list of storage namespaces to be used.
     pub namespaces: Vec<auth::Auth>,
@@ -52,7 +52,7 @@ pub struct Config {
 impl Config {
     /// Creates a new [`Config`] with the provided list of nodes to connect to
     /// and other options defaults.
-    pub fn new(nodes: HashSet<Multiaddr>) -> Self {
+    pub fn new(nodes: HashSet<PeerAddr>) -> Self {
         Self {
             keypair: identity::Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
@@ -358,17 +358,20 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
 
         let mut result_stream: FuturesUnordered<_> = replica_set
             .nodes
-            .map(|node| {
+            .map(|node| async {
+                let peer = PeerAddr::new(node.id, node.addr.clone());
+
                 self.operation
-                    .execute(self.driver.storage_api.remote_storage(&node.addr))
-                    .map(|res| (&node.addr, res))
+                    .execute(self.driver.storage_api.remote_storage(&peer))
+                    .map(|res| (peer.clone(), res))
+                    .await
             })
             .collect();
 
         let mut quorum = consistency::MajorityQuorum::new(replica_set.required_count);
 
-        while let Some((addr, result)) = result_stream.next().await {
-            quorum.push(addr.clone(), result);
+        while let Some((peer, result)) = result_stream.next().await {
+            quorum.push(peer, result);
 
             let Some(result) = quorum.is_reached() else {
                 continue;

@@ -6,12 +6,13 @@ use {
         ForceSendFuture,
         Id as RpcId,
         Message,
+        PeerAddr,
         Rpc,
         ServerName,
     },
     derive_more::{derive::Display, From},
     futures::{Future, SinkExt as _},
-    libp2p::{identity, Multiaddr},
+    libp2p::identity,
     std::{collections::HashSet, io, time::Duration},
 };
 
@@ -24,7 +25,7 @@ pub struct Config<H = NoHandshake> {
     pub keypair: identity::Keypair,
 
     /// Known remote peer [`Multiaddr`]s.
-    pub known_peers: HashSet<Multiaddr>,
+    pub known_peers: HashSet<PeerAddr>,
 
     /// [`Handshake`] implementation to use for connection establishment.
     pub handshake: H,
@@ -37,11 +38,11 @@ pub struct Config<H = NoHandshake> {
 }
 
 /// RPC client.
-pub trait Client<A: Sync = Multiaddr>: Send + Sync {
+pub trait Client<P: Sync = PeerAddr>: Send + Sync {
     /// Sends an outbound RPC.
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         rpc_id: RpcId,
         f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a;
@@ -49,11 +50,11 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends an unary RPC.
     fn send_unary<'a, RPC: Rpc<Kind = kind::Unary>>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         request: &'a RPC::Request,
     ) -> impl Future<Output = Result<RPC::Response>> + Send + 'a {
         async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
+            self.send_rpc(peer, RPC::ID, &move |stream| async move {
                 let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request, RPC::Codec>();
                 tx.send(request).await?;
                 Ok(rx.recv_message().await??)
@@ -66,7 +67,7 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends a streaming RPC.
     fn send_streaming<'a, RPC: Rpc<Kind = kind::Streaming>, Fut, Ok: Send>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         f: &'a (impl Fn(
             SendStream<RPC::Request, RPC::Codec>,
             RecvStream<RpcResult<RPC>, RPC::Codec>,
@@ -79,7 +80,7 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
         Fut: Future<Output = Result<Ok>> + Send,
     {
         async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
+            self.send_rpc(peer, RPC::ID, &move |stream| async move {
                 let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request, RPC::Codec>();
                 f(tx, rx).await
             })
@@ -91,11 +92,11 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends a oneshot RPC.
     fn send_oneshot<'a, RPC: Rpc<Kind = kind::Oneshot>>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         msg: &'a RPC::Request,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
         async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
+            self.send_rpc(peer, RPC::ID, &move |stream| async move {
                 let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request, RPC::Codec>();
                 tx.send(msg).await?;
                 Ok(())

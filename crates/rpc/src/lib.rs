@@ -5,7 +5,7 @@ pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, marker::PhantomData},
+    std::{borrow::Cow, fmt::Debug, marker::PhantomData, str::FromStr},
     transport::Codec,
 };
 
@@ -242,3 +242,50 @@ trait ForceSendFuture: core::future::Future {
 }
 
 impl<T: core::future::Future> ForceSendFuture for T {}
+
+/// Peer address, which includes [`PeerId`] and [`Multiaddr`].
+#[derive(Display, Clone, Hash, PartialEq, Eq)]
+#[display("{}-{}", self.id, self.addr)]
+pub struct PeerAddr {
+    pub id: PeerId,
+    pub addr: Multiaddr,
+}
+
+impl PeerAddr {
+    pub fn new(id: PeerId, addr: Multiaddr) -> Self {
+        Self { id, addr }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PeerAddressError {
+    #[error("Invalid format")]
+    Format,
+
+    #[error("Invalid peer ID")]
+    Id,
+
+    #[error("Invalid multiaddress")]
+    Address,
+}
+
+impl FromStr for PeerAddr {
+    type Err = PeerAddressError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let Some((id, addr)) = s.split_once("-") else {
+            return Err(PeerAddressError::Format);
+        };
+
+        let id = PeerId::from_str(id).map_err(|_| PeerAddressError::Id)?;
+        let addr = Multiaddr::from_str(addr).map_err(|_| PeerAddressError::Address)?;
+
+        Ok(Self { id, addr })
+    }
+}
+
+impl Debug for PeerAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.to_string(), f)
+    }
+}

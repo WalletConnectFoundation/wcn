@@ -92,7 +92,10 @@ mod test {
         pub(crate) fn new_test(inner: storage_api::client::Result<T>) -> Self {
             Self {
                 inner,
-                replica_addr: "/ip4/10.0.0.1/udp/3010/quic-v1".parse().unwrap(),
+                replica_addr: "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4/10.0.0.1/\
+                               udp/3010/quic-v1"
+                    .parse()
+                    .unwrap(),
                 within_quorum: true,
             }
         }

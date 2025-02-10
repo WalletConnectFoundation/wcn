@@ -244,6 +244,9 @@ trait ForceSendFuture: core::future::Future {
 impl<T: core::future::Future> ForceSendFuture for T {}
 
 /// Peer address, which includes [`PeerId`] and [`Multiaddr`].
+///
+/// These can be parsed from a string of the following format:
+/// `{peer_id}-{multiaddr}`.
 #[derive(Display, Clone, Hash, PartialEq, Eq)]
 #[display("{}-{}", self.id, self.addr)]
 pub struct PeerAddr {

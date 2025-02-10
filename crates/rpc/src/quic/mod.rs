@@ -154,7 +154,7 @@ fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdE
 
     let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
     let certificate = identity
-        .downcast::<Vec<CertificateDer<'static>>>()
+        .downcast::<Vec<CertificateDer<'_>>>()
         .map_err(|_| Error::DowncastPeerIdentity)?
         .into_iter()
         .next()

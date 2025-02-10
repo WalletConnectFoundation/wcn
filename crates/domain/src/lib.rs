@@ -1,7 +1,7 @@
 pub use wcn_core::cluster;
 use {
     serde::{Deserialize, Serialize},
-    wcn_rpc::{Multiaddr, PeerId},
+    wcn_rpc::{Multiaddr, PeerAddr, PeerId},
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
@@ -60,6 +60,10 @@ impl Node {
         });
 
         err.map(Err).unwrap_or(Ok(()))
+    }
+
+    pub fn addr(&self) -> PeerAddr {
+        PeerAddr::new(self.id, self.addr.clone())
     }
 }
 

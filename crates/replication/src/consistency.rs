@@ -1,4 +1,4 @@
-use {derive_more::derive::Deref, smallvec::SmallVec, storage_api::Multiaddr};
+use {derive_more::derive::Deref, smallvec::SmallVec, storage_api::PeerAddr};
 
 /// Replication consistency mechanism guaranteeing majority of replicas
 /// (quorum threshold) return the same result.
@@ -19,7 +19,7 @@ impl<T: Clone + Eq> MajorityQuorum<T> {
     }
 
     /// Pushes the provided replication result.
-    pub fn push(&mut self, replica_addr: Multiaddr, result: storage_api::client::Result<T>) {
+    pub fn push(&mut self, replica_addr: PeerAddr, result: storage_api::client::Result<T>) {
         if let Some(res) = self.is_reached() {
             return self.results.push(ReplicationResult {
                 replica_addr,
@@ -55,7 +55,7 @@ impl<T: Clone + Eq> MajorityQuorum<T> {
 
     /// Returns an [`Iterator`] of replicas replication results of which do not
     /// match with the [`MajorityQuorum`].
-    pub fn minority_replicas(&self) -> impl Iterator<Item = &Multiaddr> + '_ {
+    pub fn minority_replicas(&self) -> impl Iterator<Item = &PeerAddr> + '_ {
         let quorum_reached = self.reached_idx.is_some();
 
         self.results.iter().filter_map(move |res| {
@@ -80,19 +80,22 @@ pub type ReplicationResults<T> = SmallVec<[ReplicationResult<T>; 3]>;
 pub(super) struct ReplicationResult<T> {
     #[deref]
     pub inner: storage_api::client::Result<T>,
-    pub replica_addr: Multiaddr,
+    pub replica_addr: PeerAddr,
     within_quorum: bool,
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, storage_api::PeerId};
 
     impl<T> ReplicationResult<T> {
         pub(crate) fn new_test(inner: storage_api::client::Result<T>) -> Self {
             Self {
                 inner,
-                replica_addr: "/ip4//udp/3010/quic-v1".parse().unwrap(),
+                replica_addr: "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4//\
+                               udp/3010/quic-v1"
+                    .parse()
+                    .unwrap(),
                 within_quorum: true,
             }
         }
@@ -100,9 +103,18 @@ mod test {
 
     #[test]
     fn test_majority_quorum() {
-        let addr1: Multiaddr = "/ip4//udp/3010/quic-v1".parse().unwrap();
-        let addr2: Multiaddr = "/ip4//udp/3010/quic-v1".parse().unwrap();
-        let addr3: Multiaddr = "/ip4//udp/3010/quic-v1".parse().unwrap();
+        let addr1 = PeerAddr::new(
+            PeerId::random(),
+            "/ip4//udp/3010/quic-v1".parse().unwrap(),
+        );
+        let addr2 = PeerAddr::new(
+            PeerId::random(),
+            "/ip4//udp/3010/quic-v1".parse().unwrap(),
+        );
+        let addr3 = PeerAddr::new(
+            PeerId::random(),
+            "/ip4//udp/3010/quic-v1".parse().unwrap(),
+        );
 
         let mut quorum = MajorityQuorum::<u8>::new(2);
         quorum.push(addr1.clone(), Ok(42));

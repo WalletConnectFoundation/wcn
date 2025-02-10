@@ -4,6 +4,7 @@ use {
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
         Id as RpcId,
+        PeerAddr,
         ServerName,
     },
     backoff::ExponentialBackoffBuilder,
@@ -48,11 +49,11 @@ impl<H> client::Marker for Client<H> {}
 impl<H: Handshake> crate::Client for Client<H> {
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
         &'a self,
-        addr: &'a Multiaddr,
+        peer: &'a PeerAddr,
         rpc_id: RpcId,
         f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
-        self.establish_stream(addr, rpc_id)
+        self.establish_stream(peer, rpc_id)
             .map_err(Into::into)
             .and_then(move |stream| f(stream).map_err(Into::into))
     }
@@ -94,16 +95,18 @@ impl<H: Handshake> Client<H> {
         let handlers = cfg
             .known_peers
             .into_iter()
-            .map(|multiaddr| {
-                super::multiaddr_to_socketaddr(&multiaddr).map(|socketaddr| {
+            .map(|peer| {
+                super::multiaddr_to_socketaddr(&peer.addr).map(|socketaddr| {
                     let handler = ConnectionHandler::new(
+                        peer.id,
                         socketaddr,
                         cfg.server_name,
                         endpoint.clone(),
                         cfg.handshake.clone(),
                         cfg.connection_timeout,
                     );
-                    (multiaddr, handler)
+
+                    (peer.addr, handler)
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -133,6 +136,7 @@ pub(super) struct ConnectionHandler<H> {
 #[derive(Derivative)]
 #[derivative(Debug)]
 struct ConnectionHandlerInner {
+    peer_id: PeerId,
     addr: SocketAddr,
     server_name: ServerName,
     endpoint: quinn::Endpoint,
@@ -144,7 +148,10 @@ struct ConnectionHandlerInner {
 
 type Connection = Shared<BoxFuture<'static, quinn::Connection>>;
 
+// TODO: This should return a result, as one possible error here is invalid peer
+// ID. Currently, if the peer ID is invalid, the connection will be retried.
 fn new_connection<H: Handshake>(
+    peer_id: PeerId,
     addr: SocketAddr,
     server_name: ServerName,
     endpoint: quinn::Endpoint,
@@ -171,8 +178,14 @@ fn new_connection<H: Handshake>(
                 .await
                 .map_err(|_| ConnectionError::Timeout)??;
 
-            // TODO: Validate server `PeerId`.
-            let peer_id = super::connection_peer_id(&conn)?;
+            let actual_peer_id = super::connection_peer_id(&conn)?;
+
+            if actual_peer_id != peer_id {
+                return Err(ConnectionError::Handshake(format!(
+                    "Invalid peer ID: expected: {} actual: {}",
+                    peer_id, actual_peer_id
+                )));
+            }
 
             write_connection_header(&conn, ConnectionHeader {
                 server_name: Some(server_name),
@@ -209,6 +222,7 @@ fn new_connection<H: Handshake>(
 
 impl<H: Handshake> ConnectionHandler<H> {
     pub(super) fn new(
+        peer_id: PeerId,
         addr: SocketAddr,
         server_name: ServerName,
         endpoint: quinn::Endpoint,
@@ -216,10 +230,12 @@ impl<H: Handshake> ConnectionHandler<H> {
         connection_timeout: Duration,
     ) -> Self {
         let inner = ConnectionHandlerInner {
+            peer_id,
             addr,
             server_name,
             endpoint: endpoint.clone(),
             connection: new_connection(
+                peer_id,
                 addr,
                 server_name,
                 endpoint,
@@ -297,6 +313,7 @@ impl<H: Handshake> ConnectionHandler<H> {
         {
             metrics::counter!("wcn_network_reconnects").increment(1);
             this.connection = new_connection(
+                this.peer_id,
                 this.addr,
                 this.server_name,
                 this.endpoint.clone(),
@@ -382,15 +399,16 @@ impl<H: Handshake> Client<H> {
     /// Establishes a [`BiDirectionalStream`] with the requested remote peer.
     pub async fn establish_stream(
         &self,
-        multiaddr: &Multiaddr,
+        peer: &PeerAddr,
         rpc_id: RpcId,
     ) -> Result<BiDirectionalStream, EstablishStreamError> {
         let handlers = self.connection_handlers.read().await;
-        let handler = if let Some(handler) = handlers.get(multiaddr) {
+        let handler = if let Some(handler) = handlers.get(&peer.addr) {
             handler.clone()
         } else {
             let handler = ConnectionHandler::new(
-                super::multiaddr_to_socketaddr(multiaddr)?,
+                peer.id,
+                super::multiaddr_to_socketaddr(&peer.addr)?,
                 self.server_name,
                 self.endpoint.clone(),
                 self.handshake.clone(),
@@ -399,13 +417,13 @@ impl<H: Handshake> Client<H> {
 
             drop(handlers);
             let mut handlers = self.connection_handlers.write().await;
-            if let Some(handler) = handlers.get(multiaddr) {
+            if let Some(handler) = handlers.get(&peer.addr) {
                 handler.clone()
             } else {
                 // ad-hoc "copy-on-write" behaviour, the map changes infrequently and we don't
                 // want to clone it in the hot path.
                 let mut new_handlers = (**handlers).clone();
-                new_handlers.insert(multiaddr.clone(), handler.clone());
+                new_handlers.insert(peer.addr.clone(), handler.clone());
                 *handlers = Arc::new(new_handlers);
                 handler
             }

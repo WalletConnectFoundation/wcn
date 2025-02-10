@@ -11,7 +11,7 @@ use {
         },
         identity::Keypair,
         transport::NoHandshake,
-        Multiaddr,
+        PeerAddr,
     },
 };
 
@@ -30,8 +30,8 @@ pub struct Config {
     /// Timeout of a [`Client`] operation.
     pub operation_timeout: Duration,
 
-    /// [`Multiaddr`] of the API servers.
-    pub nodes: HashSet<Multiaddr>,
+    /// [`PeerAddr`] of the API servers.
+    pub nodes: HashSet<PeerAddr>,
 
     pub auth_purpose: token::Purpose,
 
@@ -41,7 +41,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(nodes: impl Into<HashSet<Multiaddr>>) -> Self {
+    pub fn new(nodes: impl Into<HashSet<PeerAddr>>) -> Self {
         Self {
             keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
@@ -88,7 +88,7 @@ struct Inner {
     auth_ttl: Duration,
     auth_token: Arc<ArcSwap<token::Token>>,
     cluster: Arc<ArcSwap<domain::Cluster>>,
-    nodes: Vec<Multiaddr>,
+    nodes: Vec<PeerAddr>,
 }
 
 impl Inner {

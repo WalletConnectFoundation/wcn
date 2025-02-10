@@ -63,6 +63,7 @@ use {
             SendStream,
         },
         Multiaddr,
+        PeerAddr,
         ServerName,
     },
 };
@@ -536,13 +537,16 @@ impl client_api::Server for ClientApiServer {
 
         async move {
             stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
-                .for_each_concurrent(None, |n| {
+                .for_each_concurrent(None, |node| async {
+                    let addr = PeerAddr::new(node.id, node.addr.clone());
+
                     rpc::broadcast::Pubsub::send(
                         &self.node.network().replica_api_client,
-                        &n.addr,
+                        &addr,
                         &evt,
                     )
                     .map(drop)
+                    .await
                 })
                 .await
         }
@@ -591,9 +595,10 @@ impl wcn::migration::Network<cluster::Node> for Network {
     ) -> impl Future<Output = Result<Self::DataStream, impl wcn::migration::AnyError>> + Send {
         async move {
             let range = &range;
+
             rpc::migration::PullData::send(
                 &self.replica_api_client,
-                &from.addr,
+                &from.addr(),
                 &move |mut tx, rx| async move {
                     tx.send(rpc::migration::PullDataRequest {
                         keyrange: range.clone(),
@@ -862,11 +867,17 @@ impl Network {
             .with_default(Duration::from_millis(cfg.network_request_timeout))
             .with::<{ rpc::migration::PullData::ID }>(None);
 
+        let known_peers = cfg
+            .known_peers
+            .iter()
+            .map(|(id, addr)| PeerAddr::new(*id, addr.clone()))
+            .collect();
+
         Ok(Self {
             local_id: cfg.id,
             replica_api_client: quic::Client::new(wcn_rpc::client::Config {
                 keypair: cfg.keypair.clone(),
-                known_peers: cfg.known_peers.values().cloned().collect(),
+                known_peers,
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: REPLICA_API_SERVER_NAME,

@@ -6,6 +6,7 @@ use {
     tap::{TapFallible, TapOptional},
     tokio::sync::oneshot,
     wcn::cluster::Consensus,
+    wcn_rpc::PeerAddr,
 };
 
 fn update_loop(
@@ -235,7 +236,8 @@ async fn scrape_prometheus(
         return String::new();
     };
 
-    rpc::Metrics::send(&node.network().replica_api_client, addr, &())
+    let addr = PeerAddr::new(peer_id, addr.clone());
+    rpc::Metrics::send(&node.network().replica_api_client, &addr, &())
         .await
         .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrape prometheus metrics"))
         .unwrap_or_default()

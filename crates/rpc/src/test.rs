@@ -8,6 +8,7 @@ use {
         transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
         Id as RpcId,
         Multiaddr,
+        PeerAddr,
         PeerId,
         ServerName,
     },
@@ -111,7 +112,7 @@ async fn suite() {
             keypair: keypair.clone(),
             known_peers: peers
                 .iter()
-                .filter_map(|p| (&p.0 != id).then_some(p.1.clone()))
+                .filter_map(|peer| (&peer.0 != id).then_some(PeerAddr::new(peer.0, peer.1.clone())))
                 .collect(),
             handshake: NoHandshake,
             connection_timeout: Duration::from_secs(15),
@@ -155,11 +156,11 @@ async fn suite() {
                 continue;
             }
 
-            let to = remote_addr;
+            let to = PeerAddr::new(*remote_id, remote_addr.clone());
 
             // unary
 
-            let res = UnaryRpc::send(client, to, &"ping".to_string()).await;
+            let res = UnaryRpc::send(client, &to, &"ping".to_string()).await;
             assert_eq!(res, Ok("pong".to_string()));
 
             let res = UnaryRpc::send(client, &AnyPeer, &"ping".to_string()).await;
@@ -167,7 +168,7 @@ async fn suite() {
 
             // streaming
 
-            StreamingRpc::send(client, to, &|mut tx, mut rx| async move {
+            StreamingRpc::send(client, &to, &|mut tx, mut rx| async move {
                 for _ in 0..3 {
                     tx.send(&"ping".to_string()).await?;
                     assert_eq!(rx.recv_message().await?, Ok("pong".to_string()));
@@ -179,7 +180,7 @@ async fn suite() {
 
             // oneshot
 
-            OneshotRpc::send(client, to, &(i as u8)).await.unwrap();
+            OneshotRpc::send(client, &to, &(i as u8)).await.unwrap();
         }
     }
 
@@ -195,4 +196,23 @@ async fn suite() {
         let received = peer.received_messages.lock().await;
         assert_eq!(&*received, &expected);
     }
+}
+
+#[test]
+fn peer_addr() {
+    let encoded =
+        "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4/127.0.0.1/udp/3011/quic-v1";
+    let decoded = PeerAddr::from_str(encoded).unwrap();
+
+    assert_eq!(
+        decoded,
+        PeerAddr::new(
+            "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp"
+                .parse()
+                .unwrap(),
+            "/ip4/127.0.0.1/udp/3011/quic-v1".parse().unwrap(),
+        )
+    );
+
+    assert_eq!(encoded, &decoded.to_string());
 }

@@ -6,6 +6,7 @@ use {
         ForceSendFuture as _,
         Id as RpcId,
         Name as RpcName,
+        PeerAddr,
     },
     futures::FutureExt as _,
     libp2p::Multiaddr,
@@ -34,16 +35,16 @@ where
 {
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
-        addr: &'a Multiaddr,
+        peer: &'a PeerAddr,
         rpc_id: RpcId,
         f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a {
         self.inner
-            .send_rpc(addr, rpc_id, f)
+            .send_rpc(peer, rpc_id, f)
             .with_metrics(future_metrics!(
                 "outbound_rpc",
                 StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
-                StringLabel<"destination", Multiaddr> => addr
+                StringLabel<"destination", Multiaddr> => &peer.addr
             ))
             .map(move |res| {
                 let error_kind = match &res {
@@ -55,7 +56,7 @@ where
                 metrics::counter!(
                     "outbound_rpc_errors",
                     StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
-                    StringLabel<"destination", Multiaddr> => addr,
+                    StringLabel<"destination", Multiaddr> => &peer.addr,
                     StringLabel<"error_kind"> => error_kind
                 )
                 .increment(1);

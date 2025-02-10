@@ -1,4 +1,9 @@
-use {anyhow::Context as _, derive_more::Deref, std::str::FromStr, wcn_rpc::Multiaddr};
+use {
+    anyhow::Context as _,
+    derive_more::Deref,
+    std::str::FromStr,
+    wcn_rpc::{Multiaddr, PeerAddr, PeerId},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -41,6 +46,10 @@ impl FromStr for Keypair {
 
 #[derive(Debug, clap::Args)]
 pub struct AdminApiArgs {
+    /// Peer ID.
+    #[clap(short, long, env = "WCN_ADMIN_API_PEER_ID")]
+    id: PeerId,
+
     /// Admin API address.
     #[clap(short, long, env = "WCN_ADMIN_API_ADDRESS")]
     address: Multiaddr,
@@ -56,7 +65,8 @@ pub struct AdminApiArgs {
 
 impl AdminApiArgs {
     pub fn new_client(self) -> anyhow::Result<wcn_admin_api::Client> {
-        let cfg = wcn_admin_api::client::Config::new(self.address).with_keypair(self.keypair.0);
+        let addr = PeerAddr::new(self.id, self.address);
+        let cfg = wcn_admin_api::client::Config::new(addr).with_keypair(self.keypair.0);
         wcn_admin_api::Client::new(cfg).context("wcn_admin_api::Client::new")
     }
 }

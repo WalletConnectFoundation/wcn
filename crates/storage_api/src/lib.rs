@@ -2,7 +2,7 @@
 
 pub use {
     auth,
-    wcn_rpc::{identity, Multiaddr, PeerId},
+    wcn_rpc::{identity, Multiaddr, PeerAddr, PeerId},
 };
 use {
     serde::{Deserialize, Serialize},

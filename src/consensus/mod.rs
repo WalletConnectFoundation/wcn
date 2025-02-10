@@ -31,6 +31,7 @@ use {
     wcn_rpc::{
         quic::{self, socketaddr_to_multiaddr},
         Multiaddr,
+        PeerAddr,
     },
 };
 
@@ -436,8 +437,10 @@ impl Raft {
                 .filter_map(|(NodeId(id), Node(addr))| (id != &self.id).then_some((id, addr)));
 
             for (peer_id, multiaddr) in cfg.known_peers.iter().chain(known_members) {
+                let peer_addr = PeerAddr::new(*peer_id, multiaddr.clone());
+
                 let res = async {
-                    self.api_client.add_member(multiaddr, &req)
+                    self.api_client.add_member(&peer_addr, &req)
                         .await
                         .context("outbound::Error")??
                         .pipe(Ok::<_, anyhow::Error>)
@@ -505,10 +508,14 @@ impl Raft {
                 // otherwise forward the request to a voter.
                 else {
                     let voter_ids: HashSet<_> = membership.voter_ids().collect();
-                    let Some(voter_addr) = membership
-                        .nodes()
-                        .find_map(|(id, n)| voter_ids.contains(id).then_some(n.0.clone()))
-                    else {
+
+                    let voter_addr = membership.nodes().find_map(|(id, node)| {
+                        voter_ids
+                            .contains(id)
+                            .then_some(PeerAddr::new(id.0, node.0.clone()))
+                    });
+
+                    let Some(voter_addr) = voter_addr else {
                         return Err(unauthorized_error());
                     };
 

@@ -5,6 +5,7 @@ use {
         client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
         identity::Keypair,
         transport::NoHandshake,
+        PeerAddr,
     },
 };
 
@@ -12,7 +13,7 @@ use {
 #[derive(Clone)]
 pub struct Client {
     rpc_client: RpcClient,
-    server_addr: Multiaddr,
+    server_addr: PeerAddr,
 }
 
 type RpcClient = WithTimeouts<wcn_rpc::quic::Client>;
@@ -29,12 +30,12 @@ pub struct Config {
     /// Timeout of a [`Client`] operation.
     pub operation_timeout: Duration,
 
-    /// [`Multiaddr`] of the Admin API server.
-    pub server_addr: Multiaddr,
+    /// [`PeerAddr`] of the Admin API server.
+    pub server_addr: PeerAddr,
 }
 
 impl Config {
-    pub fn new(server_addr: Multiaddr) -> Self {
+    pub fn new(server_addr: PeerAddr) -> Self {
         Self {
             keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
@@ -77,7 +78,7 @@ impl Client {
         })
     }
 
-    pub fn set_server_addr(&mut self, addr: Multiaddr) {
+    pub fn set_server_addr(&mut self, addr: PeerAddr) {
         self.server_addr = addr;
     }
 

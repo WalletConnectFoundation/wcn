@@ -128,22 +128,12 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
     /// Time complexity: `O(n)`.
     fn hcard(&self, key: &C::KeyType) -> impl Future<Output = Result<usize, Error>> + Send + Sync;
 
-    // TODO: Remove after migrating to the new API.
-    fn hscan(
-        &self,
-        key: &C::KeyType,
-        opts: iterators::ScanOptions<iterators::GenericCursor>,
-    ) -> impl Future<
-        Output = Result<iterators::ScanResult<iterators::GenericCursor, C::ValueType>, Error>,
-    > + Send
-           + Sync;
-
     /// Iterates over the items in the hash stored at `key`, and returns a batch
     /// of items of specified size.
     ///
     /// Also returns a cursor that can be used to retrieve the next batch of
     /// items.
-    fn hscan_v2(
+    fn hscan(
         &self,
         key: &C::KeyType,
         opts: iterators::ScanOptions<C::SubKeyType>,
@@ -339,27 +329,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
         }
     }
 
-    // TODO: Remove after migrating to the new API.
     fn hscan(
-        &self,
-        key: &C::KeyType,
-        opts: iterators::ScanOptions<iterators::GenericCursor>,
-    ) -> impl Future<
-        Output = Result<iterators::ScanResult<iterators::GenericCursor, C::ValueType>, Error>,
-    > + Send
-           + Sync {
-        async move {
-            let key = key.clone();
-
-            self.backend
-                .exec_blocking(move |b| {
-                    iterators::scan::<C, iterators::MapRecordsGeneric, _>(&b, &key, opts)
-                })
-                .await
-        }
-    }
-
-    fn hscan_v2(
         &self,
         key: &C::KeyType,
         opts: iterators::ScanOptions<C::SubKeyType>,
@@ -371,7 +341,7 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
 
             self.backend
                 .exec_blocking(move |b| {
-                    iterators::scan_v2::<C, iterators::MapRecords, _>(&b, &key, opts)
+                    iterators::scan::<C, iterators::MapRecords, _>(&b, &key, opts)
                 })
                 .await
         }

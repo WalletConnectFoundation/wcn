@@ -471,10 +471,9 @@ struct HCardResponse {
     cardinality: u64,
 }
 
-// TODO: Remove after migrating to the new API.
 type HScan = rpc::Unary<{ rpc::id(b"hscan") }, HScanRequest, HScanResponse>;
 
-// This is the fixed version of `hscan` that properly deserializes fields.
+// TODO: Remove when clients are no longer using it.
 type HScanV2 = rpc::Unary<{ rpc::id(b"hscan_v2") }, HScanRequest, HScanResponse>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

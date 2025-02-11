@@ -110,7 +110,7 @@ pub fn exec() -> anyhow::Result<()> {
 
     // TODO: Make this version consistent with the version in the repo, and find a
     // way to set it automatically.
-    wc::metrics::gauge!("wcn_node_version").set(240207.0);
+    wc::metrics::gauge!("wcn_node_version").set(240211.0);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 

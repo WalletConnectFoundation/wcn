@@ -23,6 +23,7 @@ use {
         identity::Keypair,
         middleware::Metered,
         transport::NoHandshake,
+        PeerAddr,
     },
 };
 
@@ -90,7 +91,7 @@ impl<C: TypeConfig> Client<C> {
     /// Adds a member to the Raft network.
     pub async fn add_member(
         &self,
-        destination: &Multiaddr,
+        destination: &PeerAddr,
         req: &AddMemberRequest<C>,
     ) -> client::Result<AddMemberResult<C>> {
         AddMember::<C>::send(&self.rpc_client, destination, req).await
@@ -99,7 +100,7 @@ impl<C: TypeConfig> Client<C> {
     /// Removes a member from the Raft network.
     pub async fn remove_member(
         &self,
-        destination: &Multiaddr,
+        destination: &PeerAddr,
         req: &RemoveMemberRequest<C>,
     ) -> client::Result<RemoveMemberResult<C>> {
         RemoveMember::<C>::send(&self.rpc_client, destination, req).await
@@ -108,7 +109,7 @@ impl<C: TypeConfig> Client<C> {
     /// Proposes a change to the Raft state.
     pub async fn propose_change(
         &self,
-        destination: &Multiaddr,
+        destination: &PeerAddr,
         req: &ProposeChangeRequest<C>,
     ) -> client::Result<ProposeChangeResult<C>> {
         ProposeChange::<C>::send(&self.rpc_client, destination, req).await
@@ -117,7 +118,7 @@ impl<C: TypeConfig> Client<C> {
     /// Appends entries to the Raft log.
     pub async fn append_entries(
         &self,
-        destination: &Multiaddr,
+        destination: &PeerAddr,
         req: &AppendEntriesRequest<C>,
     ) -> client::Result<AppendEntriesResult<C>> {
         AppendEntries::<C>::send(&self.rpc_client, destination, req).await
@@ -126,7 +127,7 @@ impl<C: TypeConfig> Client<C> {
     /// Installs a new snapshot of the Raft state.
     pub async fn install_snapshot(
         &self,
-        destination: &Multiaddr,
+        destination: &PeerAddr,
         req: &InstallSnapshotRequest<C>,
     ) -> client::Result<InstallSnapshotResult<C>> {
         InstallSnapshot::<C>::send(&self.rpc_client, destination, req).await
@@ -135,7 +136,7 @@ impl<C: TypeConfig> Client<C> {
     /// Makes a candidate vote.
     pub async fn vote(
         &self,
-        destination: &Multiaddr,
+        destination: &PeerAddr,
         req: &VoteRequest<C>,
     ) -> client::Result<VoteResult<C>> {
         Vote::<C>::send(&self.rpc_client, destination, req).await
@@ -152,8 +153,7 @@ where
 
     fn new_client(&self, target: C::NodeId, node: &C::Node) -> Self::Client {
         RemotePeer {
-            id: target.into(),
-            multiaddr: node.as_ref().clone(),
+            addr: PeerAddr::new(target.into(), node.as_ref().clone()),
             api_client: self.clone(),
         }
     }
@@ -161,8 +161,7 @@ where
 
 #[derive(Clone, Debug)]
 pub struct RemotePeer<C> {
-    id: PeerId,
-    multiaddr: Multiaddr,
+    addr: PeerAddr,
     api_client: Client<C>,
 }
 
@@ -176,10 +175,10 @@ where
     ) -> impl Future<Output = AddMemberRpcResult<C>> + Send {
         async move {
             self.api_client
-                .add_member(&self.multiaddr, &req)
+                .add_member(&self.addr, &req)
                 .await
                 .map_err(|e| RpcError::<C, _>::Unreachable(raft::UnreachableError::new(&e)))?
-                .map_err(|e| RemoteError::new(self.id.into(), e).into())
+                .map_err(|e| RemoteError::new(self.addr.id.into(), e).into())
         }
     }
 
@@ -189,10 +188,10 @@ where
     ) -> impl Future<Output = RemoveMemberRpcResult<C>> + Send {
         async move {
             self.api_client
-                .remove_member(&self.multiaddr, &req)
+                .remove_member(&self.addr, &req)
                 .await
                 .map_err(|e| RpcError::<C, _>::Unreachable(raft::UnreachableError::new(&e)))?
-                .map_err(|e| RemoteError::new(self.id.into(), e).into())
+                .map_err(|e| RemoteError::new(self.addr.id.into(), e).into())
         }
     }
 
@@ -202,10 +201,10 @@ where
     ) -> impl Future<Output = ProposeChangeRpcResult<C>> + Send {
         async move {
             self.api_client
-                .propose_change(&self.multiaddr, &req)
+                .propose_change(&self.addr, &req)
                 .await
                 .map_err(|e| RpcError::<C, _>::Unreachable(raft::UnreachableError::new(&e)))?
-                .map_err(|e| RemoteError::new(self.id.into(), e).into())
+                .map_err(|e| RemoteError::new(self.addr.id.into(), e).into())
         }
     }
 
@@ -215,10 +214,10 @@ where
     ) -> impl Future<Output = AppendEntriesRpcResult<C>> + Send {
         async move {
             self.api_client
-                .append_entries(&self.multiaddr, &req)
+                .append_entries(&self.addr, &req)
                 .await
                 .map_err(|e| RpcError::<C, _>::Unreachable(raft::UnreachableError::new(&e)))?
-                .map_err(|e| RemoteError::new(self.id.into(), e).into())
+                .map_err(|e| RemoteError::new(self.addr.id.into(), e).into())
         }
     }
 
@@ -228,20 +227,20 @@ where
     ) -> impl Future<Output = InstallSnapshotRpcResult<C>> + Send {
         async move {
             self.api_client
-                .install_snapshot(&self.multiaddr, &req)
+                .install_snapshot(&self.addr, &req)
                 .await
                 .map_err(|e| RpcError::<C, _>::Unreachable(raft::UnreachableError::new(&e)))?
-                .map_err(|e| RemoteError::new(self.id.into(), e).into())
+                .map_err(|e| RemoteError::new(self.addr.id.into(), e).into())
         }
     }
 
     fn vote(&self, req: VoteRequest<C>) -> impl Future<Output = VoteRpcResult<C>> + Send {
         async move {
             self.api_client
-                .vote(&self.multiaddr, &req)
+                .vote(&self.addr, &req)
                 .await
                 .map_err(|e| RpcError::<C, _>::Unreachable(raft::UnreachableError::new(&e)))?
-                .map_err(|e| RemoteError::new(self.id.into(), e).into())
+                .map_err(|e| RemoteError::new(self.addr.id.into(), e).into())
         }
     }
 }

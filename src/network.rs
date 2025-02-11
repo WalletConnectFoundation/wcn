@@ -63,6 +63,7 @@ use {
             SendStream,
         },
         Multiaddr,
+        PeerAddr,
         ServerName,
     },
 };
@@ -405,36 +406,6 @@ impl storage_api::Server for StorageApiServer {
             })
             .map_err(storage_api::server::Error::new)
     }
-
-    // TODO: Remove after migrating to the new API.
-    fn hscan_v2(
-        &self,
-        key: storage_api::Key,
-        count: u32,
-        cursor: Option<storage_api::Field>,
-    ) -> impl Future<Output = storage_api::server::Result<storage_api::MapPage>> + Send {
-        let key = generic_key(key);
-        let opts = ScanOptions::new(count as usize).with_cursor(cursor);
-
-        async move { self.map_storage().hscan_v2(&key, opts).await }
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
-            .map_ok(|res| storage_api::MapPage {
-                records: res
-                    .items
-                    .into_iter()
-                    .map(|rec| storage_api::MapRecord {
-                        field: rec.field,
-                        value: rec.value,
-                        expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(
-                            rec.expiration,
-                        ),
-                        version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
-                    })
-                    .collect(),
-                has_next: res.has_more,
-            })
-            .map_err(storage_api::server::Error::new)
-    }
 }
 
 impl ReplicaApiServer {
@@ -536,13 +507,16 @@ impl client_api::Server for ClientApiServer {
 
         async move {
             stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
-                .for_each_concurrent(None, |n| {
+                .for_each_concurrent(None, |node| async {
+                    let addr = PeerAddr::new(node.id, node.addr.clone());
+
                     rpc::broadcast::Pubsub::send(
                         &self.node.network().replica_api_client,
-                        &n.addr,
+                        &addr,
                         &evt,
                     )
                     .map(drop)
+                    .await
                 })
                 .await
         }
@@ -591,9 +565,10 @@ impl wcn::migration::Network<cluster::Node> for Network {
     ) -> impl Future<Output = Result<Self::DataStream, impl wcn::migration::AnyError>> + Send {
         async move {
             let range = &range;
+
             rpc::migration::PullData::send(
                 &self.replica_api_client,
-                &from.addr,
+                &from.addr(),
                 &move |mut tx, rx| async move {
                     tx.send(rpc::migration::PullDataRequest {
                         keyrange: range.clone(),
@@ -862,11 +837,17 @@ impl Network {
             .with_default(Duration::from_millis(cfg.network_request_timeout))
             .with::<{ rpc::migration::PullData::ID }>(None);
 
+        let known_peers = cfg
+            .known_peers
+            .iter()
+            .map(|(id, addr)| PeerAddr::new(*id, addr.clone()))
+            .collect();
+
         Ok(Self {
             local_id: cfg.id,
             replica_api_client: quic::Client::new(wcn_rpc::client::Config {
                 keypair: cfg.keypair.clone(),
-                known_peers: cfg.known_peers.values().cloned().collect(),
+                known_peers,
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: REPLICA_API_SERVER_NAME,

@@ -2,7 +2,7 @@ use {
     std::{net::SocketAddr, str::FromStr, time::Duration},
     wcn::Keypair,
     wcn_replication::storage,
-    wcn_rpc::quic,
+    wcn_rpc::{quic, PeerAddr, PeerId},
 };
 
 const MIN_TTL: Duration = Duration::from_secs(30);
@@ -49,6 +49,12 @@ pub struct StorageCmd {
     ///
     /// The address is specified in format `{IP_ADDR}`.
     address: SocketAddr,
+
+    #[clap(short, long, env = "WCN_STORAGE_PEER_ID")]
+    /// WCN node peer ID.
+    ///
+    /// Required for node authentication.
+    peer_id: PeerId,
 
     #[clap(long, env = "WCN_STORAGE_PRIVATE_KEY")]
     /// Client private key used for authorization.
@@ -292,11 +298,14 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
     let namespaces = initialize_namespaces(&cmd)?;
     let namespace = namespaces.first().map(|ns| ns.public_key());
 
+    let id = cmd.peer_id;
+    let addr = quic::socketaddr_to_multiaddr(cmd.address);
+
     let client = wcn_replication::Driver::new(wcn_replication::Config {
         keypair: cmd.private_key.0,
         connection_timeout: Duration::from_secs(1),
         operation_timeout: Duration::from_millis(2500),
-        nodes: [quic::socketaddr_to_multiaddr(cmd.address)].into(),
+        nodes: [PeerAddr::new(id, addr)].into(),
         namespaces,
     })
     .await?;

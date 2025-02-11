@@ -22,6 +22,7 @@ use {
         identity::Keypair,
         middleware::Metered,
         transport::{self, PendingConnection},
+        PeerAddr,
     },
 };
 
@@ -117,7 +118,7 @@ impl Client {
         Ok(Self { rpc: rpc_client })
     }
 
-    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a> {
+    pub fn remote_storage<'a>(&'a self, server_addr: &'a PeerAddr) -> RemoteStorage<'a> {
         RemoteStorage {
             client: self,
             server_addr,
@@ -174,7 +175,7 @@ impl middleware::RetryStrategy for RetryStrategy {
 #[derive(Clone, Copy)]
 pub struct RemoteStorage<'a> {
     client: &'a Client,
-    server_addr: &'a Multiaddr,
+    server_addr: &'a PeerAddr,
     expected_keyspace_version: Option<u64>,
 }
 
@@ -338,7 +339,7 @@ impl RemoteStorage<'_> {
     /// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
     /// the provided [`Key`].
     pub async fn hscan(self, key: Key, count: u32, cursor: Option<Field>) -> Result<MapPage> {
-        let resp = HScanV2::send(self.rpc_client(), self.server_addr, &HScanRequest {
+        let resp = HScan::send(self.rpc_client(), self.server_addr, &HScanRequest {
             key: self.extended_key(key),
             count,
             cursor,

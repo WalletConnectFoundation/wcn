@@ -25,7 +25,7 @@ use {
     tracing_subscriber::EnvFilter,
     wcn::fsm::ShutdownReason,
     wcn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
-    wcn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr},
+    wcn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr, PeerAddr},
 };
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
@@ -81,6 +81,18 @@ impl NodeHandle {
         self.config.raft_server_port = next_port();
         self.config.replica_api_server_port = next_port();
     }
+
+    fn replica_api_addr(&self) -> PeerAddr {
+        PeerAddr::new(self.config.id, self.replica_api_server_addr.clone())
+    }
+
+    fn client_api_addr(&self) -> PeerAddr {
+        PeerAddr::new(self.config.id, self.client_api_server_addr.clone())
+    }
+
+    fn admin_api_addr(&self) -> PeerAddr {
+        PeerAddr::new(self.config.id, self.admin_api_server_addr.clone())
+    }
 }
 
 struct TestCluster {
@@ -120,9 +132,10 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
+        let admin_addr = PeerAddr::new(PeerId::random(), local_multiaddr(0));
+
         let admin_api_client = admin_api::Client::new(
-            admin_api::client::Config::new(local_multiaddr(0))
-                .with_keypair(authorized_client_keypair(0)),
+            admin_api::client::Config::new(admin_addr).with_keypair(authorized_client_keypair(0)),
         )
         .unwrap();
 
@@ -159,8 +172,7 @@ impl TestCluster {
 
     async fn decommission_node(&mut self, id: &PeerId) {
         let node = self.nodes.remove(id).unwrap();
-        self.admin_api_client
-            .set_server_addr(node.admin_api_server_addr);
+        self.admin_api_client.set_server_addr(node.admin_api_addr());
 
         self.admin_api_client
             .decommission_node(*id, false)
@@ -253,7 +265,7 @@ impl TestCluster {
         let node = self.nodes.values().next().unwrap();
 
         let mut client = self.admin_api_client.clone();
-        client.set_server_addr(node.admin_api_server_addr.clone());
+        client.set_server_addr(node.admin_api_addr());
 
         Ok(client.get_cluster_view().await?)
     }
@@ -287,7 +299,7 @@ impl TestCluster {
         let nodes = self
             .nodes
             .values()
-            .map(|node| local_multiaddr(node.config.client_api_server_port))
+            .map(|node| node.client_api_addr())
             .collect();
 
         let mut cfg = replication::Config::new(nodes).with_keypair(authorized_client_keypair(0));
@@ -300,7 +312,7 @@ impl TestCluster {
         let nodes: HashSet<_> = self
             .nodes
             .values()
-            .map(|node| local_multiaddr(node.config.client_api_server_port))
+            .map(|node| node.client_api_addr())
             .collect();
 
         client_api::Client::new(
@@ -424,7 +436,7 @@ impl TestCluster {
         // Client, authorized for the first namespace.
         let client0 = self
             .new_replication_driver(|cfg| {
-                cfg.nodes.insert(node.client_api_server_addr.clone());
+                cfg.nodes.insert(node.client_api_addr());
                 cfg.namespaces = vec![namespaces[0].0.clone()];
             })
             .await;
@@ -433,7 +445,7 @@ impl TestCluster {
         // Client, authorized for the second namespace.
         let client1 = self
             .new_replication_driver(|cfg| {
-                cfg.nodes.insert(node.client_api_server_addr.clone());
+                cfg.nodes.insert(node.client_api_addr());
                 cfg.namespaces = vec![namespaces[1].0.clone()];
             })
             .await;
@@ -658,8 +670,9 @@ impl TestCluster {
 
                 // check that all replicas have the data
                 let replicas: usize = stream::iter(self.nodes.values())
-                    .map(|n| async {
-                        let storage = storage_api_client.remote_storage(&n.replica_api_server_addr);
+                    .map(|node| async {
+                        let addr = node.replica_api_addr();
+                        let storage = storage_api_client.remote_storage(&addr);
                         let output = storage.get(key.clone()).await.unwrap().map(|rec| rec.value);
                         usize::from(c.expected_output == output)
                     })
@@ -789,7 +802,7 @@ impl TestCluster {
             })
             .await;
 
-        let node_addr = self.nodes[&node_id].client_api_server_addr.clone();
+        let node_addr = self.nodes[&node_id].client_api_addr();
 
         let namespaces = (0..2)
             .map(|i| {
@@ -880,6 +893,7 @@ fn new_node_config() -> Config {
         replica_api_server_port: next_port(),
         client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
+        migration_api_server_port: next_port(),
         client_api_max_concurrent_connections: 500,
         client_api_max_concurrent_rpcs: 10000,
         replica_api_max_concurrent_connections: 500,

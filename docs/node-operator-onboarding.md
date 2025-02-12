@@ -103,17 +103,14 @@ export ADMIN_API_SERVER_PORT=3013
 
 # Port of the Prometheus metrics server.
 export METRICS_SERVER_PORT=3014
-
-# Port of the Migration API metrics server.
-export MIGRATION_API_SERVER_PORT=3015
 ```
 
 ### Prepare your infrastructure
 
 #### Firewall
 
-`Raft API`, `Replica API` and `Migration API` server ports need to be open for all connections in your firewall settings.  
-Default ports are `3010`, `3011` and `3015`, however you can change them as described in the previous section.
+`Raft API` and `Replica API` server ports need to be open for all connections in your firewall settings.  
+Default ports are `3010` and `3011`, however you can change them as described in the previous section.
 
 #### Graceful shutdown
 

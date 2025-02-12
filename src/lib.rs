@@ -158,8 +158,6 @@ pub async fn run(
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
-            // TODO: populate once all nodes are updated and have this field
-            migration_api_addr: None,
         },
         node_opts,
         consensus,

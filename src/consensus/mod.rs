@@ -16,7 +16,6 @@ use {
         Raft as _,
     },
     serde::{Deserialize, Serialize},
-    serde_json::json,
     std::{
         collections::{HashMap, HashSet},
         error::Error as StdError,

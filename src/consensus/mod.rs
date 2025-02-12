@@ -134,6 +134,7 @@ impl raft::State<TypeConfig> for State {
         let data = snapshot.into_inner();
 
         let snapshot: StateSnapshot<'static> = postcard::from_bytes(data.as_slice())
+            .or_else(|_| serde_json::from_slice(data.as_slice()))
             .map_err(|e| cluster::Error::Bug(format!("failed to deserialize snapshot: {e}")))?;
 
         let new_cluster = Cluster::from_snapshot(snapshot.cluster)?;

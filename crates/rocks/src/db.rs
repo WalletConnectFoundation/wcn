@@ -20,6 +20,7 @@ use {
         ops::Deref,
         path::{Path, PathBuf},
         sync::Arc,
+        time::Duration,
     },
 };
 pub use {
@@ -448,7 +449,7 @@ fn create_db_opts(cfg: &RocksdbDatabaseConfig) -> rocksdb::Options {
     // access. 15 bits per key are 99% as effective as 100 bits per key, and `false`
     // means we are using the new filter format (the previous format is block based
     // and memory non-aligned see: https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter).
-    let cache = rocksdb::Cache::new_lru_cache(cfg.block_cache_size);
+    let cache = create_cache("block_based_table", cfg.block_cache_size);
     let mut block_opts = rocksdb::BlockBasedOptions::default();
     block_opts.set_block_cache(&cache);
     block_opts.set_block_size(cfg.block_size);
@@ -464,10 +465,33 @@ fn create_db_opts(cfg: &RocksdbDatabaseConfig) -> rocksdb::Options {
     // record is read from the block cache. RocksDB allows to cache records
     // themselves, so that before querying the block cache, the record cache is
     // checked. This speeds up point lookups, but increases memory usage.
-    let cache = rocksdb::Cache::new_lru_cache(cfg.row_cache_size);
+    let cache = create_cache("row", cfg.row_cache_size);
     opts.set_row_cache(&cache);
 
     opts
+}
+
+fn create_cache(kind: &'static str, capacity: usize) -> rocksdb::Cache {
+    let cache = rocksdb::Cache::new_lru_cache(capacity);
+    let weak = cache.downgrade();
+
+    tokio::spawn(async move {
+        while let Some(cache) = weak.upgrade() {
+            metrics::gauge!("rocksdb_cache_usage", "kind" => kind).set(cache.get_usage() as f64);
+            metrics::gauge!("rocksdb_cache_pinned_usage", "kind" => kind)
+                .set(cache.get_pinned_usage() as f64);
+            metrics::gauge!("rocksdb_cache_occupancy_count", "kind" => kind)
+                .set(cache.get_occupancy_count() as f64);
+            metrics::gauge!("rocksdb_cache_table_address_count", "kind" => kind)
+                .set(cache.get_table_address_count() as f64);
+
+            drop(cache);
+
+            tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    });
+
+    cache
 }
 
 fn create_cf_opts<C: 'static + cf::Column>() -> rocksdb::Options {

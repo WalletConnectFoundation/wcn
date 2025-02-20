@@ -110,7 +110,7 @@ pub fn exec() -> anyhow::Result<()> {
 
     // TODO: Make this version consistent with the version in the repo, and find a
     // way to set it automatically.
-    wc::metrics::gauge!("wcn_node_version").set(250220.0);
+    wc::metrics::gauge!("wcn_node_version").set(250220.1);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 
@@ -158,6 +158,8 @@ pub async fn run(
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
+            // TODO: populate once all nodes are updated and have this field
+            migration_api_addr: None,
         },
         node_opts,
         consensus,

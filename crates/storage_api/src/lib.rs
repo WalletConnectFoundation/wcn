@@ -473,9 +473,6 @@ struct HCardResponse {
 
 type HScan = rpc::Unary<{ rpc::id(b"hscan") }, HScanRequest, HScanResponse>;
 
-// TODO: Remove when clients are no longer using it.
-type HScanV2 = rpc::Unary<{ rpc::id(b"hscan_v2") }, HScanRequest, HScanResponse>;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct HScanRequest {
     key: ExtendedKey,

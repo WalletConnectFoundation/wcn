@@ -21,6 +21,9 @@ pub struct Node {
     pub region: NodeRegion,
     pub organization: String,
     pub eth_address: Option<String>,
+
+    #[serde(default)]
+    pub migration_api_addr: Option<Multiaddr>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,14 +161,19 @@ mod test {
     ) -> Node {
         static PORT: AtomicU16 = AtomicU16::new(3000);
 
-        Node {
-            id: PeerId::random(),
-            addr: format!(
+        let addr = || {
+            format!(
                 "/ip4/127.0.0.1/udp/{}/quic-v1",
                 PORT.fetch_add(1, Ordering::Relaxed)
             )
             .parse()
-            .unwrap(),
+            .unwrap()
+        };
+
+        Node {
+            id: PeerId::random(),
+            addr: addr(),
+            migration_api_addr: Some(addr()),
             region: match region {
                 "eu" => NodeRegion::Eu,
                 "us" => NodeRegion::Us,

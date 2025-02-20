@@ -182,6 +182,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         client_api_server_port: config.server.auth_port,
         admin_api_server_port: config.server.admin_port,
         metrics_server_port: config.server.metrics_port,
+        migration_api_server_port: config.server.migration_api_port,
         coordinator_api_max_concurrent_connections: 500,
         coordinator_api_max_concurrent_rpcs: 4500,
         client_api_max_concurrent_connections: 500,

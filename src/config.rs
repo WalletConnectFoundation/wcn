@@ -40,6 +40,9 @@ pub struct Config {
     /// Port of the admin API server.
     pub admin_api_server_port: u16,
 
+    /// Port of the migration API server.
+    pub migration_api_server_port: u16,
+
     /// Port of the Prometheus metrics server.
     pub metrics_server_port: u16,
 
@@ -161,6 +164,7 @@ impl Config {
             client_api_server_port: raw.client_api_server_port.unwrap_or(3014),
             admin_api_server_port: raw.admin_api_server_port.unwrap_or(3013),
             metrics_server_port: raw.metrics_server_port.unwrap_or(3014),
+            migration_api_server_port: raw.migration_api_server_port.unwrap_or(3015),
             client_api_max_concurrent_connections: raw
                 .client_api_max_concurrent_connections
                 .unwrap_or(500),
@@ -236,6 +240,7 @@ struct RawConfig {
     replica_api_server_port: Option<u16>,
     client_api_server_port: Option<u16>,
     admin_api_server_port: Option<u16>,
+    migration_api_server_port: Option<u16>,
     metrics_server_port: Option<u16>,
 
     client_api_max_concurrent_connections: Option<u32>,

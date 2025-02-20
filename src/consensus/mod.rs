@@ -115,7 +115,7 @@ impl raft::State<TypeConfig> for State {
 
         let cluster = self.cluster.view().cluster();
 
-        postcard::to_allocvec(&StateSnapshot {
+        serde_json::to_vec(&StateSnapshot {
             last_applied_log: meta.last_log_id,
             membership: meta.last_membership.clone(),
             cluster: cluster.snapshot(),

@@ -1,0 +1,32 @@
+[package]
+name = "wcn_echo_api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+client = []
+server = []
+
+[dependencies]
+time = { workspace = true, features = ["serde"] }
+tokio-serde = { workspace = true }
+tokio-serde-postcard = { workspace = true }
+wc = { workspace = true, features = ["future", "metrics"] }
+tokio = { version = "1", default-features = false, features = [
+    "sync",
+    "time",
+    "io-util",
+] }
+tokio-util = "0.7"
+tokio-stream = { version = "0.1", features = ["time"] }
+serde = "1"
+thiserror = "1"
+tap = "1.0"
+futures = "0.3"
+tracing = "0.1"
+chrono = "0.4"
+phi-accrual-failure-detector = { git = "https://github.com/heilhead/phi-accrual-failure-detector.git", rev = "7a6b36b" }
+
+[lints]
+workspace = true

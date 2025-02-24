@@ -964,11 +964,18 @@ impl Network {
             replica_api_quic_server_config,
         )?;
 
+        let echo_server = echo_api::server::spawn(echo_api::server::Config {
+            address: (cfg.server_addr, cfg.replica_api_server_port).into(),
+            max_connections: 512,
+            max_rate: 3,
+        });
+
         Ok(async move {
             tokio::join!(
                 replica_and_storage_api_servers,
                 client_api_server,
-                admin_api_server
+                admin_api_server,
+                echo_server
             )
         }
         .map(drop)

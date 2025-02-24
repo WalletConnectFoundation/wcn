@@ -49,16 +49,16 @@ jobs:
         cargo:
           - name: "clippy"
             cmd: cargo clippy --workspace --all-targets --all-features --tests -- -D warnings
-            rust: nightly-2024-06-13
+            rust: nightly-2025-02-23
           - name: "formatting"
             cmd: cargo fmt --all --check
-            rust: nightly-2024-06-13
+            rust: nightly-2025-02-23
           - name: "tests"
             cmd: |
               cargo test --workspace --doc --all-features \
               && RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node \
               && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features --release
-            rust: 1.79.0
+            rust: 1.85.0
     env:
       RUST_BACKTRACE: full
     steps:
@@ -86,13 +86,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: EmbarkStudios/cargo-deny-action@v1
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
+          rust-version: "1.85.0"
           command: check license
 
   build:
     name: "Build image"
-    runs-on: 
+    runs-on:
       group: ubuntu-runners
     strategy:
       fail-fast: false

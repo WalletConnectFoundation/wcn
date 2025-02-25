@@ -1,6 +1,7 @@
 use {
     crate::Error,
     futures::{FutureExt as _, SinkExt as _, StreamExt as _},
+    governor::state::StreamRateLimitExt,
     std::{net::SocketAddr, num::NonZeroU32, sync::Arc},
     tap::TapFallible,
     tokio::{
@@ -68,12 +69,14 @@ async fn connection_handler(
     rate: NonZeroU32,
     _permit: OwnedSemaphorePermit,
 ) -> Result<(), Error> {
-    let limiter = governor::RateLimiter::direct(governor::Quota::per_second(rate));
     let transport = super::create_transport(stream);
     let (mut tx, rx) = futures::StreamExt::split(transport);
-    let mut rx = std::pin::pin!(rx);
+    let limiter = governor::RateLimiter::direct(governor::Quota::per_second(rate));
+    let mut rx = std::pin::pin!(rx.ratelimit_stream(&limiter));
 
-    while let (Some(payload), _) = tokio::join!(rx.next(), limiter.until_ready()) {
+    // Use this loop instead of `send_all()` to make sure the buffer is flushed
+    // after each frame.
+    while let Some(payload) = rx.next().await {
         let payload = payload.map_err(Error::Recv)?;
         tx.send(payload).await.map_err(Error::Send)?;
     }

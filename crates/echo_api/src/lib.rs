@@ -27,10 +27,20 @@ pub enum Error {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EchoPayload {
-    seq_num: u64,
-
     #[serde(with = "time::serde::timestamp")]
     timestamp: time::OffsetDateTime,
+}
+
+impl EchoPayload {
+    fn new() -> Self {
+        Self {
+            timestamp: time::OffsetDateTime::now_utc(),
+        }
+    }
+
+    fn elapsed(&self) -> time::Duration {
+        time::OffsetDateTime::now_utc() - self.timestamp
+    }
 }
 
 type Transport<T> = tokio_serde::Framed<

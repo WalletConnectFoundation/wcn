@@ -3,7 +3,6 @@ use {
     futures::{SinkExt, StreamExt},
     phi_accrual_failure_detector::{Detector as _, SyncDetector},
     std::{net::SocketAddr, time::Duration},
-    time::OffsetDateTime,
     tokio::net::TcpSocket,
     tokio_util::sync::DropGuard,
     wc::{
@@ -59,13 +58,7 @@ async fn ping_loop_internal(addr: SocketAddr, detector: &SyncDetector) -> Result
 
         loop {
             interval.tick().await;
-
-            tx.send(EchoPayload {
-                seq_num: 0,
-                timestamp: time::OffsetDateTime::now_utc(),
-            })
-            .await
-            .map_err(Error::Send)?;
+            tx.send(EchoPayload::new()).await.map_err(Error::Send)?;
         }
     };
 
@@ -74,10 +67,8 @@ async fn ping_loop_internal(addr: SocketAddr, detector: &SyncDetector) -> Result
     let rx_loop = async {
         while let Some(payload) = rx.next().await {
             let payload = payload.map_err(Error::Recv)?;
-            let latency = (OffsetDateTime::now_utc() - payload.timestamp).as_seconds_f64();
-
             metrics::histogram!("wcn_echo_client_latency", StringLabel<"destination"> => &addr)
-                .record(latency);
+                .record(payload.elapsed().as_seconds_f64());
             detector.heartbeat();
         }
 

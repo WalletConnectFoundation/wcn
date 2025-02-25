@@ -27,6 +27,7 @@ futures = "0.3"
 tracing = "0.1"
 chrono = "0.4"
 phi-accrual-failure-detector = { git = "https://github.com/heilhead/phi-accrual-failure-detector.git", rev = "7a6b36b" }
+governor = { version = "0.8", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

@@ -967,7 +967,7 @@ impl Network {
         let echo_server = echo_api::server::spawn(echo_api::server::Config {
             address: (cfg.server_addr, cfg.replica_api_server_port).into(),
             max_connections: 512,
-            max_rate: 3,
+            max_rate: std::num::NonZeroU32::new(5).unwrap(), // Safe unwrap, obviously.
         });
 
         Ok(async move {

@@ -1,16 +1,15 @@
 use {
     crate::Error,
-    futures::{FutureExt as _, SinkExt},
-    std::{net::SocketAddr, sync::Arc, time::Duration},
+    futures::{FutureExt as _, SinkExt as _, StreamExt as _},
+    std::{net::SocketAddr, num::NonZeroU32, sync::Arc},
     tap::TapFallible,
     tokio::{
         net::TcpStream,
         sync::{OwnedSemaphorePermit, Semaphore},
     },
-    tokio_stream::StreamExt as _,
     wc::{
-        future::{CancellationToken, FutureExt, StaticFutureExt},
-        metrics,
+        future::{CancellationToken, FutureExt as _, StaticFutureExt as _},
+        metrics::{self, FutureExt as _},
     },
 };
 
@@ -20,7 +19,7 @@ pub struct Config {
     pub max_connections: usize,
 
     /// Maximum requests per second.
-    pub max_rate: usize,
+    pub max_rate: NonZeroU32,
 }
 
 pub async fn spawn(config: Config) -> Result<(), Error> {
@@ -57,21 +56,24 @@ pub async fn spawn(config: Config) -> Result<(), Error> {
                 }
             })
             .with_cancellation(token.child_token())
+            .with_metrics(metrics::future_metrics!(
+                "wcn_echo_server_connection_handler"
+            ))
             .spawn();
     }
 }
 
 async fn connection_handler(
     stream: TcpStream,
-    rate: usize,
+    rate: NonZeroU32,
     _permit: OwnedSemaphorePermit,
 ) -> Result<(), Error> {
+    let limiter = governor::RateLimiter::direct(governor::Quota::per_second(rate));
     let transport = super::create_transport(stream);
-
     let (mut tx, rx) = futures::StreamExt::split(transport);
-    let mut rx = std::pin::pin!(rx.throttle(Duration::from_millis(1000 / rate as u64)));
+    let mut rx = std::pin::pin!(rx);
 
-    while let Some(payload) = rx.next().await {
+    while let (Some(payload), _) = tokio::join!(rx.next(), limiter.until_ready()) {
         let payload = payload.map_err(Error::Recv)?;
         tx.send(payload).await.map_err(Error::Send)?;
     }

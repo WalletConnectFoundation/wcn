@@ -11,22 +11,19 @@ use {
     },
 };
 
-pub struct Client {
-    _guard: DropGuard,
-}
+#[allow(dead_code)]
+pub struct Handle(DropGuard);
 
-impl Client {
-    pub fn new(address: SocketAddr) -> Self {
-        let token = CancellationToken::new();
-        let _guard = token.clone().drop_guard();
+pub fn spawn(address: SocketAddr) -> Handle {
+    let token = CancellationToken::new();
+    let guard = token.clone().drop_guard();
 
-        ping_loop(address)
-            .with_cancellation(token)
-            .with_metrics(metrics::future_metrics!("wcn_echo_client_ping_loop"))
-            .spawn();
+    ping_loop(address)
+        .with_cancellation(token)
+        .with_metrics(metrics::future_metrics!("wcn_echo_client_ping_loop"))
+        .spawn();
 
-        Self { _guard }
-    }
+    Handle(guard)
 }
 
 async fn ping_loop(addr: SocketAddr) -> Result<(), Error> {

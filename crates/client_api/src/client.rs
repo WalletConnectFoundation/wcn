@@ -169,7 +169,7 @@ async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
 }
 
 async fn peer_liveness_check(inner: &Inner, mut update_rx: mpsc::Receiver<()>) {
-    use echo_api::client::Client;
+    use echo_api::client;
 
     // The registry is needed only to store client handles. Dropping these handles
     // shuts down the client.
@@ -195,7 +195,7 @@ async fn peer_liveness_check(inner: &Inner, mut update_rx: mpsc::Receiver<()>) {
             // Echo server is currently hosted on the same address we're using for storage
             // API, but it's TCP instead of UDP.
             if let Ok(socketaddr) = addr.quic_socketaddr() {
-                registry.insert(addr.clone(), Client::new(socketaddr));
+                registry.insert(addr.clone(), client::spawn(socketaddr));
             } else {
                 tracing::warn!(?addr, "failed to parse socket address for peer");
             }

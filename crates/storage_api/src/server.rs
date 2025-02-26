@@ -347,7 +347,6 @@ where
                 HSetExp::ID => HSetExp::handle(stream, |req| handler.hset_exp(req)).await,
                 HCard::ID => HCard::handle(stream, |req| handler.hcard(req)).await,
                 HScan::ID => HScan::handle(stream, |req| handler.hscan(req)).await,
-                HScanV2::ID => HScanV2::handle(stream, |req| handler.hscan(req)).await,
 
                 id => return tracing::warn!("Unexpected RPC: {}", rpc::Name::new(id)),
             }

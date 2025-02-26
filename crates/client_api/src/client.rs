@@ -2,8 +2,13 @@ use {
     super::*,
     arc_swap::ArcSwap,
     futures_util::{SinkExt as _, Stream, StreamExt},
-    std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
-    tokio::sync::oneshot,
+    std::{
+        collections::{HashMap, HashSet},
+        convert::Infallible,
+        sync::Arc,
+        time::Duration,
+    },
+    tokio::sync::{mpsc, oneshot},
     wcn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
@@ -153,14 +158,58 @@ impl Inner {
 }
 
 async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
+    let (tx, rx) = mpsc::channel(1);
+
     tokio::select! {
-        _ = cluster_update(&inner) => {},
+        _ = cluster_update(&inner, tx) => {},
         _ = auth_token_update(&inner) => {},
+        _ = peer_liveness_check(&inner, rx) => {},
         _ = shutdown_rx => {}
     }
 }
 
-async fn cluster_update(inner: &Inner) {
+async fn peer_liveness_check(inner: &Inner, mut update_rx: mpsc::Receiver<()>) {
+    use echo_api::client;
+
+    // The registry is needed only to store client handles. Dropping these handles
+    // shuts down the client.
+    #[allow(clippy::collection_is_never_read)]
+    let mut registry = HashMap::new();
+    let mut current_peers = HashSet::new();
+
+    loop {
+        let cluster = inner.cluster.load_full();
+
+        let next_peers = cluster
+            .nodes()
+            .map(|node| node.addr())
+            .collect::<HashSet<_>>();
+
+        // Removed nodes.
+        for addr in current_peers.difference(&next_peers) {
+            registry.remove(addr);
+        }
+
+        // Added nodes.
+        for addr in next_peers.difference(&current_peers) {
+            // Echo server is currently hosted on the same address we're using for storage
+            // API, but it's TCP instead of UDP.
+            if let Ok(socketaddr) = addr.quic_socketaddr() {
+                registry.insert(addr.clone(), client::spawn(socketaddr));
+            } else {
+                tracing::warn!(?addr, "failed to parse socket address for peer");
+            }
+        }
+
+        current_peers = next_peers;
+
+        if update_rx.recv().await.is_none() {
+            break;
+        }
+    }
+}
+
+async fn cluster_update(inner: &Inner, update_tx: mpsc::Sender<()>) {
     loop {
         let stream =
             ClusterUpdatesV2::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) })
@@ -186,6 +235,7 @@ async fn cluster_update(inner: &Inner) {
                         tracing::warn!(?err, "failed to apply cluster update");
                     }
 
+                    let _ = update_tx.try_send(());
                     wc::metrics::counter!("wcn_client_api_cluster_updates").increment(1);
                 }
 

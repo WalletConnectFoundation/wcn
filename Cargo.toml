@@ -36,12 +36,7 @@ name = "wcn_node"
 
 [features]
 default = ["testing"]
-testing = [
-    "dep:tempfile",
-    "dep:once_cell",
-    "dep:rand",
-    "wcn/testing",
-]
+testing = ["dep:tempfile", "dep:once_cell", "dep:rand", "wcn/testing"]
 memory_profiler = ["wc/profiler"]
 
 [lints]
@@ -61,16 +56,23 @@ derive_more = { version = "1.0.0", features = [
 core = { package = "wcn_core", path = "crates/core" }
 auth = { package = "wcn_auth", path = "crates/auth" }
 domain = { package = "wcn_domain", path = "crates/domain" }
-raft_api = { package = "wcn_raft_api", path = "crates/raft_api", features = ["server"] }
-storage_api = { package = "wcn_storage_api", path = "crates/storage_api", features = ["server"] }
+raft_api = { package = "wcn_raft_api", path = "crates/raft_api", features = [
+    "server",
+] }
+storage_api = { package = "wcn_storage_api", path = "crates/storage_api", features = [
+    "server",
+] }
 admin_api = { package = "wcn_admin_api", path = "crates/admin_api" }
 client_api = { package = "wcn_client_api", path = "crates/client_api" }
+echo_api = { package = "wcn_echo_api", path = "crates/echo_api" }
 raft = { path = "crates/raft" }
 wcn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
 metrics = "0.23"
 time = "0.3"
 libp2p = { version = "0.54", default-features = false, features = ["serde"] }
+tokio-serde = { git = "https://github.com/xDarksome/tokio-serde.git", rev = "6df9ff9" }
+tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcard.git", rev = "5e1b77a" }
 
 [dependencies]
 wcn = { package = "wcn_core", path = "crates/core" }
@@ -81,6 +83,7 @@ raft_api = { workspace = true, features = ["server", "client"] }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }
+echo_api = { workspace = true, features = ["server", "client"] }
 raft = { workspace = true }
 wcn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }

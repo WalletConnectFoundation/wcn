@@ -5,7 +5,7 @@ pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, fmt::Debug, marker::PhantomData, str::FromStr},
+    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
 };
 
@@ -257,6 +257,10 @@ pub struct PeerAddr {
 impl PeerAddr {
     pub fn new(id: PeerId, addr: Multiaddr) -> Self {
         Self { id, addr }
+    }
+
+    pub fn quic_socketaddr(&self) -> Result<SocketAddr, quic::InvalidMultiaddrError> {
+        quic::multiaddr_to_socketaddr(&self.addr)
     }
 }
 

@@ -1,6 +1,6 @@
 pub use {
     client_api::SubscriptionEvent,
-    storage_api::{self as storage, auth, identity, Multiaddr, PeerId},
+    storage_api::{self as storage, auth, identity, Multiaddr, PeerAddr, PeerId},
 };
 use {
     consistency::ReplicationResults,
@@ -8,7 +8,7 @@ use {
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
-    storage_api::{client::RemoteStorage, PeerAddr},
+    storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
     wc::metrics::{
         self,

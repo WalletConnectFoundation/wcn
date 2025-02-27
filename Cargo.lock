@@ -4404,7 +4404,7 @@ dependencies = [
 [[package]]
 name = "phi-accrual-failure-detector"
 version = "0.1.0"
-source = "git+https://github.com/heilhead/phi-accrual-failure-detector.git?rev=7a6b36b#7a6b36beaa31b867c90c56047807c2073cd4e20b"
+source = "git+https://github.com/heilhead/phi-accrual-failure-detector.git?rev=01e5706#01e5706e73cbb3f29fb5542a1bfb359502503a24"
 dependencies = [
  "thiserror",
 ]

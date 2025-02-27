@@ -26,18 +26,39 @@ pub fn spawn(address: SocketAddr) -> Handle {
     Handle(guard)
 }
 
-async fn ping_loop(addr: SocketAddr) -> Result<(), Error> {
+async fn ping_loop(addr: SocketAddr) {
     let detector = SyncDetector::default();
+    let addr_str = addr.to_string();
 
-    loop {
-        // Retry broken connections.
-        if let Err(err) = ping_loop_internal(addr, &detector).await {
-            tracing::warn!(?err, "ping loop ended with error");
+    let conn_loop = async {
+        loop {
+            // Retry broken connections.
+            if ping_loop_internal(addr, &detector).await.is_err() {
+                metrics::counter!("wcn_echo_client_connection_failure", StringLabel<"destination"> => &addr_str).increment(1);
+            }
+
+            // Added delay before retrying connection.
+            tokio::time::sleep(Duration::from_secs(3)).await;
         }
+    };
 
-        // Added delay before retrying connection.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
+    let stats_loop = async {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+
+            // Failure detector can't calculate suspicion level unless it's received at
+            // least one heartbeat.
+            if detector.is_monitoring() {
+                metrics::gauge!("wcn_echo_client_failure_suspicion", StringLabel<"destination"> => &addr_str)
+                    .set(detector.phi());
+            }
+        }
+    };
+
+    tokio::join!(conn_loop, stats_loop);
 }
 
 async fn ping_loop_internal(addr: SocketAddr, detector: &SyncDetector) -> Result<(), Error> {
@@ -72,20 +93,8 @@ async fn ping_loop_internal(addr: SocketAddr, detector: &SyncDetector) -> Result
         Ok(())
     };
 
-    let stats_loop = async {
-        let mut interval = tokio::time::interval(Duration::from_secs(15));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        loop {
-            interval.tick().await;
-            metrics::gauge!("wcn_echo_client_failure_suspicion", StringLabel<"destination"> => &addr)
-                .set(detector.phi());
-        }
-    };
-
     tokio::select! {
         res = tx_loop => res,
         res = rx_loop => res,
-        res = stats_loop => res,
     }
 }

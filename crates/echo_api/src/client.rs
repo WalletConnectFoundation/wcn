@@ -2,7 +2,10 @@ use {
     crate::{EchoPayload, Error},
     futures::{SinkExt, StreamExt},
     phi_accrual_failure_detector::{Detector as _, SyncDetector},
-    std::{net::SocketAddr, time::Duration},
+    std::{
+        net::{IpAddr, SocketAddr},
+        time::Duration,
+    },
     tokio::net::TcpSocket,
     tokio_util::sync::DropGuard,
     wc::{
@@ -14,9 +17,10 @@ use {
 #[allow(dead_code)]
 pub struct Handle(DropGuard);
 
-pub fn spawn(address: SocketAddr) -> Handle {
+pub fn spawn(address: IpAddr) -> Handle {
     let token = CancellationToken::new();
     let guard = token.clone().drop_guard();
+    let address = SocketAddr::new(address, crate::SERVER_PORT);
 
     ping_loop(address)
         .with_cancellation(token)

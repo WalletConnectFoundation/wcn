@@ -33,6 +33,7 @@ pub async fn spawn(config: Config) -> Result<(), Error> {
 
     let listener = tokio::net::TcpListener::bind(address)
         .await
+        .tap_err(|err| tracing::warn!(?err, "failed to start echo server"))
         .map_err(Error::Listener)?;
 
     let token = CancellationToken::new();

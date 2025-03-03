@@ -2,11 +2,7 @@ use {
     crate::Error,
     futures::{FutureExt as _, SinkExt as _, StreamExt as _},
     governor::state::StreamRateLimitExt,
-    std::{
-        net::{IpAddr, SocketAddr},
-        num::NonZeroU32,
-        sync::Arc,
-    },
+    std::{net::SocketAddr, num::NonZeroU32, sync::Arc},
     tap::TapFallible,
     tokio::{
         net::TcpStream,
@@ -20,7 +16,7 @@ use {
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub address: IpAddr,
+    pub address: SocketAddr,
     pub max_connections: usize,
 
     /// Maximum requests per second.
@@ -29,9 +25,8 @@ pub struct Config {
 
 pub async fn spawn(config: Config) -> Result<(), Error> {
     let semaphore = Arc::new(Semaphore::new(config.max_connections));
-    let address = SocketAddr::new(config.address, crate::SERVER_PORT);
 
-    let listener = tokio::net::TcpListener::bind(address)
+    let listener = tokio::net::TcpListener::bind(config.address)
         .await
         .tap_err(|err| tracing::warn!(?err, "failed to start echo server"))
         .map_err(Error::Listener)?;

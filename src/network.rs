@@ -1,13 +1,12 @@
 use {
     crate::{cluster, consensus, Config, Error, Node, TypeConfig},
     admin_api::Server as _,
-    anyerror::AnyError,
     client_api::Server,
     derive_more::AsRef,
     domain::HASHER,
     futures::{
         future,
-        stream::{self, Map},
+        stream::{self, BoxStream},
         Future,
         FutureExt,
         SinkExt,
@@ -552,12 +551,7 @@ pub enum PullDataError {
 }
 
 impl wcn::migration::Network<cluster::Node> for Network {
-    type DataStream = Map<
-        RecvStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
-        fn(
-            transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
-        ) -> transport::Result<ExportItem>,
-    >;
+    type DataStream = BoxStream<'static, migration_api::client::Result<ExportItem>>;
 
     fn pull_keyrange(
         &self,
@@ -566,6 +560,19 @@ impl wcn::migration::Network<cluster::Node> for Network {
         keyspace_version: u64,
     ) -> impl Future<Output = Result<Self::DataStream, impl wcn::migration::AnyError>> + Send {
         async move {
+            if let Some(addr) = &from.migration_api_addr {
+                let addr = PeerAddr {
+                    id: from.id,
+                    addr: addr.clone(),
+                };
+
+                return self
+                    .migration_api_client
+                    .pull_data(&addr, range, keyspace_version)
+                    .map_ok(|stream| stream.boxed())
+                    .await;
+            }
+
             let range = &range;
 
             rpc::migration::PullData::send(
@@ -581,23 +588,28 @@ impl wcn::migration::Network<cluster::Node> for Network {
                     // flatten error by converting the inner ones into the outer `io::Error`
                     fn flatten_err(
                         res: transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
-                    ) -> transport::Result<ExportItem> {
+                    ) -> migration_api::client::Result<ExportItem> {
                         match res {
                             Ok(Ok(Ok(item))) => Ok(item),
-                            Ok(Ok(Err(err))) => Err(transport::Error::Other(
+                            Ok(Ok(Err(err))) => Err(migration_api::client::Error::Other(
                                 wcn::migration::PullKeyrangeError::from(err).to_string(),
                             )),
-                            Ok(Err(err)) => Err(transport::Error::Other(err.to_string())),
-                            Err(err) => Err(err),
+                            Ok(Err(err)) => {
+                                Err(migration_api::client::Error::Other(err.to_string()))
+                            }
+                            Err(err) => {
+                                Err(migration_api::client::Error::Transport(err.to_string()))
+                            }
                         }
                     }
-                    let rx = rx.map(flatten_err as _);
+                    let rx = rx.map(flatten_err);
 
                     Ok(rx)
                 },
             )
             .await
-            .map_err(|e| AnyError::new(&e))
+            .map(|stream| stream.boxed())
+            .map_err(|e| migration_api::client::Error::Transport(e.to_string()))
         }
     }
 }
@@ -830,6 +842,7 @@ pub type Client = Metered<WithTimeouts<quic::Client>>;
 pub struct Network {
     pub local_id: PeerId,
     pub replica_api_client: Client,
+    pub migration_api_client: migration_api::Client,
 }
 
 impl Network {
@@ -857,6 +870,9 @@ impl Network {
             })?
             .with_timeouts(rpc_timeouts)
             .metered(),
+            migration_api_client: migration_api::Client::new(
+                migration_api::client::Config::new().with_keypair(cfg.keypair.clone()),
+            )?,
         })
     }
 

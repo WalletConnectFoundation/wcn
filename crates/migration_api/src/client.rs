@@ -12,7 +12,7 @@ use {
 };
 
 /// Migration API client.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Client {
     rpc: RpcClient,
 }

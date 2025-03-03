@@ -1,6 +1,6 @@
 use {
     super::*,
-    futures::{SinkExt as _, Stream, StreamExt as _, TryStreamExt},
+    futures::{SinkExt as _, Stream, StreamExt as _},
     std::{future::Future, pin::pin},
     wcn_rpc::{
         server::{middleware::MeteredExt, ClientConnectionInfo},
@@ -10,19 +10,13 @@ use {
 
 /// Migration API server.
 pub trait Server: Clone + Send + Sync + 'static {
-    /// Returns the current keyspace version of this [`Server`].
-    fn keyspace_version(&self) -> u64;
-
-    /// Indicates whether the provided peer is a cluster member.
-    fn is_cluster_member(peer_id: &PeerId) -> bool;
-
     /// Pulls data from this [`Server`].
     fn pull_data(
         &self,
         peer_id: &PeerId,
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<ExportItem>> + Send>> + Send;
+    ) -> impl Future<Output = Result<impl Stream<Item = ExportItem> + Send>> + Send;
 
     /// Converts this Migration API [`Server`] into an [`rpc::Server`].
     fn into_rpc_server(self) -> impl rpc::Server {
@@ -74,8 +68,7 @@ impl<S: Server> rpc::Server for RpcServer<S> {
                         match resp {
                             Ok(data) => {
                                 let data = pin!(data);
-                                tx.send_all(&mut data.map_err(|err| err.into_rpc_error()).map(Ok))
-                                    .await?
+                                tx.send_all(&mut data.map(Ok).map(Ok)).await?
                             }
                             Err(e) => tx.send(Err(e.into_rpc_error())).await?,
                         };

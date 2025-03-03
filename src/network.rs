@@ -16,6 +16,7 @@ use {
     },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
+    migration_api::Server as _,
     pin_project::{pin_project, pinned_drop},
     raft::Raft,
     relay_rocks::{
@@ -43,7 +44,7 @@ use {
     tap::Pipe,
     tokio::sync::mpsc,
     wc::metrics::{future_metrics, FutureExt as _},
-    wcn::cluster::Consensus,
+    wcn::{cluster::Consensus, migration::PullKeyrangeError},
     wcn_rpc::{
         client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
         middleware::{Metered, Timeouts, WithTimeouts},
@@ -541,6 +542,37 @@ impl client_api::Server for ClientApiServer {
     }
 }
 
+#[derive(AsRef, Clone)]
+struct MigrationApiServer {
+    #[as_ref]
+    node: Arc<Node>,
+}
+
+impl migration_api::Server for MigrationApiServer {
+    async fn pull_data(
+        &self,
+        peer_id: &PeerId,
+        keyrange: std::ops::RangeInclusive<u64>,
+        keyspace_version: u64,
+    ) -> migration_api::server::Result<impl Stream<Item = ExportItem> + Send> {
+        self.node
+            .migration_manager()
+            .handle_pull_request(peer_id, keyrange, keyspace_version)
+            .await
+            .map_err(migration_api_server_error)
+    }
+}
+
+fn migration_api_server_error(err: PullKeyrangeError) -> migration_api::server::Error {
+    match err {
+        PullKeyrangeError::NotClusterMember => migration_api::server::Error::NotClusterMember,
+        PullKeyrangeError::KeyspaceVersionMismatch => {
+            migration_api::server::Error::KeyspaceVersionMismatch
+        }
+        PullKeyrangeError::StorageExport(err) => migration_api::server::Error::StorageExport(err),
+    }
+}
+
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum PullDataError {
     #[error(transparent)]
@@ -975,7 +1007,7 @@ impl Network {
                 operation_timeout: default_timeout,
                 authenticator: StorageApiAuthenticator {
                     network_id: cfg.network_id.clone().into(),
-                    node,
+                    node: node.clone(),
                 },
             },
         );
@@ -983,6 +1015,20 @@ impl Network {
         let replica_and_storage_api_servers = wcn_rpc::quic::server::multiplex(
             (replica_api_server, storage_api_server),
             replica_api_quic_server_config,
+        )?;
+
+        let migration_api_quic_server_config = wcn_rpc::quic::server::Config {
+            name: "migration_api",
+            addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.migration_api_server_port)),
+            keypair: cfg.keypair.clone(),
+            max_concurrent_connections: 100,
+            max_concurrent_streams: 1000,
+            priority: transport::Priority::Low,
+        };
+
+        let migration_api_server = wcn_rpc::quic::server::run(
+            MigrationApiServer { node }.into_rpc_server(),
+            migration_api_quic_server_config,
         )?;
 
         let echo_server = echo_api::server::spawn(echo_api::server::Config {
@@ -994,6 +1040,7 @@ impl Network {
         Ok(async move {
             tokio::join!(
                 replica_and_storage_api_servers,
+                migration_api_server,
                 client_api_server,
                 admin_api_server,
                 echo_server

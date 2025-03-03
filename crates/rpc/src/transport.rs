@@ -15,7 +15,7 @@ use {
     tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 
-/// Tranport priority. Transports with higher priority take presedence during
+/// Tranport priority. Transports with higher priority take precedence during
 /// network congestion.
 #[derive(Clone, Copy, Debug)]
 pub enum Priority {

@@ -3,6 +3,7 @@ use {
     futures::{SinkExt, StreamExt},
     phi_accrual_failure_detector::{Detector as _, SyncDetector},
     std::{net::SocketAddr, time::Duration},
+    tap::TapFallible as _,
     tokio::net::TcpSocket,
     tokio_util::sync::DropGuard,
     wc::{
@@ -62,12 +63,11 @@ async fn ping_loop(addr: SocketAddr) {
 }
 
 async fn ping_loop_internal(addr: SocketAddr, detector: &SyncDetector) -> Result<(), Error> {
-    let stream = TcpSocket::new_v4()
-        .map_err(Error::Connection)?
-        .connect(addr)
-        .await
-        .map_err(Error::Connection)?;
-
+    let socket = TcpSocket::new_v4().map_err(Error::Connection)?;
+    let _ = socket
+        .set_nodelay(true)
+        .tap_err(|err| tracing::warn!(?err, "failed to set TCP_NODELAY"));
+    let stream = socket.connect(addr).await.map_err(Error::Connection)?;
     let (mut tx, mut rx) = super::create_transport(stream).split();
 
     let tx_loop = async {

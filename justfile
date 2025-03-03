@@ -1,7 +1,7 @@
-# IRN Justfile
-irn-binary-crate            := "."
+# WCN Justfile
+wcn-binary-crate            := "."
 
-export IRN_JUST_ROOT        := justfile_directory()
+export WCN_JUST_ROOT        := justfile_directory()
 
 # Default to listing recipes
 _default:
@@ -51,50 +51,11 @@ clean:
 
 # Clean /tmp test folder
 clean-tmp:
-  @echo '==> Cleaning /tmp/irn'
-  rm -rf /tmp/irn
-
-# Build IRN docker image
-build-docker:
-  @echo '=> Build IRN docker image'
-  docker compose -f ./docker-compose.yml build
-
-# Start IRN sandbox cluster on docker
-run-docker:
-  @echo '==> Start IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml up -d
-
-# Stop IRN sandbox cluster on docker
-stop-docker:
-  @echo '==> Stop IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml down
-
-
-run-docker-all:
-  @echo '==> Start IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml --profile oracle up -d
-  @sleep 2
-  @sh ./infra/load_anvil_state.sh
-
-
-stop-docker-all:
-  @echo '==> Stop IRN sandbox cluster on docker'
-  docker compose -f ./docker-compose.yml --profile oracle down
-
-
-# Clean up docker IRN sandbox cluster
-clean-docker:
-  @echo '==> Clean IRN sandbox cluster on docker'
-  docker compose  -f ./docker-compose.yml stop
-  docker compose -f ./docker-compose.yml rm -f
-
-# List services running on docker
-ps-docker:
-  @echo '==> List services on docker'
-  docker compose -f ./docker-compose.yml ps
+  @echo '==> Cleaning /tmp/wcn'
+  rm -rf /tmp/wcn
 
 # Bumps the binary version to the given version
-bump-version to: (_bump-cargo-version to irn-binary-crate + "/Cargo.toml")
+bump-version to: (_bump-cargo-version to wcn-binary-crate + "/Cargo.toml")
 
 # Lint the project for any quality issues
 lint: check fmt clippy commit-check clean-tmp
@@ -145,13 +106,13 @@ update-docs: (_regenerate-metrics "docs/Metrics.md")
 
 # Build project documentation
 _build-docs $open="" $nodeps="":
-  @echo "==> Building project documentation @$IRN_JUST_ROOT/target/doc"
+  @echo "==> Building project documentation @$WCN_JUST_ROOT/target/doc"
   @cargo doc --all-features --document-private-items ${nodeps:+--no-deps} ${open:+--open}
 
 # Update the metrics documentation with current metrics
 _regenerate-metrics file temp=`mktemp`: build
   @echo '==> Regenerating metrics to @{{file}}'
-  @cd scripts && ./metrics-apply.awk <(./metrics-fetch.sh | ./metrics-doc.pl | ./metrics-format.pl) < $IRN_JUST_ROOT/{{file}} > {{temp}}
+  @cd scripts && ./metrics-apply.awk <(./metrics-fetch.sh | ./metrics-doc.pl | ./metrics-format.pl) < $WCN_JUST_ROOT/{{file}} > {{temp}}
   @mv -f {{temp}} {{file}}
 
 # Bump the version field of a given Cargo.toml file

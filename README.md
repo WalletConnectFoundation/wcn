@@ -1,4 +1,4 @@
-Inter-Relay-Network Node. Implemented in Rust.
+WallectConnect Network Node. Implemented in Rust.
 
 Node operators, see [Node Operator onboarding](docs/node-operator-onboarding.md) doc before joining the network.
 
@@ -15,7 +15,7 @@ Setup:
   ```
 - Fill `.env` file with necessary values - access keys for AWS and other services. No changes are necessary if just running locally.
 
-Running the IRN Node:
+Running the WCN Node:
 
 ```sh
 just run
@@ -40,11 +40,6 @@ Running dockerized sandbox cluster:
 ```sh
 $ just run-docker
 ```
-
-## Generating Anvil state
-
-To generate an Anvil state snapshot you can load to the Anvil node ran via Docker Compose you first need to generate it using the scripts at https://github.com/WalletConnect/contracts and then place the generated state file at `infra/` and run `just run-docker-all`
-
 ## Contributing
 
 If you would like to contribute to the project, please read

@@ -1,5 +1,5 @@
 [package]
-name = "irn_node"
+name = "wcn_node"
 version = "0.0.0"
 edition = "2021"
 authors = [
@@ -28,20 +28,15 @@ debug = 1
 
 [lib]
 path = "src/lib.rs"
-name = "irn_node"
+name = "wcn_node"
 
 [[bin]]
 path = "src/main.rs"
-name = "irn_node"
+name = "wcn_node"
 
 [features]
 default = ["testing"]
-testing = [
-    "dep:tempfile",
-    "dep:once_cell",
-    "dep:rand",
-    "irn/testing",
-]
+testing = ["dep:tempfile", "dep:once_cell", "dep:rand", "wcn/testing"]
 memory_profiler = ["wc/profiler"]
 
 [lints]
@@ -58,31 +53,41 @@ derive_more = { version = "1.0.0", features = [
     "try_into",
     "deref",
 ] }
-core = { package = "irn_core", path = "crates/core" }
-auth = { package = "irn_auth", path = "crates/auth" }
-domain = { package = "irn_domain", path = "crates/domain" }
-storage_api = { package = "irn_storage_api", path = "crates/storage_api", features = ["server"] }
-admin_api = { package = "irn_admin_api", path = "crates/admin_api" }
-client_api = { package = "irn_client_api", path = "crates/client_api" }
-migration_api = { package = "irn_migration_api", path = "crates/migration_api" }
+core = { package = "wcn_core", path = "crates/core" }
+auth = { package = "wcn_auth", path = "crates/auth" }
+domain = { package = "wcn_domain", path = "crates/domain" }
+raft_api = { package = "wcn_raft_api", path = "crates/raft_api", features = [
+    "server",
+] }
+storage_api = { package = "wcn_storage_api", path = "crates/storage_api", features = [
+    "server",
+] }
+admin_api = { package = "wcn_admin_api", path = "crates/admin_api" }
+client_api = { package = "wcn_client_api", path = "crates/client_api" }
+migration_api = { package = "wcn_migration_api", path = "crates/migration_api" }
+echo_api = { package = "wcn_echo_api", path = "crates/echo_api" }
 raft = { path = "crates/raft" }
-irn_rpc = { path = "crates/rpc" }
+wcn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
 metrics = "0.23"
 time = "0.3"
 libp2p = { version = "0.54", default-features = false, features = ["serde"] }
+tokio-serde = { git = "https://github.com/xDarksome/tokio-serde.git", rev = "6df9ff9" }
+tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcard.git", rev = "5e1b77a" }
 
 [dependencies]
-irn = { package = "irn_core", path = "crates/core" }
+wcn = { package = "wcn_core", path = "crates/core" }
 sharding = { path = "crates/sharding" }
 auth = { workspace = true }
 domain = { workspace = true }
+raft_api = { workspace = true, features = ["server", "client"] }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }
 migration_api = { workspace = true, features = ["server", "client"] }
+echo_api = { workspace = true, features = ["server", "client"] }
 raft = { workspace = true }
-irn_rpc = { workspace = true, features = ["server"] }
+wcn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }
 wc = { workspace = true, features = ["alloc", "future", "metrics"] }
 metrics = { workspace = true }
@@ -147,7 +152,7 @@ rand = { version = "0.8", optional = true }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 
 [dev-dependencies]
-replication = { package = "irn_replication", path = "crates/replication" }
+replication = { package = "wcn_replication", path = "crates/replication" }
 storage_api = { workspace = true, features = ["client", "server"] }
 admin_api = { workspace = true, features = ["client", "server"] }
 tempfile = "3"

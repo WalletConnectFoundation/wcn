@@ -1,11 +1,11 @@
 [package]
-name = "irn_auth"
+name = "wcn_auth"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-irn_rpc = { workspace = true }
+wcn_rpc = { workspace = true }
 
 serde = "1"
 rand = "0.8"

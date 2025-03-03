@@ -111,7 +111,7 @@ fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket>
     Ok(socket.into())
 }
 
-fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
+pub fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
     try_multiaddr_to_socketaddr(addr).ok_or_else(|| InvalidMultiaddrError(addr.clone()))
 }
 
@@ -173,7 +173,7 @@ fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdE
 
     let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;
     let certificate = identity
-        .downcast::<Vec<CertificateDer<'static>>>()
+        .downcast::<Vec<CertificateDer<'_>>>()
         .map_err(|_| Error::DowncastPeerIdentity)?
         .into_iter()
         .next()

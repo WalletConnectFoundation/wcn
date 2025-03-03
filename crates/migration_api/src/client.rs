@@ -1,13 +1,14 @@
 use {
     super::*,
     futures::{SinkExt as _, Stream, StreamExt as _},
-    irn_rpc::{
+    std::{collections::HashSet, io, result::Result as StdResult, time::Duration},
+    wcn_rpc::{
         client::middleware::{MeteredExt, WithTimeoutsExt},
         identity::Keypair,
         middleware::{Metered, Timeouts, WithTimeouts},
         transport::{self, NoHandshake},
+        PeerAddr,
     },
-    std::{collections::HashSet, io, result::Result as StdResult, time::Duration},
 };
 
 /// Migration API client.
@@ -16,7 +17,7 @@ pub struct Client {
     rpc: RpcClient,
 }
 
-type RpcClient = Metered<WithTimeouts<irn_rpc::quic::Client>>;
+type RpcClient = Metered<WithTimeouts<wcn_rpc::quic::Client>>;
 
 /// [`Client`] config.
 #[derive(Clone, Debug)]
@@ -29,6 +30,12 @@ pub struct Config {
 
     /// Timeout of a [`Client`] operation.
     pub operation_timeout: Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Config {
@@ -62,7 +69,7 @@ impl Config {
 impl Client {
     /// Creates a new [`Client`].
     pub fn new(config: Config) -> StdResult<Self, CreationError> {
-        let rpc_client_config = irn_rpc::client::Config {
+        let rpc_client_config = wcn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: HashSet::new(),
             handshake: NoHandshake,
@@ -73,7 +80,7 @@ impl Client {
 
         let timeouts = Timeouts::new().with_default(config.operation_timeout);
 
-        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
+        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
             .with_timeouts(timeouts)
             .metered();
@@ -84,7 +91,7 @@ impl Client {
     /// Pulls data from a remote peer.
     pub async fn pull_data(
         &self,
-        from: &Multiaddr,
+        from: &PeerAddr,
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
     ) -> Result<impl Stream<Item = Result<ExportItem>>> {
@@ -99,7 +106,7 @@ impl Client {
             Ok(rx.map(|item| match item {
                 Ok(Ok(item)) => Ok(item),
                 Err(err) => Err(err.into()),
-                Ok(Err(err)) => Err(irn_rpc::client::Error::from(err).into()),
+                Ok(Err(err)) => Err(wcn_rpc::client::Error::from(err).into()),
             }))
         })
         .await
@@ -146,15 +153,21 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<irn_rpc::client::Error> for Error {
-    fn from(err: irn_rpc::client::Error) -> Self {
+impl From<wcn_rpc::transport::Error> for Error {
+    fn from(err: wcn_rpc::transport::Error) -> Self {
+        Self::Transport(err.to_string())
+    }
+}
+
+impl From<wcn_rpc::client::Error> for Error {
+    fn from(err: wcn_rpc::client::Error) -> Self {
         let rpc_err = match err {
-            irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
-            irn_rpc::client::Error::Rpc { error, .. } => error,
+            wcn_rpc::client::Error::Transport(err) => return err.into(),
+            wcn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {
-            irn_rpc::error_code::TIMEOUT => Self::Timeout,
+            wcn_rpc::error_code::TIMEOUT => Self::Timeout,
             crate::error_code::NOT_CLUSTER_MEMBER => Self::NotClusterMember,
             crate::error_code::KEYSPACE_VERSION_MISMATCH => Self::KeyspaceVersionMismatch,
             crate::error_code::STORAGE_EXPORT_FAILED => Self::StorageExport(

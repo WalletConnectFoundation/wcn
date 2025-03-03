@@ -5,9 +5,6 @@ use {
         FutureExt,
         StreamExt as _,
     },
-    irn::fsm::ShutdownReason,
-    irn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
-    irn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr},
     itertools::Itertools,
     libp2p::{Multiaddr, PeerId},
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
@@ -16,17 +13,23 @@ use {
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
-        sync::atomic::{AtomicU16, Ordering},
+        sync::{
+            atomic::{AtomicU16, AtomicUsize, Ordering},
+            Arc,
+        },
         thread,
         time::Duration,
     },
     tap::Pipe,
     tokio::sync::oneshot,
     tracing_subscriber::EnvFilter,
+    wcn::fsm::ShutdownReason,
+    wcn_node::{cluster::NodeRegion, Config, RocksdbDatabaseConfig},
+    wcn_rpc::{identity::Keypair, quic::socketaddr_to_multiaddr, PeerAddr},
 };
 
 static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
-const NETWORK_ID: &str = "irn_integration_tests";
+const NETWORK_ID: &str = "wcn_integration_tests";
 
 fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::Relaxed)
@@ -78,6 +81,18 @@ impl NodeHandle {
         self.config.raft_server_port = next_port();
         self.config.replica_api_server_port = next_port();
     }
+
+    fn replica_api_addr(&self) -> PeerAddr {
+        PeerAddr::new(self.config.id, self.replica_api_server_addr.clone())
+    }
+
+    fn client_api_addr(&self) -> PeerAddr {
+        PeerAddr::new(self.config.id, self.client_api_server_addr.clone())
+    }
+
+    fn admin_api_addr(&self) -> PeerAddr {
+        PeerAddr::new(self.config.id, self.admin_api_server_addr.clone())
+    }
 }
 
 struct TestCluster {
@@ -117,9 +132,10 @@ impl TestCluster {
             nodes.insert(cfg.id, spawn_node(cfg, prometheus.clone()));
         }
 
+        let admin_addr = PeerAddr::new(PeerId::random(), local_multiaddr(0));
+
         let admin_api_client = admin_api::Client::new(
-            admin_api::client::Config::new(local_multiaddr(0))
-                .with_keypair(authorized_client_keypair(0)),
+            admin_api::client::Config::new(admin_addr).with_keypair(authorized_client_keypair(0)),
         )
         .unwrap();
 
@@ -156,8 +172,7 @@ impl TestCluster {
 
     async fn decommission_node(&mut self, id: &PeerId) {
         let node = self.nodes.remove(id).unwrap();
-        self.admin_api_client
-            .set_server_addr(node.admin_api_server_addr);
+        self.admin_api_client.set_server_addr(node.admin_api_addr());
 
         self.admin_api_client
             .decommission_node(*id, false)
@@ -250,7 +265,7 @@ impl TestCluster {
         let node = self.nodes.values().next().unwrap();
 
         let mut client = self.admin_api_client.clone();
-        client.set_server_addr(node.admin_api_server_addr.clone());
+        client.set_server_addr(node.admin_api_addr());
 
         Ok(client.get_cluster_view().await?)
     }
@@ -284,7 +299,7 @@ impl TestCluster {
         let nodes = self
             .nodes
             .values()
-            .map(|node| local_multiaddr(node.config.client_api_server_port))
+            .map(|node| node.client_api_addr())
             .collect();
 
         let mut cfg = replication::Config::new(nodes).with_keypair(authorized_client_keypair(0));
@@ -297,7 +312,7 @@ impl TestCluster {
         let nodes: HashSet<_> = self
             .nodes
             .values()
-            .map(|node| local_multiaddr(node.config.client_api_server_port))
+            .map(|node| node.client_api_addr())
             .collect();
 
         client_api::Client::new(
@@ -318,35 +333,26 @@ impl TestCluster {
     }
 
     async fn test_pubsub(&self) {
-        tracing::info!("PubSub");
+        let channel = b"channel";
+        let payload = b"payload";
+        let num_clients = 10;
+        let num_messages = 100;
+        let num_messages_total_per_client = num_clients * num_messages;
 
-        let channel1 = b"channel1";
-        let channel2 = b"channel2";
-        let payload1 = b"payload1";
-        let payload2 = b"payload2";
-
-        let clients = (0..2)
+        let clients = (0..num_clients)
             .map(|n| {
-                self.new_replication_driver(move |cfg| cfg.keypair = authorized_client_keypair(n))
+                self.new_replication_driver(move |cfg| {
+                    cfg.keypair = authorized_client_keypair(n as u8 % 2)
+                })
             })
             .pipe(stream::iter)
-            .buffer_unordered(2)
+            .buffer_unordered(num_clients)
             .collect::<Vec<_>>()
             .await;
 
-        // Subscribe 2 groups of clients to different channels.
-        let mut subscriptions1 = stream::iter(&clients)
+        let mut subscriptions = stream::iter(&clients)
             .then(|c| async {
-                c.subscribe([channel1.to_vec()].into_iter().collect())
-                    .await
-                    .unwrap()
-            })
-            .collect::<Vec<_>>()
-            .await;
-
-        let mut subscriptions2 = stream::iter(&clients)
-            .then(|c| async {
-                c.subscribe([channel2.to_vec()].into_iter().collect())
+                c.subscribe([channel.to_vec()].into_iter().collect())
                     .await
                     .unwrap()
             })
@@ -355,58 +361,50 @@ impl TestCluster {
 
         let tasks = FuturesUnordered::new();
 
-        // Publish a message to each channel.
-        // Subscribers need to be polled in order to connect to the IRN backend, so we
-        // wait a bit before publishing.
-        tasks.push(
-            async {
-                let publisher = &clients[0];
-
-                tokio::time::sleep(Duration::from_secs(3)).await;
-
-                publisher
-                    .publish(channel1.to_vec(), payload1.to_vec())
-                    .await
-                    .unwrap();
-                publisher
-                    .publish(channel2.to_vec(), payload2.to_vec())
-                    .await
-                    .unwrap();
-            }
-            .boxed_local(),
-        );
-
-        // All subscriber groups should receive their messages.
-        for sub in subscriptions1.iter_mut() {
+        for client in &clients {
             tasks.push(
-                async {
-                    let data = sub.next().await.unwrap().unwrap();
+                async move {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
 
-                    assert_eq!(&data.channel, channel1);
-                    assert_eq!(&data.message, payload1);
+                    for _ in 0..num_messages {
+                        client
+                            .publish(channel.to_vec(), payload.to_vec())
+                            .await
+                            .unwrap();
+                    }
                 }
                 .boxed_local(),
             )
         }
 
-        for sub in subscriptions2.iter_mut() {
-            tasks.push(
-                async {
-                    let data = sub.next().await.unwrap().unwrap();
+        let num_received = Arc::new(AtomicUsize::new(0));
 
-                    assert_eq!(&data.channel, channel2);
-                    assert_eq!(&data.message, payload2);
+        for sub in subscriptions.iter_mut() {
+            let num_received = num_received.clone();
+
+            tasks.push(
+                async move {
+                    for _ in 0..num_messages_total_per_client {
+                        let data = sub.next().await.unwrap().unwrap();
+                        assert_eq!(&data.channel, channel);
+                        assert_eq!(&data.message, payload);
+                        num_received.fetch_add(1, Ordering::SeqCst);
+                        // tracing::error!("receiving {i} {j}");
+                    }
                 }
                 .boxed_local(),
-            )
+            );
         }
 
-        // Await all tasks.
         tasks.count().await;
 
+        assert_eq!(
+            num_received.load(Ordering::SeqCst),
+            num_messages_total_per_client * num_clients
+        );
+
         // Verify there's no more messages to receive.
-        stream::iter(subscriptions1)
-            .chain(stream::iter(subscriptions2))
+        stream::iter(subscriptions)
             .for_each_concurrent(None, |mut subscriber| async move {
                 let result = tokio::time::timeout(Duration::from_secs(3), subscriber.next()).await;
 
@@ -438,7 +436,7 @@ impl TestCluster {
         // Client, authorized for the first namespace.
         let client0 = self
             .new_replication_driver(|cfg| {
-                cfg.nodes.insert(node.client_api_server_addr.clone());
+                cfg.nodes.insert(node.client_api_addr());
                 cfg.namespaces = vec![namespaces[0].0.clone()];
             })
             .await;
@@ -447,7 +445,7 @@ impl TestCluster {
         // Client, authorized for the second namespace.
         let client1 = self
             .new_replication_driver(|cfg| {
-                cfg.nodes.insert(node.client_api_server_addr.clone());
+                cfg.nodes.insert(node.client_api_addr());
                 cfg.namespaces = vec![namespaces[1].0.clone()];
             })
             .await;
@@ -550,8 +548,17 @@ impl TestCluster {
             // Validate `hscan`.
             let page = client0.hscan(key, 10, None).await.unwrap();
             assert_eq!(
-                crate::sort_data(page.records.into_iter().map(|rec| rec.value).collect()),
-                crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
+                crate::sort_data(
+                    page.records
+                        .into_iter()
+                        .map(|rec| (rec.field, rec.value))
+                        .collect()
+                ),
+                crate::sort_data(
+                    data.iter()
+                        .map(|v| (v.0 .0.clone(), v.1 .0.clone()))
+                        .collect::<Vec<_>>()
+                )
             );
         }
 
@@ -574,8 +581,17 @@ impl TestCluster {
             // Validate `hscan`.
             let page = client0.hscan(key, 10, None).await.unwrap();
             assert_eq!(
-                crate::sort_data(page.records.into_iter().map(|rec| rec.value).collect()),
-                crate::sort_data(data.iter().map(|v| v.1 .0.clone()).collect::<Vec<_>>())
+                crate::sort_data(
+                    page.records
+                        .into_iter()
+                        .map(|rec| (rec.field, rec.value))
+                        .collect()
+                ),
+                crate::sort_data(
+                    data.iter()
+                        .map(|v| (v.0 .0.clone(), v.1 .0.clone()))
+                        .collect::<Vec<_>>()
+                )
             );
         }
     }
@@ -654,8 +670,9 @@ impl TestCluster {
 
                 // check that all replicas have the data
                 let replicas: usize = stream::iter(self.nodes.values())
-                    .map(|n| async {
-                        let storage = storage_api_client.remote_storage(&n.replica_api_server_addr);
+                    .map(|node| async {
+                        let addr = node.replica_api_addr();
+                        let storage = storage_api_client.remote_storage(&addr);
                         let output = storage.get(key.clone()).await.unwrap().map(|rec| rec.value);
                         usize::from(c.expected_output == output)
                     })
@@ -785,7 +802,7 @@ impl TestCluster {
             })
             .await;
 
-        let node_addr = self.nodes[&node_id].client_api_server_addr.clone();
+        let node_addr = self.nodes[&node_id].client_api_addr();
 
         let namespaces = (0..2)
             .map(|i| {
@@ -850,7 +867,7 @@ fn new_node_config() -> Config {
 
     let keypair = Keypair::generate_ed25519();
     let id = PeerId::from_public_key(&keypair.public());
-    let dir: PathBuf = format!("/tmp/irn/test-node/{}", id).parse().unwrap();
+    let dir: PathBuf = format!("/tmp/wcn/test-node/{}", id).parse().unwrap();
 
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let region = match n % 3 {
@@ -876,6 +893,9 @@ fn new_node_config() -> Config {
         replica_api_server_port: next_port(),
         client_api_server_port: next_port(),
         admin_api_server_port: next_port(),
+        migration_api_server_port: next_port(),
+        client_api_max_concurrent_connections: 500,
+        client_api_max_concurrent_rpcs: 10000,
         replica_api_max_concurrent_connections: 500,
         replica_api_max_concurrent_rpcs: 10000,
         coordinator_api_max_concurrent_connections: 500,
@@ -932,9 +952,9 @@ fn spawn_node(cfg: Config, prometheus: PrometheusHandle) -> NodeHandle {
             .build()
             .unwrap()
             .block_on(async move {
-                irn_node::run(rx, prometheus, &config)
+                wcn_node::run(rx, prometheus, &config)
                     .await
-                    .map_err(|err| tracing::error!(?err, "irn_node::run() failed"))
+                    .map_err(|err| tracing::error!(?err, "wcn_node::run() failed"))
                     .unwrap()
                     .await;
 
@@ -988,7 +1008,7 @@ impl Data {
     }
 }
 
-fn sort_data(mut data: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
+fn sort_data<T: Ord>(mut data: Vec<T>) -> Vec<T> {
     data.sort();
     data
 }

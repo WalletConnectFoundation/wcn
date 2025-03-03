@@ -1,11 +1,11 @@
 use {
     super::*,
     futures::{SinkExt as _, Stream, StreamExt as _, TryStreamExt},
-    irn_rpc::{
-        server::{middleware::MeteredExt, ClientConnectionInfo},
-        transport::{BiDirectionalStream, NoHandshake},
-    },
     std::{future::Future, pin::pin},
+    wcn_rpc::{
+        server::{middleware::MeteredExt, ClientConnectionInfo},
+        transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
+    },
 };
 
 /// Migration API server.
@@ -26,7 +26,7 @@ pub trait Server: Clone + Send + Sync + 'static {
 
     /// Converts this Migration API [`Server`] into an [`rpc::Server`].
     fn into_rpc_server(self) -> impl rpc::Server {
-        let rpc_server_config = irn_rpc::server::Config {
+        let rpc_server_config = wcn_rpc::server::Config {
             name: crate::RPC_SERVER_NAME,
             handshake: NoHandshake,
         };
@@ -48,8 +48,9 @@ struct RpcServer<S> {
 impl<S: Server> rpc::Server for RpcServer<S> {
     type Handshake = NoHandshake;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
-    fn config(&self) -> &irn_rpc::server::Config<Self::Handshake> {
+    fn config(&self) -> &wcn_rpc::server::Config<NoHandshake> {
         &self.config
     }
 
@@ -107,13 +108,13 @@ pub enum Error {
 }
 
 impl Error {
-    fn into_rpc_error(self) -> irn_rpc::Error {
+    fn into_rpc_error(self) -> wcn_rpc::Error {
         match self {
-            Self::NotClusterMember => irn_rpc::Error::new(error_code::NOT_CLUSTER_MEMBER),
+            Self::NotClusterMember => wcn_rpc::Error::new(error_code::NOT_CLUSTER_MEMBER),
             Self::KeyspaceVersionMismatch => {
-                irn_rpc::Error::new(error_code::KEYSPACE_VERSION_MISMATCH)
+                wcn_rpc::Error::new(error_code::KEYSPACE_VERSION_MISMATCH)
             }
-            Self::StorageExport(desc) => irn_rpc::Error {
+            Self::StorageExport(desc) => wcn_rpc::Error {
                 code: error_code::STORAGE_EXPORT_FAILED.into(),
                 description: Some(desc.into()),
             },

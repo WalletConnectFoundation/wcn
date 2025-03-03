@@ -1,5 +1,5 @@
 use {
-    crate::{cluster, consensus, contract::StatusReporter, Config, Error, Node},
+    crate::{cluster, consensus, Config, Error, Node, TypeConfig},
     admin_api::Server as _,
     anyerror::AnyError,
     client_api::Server,
@@ -14,20 +14,6 @@ use {
         Stream,
         StreamExt,
         TryFutureExt,
-    },
-    irn::cluster::Consensus,
-    irn_rpc::{
-        client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
-        middleware::{Metered, Timeouts, WithTimeouts},
-        quic::{self, socketaddr_to_multiaddr},
-        server::{
-            self,
-            middleware::{MeteredExt as _, WithTimeoutsExt as _},
-            ClientConnectionInfo,
-        },
-        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
-        Multiaddr,
-        ServerName,
     },
     libp2p::PeerId,
     metrics_exporter_prometheus::PrometheusHandle,
@@ -48,11 +34,9 @@ use {
         },
     },
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         fmt::Debug,
         hash::BuildHasher,
-        io,
         pin::Pin,
         sync::{Arc, RwLock},
         time::Duration,
@@ -60,43 +44,39 @@ use {
     tap::Pipe,
     tokio::sync::mpsc,
     wc::metrics::{future_metrics, FutureExt as _},
+    wcn::cluster::Consensus,
+    wcn_rpc::{
+        client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
+        middleware::{Metered, Timeouts, WithTimeouts},
+        quic::{self, socketaddr_to_multiaddr},
+        server::{
+            self,
+            middleware::{MeteredExt as _, WithTimeoutsExt as _},
+            ClientConnectionInfo,
+        },
+        transport::{
+            self,
+            BiDirectionalStream,
+            NoHandshake,
+            PostcardCodec,
+            RecvStream,
+            SendStream,
+        },
+        Multiaddr,
+        PeerAddr,
+        ServerName,
+    },
 };
 
-pub const RAFT_API_SERVER_NAME: ServerName = ServerName::new("raft_api");
 pub const REPLICA_API_SERVER_NAME: ServerName = ServerName::new("replica_api");
 
 pub mod rpc {
-
-    pub mod raft {
-        use {crate::consensus::*, irn_rpc as rpc};
-
-        pub type AddMember =
-            rpc::Unary<{ rpc::id(b"add_member") }, AddMemberRequest, AddMemberResult>;
-
-        pub type RemoveMember =
-            rpc::Unary<{ rpc::id(b"remove_member") }, RemoveMemberRequest, RemoveMemberResult>;
-
-        pub type ProposeChange =
-            rpc::Unary<{ rpc::id(b"propose_change") }, ProposeChangeRequest, ProposeChangeResult>;
-
-        pub type AppendEntries =
-            rpc::Unary<{ rpc::id(b"append_entries") }, AppendEntriesRequest, AppendEntriesResult>;
-
-        pub type InstallSnapshot = rpc::Unary<
-            { rpc::id(b"install_snapshot") },
-            InstallSnapshotRequest,
-            InstallSnapshotResult,
-        >;
-
-        pub type Vote = rpc::Unary<{ rpc::id(b"vote") }, VoteRequest, VoteResult>;
-    }
-
     pub mod migration {
         use {
-            irn_rpc as rpc,
             relay_rocks::db::migration::ExportItem,
             serde::{Deserialize, Serialize},
             std::ops::RangeInclusive,
+            wcn_rpc as rpc,
         };
 
         #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,9 +103,9 @@ pub mod rpc {
 
     pub mod broadcast {
         use {
-            irn_rpc as rpc,
             libp2p::PeerId,
             serde::{Deserialize, Serialize},
+            wcn_rpc as rpc,
         };
 
         #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -148,8 +128,8 @@ pub mod rpc {
     pub use health::Health;
     pub mod health {
         use {
-            irn_rpc as rpc,
             serde::{Deserialize, Serialize},
+            wcn_rpc as rpc,
         };
 
         pub type Request = ();
@@ -164,7 +144,7 @@ pub mod rpc {
 
     pub use metrics::Metrics;
     pub mod metrics {
-        use irn_rpc as rpc;
+        use wcn_rpc as rpc;
 
         pub type Request = ();
 
@@ -183,12 +163,13 @@ struct ReplicaApiServer {
 
     prometheus: PrometheusHandle,
 
-    config: irn_rpc::server::Config,
+    config: wcn_rpc::server::Config,
 }
 
-impl irn_rpc::Server for ReplicaApiServer {
+impl wcn_rpc::Server for ReplicaApiServer {
     type Handshake = NoHandshake;
     type ConnectionData = ();
+    type Codec = PostcardCodec;
 
     fn config(&self) -> &server::Config<Self::Handshake> {
         &self.config
@@ -196,7 +177,7 @@ impl irn_rpc::Server for ReplicaApiServer {
 
     fn handle_rpc<'a>(
         &'a self,
-        id: irn_rpc::Id,
+        id: wcn_rpc::Id,
         stream: BiDirectionalStream,
         conn_info: &'a ClientConnectionInfo<Self>,
     ) -> impl Future<Output = ()> + Send + 'a {
@@ -430,7 +411,7 @@ impl storage_api::Server for StorageApiServer {
 impl ReplicaApiServer {
     async fn handle_internal_rpc(
         &self,
-        id: irn_rpc::Id,
+        id: wcn_rpc::Id,
         stream: BiDirectionalStream,
         conn_info: &ClientConnectionInfo<Self>,
     ) {
@@ -469,13 +450,13 @@ impl ReplicaApiServer {
             id => {
                 return tracing::warn!(
                     "Unexpected internal RPC: {}",
-                    irn_rpc::Name::new(id).as_str()
+                    wcn_rpc::Name::new(id).as_str()
                 )
             }
         }
         .map_err(|err| {
             tracing::debug!(
-                name = irn_rpc::Name::new(id).as_str(),
+                name = wcn_rpc::Name::new(id).as_str(),
                 ?err,
                 "Failed to handle internal RPC"
             )
@@ -488,7 +469,7 @@ impl ReplicaApiServer {
         &self,
         peer_id: &libp2p::PeerId,
         mut rx: RecvStream<rpc::migration::PullDataRequest>,
-        mut tx: SendStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
+        mut tx: SendStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
     ) -> server::Result<()> {
         tx.set_low_priority();
 
@@ -528,13 +509,16 @@ impl client_api::Server for ClientApiServer {
 
         async move {
             stream::iter(cluster.nodes().filter(|n| &n.id != self.node.id()))
-                .for_each_concurrent(None, |n| {
+                .for_each_concurrent(None, |node| async {
+                    let addr = PeerAddr::new(node.id, node.addr.clone());
+
                     rpc::broadcast::Pubsub::send(
                         &self.node.network().replica_api_client,
-                        &n.addr,
+                        &addr,
                         &evt,
                     )
                     .map(drop)
+                    .await
                 })
                 .await
         }
@@ -567,10 +551,12 @@ pub enum PullDataError {
     Rpc(rpc::migration::PullDataError),
 }
 
-impl irn::migration::Network<cluster::Node> for Network {
+impl wcn::migration::Network<cluster::Node> for Network {
     type DataStream = Map<
-        RecvStream<irn_rpc::Result<rpc::migration::PullDataResponse>>,
-        fn(io::Result<irn_rpc::Result<rpc::migration::PullDataResponse>>) -> io::Result<ExportItem>,
+        RecvStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+        fn(
+            transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+        ) -> transport::Result<ExportItem>,
     >;
 
     fn pull_keyrange(
@@ -578,12 +564,13 @@ impl irn::migration::Network<cluster::Node> for Network {
         from: &cluster::Node,
         range: std::ops::RangeInclusive<u64>,
         keyspace_version: u64,
-    ) -> impl Future<Output = Result<Self::DataStream, impl irn::migration::AnyError>> + Send {
+    ) -> impl Future<Output = Result<Self::DataStream, impl wcn::migration::AnyError>> + Send {
         async move {
             let range = &range;
+
             rpc::migration::PullData::send(
                 &self.replica_api_client,
-                &from.addr,
+                &from.addr(),
                 &move |mut tx, rx| async move {
                     tx.send(rpc::migration::PullDataRequest {
                         keyrange: range.clone(),
@@ -592,15 +579,19 @@ impl irn::migration::Network<cluster::Node> for Network {
                     .await?;
 
                     // flatten error by converting the inner ones into the outer `io::Error`
-                    let map_fn = |res| match res {
-                        Ok(Ok(Ok(item))) => Ok(item),
-                        Ok(Ok(Err(err))) => Err(io::Error::other(
-                            irn::migration::PullKeyrangeError::from(err),
-                        )),
-                        Ok(Err(err)) => Err(io::Error::other(err)),
-                        Err(err) => Err(err),
-                    };
-                    let rx = rx.map(map_fn as fn(_) -> _);
+                    fn flatten_err(
+                        res: transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
+                    ) -> transport::Result<ExportItem> {
+                        match res {
+                            Ok(Ok(Ok(item))) => Ok(item),
+                            Ok(Ok(Err(err))) => Err(transport::Error::Other(
+                                wcn::migration::PullKeyrangeError::from(err).to_string(),
+                            )),
+                            Ok(Err(err)) => Err(transport::Error::Other(err.to_string())),
+                            Err(err) => Err(err),
+                        }
+                    }
+                    let rx = rx.map(flatten_err as _);
 
                     Ok(rx)
                 },
@@ -614,111 +605,65 @@ impl irn::migration::Network<cluster::Node> for Network {
 #[derive(Clone)]
 struct RaftRpcServer {
     raft: consensus::Raft,
-    config: irn_rpc::server::Config,
 }
 
-impl irn_rpc::Server for RaftRpcServer {
-    type Handshake = NoHandshake;
-    type ConnectionData = ();
-
-    fn config(&self) -> &server::Config<Self::Handshake> {
-        &self.config
+impl raft_api::Server<TypeConfig> for RaftRpcServer {
+    fn is_member(&self, peer_id: &PeerId) -> bool {
+        self.raft.is_member(peer_id)
     }
 
-    fn handle_rpc<'a>(
-        &'a self,
-        id: irn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &'a ClientConnectionInfo<Self>,
-    ) -> impl Future<Output = ()> + Send + 'a {
-        Self::handle_rpc(self, id, stream, conn_info)
-    }
-}
-
-impl RaftRpcServer {
-    async fn handle_rpc(
+    fn add_member(
         &self,
-        id: irn_rpc::Id,
-        stream: BiDirectionalStream,
-        conn_info: &ClientConnectionInfo<Self>,
-    ) {
-        let peer_id = &conn_info.peer_id;
+        peer_id: &PeerId,
+        req: consensus::AddMemberRequest,
+    ) -> impl Future<Output = consensus::AddMemberResult> + Send {
+        self.raft.add_member(peer_id, req)
+    }
 
-        let _ = match id {
-            rpc::raft::AddMember::ID => {
-                rpc::raft::AddMember::handle(stream, |req| {
-                    self.raft.add_member(peer_id, req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::RemoveMember::ID => {
-                rpc::raft::RemoveMember::handle(stream, |req| {
-                    self.raft.remove_member(peer_id, req).map(Ok)
-                })
-                .await
-            }
+    fn remove_member(
+        &self,
+        peer_id: &PeerId,
+        req: consensus::RemoveMemberRequest,
+    ) -> impl Future<Output = consensus::RemoveMemberResult> + Send {
+        self.raft.remove_member(peer_id, req)
+    }
 
-            // Adding `Unauthorized` error to responses of these RPCs is total PITA, as the types
-            // are defined in `openraft` itself.
-            // So if the requestor is not a member we just drop the request.
-            // This should generally never happen under normal circumstances, unless we are dealing
-            // with a malicious actor.
-            rpc::raft::ProposeChange::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::ProposeChange::handle(stream, |req| {
-                    self.raft.propose_change(req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::AppendEntries::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::AppendEntries::handle(stream, |req| {
-                    self.raft.append_entries(req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::InstallSnapshot::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::InstallSnapshot::handle(stream, |req| {
-                    self.raft.install_snapshot(req).map(Ok)
-                })
-                .await
-            }
-            rpc::raft::Vote::ID => {
-                if !self.raft.is_member(peer_id) {
-                    return;
-                }
-                rpc::raft::Vote::handle(stream, |req| self.raft.vote(req).map(Ok)).await
-            }
+    fn propose_change(
+        &self,
+        req: consensus::ProposeChangeRequest,
+    ) -> impl Future<Output = consensus::ProposeChangeResult> + Send {
+        self.raft.propose_change(req)
+    }
 
-            id => {
-                return tracing::warn!("Unexpected raft RPC: {}", irn_rpc::Name::new(id).as_str())
-            }
-        }
-        .map_err(|err| {
-            tracing::debug!(
-                name = irn_rpc::Name::new(id).as_str(),
-                ?err,
-                "Failed to handle raft RPC"
-            )
-        });
+    fn append_entries(
+        &self,
+        req: consensus::AppendEntriesRequest,
+    ) -> impl Future<Output = consensus::AppendEntriesResult> + Send {
+        self.raft.append_entries(req)
+    }
+
+    fn install_snapshot(
+        &self,
+        req: consensus::InstallSnapshotRequest,
+    ) -> impl Future<Output = consensus::InstallSnapshotResult> + Send {
+        self.raft.install_snapshot(req)
+    }
+
+    fn vote(
+        &self,
+        req: consensus::VoteRequest,
+    ) -> impl Future<Output = consensus::VoteResult> + Send {
+        self.raft.vote(req)
     }
 }
 
 #[derive(Clone)]
-struct AdminApiServer<S> {
+struct AdminApiServer {
     node: Arc<Node>,
-    status_reporter: Option<S>,
     eth_address: Option<Arc<str>>,
 }
 
-impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
+impl admin_api::Server for AdminApiServer {
     fn get_cluster_view(&self) -> impl Future<Output = admin_api::ClusterView> + Send {
         use admin_api::NodeState;
 
@@ -759,20 +704,10 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
     fn get_node_status(
         &self,
     ) -> impl Future<Output = admin_api::server::GetNodeStatusResult> + Send {
-        use admin_api::GetNodeStatusError as Error;
-
         async {
-            let reporter = self.status_reporter.as_ref().ok_or(Error::NotAvailable)?;
-
-            let report = reporter
-                .report_status()
-                .await
-                .map_err(|err| Error::Internal(format!("{err:?}")))?;
-
             Ok(admin_api::NodeStatus {
                 node_version: crate::NODE_VERSION,
                 eth_address: self.eth_address.as_ref().map(|s| s.to_string()),
-                stake_amount: report.stake,
             })
         }
     }
@@ -859,7 +794,7 @@ impl<S: StatusReporter> admin_api::Server for AdminApiServer<S> {
             {
                 use {
                     admin_api::{snap, MemoryProfile},
-                    io::Write,
+                    std::io::Write,
                 };
 
                 if duration.is_zero() || duration > admin_api::MEMORY_PROFILE_MAX_DURATION {
@@ -895,7 +830,6 @@ pub type Client = Metered<WithTimeouts<quic::Client>>;
 pub struct Network {
     pub local_id: PeerId,
     pub replica_api_client: Client,
-    pub raft_api_client: Client,
 }
 
 impl Network {
@@ -905,24 +839,20 @@ impl Network {
             .with_default(Duration::from_millis(cfg.network_request_timeout))
             .with::<{ rpc::migration::PullData::ID }>(None);
 
+        let known_peers = cfg
+            .known_peers
+            .iter()
+            .map(|(id, addr)| PeerAddr::new(*id, addr.clone()))
+            .collect();
+
         Ok(Self {
             local_id: cfg.id,
-            replica_api_client: quic::Client::new(irn_rpc::client::Config {
+            replica_api_client: quic::Client::new(wcn_rpc::client::Config {
                 keypair: cfg.keypair.clone(),
-                known_peers: cfg.known_peers.values().cloned().collect(),
+                known_peers,
                 handshake: NoHandshake,
                 connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
                 server_name: REPLICA_API_SERVER_NAME,
-                priority: transport::Priority::High,
-            })?
-            .with_timeouts(rpc_timeouts.clone())
-            .metered(),
-            raft_api_client: quic::Client::new(irn_rpc::client::Config {
-                keypair: cfg.keypair.clone(),
-                known_peers: cfg.known_peers.values().cloned().collect(),
-                handshake: NoHandshake,
-                connection_timeout: Duration::from_millis(cfg.network_connection_timeout),
-                server_name: RAFT_API_SERVER_NAME,
                 priority: transport::Priority::High,
             })?
             .with_timeouts(rpc_timeouts)
@@ -935,12 +865,7 @@ impl Network {
         server_addr: Multiaddr,
         raft: consensus::Raft,
     ) -> Result<tokio::task::JoinHandle<()>, quic::Error> {
-        let server_config = irn_rpc::server::Config {
-            name: const { irn_rpc::ServerName::new("raft_api") },
-            handshake: NoHandshake,
-        };
-
-        let quic_server_config = irn_rpc::quic::server::Config {
+        let quic_server_config = wcn_rpc::quic::server::Config {
             name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
@@ -949,27 +874,28 @@ impl Network {
             priority: transport::Priority::High,
         };
 
-        let server = RaftRpcServer {
-            raft,
-            config: server_config,
-        }
-        .with_timeouts(Timeouts::new().with_default(Duration::from_secs(2)))
-        .metered();
+        let server = RaftRpcServer { raft };
 
-        irn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
+        let operation_timeout = Duration::from_secs(2);
+
+        let server =
+            raft_api::Server::<TypeConfig>::into_rpc_server(server, raft_api::server::Config {
+                operation_timeout,
+            });
+
+        wcn_rpc::quic::server::run(server, quic_server_config).map(tokio::spawn)
     }
 
-    pub fn spawn_servers<S: StatusReporter>(
+    pub fn spawn_servers(
         cfg: &Config,
         node: Node,
         prometheus: PrometheusHandle,
-        status_reporter: Option<S>,
     ) -> Result<tokio::task::JoinHandle<()>, Error> {
-        let replica_api_server_config = irn_rpc::server::Config {
-            name: const { irn_rpc::ServerName::new("replica_api") },
+        let replica_api_server_config = wcn_rpc::server::Config {
+            name: const { wcn_rpc::ServerName::new("replica_api") },
             handshake: NoHandshake,
         };
-        let replica_api_quic_server_config = irn_rpc::quic::server::Config {
+        let replica_api_quic_server_config = wcn_rpc::quic::server::Config {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
@@ -1011,6 +937,8 @@ impl Network {
             authorized_clients: cfg.authorized_clients.clone(),
             network_id: cfg.network_id.clone(),
             cluster_view: node.consensus().cluster_view().clone(),
+            max_concurrent_connections: cfg.client_api_max_concurrent_connections,
+            max_concurrent_streams: cfg.client_api_max_concurrent_rpcs,
         };
 
         let client_api_server = ClientApiServer {
@@ -1021,7 +949,6 @@ impl Network {
 
         let admin_api_server = AdminApiServer {
             node: node.clone(),
-            status_reporter,
             eth_address: cfg.eth_address.clone().map(Into::into),
         }
         .serve(admin_api_server_config)?;
@@ -1037,55 +964,27 @@ impl Network {
             },
         );
 
-        let replica_and_storage_api_servers = irn_rpc::quic::server::multiplex(
+        let replica_and_storage_api_servers = wcn_rpc::quic::server::multiplex(
             (replica_api_server, storage_api_server),
             replica_api_quic_server_config,
         )?;
+
+        let echo_server = echo_api::server::spawn(echo_api::server::Config {
+            address: (cfg.server_addr, cfg.replica_api_server_port).into(),
+            max_connections: 512,
+            max_rate: std::num::NonZeroU32::new(5).unwrap(), // Safe unwrap, obviously.
+        });
 
         Ok(async move {
             tokio::join!(
                 replica_and_storage_api_servers,
                 client_api_server,
-                admin_api_server
+                admin_api_server,
+                echo_server
             )
         }
         .map(drop)
         .pipe(tokio::spawn))
-    }
-
-    pub(crate) fn get_peer<'a>(
-        &self,
-        node_id: &'a PeerId,
-        multiaddr: &'a Multiaddr,
-    ) -> RemoteNode<'a> {
-        RemoteNode {
-            id: Cow::Borrowed(node_id),
-            multiaddr: Cow::Borrowed(multiaddr),
-            client: self.raft_api_client.clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct RemoteNode<'a> {
-    pub id: Cow<'a, PeerId>,
-    pub multiaddr: Cow<'a, Multiaddr>,
-    pub client: Client,
-}
-
-impl RemoteNode<'_> {
-    pub fn into_owned(self) -> RemoteNode<'static> {
-        RemoteNode {
-            id: Cow::Owned(self.id.into_owned()),
-            multiaddr: Cow::Owned(self.multiaddr.into_owned()),
-            client: self.client,
-        }
-    }
-}
-
-impl RemoteNode<'_> {
-    pub fn id(&self) -> PeerId {
-        self.id.clone().into_owned()
     }
 }
 
@@ -1129,17 +1028,17 @@ impl Pubsub {
     fn publish(&self, evt: rpc::broadcast::PubsubEventPayload) {
         // `Err` can't happen here, if the lock is poisoned then we have already crashed
         // as we don't handle panics.
-        let subscribers = self.inner.read().unwrap().subscribers.clone();
+        let inner = self.inner.read().unwrap();
 
-        for sub in subscribers.values() {
+        for sub in inner.subscribers.values() {
             if sub.channels.contains(&evt.channel) {
                 match sub.tx.try_send(evt.clone()) {
                     Ok(_) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
-                        metrics::counter!("irn_pubsub_channel_full").increment(1)
+                        metrics::counter!("wcn_pubsub_channel_full").increment(1)
                     }
                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                        metrics::counter!("irn_pubsub_channel_closed").increment(1)
+                        metrics::counter!("wcn_pubsub_channel_closed").increment(1)
                     }
                 };
             }
@@ -1188,9 +1087,9 @@ impl PinnedDrop for Subscription {
     }
 }
 
-impl From<irn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
-    fn from(err: irn::migration::PullKeyrangeError) -> Self {
-        use irn::migration::PullKeyrangeError as E;
+impl From<wcn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
+    fn from(err: wcn::migration::PullKeyrangeError) -> Self {
+        use wcn::migration::PullKeyrangeError as E;
 
         match err {
             E::KeyspaceVersionMismatch => Self::KeyspaceVersionMismatch,
@@ -1200,7 +1099,7 @@ impl From<irn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
     }
 }
 
-impl From<rpc::migration::PullDataError> for irn::migration::PullKeyrangeError {
+impl From<rpc::migration::PullDataError> for wcn::migration::PullKeyrangeError {
     fn from(err: rpc::migration::PullDataError) -> Self {
         use rpc::migration::PullDataError as E;
 

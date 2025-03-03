@@ -1,8 +1,8 @@
 use {
-    irn_rpc::{identity::Keypair, PeerId},
     node::cluster::NodeRegion,
     serde::{Deserialize, Serialize},
     std::net::{Ipv4Addr, SocketAddr},
+    wcn_rpc::{identity::Keypair, PeerId},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,6 +40,7 @@ pub struct Server {
     pub raft_port: u16,
     pub auth_port: u16,
     pub admin_port: u16,
+    pub migration_api_port: u16,
     pub metrics_port: u16,
     pub warmup_delay: u64,
 }
@@ -127,8 +128,8 @@ impl Config {
 
 mod keypair_as_base64 {
     use {
-        irn_rpc::identity::Keypair,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
+        wcn_rpc::identity::Keypair,
     };
 
     pub fn serialize<S>(data: &Keypair, serializer: S) -> Result<S::Ok, S::Error>
@@ -160,7 +161,7 @@ mod keypair_as_base64 {
             .decode(key_str.as_bytes())
             .map_err(|_| D::Error::custom("invalid key encoding: must be base64"))?;
 
-        irn_rpc::identity::Keypair::ed25519_from_bytes(decoded)
+        wcn_rpc::identity::Keypair::ed25519_from_bytes(decoded)
             .map_err(|_| D::Error::custom("invalid key length: must be 32 bytes"))
     }
 }

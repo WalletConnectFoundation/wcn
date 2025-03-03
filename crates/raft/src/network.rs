@@ -17,12 +17,11 @@ use {
 };
 
 /// Creating connections between cluster members.
-#[async_trait]
 pub trait Network<C: TypeConfig>: Clone + Send + Sync + 'static {
     type Client: Raft<C, RpcApi>;
 
     /// Creates a new client instance sending RPCs to the target node.
-    async fn new_client(&self, target: C::NodeId, node: &C::Node) -> Self::Client;
+    fn new_client(&self, target: C::NodeId, node: &C::Node) -> Self::Client;
 }
 
 #[derive(Clone, Debug)]
@@ -33,7 +32,7 @@ impl<C: TypeConfig, N: Network<C>> openraft::RaftNetworkFactory<OpenRaft<C>> for
     type Network = Adapter<N::Client>;
 
     async fn new_client(&mut self, target: C::NodeId, node: &C::Node) -> Self::Network {
-        Adapter(self.0.new_client(target, node).await)
+        Adapter(self.0.new_client(target, node))
     }
 }
 

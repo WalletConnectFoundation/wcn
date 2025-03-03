@@ -1,13 +1,12 @@
 pub use {
     client_api::SubscriptionEvent,
-    storage_api::{self as storage, auth, identity, Multiaddr, PeerId},
+    storage_api::{self as storage, auth, identity, Multiaddr, PeerAddr, PeerId},
 };
 use {
     consistency::ReplicationResults,
     derive_more::derive::AsRef,
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
-    irn_core::cluster,
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
     storage_api::client::RemoteStorage,
     tap::{Pipe, TapFallible as _},
@@ -19,12 +18,13 @@ use {
         FutureExt as _,
         StringLabel,
     },
+    wcn_core::cluster,
 };
 
 mod consistency;
 mod reconciliation;
 
-/// IRN replication driver.
+/// WCN replication driver.
 #[derive(Clone)]
 pub struct Driver {
     client_api: client_api::Client,
@@ -42,8 +42,8 @@ pub struct Config {
     /// Timeout of an API operation.
     pub operation_timeout: Duration,
 
-    /// [`Multiaddr`]s of the nodes to connect to.
-    pub nodes: HashSet<Multiaddr>,
+    /// [`PeerAddr`]s of the nodes to connect to.
+    pub nodes: HashSet<PeerAddr>,
 
     /// A list of storage namespaces to be used.
     pub namespaces: Vec<auth::Auth>,
@@ -52,7 +52,7 @@ pub struct Config {
 impl Config {
     /// Creates a new [`Config`] with the provided list of nodes to connect to
     /// and other options defaults.
-    pub fn new(nodes: HashSet<Multiaddr>) -> Self {
+    pub fn new(nodes: HashSet<PeerAddr>) -> Self {
         Self {
             keypair: identity::Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
@@ -236,9 +236,9 @@ impl Driver {
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
         self.client_api
             .publish(channel, message)
-            .with_metrics(future_metrics!("irn_replication_driver_publish"))
+            .with_metrics(future_metrics!("wcn_replication_driver_publish"))
             .await
-            .tap_err(|_| metrics::counter!("irn_replication_driver_publish_errors").increment(1))
+            .tap_err(|_| metrics::counter!("wcn_replication_driver_publish_errors").increment(1))
             .map_err(Error::ClientApi)
     }
 
@@ -251,9 +251,9 @@ impl Driver {
         let stream = self
             .client_api
             .subscribe(channels)
-            .with_metrics(future_metrics!("irn_replication_driver_subscribe"))
+            .with_metrics(future_metrics!("wcn_replication_driver_subscribe"))
             .await
-            .tap_err(|_| metrics::counter!("irn_replication_driver_subscribe_errors").increment(1))
+            .tap_err(|_| metrics::counter!("wcn_replication_driver_subscribe_errors").increment(1))
             .map_err(Error::ClientApi)?
             .map(|res| res.map_err(Error::ClientApi));
 
@@ -267,12 +267,12 @@ impl Driver {
                 .map_err(|_| Error::TaskCancelled)?
         }
         .with_metrics(future_metrics!(
-            "irn_replication_driver_operation",
+            "wcn_replication_driver_operation",
             EnumLabel<"name", OperationName> => Op::NAME
         ))
         .await
         .tap_err(|err| {
-            metrics::counter!("irn_replication_driver_operation_errors",
+            metrics::counter!("wcn_replication_driver_operation_errors",
                 EnumLabel<"operation", OperationName> => Op::NAME,
                 StringLabel<"error"> => err.as_str()
             )
@@ -309,7 +309,7 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
             result_channel: Some(tx),
         }
         .run()
-        .with_metrics(future_metrics!("irn_replication_driver_task",
+        .with_metrics(future_metrics!("wcn_replication_driver_task",
             EnumLabel<"operation", OperationName> => Op::NAME
         ))
         .pipe(tokio::spawn);
@@ -358,17 +358,20 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
 
         let mut result_stream: FuturesUnordered<_> = replica_set
             .nodes
-            .map(|node| {
+            .map(|node| async {
+                let peer = PeerAddr::new(node.id, node.addr.clone());
+
                 self.operation
-                    .execute(self.driver.storage_api.remote_storage(&node.addr))
-                    .map(|res| (&node.addr, res))
+                    .execute(self.driver.storage_api.remote_storage(&peer))
+                    .map(|res| (peer.clone(), res))
+                    .await
             })
             .collect();
 
         let mut quorum = consistency::MajorityQuorum::new(replica_set.required_count);
 
-        while let Some((addr, result)) = result_stream.next().await {
-            quorum.push(addr.clone(), result);
+        while let Some((peer, result)) = result_stream.next().await {
+            quorum.push(peer, result);
 
             let Some(result) = quorum.is_reached() else {
                 continue;
@@ -394,12 +397,12 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
                 self.operation
                     .repair(self.driver.storage_api.remote_storage(addr), value)
                     .map(|res| match res {
-                        Ok(true) => metrics::counter!("irn_replication_driver_read_repairs",
+                        Ok(true) => metrics::counter!("wcn_replication_driver_read_repairs",
                             EnumLabel<"operation_name", OperationName> => Op::NAME
                         )
                         .increment(1),
                         Ok(false) => {}
-                        Err(_) => metrics::counter!("irn_replication_driver_read_repair_errors",
+                        Err(_) => metrics::counter!("wcn_replication_driver_read_repair_errors",
                             EnumLabel<"operation_name", OperationName> => Op::NAME
                         )
                         .increment(1),
@@ -414,14 +417,14 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
         let required_replicas = quorum.threshold();
         match Op::reconcile(quorum.into_results(), required_replicas) {
             Some(Ok(value)) => {
-                metrics::counter!("irn_replication_driver_reconciliations",
+                metrics::counter!("wcn_replication_driver_reconciliations",
                     EnumLabel<"operation_name", OperationName> => Op::NAME
                 )
                 .increment(1);
                 Ok(value)
             }
             Some(Err(_)) => {
-                metrics::counter!("irn_replication_driver_reconciliation_errors",
+                metrics::counter!("wcn_replication_driver_reconciliation_errors",
                     EnumLabel<"operation_name", OperationName> => Op::NAME
                 )
                 .increment(1);

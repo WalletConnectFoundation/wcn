@@ -1,13 +1,13 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
-    irn_rpc as rpc,
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, time::Duration},
+    wcn_rpc as rpc,
 };
 pub use {
-    irn_rpc::{identity, Multiaddr, PeerId},
     snap,
+    wcn_rpc::{identity, Multiaddr, PeerId},
 };
 
 #[cfg(feature = "client")]
@@ -76,7 +76,6 @@ pub enum NodeState {
 pub struct NodeStatus {
     pub node_version: u64,
     pub eth_address: Option<String>,
-    pub stake_amount: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 [package]
-name = "irn_migration_api"
+name = "wcn_migration_api"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,13 +8,13 @@ publish = false
 workspace = true
 
 [features]
-client = ["irn_rpc/client"]
-server = ["irn_rpc/server"]
+client = ["wcn_rpc/client"]
+server = ["wcn_rpc/server"]
 
 [dependencies]
 wc = { workspace = true, features = ["future"] }
 
-irn_rpc = { workspace = true }
+wcn_rpc = { workspace = true }
 serde = "1"
 thiserror = "1"
 tracing = "0.1"

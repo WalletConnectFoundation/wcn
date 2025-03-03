@@ -1,6 +1,6 @@
-pub use {domain::*, irn::cluster::Error};
+pub use {domain::*, wcn::cluster::Error};
 
-pub type Cluster = irn::Cluster<Node, Keyspace>;
+pub type Cluster = wcn::Cluster<Node, Keyspace>;
 pub type Snapshot<'a> = cluster::Snapshot<'a, Node, Keyspace>;
 pub type Viewable = cluster::Viewable<Node, Keyspace>;
 pub type View = cluster::View<Node, Keyspace>;

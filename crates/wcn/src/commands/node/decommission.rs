@@ -1,4 +1,4 @@
-use {anyhow::Context as _, irn::AdminApiArgs, irn_rpc::PeerId};
+use {anyhow::Context as _, wcn::AdminApiArgs, wcn_rpc::PeerId};
 
 #[derive(Debug, clap::Args)]
 pub struct Cmd {
@@ -20,7 +20,7 @@ pub async fn exec(cmd: Cmd) -> anyhow::Result<()> {
         .new_client()?
         .decommission_node(cmd.id, cmd.force)
         .await
-        .context("irn_admin_api::Client::decommission_node")?;
+        .context("wcn_admin_api::Client::decommission_node")?;
 
     println!("Decommissioning");
 

@@ -27,6 +27,7 @@ where
 {
     type Handshake = S::Handshake;
     type ConnectionData = S::ConnectionData;
+    type Codec = S::Codec;
 
     fn config(&self) -> &super::Config<Self::Handshake> {
         self.inner.config()
@@ -66,6 +67,7 @@ where
 {
     type Handshake = S::Handshake;
     type ConnectionData = S::ConnectionData;
+    type Codec = S::Codec;
 
     fn config(&self) -> &super::Config<Self::Handshake> {
         self.inner.config()
@@ -141,6 +143,7 @@ where
 {
     type Handshake = S::Handshake;
     type ConnectionData = S::ConnectionData;
+    type Codec = S::Codec;
 
     fn config(&self) -> &super::Config<Self::Handshake> {
         self.server.config()

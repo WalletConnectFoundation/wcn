@@ -1,4 +1,4 @@
-//! Consensus functionality required for managing IRN cluster state.
+//! Consensus functionality required for managing WCN cluster state.
 
 use {
     super::{keyspace::Keyspace, node, Cluster},

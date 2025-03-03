@@ -1,4 +1,4 @@
-use {anyhow::Context as _, irn::AdminApiArgs};
+use {anyhow::Context as _, wcn::AdminApiArgs};
 
 #[derive(Debug, clap::Args)]
 pub struct StatusCmd {
@@ -12,11 +12,10 @@ pub async fn exec(cmd: StatusCmd) -> anyhow::Result<()> {
         .new_client()?
         .get_node_status()
         .await
-        .context("irn_admin_api::Client::get_node_status")?;
+        .context("wcn_admin_api::Client::get_node_status")?;
 
     println!("Network Version: {}", status.node_version);
     println!("Wallet Address: {}", status.eth_address.unwrap_or_default());
-    println!("Stake: {}", status.stake_amount);
 
     Ok(())
 }

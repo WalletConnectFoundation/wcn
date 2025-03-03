@@ -1,11 +1,11 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use irn_rpc::{identity, Multiaddr, PeerId};
+pub use wcn_rpc::{identity, Multiaddr, PeerId};
 use {
-    irn_rpc::{self as rpc},
     relay_rocks::db::migration::ExportItem,
     serde::{Deserialize, Serialize},
     std::ops::RangeInclusive,
+    wcn_rpc::{self as rpc},
 };
 
 #[cfg(feature = "client")]

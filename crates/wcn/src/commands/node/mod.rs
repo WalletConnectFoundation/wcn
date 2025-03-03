@@ -30,30 +30,30 @@ pub struct NodeCmd {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum NodeSub {
-    /// Starts an IRN Node.
+    /// Starts an WCN Node.
     ///
     /// A node instance requires a separate working directory, where the
     /// operational data will be stored, as well as a configuration file.
     Start(start::StartCmd),
 
-    /// Retrieves the status of an IRN Node.
+    /// Retrieves the status of an WCN Node.
     ///
     /// The command connects to a running node instance and triggers its
     /// satatus RPC which retrieves the rewards address configured, the
     /// current stake amount, and the network version it's running on.
     Status(status::StatusCmd),
 
-    /// Stops a running IRN Node.
+    /// Stops a running WCN Node.
     ///
     /// The command finds a running node instance based on the working
     /// directory, and sends it a termination signal, waiting for the node
     /// process to terminate.
     Stop(stop::StopCmd),
 
-    /// Decommissions an IRN node.
+    /// Decommissions an WCN node.
     Decommission(decommission::Cmd),
 
-    /// Run memory profiler on an IRN node.
+    /// Run memory profiler on an WCN node.
     Profile(profile::Cmd),
 }
 
@@ -104,7 +104,7 @@ struct Lockfile(pidlock::Pidlock);
 
 impl Lockfile {
     fn new() -> Self {
-        Self(pidlock::Pidlock::new("irn.pid"))
+        Self(pidlock::Pidlock::new("wcn.pid"))
     }
 
     fn acquire(&mut self) -> Result<(), Error> {

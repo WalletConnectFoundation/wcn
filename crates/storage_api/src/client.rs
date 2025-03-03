@@ -2,7 +2,14 @@ use {
     super::*,
     arc_swap::ArcSwap,
     futures::SinkExt,
-    irn_rpc::{
+    std::{
+        collections::HashSet,
+        future::Future,
+        result::Result as StdResult,
+        sync::Arc,
+        time::Duration,
+    },
+    wcn_rpc::{
         client::middleware::{
             self,
             MeteredExt,
@@ -15,13 +22,7 @@ use {
         identity::Keypair,
         middleware::Metered,
         transport::{self, PendingConnection},
-    },
-    std::{
-        collections::HashSet,
-        future::Future,
-        result::Result as StdResult,
-        sync::Arc,
-        time::Duration,
+        PeerAddr,
     },
 };
 
@@ -32,7 +33,7 @@ pub struct Client {
 }
 
 type RpcClient =
-    WithRetries<Metered<WithTimeouts<irn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
+    WithRetries<Metered<WithTimeouts<wcn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
 
 /// Storage API access token.
 pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
@@ -98,7 +99,7 @@ impl Client {
             access_token: config.access_token,
         };
 
-        let rpc_client_config = irn_rpc::client::Config {
+        let rpc_client_config = wcn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: HashSet::new(),
             handshake,
@@ -109,7 +110,7 @@ impl Client {
 
         let timeouts = Timeouts::new().with_default(config.operation_timeout);
 
-        let rpc_client = irn_rpc::quic::Client::new(rpc_client_config)
+        let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
             .with_timeouts(timeouts)
             .metered()
@@ -118,7 +119,7 @@ impl Client {
         Ok(Self { rpc: rpc_client })
     }
 
-    pub fn remote_storage<'a>(&'a self, server_addr: &'a Multiaddr) -> RemoteStorage<'a> {
+    pub fn remote_storage<'a>(&'a self, server_addr: &'a PeerAddr) -> RemoteStorage<'a> {
         RemoteStorage {
             client: self,
             server_addr,
@@ -141,8 +142,8 @@ impl RetryStrategy {
 impl middleware::RetryStrategy for RetryStrategy {
     fn requires_retry(
         &self,
-        _rpc_id: irn_rpc::Id,
-        error: &irn_rpc::client::Error,
+        _rpc_id: wcn_rpc::Id,
+        error: &wcn_rpc::client::Error,
         attempt: usize,
     ) -> Option<Duration> {
         use crate::error_code;
@@ -152,13 +153,13 @@ impl middleware::RetryStrategy for RetryStrategy {
         }
 
         let rpc_error = match error {
-            irn_rpc::client::Error::Transport(_) => return Some(Duration::from_millis(50)),
-            irn_rpc::client::Error::Rpc { error, .. } => error,
+            wcn_rpc::client::Error::Transport(_) => return Some(Duration::from_millis(50)),
+            wcn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         Some(match rpc_error.code.as_ref() {
             // These errors are non-retryable
-            irn_rpc::error_code::THROTTLED
+            wcn_rpc::error_code::THROTTLED
             | error_code::INVALID_KEY
             | error_code::KEYSPACE_VERSION_MISMATCH
             | error_code::UNAUTHORIZED => return None,
@@ -175,7 +176,7 @@ impl middleware::RetryStrategy for RetryStrategy {
 #[derive(Clone, Copy)]
 pub struct RemoteStorage<'a> {
     client: &'a Client,
-    server_addr: &'a Multiaddr,
+    server_addr: &'a PeerAddr,
     expected_keyspace_version: Option<u64>,
 }
 
@@ -396,15 +397,15 @@ pub enum Error {
     Other(String),
 }
 
-impl From<irn_rpc::client::Error> for Error {
-    fn from(err: irn_rpc::client::Error) -> Self {
+impl From<wcn_rpc::client::Error> for Error {
+    fn from(err: wcn_rpc::client::Error) -> Self {
         let rpc_err = match err {
-            irn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
-            irn_rpc::client::Error::Rpc { error, .. } => error,
+            wcn_rpc::client::Error::Transport(err) => return Self::Transport(err.to_string()),
+            wcn_rpc::client::Error::Rpc { error, .. } => error,
         };
 
         match rpc_err.code.as_ref() {
-            irn_rpc::error_code::TIMEOUT => Self::Timeout,
+            wcn_rpc::error_code::TIMEOUT => Self::Timeout,
             crate::error_code::KEYSPACE_VERSION_MISMATCH => Self::KeyspaceVersionMismatch,
             crate::error_code::UNAUTHORIZED => Self::Unauthorized,
             _ => Self::Other(format!("{rpc_err:?}")),
@@ -439,9 +440,7 @@ impl transport::Handshake for Handshake {
                 access_token: self.access_token.load().as_ref().to_owned(),
             };
 
-            tx.send(req)
-                .await
-                .map_err(|err| HandshakeError::Transport(err.into()))?;
+            tx.send(req).await.map_err(HandshakeError::Transport)?;
 
             rx.recv_message().await?.map_err(Into::into)
         }

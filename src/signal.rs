@@ -1,8 +1,8 @@
 use {
     anyhow::Context as _,
     futures::Future,
-    irn::fsm::ShutdownReason,
     tokio::signal::unix::{self, Signal, SignalKind},
+    wcn::fsm::ShutdownReason,
 };
 
 pub fn shutdown_listener() -> anyhow::Result<impl Future<Output = ShutdownReason>> {
@@ -38,5 +38,5 @@ pub fn decommission(pid: i32) -> anyhow::Result<()> {
 }
 
 fn listener(kind: SignalKind) -> anyhow::Result<Signal> {
-    unix::signal(kind).context("Failed to initialize {kind:?} listener")
+    unix::signal(kind).context("Failed to initialize listener")
 }

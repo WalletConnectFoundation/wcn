@@ -1,7 +1,6 @@
 pub use relay_rocks::RocksdbDatabaseConfig;
 use {
     domain::NodeRegion,
-    irn_rpc::{identity::Keypair, Multiaddr},
     libp2p::PeerId,
     serde::{de::Error, Deserialize, Deserializer},
     std::{
@@ -12,6 +11,7 @@ use {
         str::FromStr,
     },
     tap::TapOptional,
+    wcn_rpc::{identity::Keypair, Multiaddr},
 };
 
 /// Local [`Node`] config.
@@ -40,8 +40,17 @@ pub struct Config {
     /// Port of the admin API server.
     pub admin_api_server_port: u16,
 
+    /// Port of the migration API server.
+    pub migration_api_server_port: u16,
+
     /// Port of the Prometheus metrics server.
     pub metrics_server_port: u16,
+
+    /// Maximum number of concurrent Client API connections.
+    pub client_api_max_concurrent_connections: u32,
+
+    /// Maximum number of concurrent Client API RPCs.
+    pub client_api_max_concurrent_rpcs: u32,
 
     /// Maximum number of concurrent Replica API connections.
     pub replica_api_max_concurrent_connections: u32,
@@ -118,7 +127,7 @@ pub struct Config {
     /// Organization that operates this node.
     pub organization: String,
 
-    /// Network ID. E.g. `irn_mainnet` or `irn_testnet`.
+    /// Network ID. E.g. `wcn_mainnet` or `wcn_testnet`.
     pub network_id: String,
 }
 
@@ -155,6 +164,11 @@ impl Config {
             client_api_server_port: raw.client_api_server_port.unwrap_or(3014),
             admin_api_server_port: raw.admin_api_server_port.unwrap_or(3013),
             metrics_server_port: raw.metrics_server_port.unwrap_or(3014),
+            migration_api_server_port: raw.migration_api_server_port.unwrap_or(3015),
+            client_api_max_concurrent_connections: raw
+                .client_api_max_concurrent_connections
+                .unwrap_or(500),
+            client_api_max_concurrent_rpcs: raw.client_api_max_concurrent_rpcs.unwrap_or(2000),
             replica_api_max_concurrent_connections: raw
                 .replica_api_max_concurrent_connections
                 .unwrap_or(500),
@@ -226,8 +240,11 @@ struct RawConfig {
     replica_api_server_port: Option<u16>,
     client_api_server_port: Option<u16>,
     admin_api_server_port: Option<u16>,
+    migration_api_server_port: Option<u16>,
     metrics_server_port: Option<u16>,
 
+    client_api_max_concurrent_connections: Option<u32>,
+    client_api_max_concurrent_rpcs: Option<u32>,
     replica_api_max_concurrent_connections: Option<u32>,
     replica_api_max_concurrent_rpcs: Option<u32>,
     coordinator_api_max_concurrent_connections: Option<u32>,

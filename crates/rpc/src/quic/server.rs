@@ -51,7 +51,7 @@ pub fn run(rpc_server: impl rpc::Server, cfg: Config) -> Result<impl Future<Outp
 
 /// Runs multiple [`rpc::Server`]s on top of a single QUIC server.
 ///
-/// `server` argument is expected to be a tuple of [`rpc::Server`] impls.
+/// `rpc_servers` argument is expected to be a tuple of [`rpc::Server`] impls.
 pub fn multiplex<S>(rpc_servers: S, cfg: Config) -> Result<impl Future<Output = ()>, Error>
 where
     S: Send + Sync + 'static,
@@ -124,7 +124,7 @@ where
 
     fn accept_connection(&self, connecting: quinn::Connecting) {
         let Ok(conn_permit) = self.connection_permits.clone().try_acquire_owned() else {
-            metrics::counter!("irn_rpc_quic_server_connections_dropped").increment(1);
+            metrics::counter!("wcn_rpc_quic_server_connections_dropped").increment(1);
             return;
         };
 
@@ -136,25 +136,24 @@ where
                 .await
                 .map_err(|_| ConnectionError::Timeout)??;
 
-            // TODO: Error on timeout, instead of downgrading the protocol version
             let header = read_connection_header(&conn)
                 .with_timeout(Duration::from_millis(500))
                 .await
-                .unwrap_or_else(|_| Ok(super::ConnectionHeader::default()))?;
+                .map_err(|_| ConnectionError::ReadHeaderTimeout)??;
 
             let _conn_permit = conn_permit;
 
             this.route_connection(header.server_name, conn).await
         }
         .map_err(|err| tracing::warn!(?err, "Inbound connection handler failed"))
-        .with_metrics(future_metrics!("irn_rpc_quic_server_inbound_connection"))
+        .with_metrics(future_metrics!("wcn_rpc_quic_server_inbound_connection"))
         .pipe(tokio::spawn);
     }
 
-    async fn handle_connection(
+    async fn handle_connection<R: rpc::Server>(
         &self,
         conn: quinn::Connection,
-        rpc_server: &impl rpc::Server,
+        rpc_server: &R,
     ) -> Result<(), ConnectionError> {
         use ConnectionError as Error;
 
@@ -178,7 +177,7 @@ where
                 .with_timeout(Duration::from_millis(1000))
                 .await
                 .map_err(|_| {
-                    metrics::counter!("irn_rpc_quic_server_handshake_timeout", StringLabel<"server_name"> => server_name)
+                    metrics::counter!("wcn_rpc_quic_server_handshake_timeout", StringLabel<"server_name"> => server_name)
                         .increment(1);
 
                     Error::Timeout
@@ -194,7 +193,7 @@ where
                 static THROTTLED_RESULT: &crate::Result<()> = &Err(crate::Error::THROTTLED);
 
                 let (_, mut tx) =
-                    BiDirectionalStream::new(tx, rx).upgrade::<(), crate::Result<()>>();
+                    BiDirectionalStream::new(tx, rx).upgrade::<(), crate::Result<()>, R::Codec>();
 
                 // The send buffer is large enough to write the whole response.
                 tx.send(THROTTLED_RESULT).now_or_never();
@@ -216,13 +215,13 @@ where
                 let stream = BiDirectionalStream::new(tx, rx);
                 rpc_server.handle_rpc(rpc_id, stream, &conn_info).await
             }
-            .with_metrics(future_metrics!("irn_rpc_quic_server_inbound_stream"))
+            .with_metrics(future_metrics!("wcn_rpc_quic_server_inbound_stream"))
             .pipe(tokio::spawn);
         }
     }
 
     fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
-        metrics::gauge!("irn_rpc_quic_server_available_stream_permits", StringLabel<"server_name"> => self.name)
+        metrics::gauge!("wcn_rpc_quic_server_available_stream_permits", StringLabel<"server_name"> => self.name)
             .set(self.stream_permits.available_permits() as f64);
 
         self.stream_permits
@@ -230,7 +229,7 @@ where
             .try_acquire_owned()
             .ok()
             .tap_none(|| {
-                metrics::counter!("irn_rpc_quic_server_throttled_streams", StringLabel<"server_name"> => self.name)
+                metrics::counter!("wcn_rpc_quic_server_throttled_streams", StringLabel<"server_name"> => self.name)
                     .increment(1);
             })
     }

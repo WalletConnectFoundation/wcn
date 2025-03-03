@@ -1,10 +1,10 @@
 use {
-    irn_rpc::{
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
+    std::time::Duration,
+    wcn_rpc::{
         identity::ed25519::{Keypair as Ed25519Keypair, PublicKey as Ed25519PublicKey},
         PeerId,
     },
-    serde::{de::DeserializeOwned, Deserialize, Serialize},
-    std::time::Duration,
 };
 
 const JWT_VALIDATION_TIME_LEEWAY_SECS: i64 = 120;
@@ -165,7 +165,7 @@ impl Claims {
     }
 
     pub fn issuer_peer_id(&self) -> PeerId {
-        irn_rpc::identity::PublicKey::from(self.iss.0.clone()).to_peer_id()
+        wcn_rpc::identity::PublicKey::from(self.iss.0.clone()).to_peer_id()
     }
 
     pub fn client_peer_id(&self) -> PeerId {
@@ -260,7 +260,7 @@ mod tests {
     const TOKEN_AUD: &str = "test_token_aud";
 
     fn peer_id(public_key: Ed25519PublicKey) -> PeerId {
-        irn_rpc::identity::PublicKey::from(public_key).to_peer_id()
+        wcn_rpc::identity::PublicKey::from(public_key).to_peer_id()
     }
 
     fn create_claims() -> (Ed25519Keypair, Claims) {

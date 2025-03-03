@@ -1,4 +1,4 @@
-use irn::AdminApiArgs;
+use wcn::AdminApiArgs;
 
 mod view;
 
@@ -13,7 +13,7 @@ pub struct Cmd {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum SubCmd {
-    /// Shows a view of the IRN cluster.
+    /// Shows a view of the WCN cluster.
     View,
 }
 

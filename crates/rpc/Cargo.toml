@@ -1,5 +1,5 @@
 [package]
-name = "irn_rpc"
+name = "wcn_rpc"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,7 +12,7 @@ client = []
 server = []
 
 [dependencies]
-derive_more = { workspace = true } 
+derive_more = { workspace = true }
 derivative = "2.2"
 futures = "0.3"
 indexmap = "2"
@@ -24,7 +24,9 @@ tokio = { version = "1", default-features = false, features = [
 ] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["compat", "codec"] }
-tokio-serde = "0.8"
+tokio-serde = { workspace = true, features = ["json"] }
+tokio-serde-postcard = { workspace = true }
+serde_json = "1"
 rand = { version = "0.8", features = ["small_rng"] }
 libp2p = { workspace = true }
 pin-project = "1.0"
@@ -39,7 +41,6 @@ libp2p-tls = "0.5"
 backoff = { version = "0.4", features = ["tokio"] }
 tap = "1"
 socket2 = "0.5.5"
-tokio-serde-postcard = "0.1"
 nix = { version = "0.28", default-features = false, features = ["socket", "net"] }
 
 [dev-dependencies]

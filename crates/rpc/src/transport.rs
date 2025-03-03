@@ -1,15 +1,15 @@
 use {
-    futures::{Future, FutureExt as _, Sink, StreamExt as _},
+    crate::Message,
+    futures::{stream::MapErr, Future, FutureExt as _, Sink, StreamExt as _, TryStreamExt},
     libp2p::PeerId,
     pin_project::pin_project,
-    serde::{Deserialize, Serialize},
     std::{
         convert::Infallible,
         io,
         pin::Pin,
         task::{self, ready},
     },
-    tokio_serde::Framed,
+    tokio_serde::{formats::SymmetricalJson, Deserializer, Framed, Serializer},
     tokio_serde_postcard::SymmetricalPostcard,
     tokio_stream::Stream,
     tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -21,6 +21,37 @@ use {
 pub enum Priority {
     High,
     Low,
+}
+
+/// Serialization codec.
+pub trait Codec: Send + Sync + 'static {
+    type Serializer<T: Message>: Serializer<T, Error: Into<Error>>
+        + Unpin
+        + Default
+        + Send
+        + Sync
+        + 'static;
+
+    type Deserializer<T: Message>: Deserializer<T, Error: Into<Error>>
+        + Unpin
+        + Default
+        + Send
+        + Sync
+        + 'static;
+}
+
+pub struct PostcardCodec;
+
+impl Codec for PostcardCodec {
+    type Serializer<T: Message> = SymmetricalPostcard<T>;
+    type Deserializer<T: Message> = SymmetricalPostcard<T>;
+}
+
+pub struct JsonCodec;
+
+impl Codec for JsonCodec {
+    type Serializer<T: Message> = SymmetricalJson<T>;
+    type Deserializer<T: Message> = SymmetricalJson<T>;
 }
 
 /// Untyped bi-directional stream.
@@ -40,12 +71,15 @@ impl BiDirectionalStream {
         }
     }
 
-    pub fn upgrade<I, O>(self) -> (RecvStream<I>, SendStream<O>) {
+    pub fn upgrade<I: Message, O: Message, C: Codec>(self) -> (RecvStream<I, C>, SendStream<O, C>) {
         (
-            RecvStream(Framed::new(self.rx, SymmetricalPostcard::default())),
+            RecvStream(Framed::new(
+                self.rx.map_err(Into::into),
+                C::Deserializer::default(),
+            )),
             SendStream {
                 inner: self.tx,
-                codec: SymmetricalPostcard::default(),
+                codec: C::Serializer::default(),
             },
         )
     }
@@ -53,14 +87,14 @@ impl BiDirectionalStream {
 
 /// [`Stream`] of outbound [`Message`]s.
 #[pin_project(project = SendStreamProj)]
-pub struct SendStream<T> {
+pub struct SendStream<T: Message, C: Codec = PostcardCodec> {
     #[pin]
     inner: RawSendStream,
     #[pin]
-    codec: SymmetricalPostcard<T>,
+    codec: C::Serializer<T>,
 }
 
-impl<T> SendStream<T> {
+impl<T: Message> SendStream<T> {
     /// Sets a low priority to this [`SendStream`].
     pub fn set_low_priority(&mut self) {
         let _: Result<(), quinn::ClosedStream> = self.inner.get_mut().set_priority(-1);
@@ -72,18 +106,22 @@ impl<T> SendStream<T> {
     }
 }
 
-impl<T: Serialize> Sink<&T> for SendStream<T> {
-    type Error = io::Error;
+impl<T: Message, C: Codec> Sink<&T> for SendStream<T, C>
+where
+    C::Serializer<T>: Serializer<T>,
+{
+    type Error = Error;
 
     fn poll_ready(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().inner.poll_ready(cx)
+        self.project().inner.poll_ready(cx).map_err(Into::into)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: &T) -> Result<(), Self::Error> {
-        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, item)?;
+        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, item)
+            .map_err(Into::into)?;
 
         self.as_mut().project().inner.start_send(bytes)?;
 
@@ -94,7 +132,7 @@ impl<T: Serialize> Sink<&T> for SendStream<T> {
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().inner.poll_flush(cx)
+        self.project().inner.poll_flush(cx).map_err(Into::into)
     }
 
     fn poll_close(
@@ -102,22 +140,26 @@ impl<T: Serialize> Sink<&T> for SendStream<T> {
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().project().inner.poll_flush(cx))?;
-        self.project().inner.poll_close(cx)
+        self.project().inner.poll_close(cx).map_err(Into::into)
     }
 }
 
-impl<T: Serialize> Sink<T> for SendStream<T> {
-    type Error = io::Error;
+impl<T: Message, C: Codec> Sink<T> for SendStream<T, C>
+where
+    C::Serializer<T>: Serializer<T>,
+{
+    type Error = Error;
 
     fn poll_ready(
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().inner.poll_ready(cx)
+        self.project().inner.poll_ready(cx).map_err(Into::into)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
-        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, &item)?;
+        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, &item)
+            .map_err(Into::into)?;
 
         self.as_mut().project().inner.start_send(bytes)?;
 
@@ -128,7 +170,7 @@ impl<T: Serialize> Sink<T> for SendStream<T> {
         self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
-        self.project().inner.poll_flush(cx)
+        self.project().inner.poll_flush(cx).map_err(Into::into)
     }
 
     fn poll_close(
@@ -136,16 +178,23 @@ impl<T: Serialize> Sink<T> for SendStream<T> {
         cx: &mut task::Context<'_>,
     ) -> task::Poll<Result<(), Self::Error>> {
         ready!(self.as_mut().project().inner.poll_flush(cx))?;
-        self.project().inner.poll_close(cx)
+        self.project().inner.poll_close(cx).map_err(Into::into)
     }
 }
 
 /// [`Stream`] of inbound [`Message`]s.
 #[pin_project]
-pub struct RecvStream<T>(#[pin] Framed<RawRecvStream, T, T, SymmetricalPostcard<T>>);
+pub struct RecvStream<T: Message, C: Codec = PostcardCodec>(
+    #[allow(clippy::type_complexity)]
+    #[pin]
+    Framed<MapErr<RawRecvStream, fn(io::Error) -> Error>, T, T, C::Deserializer<T>>,
+);
 
-impl<T: for<'de> Deserialize<'de>> Stream for RecvStream<T> {
-    type Item = io::Result<T>;
+impl<T: Message, C: Codec> Stream for RecvStream<T, C>
+where
+    C::Deserializer<T>: Deserializer<T>,
+{
+    type Item = Result<T>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -159,20 +208,14 @@ impl<T: for<'de> Deserialize<'de>> Stream for RecvStream<T> {
     }
 }
 
-impl<T> RecvStream<T>
-where
-    T: for<'de> Deserialize<'de> + Unpin,
-{
+impl<T: Message, C: Codec> RecvStream<T, C> {
     /// Tries to receive the next message from this [`RecvStream`].
     pub async fn recv_message(&mut self) -> Result<T> {
-        self.next()
-            .await
-            .ok_or(Error::StreamFinished)?
-            .map_err(Into::into)
+        self.next().await.ok_or(Error::StreamFinished)?
     }
 
     /// Changes the type of this [`RecvStream`].
-    pub fn transmute<M>(self) -> RecvStream<M> {
+    pub fn transmute<M: Message>(self) -> RecvStream<M> {
         RecvStream(Framed::new(
             self.0.into_inner(),
             SymmetricalPostcard::default(),
@@ -188,8 +231,17 @@ pub enum Error {
     #[error("Stream unexpectedly finished")]
     StreamFinished,
 
+    #[error("Codec: {_0}")]
+    Codec(String),
+
     #[error("{_0}")]
     Other(String),
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Self::Codec(err.to_string())
+    }
 }
 
 impl Error {
@@ -205,6 +257,7 @@ impl Error {
             Self::IO(IO::InvalidData) => "invalid_data",
             Self::IO(_) => "io",
             Self::StreamFinished => "stream_finished",
+            Self::Codec(_) => "codec",
             Self::Other(_) => "other_transport",
         }
     }
@@ -229,7 +282,7 @@ pub struct PendingConnection(pub(crate) quinn::Connection);
 
 impl PendingConnection {
     /// Initiates the [`Handshake`].
-    pub async fn initiate_handshake<Req, Resp>(
+    pub async fn initiate_handshake<Req: Message, Resp: Message>(
         &self,
     ) -> Result<(RecvStream<Resp>, SendStream<Req>)> {
         let (tx, rx) = self.0.open_bi().await?;
@@ -237,7 +290,9 @@ impl PendingConnection {
     }
 
     /// Accepts the [`Handshake`].
-    pub async fn accept_handshake<Req, Resp>(&self) -> Result<(RecvStream<Req>, SendStream<Resp>)> {
+    pub async fn accept_handshake<Req: Message, Resp: Message>(
+        &self,
+    ) -> Result<(RecvStream<Req>, SendStream<Resp>)> {
         let (tx, rx) = self.0.accept_bi().await?;
         Ok(BiDirectionalStream::new(tx, rx).upgrade())
     }

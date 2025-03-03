@@ -1,17 +1,18 @@
 use {
     crate::{
         kind,
-        transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        transport::{self, BiDirectionalStream, Codec, NoHandshake, RecvStream, SendStream},
         Error as RpcError,
         ForceSendFuture,
         Id as RpcId,
         Message,
+        PeerAddr,
         Rpc,
         ServerName,
     },
     derive_more::{derive::Display, From},
     futures::{Future, SinkExt as _},
-    libp2p::{identity, Multiaddr},
+    libp2p::identity,
     std::{collections::HashSet, io, time::Duration},
 };
 
@@ -24,7 +25,7 @@ pub struct Config<H = NoHandshake> {
     pub keypair: identity::Keypair,
 
     /// Known remote peer [`Multiaddr`]s.
-    pub known_peers: HashSet<Multiaddr>,
+    pub known_peers: HashSet<PeerAddr>,
 
     /// [`Handshake`] implementation to use for connection establishment.
     pub handshake: H,
@@ -40,11 +41,11 @@ pub struct Config<H = NoHandshake> {
 }
 
 /// RPC client.
-pub trait Client<A: Sync = Multiaddr>: Send + Sync {
+pub trait Client<P: Sync = PeerAddr>: Send + Sync {
     /// Sends an outbound RPC.
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         rpc_id: RpcId,
         f: &'a (impl Fn(BiDirectionalStream) -> Fut + Send + Sync + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a;
@@ -52,12 +53,12 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends an unary RPC.
     fn send_unary<'a, RPC: Rpc<Kind = kind::Unary>>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         request: &'a RPC::Request,
     ) -> impl Future<Output = Result<RPC::Response>> + Send + 'a {
         async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
+            self.send_rpc(peer, RPC::ID, &move |stream| async move {
+                let (mut rx, mut tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request, RPC::Codec>();
                 tx.send(request).await?;
                 Ok(rx.recv_message().await??)
             })
@@ -69,16 +70,22 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends a streaming RPC.
     fn send_streaming<'a, RPC: Rpc<Kind = kind::Streaming>, Fut, Ok: Send>(
         &'a self,
-        addr: &'a A,
-        f: &'a (impl Fn(SendStream<RPC::Request>, RecvStream<RpcResult<RPC>>) -> Fut + Send + Sync + 'a),
+        peer: &'a P,
+        f: &'a (impl Fn(
+            SendStream<RPC::Request, RPC::Codec>,
+            RecvStream<RpcResult<RPC>, RPC::Codec>,
+        ) -> Fut
+                 + Send
+                 + Sync
+                 + 'a),
     ) -> impl Future<Output = Result<Ok>> + Send + 'a
     where
         Fut: Future<Output = Result<Ok>> + Send,
     {
         async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request>();
-                f(tx, rx).await.map_err(Into::into)
+            self.send_rpc(peer, RPC::ID, &move |stream| async move {
+                let (rx, tx) = stream.upgrade::<RpcResult<RPC>, RPC::Request, RPC::Codec>();
+                f(tx, rx).await
             })
             .force_send_impl()
             .await
@@ -88,12 +95,12 @@ pub trait Client<A: Sync = Multiaddr>: Send + Sync {
     /// Sends a oneshot RPC.
     fn send_oneshot<'a, RPC: Rpc<Kind = kind::Oneshot>>(
         &'a self,
-        addr: &'a A,
+        peer: &'a P,
         msg: &'a RPC::Request,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
         async move {
-            self.send_rpc(addr, RPC::ID, &move |stream| async move {
-                let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request>();
+            self.send_rpc(peer, RPC::ID, &move |stream| async move {
+                let (_, mut tx) = stream.upgrade::<RPC::Response, RPC::Request, RPC::Codec>();
                 tx.send(msg).await?;
                 Ok(())
             })
@@ -158,20 +165,22 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 type RpcResult<RPC> = Result<<RPC as Rpc>::Response, crate::Error>;
 
-impl<const ID: RpcId, Req, Resp> super::Unary<ID, Req, Resp>
+impl<const ID: RpcId, Req, Resp, C> super::Unary<ID, Req, Resp, C>
 where
     Req: Message,
     Resp: Message,
+    C: Codec,
 {
     pub async fn send<A: Sync>(client: &impl Client<A>, addr: &A, req: &Req) -> Result<Resp> {
         client.send_unary::<Self>(addr, req).await
     }
 }
 
-impl<const ID: RpcId, Req, Resp> super::Streaming<ID, Req, Resp>
+impl<const ID: RpcId, Req, Resp, C> super::Streaming<ID, Req, Resp, C>
 where
     Req: Message,
     Resp: Message,
+    C: Codec,
 {
     pub fn send<'a, A: Sync, F, Fut, Ok: Send>(
         client: &'a impl Client<A>,
@@ -179,16 +188,17 @@ where
         f: &'a F,
     ) -> impl Future<Output = Result<Ok>> + Send + 'a
     where
-        F: Fn(SendStream<Req>, RecvStream<RpcResult<Self>>) -> Fut + Send + Sync + 'a,
+        F: Fn(SendStream<Req, C>, RecvStream<RpcResult<Self>, C>) -> Fut + Send + Sync + 'a,
         Fut: Future<Output = Result<Ok>> + Send,
     {
         client.send_streaming::<Self, _, _>(addr, f)
     }
 }
 
-impl<const ID: RpcId, Msg> super::Oneshot<ID, Msg>
+impl<const ID: RpcId, Msg, C> super::Oneshot<ID, Msg, C>
 where
     Msg: Message,
+    C: Codec,
 {
     pub fn send<'a, A: Sync>(
         client: &'a impl Client<A>,

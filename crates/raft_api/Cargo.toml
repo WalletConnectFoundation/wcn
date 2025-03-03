@@ -1,0 +1,22 @@
+[package]
+name = "wcn_raft_api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+client = ["wcn_rpc/client"]
+server = ["wcn_rpc/server"]
+
+[dependencies]
+wc = { workspace = true, features = ["future"] }
+raft = { path = "../raft" }
+
+wcn_rpc = { workspace = true }
+serde = "1"
+thiserror = "1"
+tracing = "0.1"
+futures = "0.3"
+
+[lints]
+workspace = true

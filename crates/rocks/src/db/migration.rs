@@ -1,7 +1,14 @@
 use {
-    super::{cf::DbColumn, schema, types::common::iterators::DbIterator},
+    super::{
+        cf::DbColumn,
+        context::MergeOp,
+        schema,
+        types::common::iterators::DbIterator,
+        DataContext,
+    },
     crate::{
         db::{batch, cf::Column, schema::ColumnFamilyName, types::common::CommonStorage},
+        util::serde::{deserialize, serialize},
         Error,
         RocksBackend,
     },
@@ -70,6 +77,9 @@ impl RocksBackend {
                     return backend.write_batch(batch);
                 }
             };
+
+            let ctx = deserialize::<DataContext<Vec<u8>>>(&value)?;
+            let value = serialize(&MergeOp::from(ctx))?;
 
             batch.merge(cf, &key, &value);
 

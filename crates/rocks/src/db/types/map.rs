@@ -18,7 +18,7 @@ use {
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Record<F = Vec<u8>, V = Vec<u8>> {
+pub struct Record<F, V> {
     pub field: F,
     pub value: V,
     pub expiration: UnixTimestampSecs,
@@ -136,8 +136,10 @@ pub trait MapStorage<C: Column>: CommonStorage<C> {
     fn hscan(
         &self,
         key: &C::KeyType,
-        opts: iterators::ScanOptions<iterators::GenericCursor>,
-    ) -> impl Future<Output = Result<iterators::ScanResult<C::ValueType>, Error>> + Send + Sync;
+        opts: iterators::ScanOptions<C::SubKeyType>,
+    ) -> impl Future<Output = Result<iterators::ScanResult<C::SubKeyType, C::ValueType>, Error>>
+           + Send
+           + Sync;
 
     /// Returns the remaining time to live of a map value stored at the given
     /// key.
@@ -330,9 +332,10 @@ impl<C: Column> MapStorage<C> for DbColumn<C> {
     fn hscan(
         &self,
         key: &C::KeyType,
-        opts: iterators::ScanOptions<iterators::GenericCursor>,
-    ) -> impl Future<Output = Result<iterators::ScanResult<C::ValueType>, Error>> + Send + Sync
-    {
+        opts: iterators::ScanOptions<C::SubKeyType>,
+    ) -> impl Future<Output = Result<iterators::ScanResult<C::SubKeyType, C::ValueType>, Error>>
+           + Send
+           + Sync {
         async move {
             let key = key.clone();
 

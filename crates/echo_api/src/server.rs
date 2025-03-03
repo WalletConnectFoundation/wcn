@@ -45,6 +45,10 @@ pub async fn spawn(config: Config) -> Result<(), Error> {
             continue;
         };
 
+        let _ = socket
+            .set_nodelay(true)
+            .tap_err(|err| tracing::warn!(?err, "failed to set TCP_NODELAY"));
+
         let Ok(permit) = semaphore.clone().try_acquire_owned() else {
             metrics::counter!("wcn_echo_server_connection_dropped").increment(1);
             continue;

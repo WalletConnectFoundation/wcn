@@ -10,8 +10,6 @@ pub mod client;
 #[cfg(feature = "server")]
 pub mod server;
 
-const SERVER_PORT: u16 = 43333;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Failed to connect: {0}")]

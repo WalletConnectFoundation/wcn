@@ -95,8 +95,8 @@ fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket>
     tracing::info!(udp_recv_buffer_size = socket.recv_buffer_size()?);
 
     let (so_priority, tos) = match priority {
-        Priority::High => (0, IpTosDscp::Ef),
-        Priority::Low => (6, IpTosDscp::Le),
+        Priority::High => (6, IpTosDscp::Ef),
+        Priority::Low => (0, IpTosDscp::Le),
     };
 
     if let Err(err) = setsockopt(&socket, sockopt::Priority, &so_priority) {

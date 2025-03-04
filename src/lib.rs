@@ -55,6 +55,9 @@ pub enum Error {
     #[error("Failed to initialize networking: {0:?}")]
     Network(#[from] quic::Error),
 
+    #[error("Failed to initialize Migration API client: {0:?}")]
+    MigrationApiClient(#[from] migration_api::client::CreationError),
+
     #[error("Failed to initialize storage: {0:?}")]
     Storage(storage::Error),
 
@@ -110,7 +113,7 @@ pub fn exec() -> anyhow::Result<()> {
 
     // TODO: Make this version consistent with the version in the repo, and find a
     // way to set it automatically.
-    wc::metrics::gauge!("wcn_node_version").set(250226.0);
+    wc::metrics::gauge!("wcn_node_version").set(250303.0);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 
@@ -158,8 +161,10 @@ pub async fn run(
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
-            // TODO: populate once all nodes are updated and have this field
-            migration_api_addr: None,
+            migration_api_addr: Some(socketaddr_to_multiaddr((
+                cfg.server_addr,
+                cfg.migration_api_server_port,
+            ))),
         },
         node_opts,
         consensus,

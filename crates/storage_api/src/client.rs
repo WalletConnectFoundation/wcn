@@ -105,6 +105,7 @@ impl Client {
             handshake,
             connection_timeout: config.connection_timeout,
             server_name: crate::RPC_SERVER_NAME,
+            priority: transport::Priority::High,
         };
 
         let timeouts = Timeouts::new().with_default(config.operation_timeout);

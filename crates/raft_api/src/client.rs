@@ -22,7 +22,7 @@ use {
         client::{self, middleware::MeteredExt},
         identity::Keypair,
         middleware::Metered,
-        transport::NoHandshake,
+        transport::{self, NoHandshake},
         PeerAddr,
     },
 };
@@ -76,6 +76,7 @@ impl<C: TypeConfig> Client<C> {
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
             server_name: crate::RPC_SERVER_NAME,
+            priority: transport::Priority::High,
         };
 
         let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)

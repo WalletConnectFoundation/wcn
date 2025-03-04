@@ -15,6 +15,14 @@ use {
     tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 
+/// Tranport priority. Transports with higher priority take precedence during
+/// network congestion.
+#[derive(Clone, Copy, Debug)]
+pub enum Priority {
+    High,
+    Low,
+}
+
 /// Serialization codec.
 pub trait Codec: Send + Sync + 'static {
     type Serializer<T: Message>: Serializer<T, Error: Into<Error>>
@@ -87,6 +95,11 @@ pub struct SendStream<T: Message, C: Codec = PostcardCodec> {
 }
 
 impl<T: Message> SendStream<T> {
+    /// Sets a low priority to this [`SendStream`].
+    pub fn set_low_priority(&mut self) {
+        let _: Result<(), quinn::ClosedStream> = self.inner.get_mut().set_priority(-1);
+    }
+
     /// Waits until this [`SendStream`] is closed.
     pub async fn wait_closed(&mut self) {
         self.inner.get_mut().stopped().map(drop).await

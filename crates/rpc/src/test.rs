@@ -5,7 +5,7 @@ use {
         identity::Keypair,
         quic,
         server::{self, ClientConnectionInfo},
-        transport::{BiDirectionalStream, NoHandshake, PostcardCodec},
+        transport::{self, BiDirectionalStream, NoHandshake, PostcardCodec},
         Id as RpcId,
         Multiaddr,
         PeerAddr,
@@ -117,6 +117,7 @@ async fn suite() {
             handshake: NoHandshake,
             connection_timeout: Duration::from_secs(15),
             server_name: RPC_SERVER_NAME,
+            priority: transport::Priority::High,
         };
 
         let client = quic::Client::new(client_config).expect("Client::new");
@@ -132,6 +133,7 @@ async fn suite() {
             keypair: keypair.clone(),
             max_concurrent_connections: 500,
             max_concurrent_streams: 10000,
+            priority: transport::Priority::High,
         };
 
         clients.push(client.clone());

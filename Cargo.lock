@@ -3864,6 +3864,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "metrics"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4052,6 +4061,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -6824,6 +6834,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_migration_api"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "relay_rocks",
+ "serde",
+ "thiserror",
+ "time",
+ "tracing",
+ "wc",
+ "wcn_rpc",
+]
+
+[[package]]
 name = "wcn_node"
 version = "0.0.0"
 dependencies = [
@@ -6885,6 +6909,7 @@ dependencies = [
  "wcn_core",
  "wcn_domain",
  "wcn_echo_api",
+ "wcn_migration_api",
  "wcn_raft_api",
  "wcn_replication",
  "wcn_rpc",
@@ -6935,6 +6960,7 @@ dependencies = [
  "libp2p",
  "libp2p-tls",
  "metrics",
+ "nix",
  "pin-project",
  "quinn",
  "quinn-proto",

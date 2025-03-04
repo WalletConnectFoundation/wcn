@@ -284,3 +284,14 @@ impl<T> Merge<MergeOp<T>> for DataContext<T> {
         self
     }
 }
+
+impl<T> From<DataContext<T>> for MergeOp<T> {
+    fn from(ctx: DataContext<T>) -> Self {
+        let timestamp = ctx.updated.unwrap_or(ctx.created);
+
+        match ctx.payload {
+            Payload::Some(value) => Self::set(value, ctx.expires, timestamp),
+            Payload::None => Self::del(timestamp),
+        }
+    }
+}

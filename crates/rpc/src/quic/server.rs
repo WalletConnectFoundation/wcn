@@ -4,7 +4,7 @@ use {
         self as rpc,
         quic,
         server::ConnectionInfo,
-        transport::{BiDirectionalStream, Handshake, PendingConnection},
+        transport::{self, BiDirectionalStream, Handshake, PendingConnection},
         ServerName,
     },
     derive_more::derive::Deref,
@@ -39,6 +39,9 @@ pub struct Config {
 
     /// Maximum allowed amount of concurrent streams.
     pub max_concurrent_streams: u32,
+
+    /// [`transport::Priority`] of the server.
+    pub priority: transport::Priority,
 }
 
 /// Runs the provided [`rpc::Server`] using QUIC protocol.
@@ -98,6 +101,7 @@ where
             &cfg.keypair,
             transport_config,
             Some(server_config),
+            cfg.priority,
         )?;
 
         Ok(Self(Arc::new(ServerInner {

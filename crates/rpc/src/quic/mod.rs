@@ -1,6 +1,10 @@
 use {
-    crate::ServerName,
+    crate::{
+        transport::{self, Priority},
+        ServerName,
+    },
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
+    nix::sys::socket::{setsockopt, sockopt},
     quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
         io,
@@ -61,6 +65,7 @@ fn new_quinn_endpoint(
     keypair: &Keypair,
     transport_config: Arc<quinn::TransportConfig>,
     server_config: Option<quinn::ServerConfig>,
+    priority: transport::Priority,
 ) -> Result<quinn::Endpoint, Error> {
     let client_tls_config =
         libp2p_tls::make_client_config(keypair, None).map_err(|err| Error::Tls(err.to_string()))?;
@@ -69,7 +74,7 @@ fn new_quinn_endpoint(
     let mut client_config = quinn::ClientConfig::new(Arc::new(client_tls_config));
     client_config.transport_config(transport_config);
 
-    let socket = new_udp_socket(socket_addr).map_err(Error::Socket)?;
+    let socket = new_udp_socket(socket_addr, priority).map_err(Error::Socket)?;
 
     let mut endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
@@ -82,12 +87,26 @@ fn new_quinn_endpoint(
     Ok(endpoint)
 }
 
-fn new_udp_socket(addr: SocketAddr) -> io::Result<UdpSocket> {
+fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
 
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     tracing::info!(udp_send_buffer_size = socket.send_buffer_size()?);
     tracing::info!(udp_recv_buffer_size = socket.recv_buffer_size()?);
+
+    let (so_priority, tos) = match priority {
+        Priority::High => (6, IpTosDscp::Ef),
+        Priority::Low => (0, IpTosDscp::Le),
+    };
+
+    if let Err(err) = setsockopt(&socket, sockopt::Priority, &so_priority) {
+        tracing::warn!(?err, "Failed to set `SO_PRIORITY`");
+    }
+
+    if let Err(err) = socket.set_tos(tos as u32) {
+        tracing::warn!(?err, "Failed to set `IP_TOS`");
+    }
+
     socket.bind(&addr.into())?;
     Ok(socket.into())
 }
@@ -180,4 +199,17 @@ pub enum ExtractPeerIdError {
 
     #[error("Failed to parse TLS certificate: {0:?}")]
     ParseTlsCertificate(libp2p_tls::certificate::ParseError),
+}
+
+// Source: https://github.com/mozilla/neqo/blob/bb45c7436f583a7ed2e408beffbf809b70142848/neqo-common/src/tos.rs#L69
+/// Diffserv codepoints, mapped to the upper six bits of the TOS field.
+/// <https://www.iana.org/assignments/dscp-registry/dscp-registry.xhtml>
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
+enum IpTosDscp {
+    /// Expedited Forwarding, RFC3246
+    Ef = 0b1011_1000,
+
+    /// Lower-Effort, RFC8622
+    Le = 0b0000_0100,
 }

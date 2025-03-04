@@ -4,7 +4,7 @@ use {
     wcn_rpc::{
         client::middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
         identity::Keypair,
-        transport::NoHandshake,
+        transport::{self, NoHandshake},
         PeerAddr,
     },
 };
@@ -60,6 +60,7 @@ impl Client {
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
             server_name: crate::RPC_SERVER_NAME,
+            priority: transport::Priority::High,
         };
 
         let timeouts = Timeouts::new()

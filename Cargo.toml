@@ -64,6 +64,7 @@ storage_api = { package = "wcn_storage_api", path = "crates/storage_api", featur
 ] }
 admin_api = { package = "wcn_admin_api", path = "crates/admin_api" }
 client_api = { package = "wcn_client_api", path = "crates/client_api" }
+migration_api = { package = "wcn_migration_api", path = "crates/migration_api" }
 echo_api = { package = "wcn_echo_api", path = "crates/echo_api" }
 raft = { path = "crates/raft" }
 wcn_rpc = { path = "crates/rpc" }
@@ -83,6 +84,7 @@ raft_api = { workspace = true, features = ["server", "client"] }
 storage_api = { workspace = true, features = ["server"] }
 admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }
+migration_api = { workspace = true, features = ["server", "client"] }
 echo_api = { workspace = true, features = ["server", "client"] }
 raft = { workspace = true }
 wcn_rpc = { workspace = true, features = ["server"] }

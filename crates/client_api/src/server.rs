@@ -15,7 +15,14 @@ use {
             middleware::{Auth, MeteredExt as _, WithAuthExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{BiDirectionalStream, NoHandshake, PostcardCodec, RecvStream, SendStream},
+        transport::{
+            self,
+            BiDirectionalStream,
+            NoHandshake,
+            PostcardCodec,
+            RecvStream,
+            SendStream,
+        },
         Multiaddr,
         PeerId,
     },
@@ -75,6 +82,7 @@ pub trait Server: Clone + Send + Sync + 'static {
             keypair: cfg.keypair.clone(),
             max_concurrent_connections: cfg.max_concurrent_connections,
             max_concurrent_streams: cfg.max_concurrent_streams,
+            priority: transport::Priority::High,
         };
 
         let inner = Arc::new(Inner {

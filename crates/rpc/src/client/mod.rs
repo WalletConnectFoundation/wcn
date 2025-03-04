@@ -35,6 +35,9 @@ pub struct Config<H = NoHandshake> {
 
     /// Name of the RPC server this client is going to be connecting to.
     pub server_name: ServerName,
+
+    /// [`transport::Priority`] of the client.
+    pub priority: transport::Priority,
 }
 
 /// RPC client.

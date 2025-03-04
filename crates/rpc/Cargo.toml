@@ -41,6 +41,7 @@ libp2p-tls = "0.5"
 backoff = { version = "0.4", features = ["tokio"] }
 tap = "1"
 socket2 = "0.5.5"
+nix = { version = "0.28", default-features = false, features = ["socket", "net"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

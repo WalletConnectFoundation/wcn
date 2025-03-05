@@ -1,10 +1,11 @@
+#[cfg(target_os = "linux")]
+use nix::sys::socket::{setsockopt, sockopt};
 use {
     crate::{
         transport::{self, Priority},
         ServerName,
     },
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
-    nix::sys::socket::{setsockopt, sockopt},
     quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
         io,
@@ -99,9 +100,14 @@ fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket>
         Priority::Low => (0, IpTosDscp::Le),
     };
 
+    // make MacOS enjoyers happy
+    #[cfg(target_os = "linux")]
     if let Err(err) = setsockopt(&socket, sockopt::Priority, &so_priority) {
         tracing::warn!(?err, "Failed to set `SO_PRIORITY`");
     }
+
+    #[cfg(not(target_os = "linux"))]
+    let _ = so_priority;
 
     if let Err(err) = socket.set_tos(tos as u32) {
         tracing::warn!(?err, "Failed to set `IP_TOS`");

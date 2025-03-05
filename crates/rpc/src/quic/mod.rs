@@ -1,10 +1,11 @@
+#[cfg(target_os = "linux")]
+use nix::sys::socket::{setsockopt, sockopt};
 use {
     crate::{
         transport::{self, Priority},
         ServerName,
     },
     libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
-    nix::sys::socket::{setsockopt, sockopt},
     quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
         io,

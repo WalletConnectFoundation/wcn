@@ -99,6 +99,8 @@ fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket>
         Priority::Low => (0, IpTosDscp::Le),
     };
 
+    // make MacOS enjoyers happy
+    #[cfg(target_os = "linux")]
     if let Err(err) = setsockopt(&socket, sockopt::Priority, &so_priority) {
         tracing::warn!(?err, "Failed to set `SO_PRIORITY`");
     }

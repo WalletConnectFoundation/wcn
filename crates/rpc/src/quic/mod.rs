@@ -105,6 +105,9 @@ fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket>
         tracing::warn!(?err, "Failed to set `SO_PRIORITY`");
     }
 
+    #[cfg(not(target_os = "linux"))]
+    let _ = so_priority;
+
     if let Err(err) = socket.set_tos(tos as u32) {
         tracing::warn!(?err, "Failed to set `IP_TOS`");
     }

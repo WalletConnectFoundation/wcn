@@ -1,100 +1,108 @@
 use {
     crate::{EchoPayload, Error},
     futures::{SinkExt, StreamExt},
-    phi_accrual_failure_detector::{Detector as _, SyncDetector},
-    std::{net::SocketAddr, time::Duration},
+    std::{collections::VecDeque, future::Future, net::SocketAddr, time::Duration},
     tap::TapFallible as _,
-    tokio::net::TcpSocket,
+    tokio::{
+        net::{TcpSocket, TcpStream},
+        sync::{mpsc, oneshot, Mutex},
+    },
     tokio_util::sync::DropGuard,
     wc::{
         future::{CancellationToken, FutureExt as _, StaticFutureExt as _},
-        metrics::{self, FutureExt as _, StringLabel},
+        metrics::{self, FutureExt as _},
     },
 };
 
-#[allow(dead_code)]
-pub struct Handle(DropGuard);
+const OUTSTANDING_HEARTBEAT_CAP: usize = 15;
 
-pub fn spawn(address: SocketAddr) -> Handle {
-    let token = CancellationToken::new();
-    let guard = token.clone().drop_guard();
+#[derive(Debug, thiserror::Error)]
+#[error("Client channel closed")]
+struct ClientChannelClosed;
 
-    ping_loop(address)
-        .with_cancellation(token)
-        .with_metrics(metrics::future_metrics!("wcn_echo_client_ping_loop"))
-        .spawn();
-
-    Handle(guard)
+pub struct Client {
+    tx: mpsc::Sender<oneshot::Sender<Result<Duration, Error>>>,
+    _guard: DropGuard,
 }
 
-async fn ping_loop(addr: SocketAddr) {
-    let detector = SyncDetector::default();
-    let addr_str = addr.to_string();
+impl Client {
+    pub async fn create(address: SocketAddr) -> Result<Self, Error> {
+        let token = CancellationToken::new();
+        let socket = TcpSocket::new_v4().map_err(Error::Connection)?;
+        let _ = socket
+            .set_nodelay(true)
+            .tap_err(|err| tracing::warn!(?err, "failed to set TCP_NODELAY"));
+        let stream = socket.connect(address).await.map_err(Error::Connection)?;
+        let (tx, rx) = mpsc::channel(OUTSTANDING_HEARTBEAT_CAP);
 
-    let conn_loop = async {
-        loop {
-            // Retry broken connections.
-            if ping_loop_internal(addr, &detector).await.is_err() {
-                metrics::counter!("wcn_echo_client_connection_failure", StringLabel<"destination"> => &addr_str).increment(1);
+        ping_loop(stream, rx)
+            .with_cancellation(token.clone())
+            .with_metrics(metrics::future_metrics!("wcn_echo_client_ping_loop"))
+            .spawn();
+
+        Ok(Self {
+            tx,
+            _guard: token.drop_guard(),
+        })
+    }
+
+    pub fn heartbeat(&self) -> impl Future<Output = Result<Duration, Error>> + Send {
+        let (tx, rx) = oneshot::channel();
+        let res = self.tx.try_send(tx);
+
+        async move {
+            if res.is_err() {
+                Err(Error::TooManyRequests)
+            } else {
+                rx.await
+                    .map_err(|_| Error::Other(ClientChannelClosed.to_string()))?
             }
-
-            // Added delay before retrying connection.
-            tokio::time::sleep(Duration::from_secs(3)).await;
         }
-    };
-
-    let stats_loop = async {
-        let mut interval = tokio::time::interval(Duration::from_secs(15));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        loop {
-            interval.tick().await;
-
-            // Failure detector can't calculate suspicion level unless it's received at
-            // least one heartbeat.
-            if detector.is_monitoring() {
-                metrics::gauge!("wcn_echo_client_failure_suspicion", StringLabel<"destination"> => &addr_str)
-                    .set(detector.phi());
-            }
-        }
-    };
-
-    tokio::join!(conn_loop, stats_loop);
+    }
 }
 
-async fn ping_loop_internal(addr: SocketAddr, detector: &SyncDetector) -> Result<(), Error> {
-    let socket = TcpSocket::new_v4().map_err(Error::Connection)?;
-    let _ = socket
-        .set_nodelay(true)
-        .tap_err(|err| tracing::warn!(?err, "failed to set TCP_NODELAY"));
-    let stream = socket.connect(addr).await.map_err(Error::Connection)?;
+async fn ping_loop(
+    stream: TcpStream,
+    mut pulse_rx: mpsc::Receiver<oneshot::Sender<Result<Duration, Error>>>,
+) {
+    // TCP responses arrive in the same order, so just use a simple ring buffer.
+    let responses = Mutex::new(VecDeque::with_capacity(OUTSTANDING_HEARTBEAT_CAP));
     let (mut tx, mut rx) = super::create_transport(stream).split();
 
     let tx_loop = async {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        while let Some(resp) = pulse_rx.recv().await {
+            let mut responses = responses.lock().await;
 
-        loop {
-            interval.tick().await;
-            tx.send(EchoPayload::new()).await.map_err(Error::Send)?;
+            if responses.len() >= OUTSTANDING_HEARTBEAT_CAP {
+                let _ = resp.send(Err(Error::TooManyRequests));
+                break;
+            }
+
+            if let Err(err) = tx.send(EchoPayload::new()).await {
+                let _ = resp.send(Err(Error::Send(err)));
+                break;
+            }
+
+            responses.push_back(resp);
         }
     };
-
-    let addr = addr.to_string();
 
     let rx_loop = async {
         while let Some(payload) = rx.next().await {
-            let payload = payload.map_err(Error::Recv)?;
-            metrics::histogram!("wcn_echo_client_latency", StringLabel<"destination"> => &addr)
-                .record(payload.elapsed().as_seconds_f64());
-            detector.heartbeat();
-        }
+            let Some(resp) = responses.lock().await.pop_front() else {
+                break;
+            };
 
-        Ok(())
+            let result = payload
+                .map(|payload| payload.elapsed().try_into().unwrap_or_default())
+                .map_err(Error::Recv);
+
+            let _ = resp.send(result);
+        }
     };
 
     tokio::select! {
-        res = tx_loop => res,
-        res = rx_loop => res,
+        _ = tx_loop => {},
+        _ = rx_loop => {},
     }
 }

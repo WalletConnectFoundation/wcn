@@ -66,6 +66,7 @@ admin_api = { package = "wcn_admin_api", path = "crates/admin_api" }
 client_api = { package = "wcn_client_api", path = "crates/client_api" }
 migration_api = { package = "wcn_migration_api", path = "crates/migration_api" }
 echo_api = { package = "wcn_echo_api", path = "crates/echo_api" }
+pulse_monitor = { path = "crates/pulse_monitor" }
 raft = { path = "crates/raft" }
 wcn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
@@ -86,6 +87,7 @@ admin_api = { workspace = true, features = ["server"] }
 client_api = { workspace = true, features = ["server", "client"] }
 migration_api = { workspace = true, features = ["server", "client"] }
 echo_api = { workspace = true, features = ["server", "client"] }
+pulse_monitor = { workspace = true }
 raft = { workspace = true }
 wcn_rpc = { workspace = true, features = ["server"] }
 relay_rocks = { workspace = true }

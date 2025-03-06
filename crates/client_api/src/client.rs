@@ -127,7 +127,7 @@ impl Inner {
     }
 
     async fn update_cluster(&self) -> Result<(), super::Error> {
-        let update = GetClusterV2::send(&self.rpc_client, &AnyPeer, &())
+        let update = GetCluster::send(&self.rpc_client, &AnyPeer, &())
             .await
             .map_err(Error::from)?
             .map_err(Error::Api)?;
@@ -174,8 +174,7 @@ async fn updater(inner: Arc<Inner>, shutdown_rx: oneshot::Receiver<()>) {
 async fn cluster_update(inner: &Inner, update_tx: mpsc::Sender<()>) {
     loop {
         let stream =
-            ClusterUpdatesV2::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) })
-                .await;
+            ClusterUpdates::send(&inner.rpc_client, &AnyPeer, &|_, rx| async move { Ok(rx) }).await;
 
         let mut rx = match stream {
             Ok(rx) => rx,
@@ -273,7 +272,7 @@ impl Client {
         let timeouts = Timeouts::new()
             .with_default(config.operation_timeout)
             .with::<{ Subscribe::ID }>(None)
-            .with::<{ ClusterUpdatesV2::ID }>(None);
+            .with::<{ ClusterUpdates::ID }>(None);
 
         let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| Error::Other(err.to_string()))?

@@ -4414,7 +4414,7 @@ dependencies = [
 [[package]]
 name = "phi-accrual-failure-detector"
 version = "0.1.0"
-source = "git+https://github.com/heilhead/phi-accrual-failure-detector.git?rev=01e5706#01e5706e73cbb3f29fb5542a1bfb359502503a24"
+source = "git+https://github.com/heilhead/phi-accrual-failure-detector.git?rev=30fb190#30fb190da0127fa2fa14b833d44c4e39872f81b7"
 dependencies = [
  "thiserror",
 ]
@@ -4660,6 +4660,24 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "pulse_monitor"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "futures",
+ "phi-accrual-failure-detector",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "wc",
+ "wcn_domain",
+ "wcn_echo_api",
+ "wcn_rpc",
 ]
 
 [[package]]
@@ -6735,18 +6753,20 @@ name = "wcn_client_api"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "futures",
  "futures-util",
  "postcard",
+ "pulse_monitor",
  "rand 0.8.5",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tracing",
  "wc",
  "wcn_auth",
  "wcn_domain",
- "wcn_echo_api",
  "wcn_rpc",
 ]
 
@@ -6819,7 +6839,6 @@ dependencies = [
  "chrono",
  "futures",
  "governor",
- "phi-accrual-failure-detector",
  "serde",
  "tap",
  "thiserror",
@@ -6878,6 +6897,7 @@ dependencies = [
  "pin-project",
  "postcard",
  "proc-mounts",
+ "pulse_monitor",
  "raft",
  "rand 0.8.5",
  "relay_rocks",

@@ -16,14 +16,16 @@ wcn_rpc = { workspace = true }
 wc = { workspace = true, features = ["metrics"] }
 auth = { workspace = true }
 domain = { workspace = true }
-echo_api = { workspace = true, features = ["client"] }
+pulse_monitor = { workspace = true }
 
 serde = "1"
 serde_json = "1"
 thiserror = "1"
 tracing = "0.1"
+futures = "0.3"
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync"] }
+tokio-stream = "0.1"
 postcard = { version = "1.0", default-features = false, features = [
     "alloc",
     "use-std",

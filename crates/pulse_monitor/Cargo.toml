@@ -1,0 +1,26 @@
+[package]
+name = "pulse_monitor"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+wc = { workspace = true, features = ["future", "metrics"] }
+echo_api = { package = "wcn_echo_api", path = "../echo_api", features = ["client"]}
+wcn_rpc = { workspace = true }
+domain = { workspace = true }
+thiserror = "1"
+tracing = "0.1"
+futures = "0.3"
+arc-swap = "1.7"
+phi-accrual-failure-detector = { git = "https://github.com/heilhead/phi-accrual-failure-detector.git", rev = "30fb190" }
+tokio-util = "0.7"
+tokio = { version = "1", default-features = false, features = [
+    "sync",
+    "time",
+    "io-util",
+] }
+tokio-stream = { version = "0.1", features = ["time"] }
+
+[lints]
+workspace = true

@@ -68,8 +68,7 @@ pub trait Server: Clone + Send + Sync + 'static {
         let timeouts = Timeouts::new()
             .with_default(cfg.operation_timeout)
             .with::<{ Subscribe::ID }>(None)
-            .with::<{ ClusterUpdates::ID }>(None)
-            .with::<{ ClusterUpdatesV2::ID }>(None);
+            .with::<{ ClusterUpdates::ID }>(None);
 
         let rpc_server_config = wcn_rpc::server::Config {
             name: crate::RPC_SERVER_NAME,
@@ -181,14 +180,6 @@ impl<S: Server> RpcServer<S> {
     fn cluster_snapshot(&self) -> Result<ClusterUpdate, super::Error> {
         let cluster = self.inner.cluster_view.cluster();
 
-        postcard::to_allocvec(&cluster.snapshot())
-            .map(ClusterUpdate)
-            .map_err(|_| super::Error::Serialization)
-    }
-
-    fn cluster_snapshot_json(&self) -> Result<ClusterUpdate, super::Error> {
-        let cluster = self.inner.cluster_view.cluster();
-
         serde_json::to_vec(&cluster.snapshot())
             .map(ClusterUpdate)
             .map_err(|_| super::Error::Serialization)
@@ -207,30 +198,6 @@ impl<S: Server> RpcServer<S> {
                     Some(_) => {
                         let snapshot = self
                             .cluster_snapshot()
-                            .map_err(|err| wcn_rpc::transport::Error::Other(err.to_string()))?;
-
-                        tx.send(Ok(snapshot))
-                            .await?;
-                    }
-                    None => return Ok(()),
-                }
-            };
-        }
-    }
-
-    async fn handle_cluster_updates_json(
-        &self,
-        mut tx: SendStream<wcn_rpc::Result<ClusterUpdate>>,
-    ) -> Result<(), wcn_rpc::server::Error> {
-        let mut updates = std::pin::pin!(self.inner.cluster_view.updates());
-
-        loop {
-            tokio::select! {
-                _ = tx.wait_closed() => return Ok(()),
-                update = updates.next() => match update {
-                    Some(_) => {
-                        let snapshot = self
-                            .cluster_snapshot_json()
                             .map_err(|err| wcn_rpc::transport::Error::Other(err.to_string()))?;
 
                         tx.send(Ok(snapshot))
@@ -317,17 +284,9 @@ where
                 GetCluster::ID => {
                     GetCluster::handle(stream, |_| async { Ok(self.cluster_snapshot()) }).await
                 }
-                GetClusterV2::ID => {
-                    GetClusterV2::handle(stream, |_| async { Ok(self.cluster_snapshot_json()) })
-                        .await
-                }
 
                 ClusterUpdates::ID => {
                     ClusterUpdates::handle(stream, |_, tx| self.handle_cluster_updates(tx)).await
-                }
-                ClusterUpdatesV2::ID => {
-                    ClusterUpdatesV2::handle(stream, |_, tx| self.handle_cluster_updates_json(tx))
-                        .await
                 }
 
                 Publish::ID => Publish::handle(stream, |req| self.publish(req)).await,

@@ -6755,7 +6755,6 @@ dependencies = [
  "arc-swap",
  "futures",
  "futures-util",
- "postcard",
  "pulse_monitor",
  "rand 0.8.5",
  "serde",

@@ -23,6 +23,12 @@ pub enum Error {
 
     #[error("Failed to send data: {0}")]
     Send(io::Error),
+
+    #[error("Too many outstanding requests")]
+    TooManyRequests,
+
+    #[error("{0}")]
+    Other(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

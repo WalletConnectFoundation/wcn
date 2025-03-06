@@ -26,7 +26,6 @@ tap = "1.0"
 futures = "0.3"
 tracing = "0.1"
 chrono = "0.4"
-phi-accrual-failure-detector = { git = "https://github.com/heilhead/phi-accrual-failure-detector.git", rev = "01e5706" }
 governor = { version = "0.8", default-features = false, features = ["std"] }
 
 [lints]

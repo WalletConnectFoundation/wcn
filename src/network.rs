@@ -1027,6 +1027,8 @@ impl Network {
             priority: transport::Priority::Low,
         };
 
+        let cluster_view = node.consensus().cluster_view().clone();
+
         let migration_api_server = wcn_rpc::quic::server::run(
             MigrationApiServer { node }.into_rpc_server(),
             migration_api_quic_server_config,
@@ -1038,13 +1040,21 @@ impl Network {
             max_rate: std::num::NonZeroU32::new(5).unwrap(), // Safe unwrap, obviously.
         });
 
+        // Create a cluster view stream that immediately yields the initial cluster
+        // state.
+        let cluster_stream = futures::stream::iter([()])
+            .chain(cluster_view.updates())
+            .map(move |_| cluster_view.cluster());
+        let pulse_monitor = pulse_monitor::run(cluster_stream);
+
         Ok(async move {
             tokio::join!(
                 replica_and_storage_api_servers,
                 migration_api_server,
                 client_api_server,
                 admin_api_server,
-                echo_server
+                echo_server,
+                pulse_monitor
             )
         }
         .map(drop)

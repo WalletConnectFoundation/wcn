@@ -7,7 +7,7 @@ pub struct Cmd {
 
     /// ID of the node to decommission.
     #[clap(long)]
-    id: PeerId,
+    target_id: PeerId,
 
     /// If set the node is going to be decommissioned even if it's not in the
     /// `Normal` state.
@@ -18,7 +18,7 @@ pub struct Cmd {
 pub async fn exec(cmd: Cmd) -> anyhow::Result<()> {
     cmd.admin_api_args
         .new_client()?
-        .decommission_node(cmd.id, cmd.force)
+        .decommission_node(cmd.target_id, cmd.force)
         .await
         .context("wcn_admin_api::Client::decommission_node")?;
 

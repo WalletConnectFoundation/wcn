@@ -101,7 +101,8 @@ impl metrics::Enum for ConnectionType {
 }
 
 async fn produce_connection_metrics(conn_type: ConnectionType, stats: ConnectionStats) {
-    let produce_bi_metrics = |dir: Direction, udp: UdpStats, frame: FrameStats| async move {
+    // TODO: Consider updating or removing.
+    let _ = |dir: Direction, udp: UdpStats, frame: FrameStats| async move {
         for (stat, value) in [
             ("datagrams", udp.datagrams),
             ("bytes", udp.bytes),
@@ -140,8 +141,8 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
         }
     };
 
-    produce_bi_metrics(Direction::Tx, stats.udp_tx, stats.frame_tx).await;
-    produce_bi_metrics(Direction::Rx, stats.udp_rx, stats.frame_rx).await;
+    // produce_bi_metrics(Direction::Tx, stats.udp_tx, stats.frame_tx).await;
+    // produce_bi_metrics(Direction::Rx, stats.udp_rx, stats.frame_rx).await;
 
     for (stat, value) in [
         ("cwnd", stats.path.cwnd),
@@ -153,7 +154,7 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
         ("lost_plpmtud_probes", stats.path.lost_plpmtud_probes),
         ("black_holes_detected", stats.path.black_holes_detected),
     ] {
-        metrics::counter!("quic_connection_stats",
+        metrics::counter!("quic_connection_path_stats",
             EnumLabel<"connection_type", ConnectionType> => conn_type,
             StringLabel<"stat"> => stat
         )

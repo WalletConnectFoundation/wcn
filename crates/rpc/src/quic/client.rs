@@ -1,5 +1,11 @@
 use {
-    super::{ConnectionHeader, ExtractPeerIdError, InvalidMultiaddrError, PROTOCOL_VERSION},
+    super::{
+        metrics::MeteredConnection,
+        ConnectionHeader,
+        ExtractPeerIdError,
+        InvalidMultiaddrError,
+        PROTOCOL_VERSION,
+    },
     crate::{
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
@@ -151,7 +157,7 @@ struct ConnectionHandlerInner {
     connection_timeout: Duration,
 }
 
-type Connection = Shared<BoxFuture<'static, quinn::Connection>>;
+type Connection = Shared<BoxFuture<'static, MeteredConnection>>;
 
 // TODO: This should return a result, as one possible error here is invalid peer
 // ID. Currently, if the peer ID is invalid, the connection will be retried.
@@ -202,7 +208,7 @@ fn new_connection<H: Handshake>(
                 .await
                 .map_err(|e| ConnectionError::Handshake(format!("{e:?}")))?;
 
-            Ok(conn)
+            Ok(MeteredConnection::outbound(conn))
         }
         .map_err(backoff::Error::transient)
     };

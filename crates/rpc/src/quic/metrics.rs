@@ -31,7 +31,7 @@ impl MeteredConnection {
                     interval.tick().await;
                     let mut stats = stats.lock().await;
                     let new_stats = conn.stats();
-                    produce_connection_metrics(conn_type, Local(new_stats) - *stats).await;
+                    produce_connection_metrics(&conn, conn_type, Local(new_stats) - *stats).await;
                     *stats = new_stats;
                 }
             }
@@ -65,7 +65,8 @@ impl Drop for MeteredConnection {
         let stats = self.stats.clone();
 
         tokio::spawn(async move {
-            produce_connection_metrics(conn_type, Local(conn.stats()) - *stats.lock().await).await;
+            produce_connection_metrics(&conn, conn_type, Local(conn.stats()) - *stats.lock().await)
+                .await;
         });
     }
 }
@@ -100,7 +101,13 @@ impl metrics::Enum for ConnectionType {
     }
 }
 
-async fn produce_connection_metrics(conn_type: ConnectionType, stats: ConnectionStats) {
+async fn produce_connection_metrics(
+    conn: &quinn::Connection,
+    conn_type: ConnectionType,
+    stats: ConnectionStats,
+) {
+    let destination = &conn.remote_address().to_string();
+
     let produce_bi_metrics = |dir: Direction, udp: UdpStats, frame: FrameStats| async move {
         for (stat, value) in [
             ("datagrams", udp.datagrams),
@@ -132,7 +139,8 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
             metrics::counter!("quic_connection_stats",
                 EnumLabel<"connection_type", ConnectionType> => conn_type,
                 EnumLabel<"direction", Direction> => dir,
-                StringLabel<"stat"> => stat
+                StringLabel<"stat"> => stat,
+                StringLabel<"destination"> => destination
             )
             .increment(value);
 
@@ -154,7 +162,8 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
     ] {
         metrics::counter!("quic_connection_path_stats",
             EnumLabel<"connection_type", ConnectionType> => conn_type,
-            StringLabel<"stat"> => stat
+            StringLabel<"stat"> => stat,
+            StringLabel<"destination"> => destination
         )
         .increment(value);
 
@@ -162,17 +171,20 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
     }
 
     metrics::histogram!("quic_connection_path_rtt",
-        EnumLabel<"connection_type", ConnectionType> => conn_type
+        EnumLabel<"connection_type", ConnectionType> => conn_type,
+        StringLabel<"destination"> => destination
     )
     .record(stats.path.rtt);
 
     metrics::histogram!("quic_connection_path_cwnd",
-        EnumLabel<"connection_type", ConnectionType> => conn_type
+        EnumLabel<"connection_type", ConnectionType> => conn_type,
+        StringLabel<"destination"> => destination
     )
     .record(stats.path.cwnd as f64);
 
     metrics::histogram!("quic_connection_path_current_mtu",
-        EnumLabel<"connection_type", ConnectionType> => conn_type
+        EnumLabel<"connection_type", ConnectionType> => conn_type,
+        StringLabel<"destination"> => destination
     )
     .record(stats.path.current_mtu);
 }

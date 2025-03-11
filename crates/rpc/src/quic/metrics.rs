@@ -101,33 +101,32 @@ impl metrics::Enum for ConnectionType {
 }
 
 async fn produce_connection_metrics(conn_type: ConnectionType, stats: ConnectionStats) {
-    // TODO: Consider updating or removing.
-    let _ = |dir: Direction, udp: UdpStats, frame: FrameStats| async move {
+    let produce_bi_metrics = |dir: Direction, udp: UdpStats, frame: FrameStats| async move {
         for (stat, value) in [
             ("datagrams", udp.datagrams),
             ("bytes", udp.bytes),
-            ("ios", udp.ios),
-            ("acks", frame.acks),
-            ("crypto", frame.crypto),
+            // ("ios", udp.ios),
+            // ("acks", frame.acks),
+            // ("crypto", frame.crypto),
             ("connection_close", frame.connection_close),
-            ("data_blocked", frame.data_blocked),
-            ("datagram", frame.datagram),
-            ("handshake_done", frame.handshake_done as u64),
+            // ("data_blocked", frame.data_blocked),
+            // ("datagram", frame.datagram),
+            // ("handshake_done", frame.handshake_done as u64),
             ("max_data", frame.max_data),
             ("max_stream_data", frame.max_stream_data),
             ("max_streams_bidi", frame.max_streams_bidi),
             ("max_streams_uni", frame.max_streams_uni),
-            ("new_connection_id", frame.new_connection_id),
-            ("new_token", frame.new_token),
-            ("path_challenge", frame.path_challenge),
-            ("path_response", frame.path_response),
-            ("ping", frame.ping),
-            ("reset_stream", frame.reset_stream),
-            ("retire_connection_id", frame.retire_connection_id),
-            ("stream_data_blocked", frame.stream_data_blocked),
-            ("streams_blocked_bidi", frame.streams_blocked_bidi),
-            ("streams_blocked_uni", frame.streams_blocked_uni),
-            ("stop_sending", frame.stop_sending),
+            // ("new_connection_id", frame.new_connection_id),
+            // ("new_token", frame.new_token),
+            // ("path_challenge", frame.path_challenge),
+            // ("path_response", frame.path_response),
+            // ("ping", frame.ping),
+            // ("reset_stream", frame.reset_stream),
+            // ("retire_connection_id", frame.retire_connection_id),
+            // ("stream_data_blocked", frame.stream_data_blocked),
+            // ("streams_blocked_bidi", frame.streams_blocked_bidi),
+            // ("streams_blocked_uni", frame.streams_blocked_uni),
+            // ("stop_sending", frame.stop_sending),
             ("stream", frame.stream),
         ] {
             metrics::counter!("quic_connection_stats",
@@ -141,11 +140,10 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
         }
     };
 
-    // produce_bi_metrics(Direction::Tx, stats.udp_tx, stats.frame_tx).await;
-    // produce_bi_metrics(Direction::Rx, stats.udp_rx, stats.frame_rx).await;
+    produce_bi_metrics(Direction::Tx, stats.udp_tx, stats.frame_tx).await;
+    produce_bi_metrics(Direction::Rx, stats.udp_rx, stats.frame_rx).await;
 
     for (stat, value) in [
-        ("cwnd", stats.path.cwnd),
         ("congestion_events", stats.path.congestion_events),
         ("lost_packets", stats.path.lost_packets),
         ("lost_bytes", stats.path.lost_bytes),
@@ -163,15 +161,20 @@ async fn produce_connection_metrics(conn_type: ConnectionType, stats: Connection
         yield_now().await;
     }
 
-    metrics::histogram!("quic_connection_rtt",
+    metrics::histogram!("quic_connection_path_rtt",
         EnumLabel<"connection_type", ConnectionType> => conn_type
     )
     .record(stats.path.rtt);
 
-    metrics::histogram!("quic_connection_cwnd",
+    metrics::histogram!("quic_connection_path_cwnd",
         EnumLabel<"connection_type", ConnectionType> => conn_type
     )
     .record(stats.path.cwnd as f64);
+
+    metrics::histogram!("quic_connection_path_current_mtu",
+        EnumLabel<"connection_type", ConnectionType> => conn_type
+    )
+    .record(stats.path.current_mtu);
 }
 
 #[derive(Deref)]

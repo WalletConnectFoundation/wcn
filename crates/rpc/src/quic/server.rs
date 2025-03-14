@@ -8,6 +8,7 @@ use {
         ServerName,
     },
     derive_more::derive::Deref,
+    filter::{Filter, Permit, RejectionReason},
     futures::{FutureExt, SinkExt as _, TryFutureExt as _},
     libp2p::{identity::Keypair, Multiaddr},
     quinn::crypto::rustls::QuicServerConfig,
@@ -19,9 +20,11 @@ use {
     },
     wc::{
         future::FutureExt as _,
-        metrics::{self, future_metrics, FutureExt as _, StringLabel},
+        metrics::{self, future_metrics, Enum, EnumLabel, FutureExt as _, StringLabel},
     },
 };
+
+mod filter;
 
 /// QUIC RPC server config.
 pub struct Config {
@@ -34,11 +37,17 @@ pub struct Config {
     /// [`Keypair`] of the server.
     pub keypair: Keypair,
 
-    /// Maximum allowed amount of concurrent connections.
-    pub max_concurrent_connections: u32,
+    /// Maximum global number of concurrent connections.
+    pub max_connections: u32,
 
-    /// Maximum allowed amount of concurrent streams.
-    pub max_concurrent_streams: u32,
+    /// Maximum number of concurrent connections per client IP address.
+    pub max_connections_per_ip: u32,
+
+    /// Maximum number of connections accepted per client IP address per second.
+    pub max_connection_rate_per_ip: u32,
+
+    /// Maximum number of concurrent streams.
+    pub max_streams: u32,
 
     /// [`transport::Priority`] of the server.
     pub priority: transport::Priority,
@@ -57,7 +66,9 @@ where
     S: Send + Sync + 'static,
     Server<S>: Multiplexer,
 {
-    Server::new(rpc_servers, cfg).map(|server| server.serve())
+    let filter = Filter::new(&cfg)?;
+    let server = Server::new(rpc_servers, cfg)?;
+    Ok(server.serve(filter))
 }
 
 /// QUIC server.
@@ -67,12 +78,9 @@ pub struct Server<S>(#[deref] Arc<ServerInner<S>>);
 #[derive(Debug)]
 pub struct ServerInner<S> {
     name: &'static str,
-
     endpoint: quinn::Endpoint,
     rpc_servers: S,
-
-    connection_permits: Arc<Semaphore>,
-    stream_permits: Arc<Semaphore>,
+    stream_semaphore: Arc<Semaphore>,
 }
 
 impl<S> Server<S>
@@ -81,8 +89,7 @@ where
     Self: Multiplexer,
 {
     pub fn new(rpc_servers: S, cfg: Config) -> Result<Self, quic::Error> {
-        let transport_config = super::new_quinn_transport_config(cfg.max_concurrent_streams);
-
+        let transport_config = super::new_quinn_transport_config(cfg.max_streams);
         let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)
             .map_err(|err| Error::Tls(err.to_string()))?;
         let server_tls_config = QuicServerConfig::try_from(server_tls_config)
@@ -108,26 +115,47 @@ where
             name: cfg.name,
             endpoint,
             rpc_servers,
-            connection_permits: Arc::new(Semaphore::new(cfg.max_concurrent_connections as usize)),
-            stream_permits: Arc::new(Semaphore::new(cfg.max_concurrent_streams as usize)),
+            stream_semaphore: Arc::new(Semaphore::new(cfg.max_streams as usize)),
         })))
     }
 
-    pub async fn serve(self) {
+    async fn serve(self, mut filter: Filter) {
         while let Some(incoming) = self.endpoint.accept().await {
-            match incoming.accept() {
-                Ok(connecting) => self.accept_connection(connecting),
-                Err(err) => tracing::warn!(?err, "Failed to accept incoming connection"),
-            }
+            match filter.try_acquire_permit(&incoming) {
+                Ok(permit) => match incoming.accept() {
+                    Ok(connecting) => self.accept_connection(connecting, permit),
+
+                    Err(err) => tracing::warn!(?err, "failed to accept incoming connection"),
+                },
+
+                Err(err) => {
+                    if err == RejectionReason::AddressNotValidated {
+                        // Signal the client to retry with validated address.
+                        let _ = incoming.retry();
+                    } else {
+                        tracing::debug!(
+                            server_name = self.name,
+                            reason = err.as_str(),
+                            remote_addr = ?incoming.remote_address().ip(),
+                            "inbound connection dropped"
+                        );
+
+                        metrics::counter!(
+                            "wcn_rpc_quic_server_connections_dropped",
+                            EnumLabel<"reason", RejectionReason> => err,
+                            StringLabel<"server_name"> => self.name
+                        )
+                        .increment(1);
+
+                        // Calling `ignore()` instead of dropping avoids sending a response.
+                        incoming.ignore();
+                    }
+                }
+            };
         }
     }
 
-    fn accept_connection(&self, connecting: quinn::Connecting) {
-        let Ok(conn_permit) = self.connection_permits.clone().try_acquire_owned() else {
-            metrics::counter!("wcn_rpc_quic_server_connections_dropped").increment(1);
-            return;
-        };
-
+    fn accept_connection(&self, connecting: quinn::Connecting, permit: Permit) {
         let this = self.clone();
 
         async move {
@@ -141,7 +169,7 @@ where
                 .await
                 .map_err(|_| ConnectionError::ReadHeaderTimeout)??;
 
-            let _conn_permit = conn_permit;
+            let _permit = permit;
 
             this.route_connection(header.server_name, conn).await
         }
@@ -222,9 +250,9 @@ where
 
     fn acquire_stream_permit(&self) -> Option<OwnedSemaphorePermit> {
         metrics::gauge!("wcn_rpc_quic_server_available_stream_permits", StringLabel<"server_name"> => self.name)
-            .set(self.stream_permits.available_permits() as f64);
+            .set(self.stream_semaphore.available_permits() as f64);
 
-        self.stream_permits
+        self.stream_semaphore
             .clone()
             .try_acquire_owned()
             .ok()

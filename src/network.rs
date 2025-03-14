@@ -918,8 +918,10 @@ impl Network {
             name: "raft_api",
             addr: server_addr,
             keypair: cfg.keypair.clone(),
-            max_concurrent_connections: 500,
-            max_concurrent_streams: 1000,
+            max_connections: 500,
+            max_connections_per_ip: 100,
+            max_connection_rate_per_ip: 100,
+            max_streams: 1000,
             priority: transport::Priority::High,
         };
 
@@ -948,8 +950,10 @@ impl Network {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
-            max_concurrent_connections: cfg.replica_api_max_concurrent_connections,
-            max_concurrent_streams: cfg.replica_api_max_concurrent_rpcs,
+            max_connections: cfg.replica_api_max_concurrent_connections,
+            max_connections_per_ip: 100,
+            max_connection_rate_per_ip: 100,
+            max_streams: cfg.replica_api_max_concurrent_rpcs,
             priority: transport::Priority::High,
         };
 
@@ -1026,8 +1030,10 @@ impl Network {
             name: "migration_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.migration_api_server_port)),
             keypair: cfg.keypair.clone(),
-            max_concurrent_connections: 100,
-            max_concurrent_streams: 1000,
+            max_connections: 100,
+            max_connections_per_ip: 50,
+            max_connection_rate_per_ip: 50,
+            max_streams: 1000,
             priority: transport::Priority::Low,
         };
 

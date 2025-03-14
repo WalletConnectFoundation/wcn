@@ -351,3 +351,36 @@ where
         }
     }
 }
+
+impl<A, B, C> Multiplexer for Server<(A, B, C)>
+where
+    A: rpc::Server,
+    B: rpc::Server,
+    C: rpc::Server,
+{
+    fn route_connection(
+        &self,
+        server_name: Option<ServerName>,
+        conn: quinn::Connection,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
+        async move {
+            let Some(server_name) = server_name else {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            };
+
+            if self.rpc_servers.0.config().name == server_name {
+                return self.handle_connection(conn, &self.rpc_servers.0).await;
+            }
+
+            if self.rpc_servers.1.config().name == server_name {
+                return self.handle_connection(conn, &self.rpc_servers.1).await;
+            }
+
+            if self.rpc_servers.2.config().name == server_name {
+                return self.handle_connection(conn, &self.rpc_servers.2).await;
+            }
+
+            Err(ConnectionError::UnknownRpcServer)
+        }
+    }
+}

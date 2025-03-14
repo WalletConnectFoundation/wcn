@@ -944,7 +944,7 @@ impl Network {
             name: const { wcn_rpc::ServerName::new("replica_api") },
             handshake: NoHandshake,
         };
-        let replica_api_quic_server_config = wcn_rpc::quic::server::Config {
+        let primary_quic_server_config = wcn_rpc::quic::server::Config {
             name: "replica_api",
             addr: socketaddr_to_multiaddr((cfg.server_addr, cfg.replica_api_server_port)),
             keypair: cfg.keypair.clone(),
@@ -1013,9 +1013,13 @@ impl Network {
             },
         );
 
-        let replica_and_storage_api_servers = wcn_rpc::quic::server::multiplex(
-            (replica_api_server, storage_api_server),
-            replica_api_quic_server_config,
+        let primary_quic_server = wcn_rpc::quic::server::multiplex(
+            (
+                replica_api_server,
+                storage_api_server,
+                pulse_api::new_rpc_server(),
+            ),
+            primary_quic_server_config,
         )?;
 
         let migration_api_quic_server_config = wcn_rpc::quic::server::Config {
@@ -1049,7 +1053,7 @@ impl Network {
 
         Ok(async move {
             tokio::join!(
-                replica_and_storage_api_servers,
+                primary_quic_server,
                 migration_api_server,
                 client_api_server,
                 admin_api_server,

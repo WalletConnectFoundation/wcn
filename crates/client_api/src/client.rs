@@ -39,6 +39,9 @@ pub struct Config {
     pub auth_token_ttl: Duration,
 
     pub namespaces: Vec<auth::Auth>,
+
+    /// Additional label to be used for all metrics of the [`Server`].
+    pub metrics_tag: &'static str,
 }
 
 impl Config {
@@ -51,6 +54,7 @@ impl Config {
             auth_purpose: token::Purpose::Storage,
             auth_token_ttl: DEFAULT_AUTH_TOKEN_TTL,
             namespaces: Default::default(),
+            metrics_tag: "default",
         }
     }
 
@@ -79,6 +83,12 @@ impl Config {
 
     pub fn with_auth_ttl(mut self, ttl: Duration) -> Self {
         self.auth_token_ttl = ttl;
+        self
+    }
+
+    /// Overwrites [`Config::metrics_tag`].
+    pub fn with_metrics_tag(mut self, tag: &'static str) -> Self {
+        self.metrics_tag = tag;
         self
     }
 }

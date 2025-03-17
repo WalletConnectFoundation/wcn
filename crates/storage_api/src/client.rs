@@ -55,6 +55,9 @@ pub struct Config {
 
     /// Maximum number of attempts to try before failing an operation.
     pub max_attempts: usize,
+
+    /// Additional label to be used for all metrics of the [`Server`].
+    pub metrics_tag: &'static str,
 }
 
 impl Config {
@@ -65,6 +68,7 @@ impl Config {
             operation_timeout: Duration::from_secs(10),
             access_token,
             max_attempts: 3,
+            metrics_tag: "default",
         }
     }
 
@@ -90,6 +94,12 @@ impl Config {
         self.max_attempts = max_attempts;
         self
     }
+
+    /// Overwrites [`Config::metrics_tag`].
+    pub fn with_metrics_tag(mut self, tag: &'static str) -> Self {
+        self.metrics_tag = tag;
+        self
+    }
 }
 
 impl Client {
@@ -113,7 +123,7 @@ impl Client {
         let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
             .with_timeouts(timeouts)
-            .metered()
+            .metered_with_tag(config.metrics_tag)
             .with_retries(RetryStrategy::new(config.max_attempts));
 
         Ok(Self { rpc: rpc_client })

@@ -307,6 +307,7 @@ pub async fn exec(cmd: StorageCmd) -> anyhow::Result<()> {
         operation_timeout: Duration::from_millis(2500),
         nodes: [PeerAddr::new(id, addr)].into(),
         namespaces,
+        metrics_tag: "default",
     })
     .await?;
 

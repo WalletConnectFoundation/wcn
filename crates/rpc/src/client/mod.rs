@@ -42,6 +42,9 @@ pub struct Config<H = NoHandshake> {
 
 /// RPC client.
 pub trait Client<P: Sync = PeerAddr>: Send + Sync {
+    /// Returns name of the server this [`Client`] connects to.
+    fn server_name(&self) -> &ServerName;
+
     /// Sends an outbound RPC.
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,

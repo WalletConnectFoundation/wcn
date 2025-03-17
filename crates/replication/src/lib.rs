@@ -29,6 +29,7 @@ mod reconciliation;
 pub struct Driver {
     client_api: client_api::Client,
     storage_api: storage_api::Client,
+    metrics_tag: &'static str,
 }
 
 /// Replication config.
@@ -47,6 +48,9 @@ pub struct Config {
 
     /// A list of storage namespaces to be used.
     pub namespaces: Vec<auth::Auth>,
+
+    /// Additional metrics tag being used for all [`Driver`] metrics.
+    pub metrics_tag: &'static str,
 }
 
 impl Config {
@@ -59,6 +63,7 @@ impl Config {
             operation_timeout: Duration::from_secs(10),
             nodes,
             namespaces: Vec::new(),
+            metrics_tag: "default",
         }
     }
 
@@ -85,6 +90,12 @@ impl Config {
         self.namespaces = namespaces.into();
         self
     }
+
+    /// Overwrites [`Config::metrics_tag`].
+    pub fn with_metrics_tag(mut self, tag: &'static str) -> Self {
+        self.metrics_tag = tag;
+        self
+    }
 }
 
 /// Error of [`Driver::new`].
@@ -99,7 +110,8 @@ impl Driver {
             .with_keypair(cfg.keypair.clone())
             .with_connection_timeout(cfg.connection_timeout)
             .with_operation_timeout(cfg.operation_timeout)
-            .with_namespaces(cfg.namespaces);
+            .with_namespaces(cfg.namespaces)
+            .with_metrics_tag(cfg.metrics_tag);
 
         let client_api = client_api::Client::new(client_api_cfg)
             .await
@@ -108,7 +120,8 @@ impl Driver {
         let storage_api_cfg = storage_api::client::Config::new(client_api.auth_token())
             .with_keypair(cfg.keypair)
             .with_connection_timeout(cfg.connection_timeout)
-            .with_operation_timeout(cfg.operation_timeout);
+            .with_operation_timeout(cfg.operation_timeout)
+            .with_metrics_tag(cfg.metrics_tag);
 
         let storage_api = storage_api::Client::new(storage_api_cfg)
             .map_err(|err| CreationError(err.to_string()))?;
@@ -116,6 +129,7 @@ impl Driver {
         Ok(Self {
             client_api,
             storage_api,
+            metrics_tag: cfg.metrics_tag,
         })
     }
 
@@ -236,9 +250,18 @@ impl Driver {
     pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
         self.client_api
             .publish(channel, message)
-            .with_metrics(future_metrics!("wcn_replication_driver_publish"))
+            .with_metrics(future_metrics!(
+                "wcn_replication_driver_publish",
+                StringLabel<"tag", &'static str> => &self.metrics_tag
+            ))
             .await
-            .tap_err(|_| metrics::counter!("wcn_replication_driver_publish_errors").increment(1))
+            .tap_err(|_| {
+                metrics::counter!(
+                    "wcn_replication_driver_publish_errors",
+                    StringLabel<"tag", &'static str> => &self.metrics_tag
+                )
+                .increment(1)
+            })
             .map_err(Error::ClientApi)
     }
 
@@ -251,9 +274,18 @@ impl Driver {
         let stream = self
             .client_api
             .subscribe(channels)
-            .with_metrics(future_metrics!("wcn_replication_driver_subscribe"))
+            .with_metrics(future_metrics!(
+                "wcn_replication_driver_subscribe",
+                StringLabel<"tag", &'static str> => &self.metrics_tag
+            ))
             .await
-            .tap_err(|_| metrics::counter!("wcn_replication_driver_subscribe_errors").increment(1))
+            .tap_err(|_| {
+                metrics::counter!(
+                    "wcn_replication_driver_subscribe_errors",
+                    StringLabel<"tag", &'static str> => &self.metrics_tag
+                )
+                .increment(1)
+            })
             .map_err(Error::ClientApi)?
             .map(|res| res.map_err(Error::ClientApi));
 
@@ -268,13 +300,15 @@ impl Driver {
         }
         .with_metrics(future_metrics!(
             "wcn_replication_driver_operation",
-            EnumLabel<"name", OperationName> => Op::NAME
+            EnumLabel<"name", OperationName> => Op::NAME,
+            StringLabel<"tag", &'static str> => &self.metrics_tag
         ))
         .await
         .tap_err(|err| {
             metrics::counter!("wcn_replication_driver_operation_errors",
                 EnumLabel<"operation", OperationName> => Op::NAME,
-                StringLabel<"error"> => err.as_str()
+                StringLabel<"error"> => err.as_str(),
+                StringLabel<"tag", &'static str> => &self.metrics_tag
             )
             .increment(1)
         })
@@ -310,7 +344,8 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
         }
         .run()
         .with_metrics(future_metrics!("wcn_replication_driver_task",
-            EnumLabel<"operation", OperationName> => Op::NAME
+            EnumLabel<"operation", OperationName> => Op::NAME,
+            StringLabel<"tag", &'static str> => &driver.metrics_tag
         ))
         .pipe(tokio::spawn);
 
@@ -398,12 +433,14 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
                     .repair(self.driver.storage_api.remote_storage(addr), value)
                     .map(|res| match res {
                         Ok(true) => metrics::counter!("wcn_replication_driver_read_repairs",
-                            EnumLabel<"operation_name", OperationName> => Op::NAME
+                            EnumLabel<"operation_name", OperationName> => Op::NAME,
+                            StringLabel<"tag", &'static str> => &self.driver.metrics_tag
                         )
                         .increment(1),
                         Ok(false) => {}
                         Err(_) => metrics::counter!("wcn_replication_driver_read_repair_errors",
-                            EnumLabel<"operation_name", OperationName> => Op::NAME
+                            EnumLabel<"operation_name", OperationName> => Op::NAME,
+                            StringLabel<"tag", &'static str> => &self.driver.metrics_tag
                         )
                         .increment(1),
                     })
@@ -418,14 +455,16 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
         match Op::reconcile(quorum.into_results(), required_replicas) {
             Some(Ok(value)) => {
                 metrics::counter!("wcn_replication_driver_reconciliations",
-                    EnumLabel<"operation_name", OperationName> => Op::NAME
+                    EnumLabel<"operation_name", OperationName> => Op::NAME,
+                    StringLabel<"tag", &'static str> => &self.driver.metrics_tag
                 )
                 .increment(1);
                 Ok(value)
             }
             Some(Err(_)) => {
                 metrics::counter!("wcn_replication_driver_reconciliation_errors",
-                    EnumLabel<"operation_name", OperationName> => Op::NAME
+                    EnumLabel<"operation_name", OperationName> => Op::NAME,
+                    StringLabel<"tag", &'static str> => &self.driver.metrics_tag
                 )
                 .increment(1);
                 Err(Error::InconsistentResults)

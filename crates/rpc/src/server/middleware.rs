@@ -15,7 +15,12 @@ pub use crate::middleware::*;
 pub trait MeteredExt: Sized {
     /// Wraps `Self` with [`Metered`].
     fn metered(self) -> Metered<Self> {
-        Metered { inner: self }
+        self.metered_with_tag("default")
+    }
+
+    /// [`Self::metered`] but with additional "tag" label.
+    fn metered_with_tag(self, tag: &'static str) -> Metered<Self> {
+        Metered { inner: self, tag }
     }
 }
 
@@ -43,6 +48,8 @@ where
             .handle_rpc(id, stream, conn_info)
             .with_metrics(future_metrics!(
                 "inbound_rpc",
+                StringLabel<"server_name"> => self.config().name.as_str(),
+                StringLabel<"tag"> => self.tag,
                 StringLabel<"rpc_name"> => RpcName::new(id).as_str()
             ))
     }

@@ -47,6 +47,10 @@ pub struct Client<H = NoHandshake> {
 impl<H> client::Marker for Client<H> {}
 
 impl<H: Handshake> crate::Client for Client<H> {
+    fn server_name(&self) -> &ServerName {
+        &self.server_name
+    }
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
         &'a self,
         peer: &'a PeerAddr,
@@ -60,6 +64,10 @@ impl<H: Handshake> crate::Client for Client<H> {
 }
 
 impl<H: Handshake> crate::Client<AnyPeer> for Client<H> {
+    fn server_name(&self) -> &ServerName {
+        &self.server_name
+    }
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok>(
         &'a self,
         _: &'a AnyPeer,

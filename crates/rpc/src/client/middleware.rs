@@ -7,6 +7,7 @@ use {
         Id as RpcId,
         Name as RpcName,
         PeerAddr,
+        ServerName,
     },
     futures::FutureExt as _,
     libp2p::Multiaddr,
@@ -23,7 +24,12 @@ pub use crate::middleware::*;
 pub trait MeteredExt: Sized {
     /// Wraps `Self` with [`Metered`].
     fn metered(self) -> Metered<Self> {
-        Metered { inner: self }
+        self.metered_with_tag("default")
+    }
+
+    /// [`Self::metered`] but with additional "tag" label.
+    fn metered_with_tag(self, tag: &'static str) -> Metered<Self> {
+        Metered { inner: self, tag }
     }
 }
 
@@ -33,6 +39,10 @@ impl<C> Client for Metered<C>
 where
     C: Client,
 {
+    fn server_name(&self) -> &ServerName {
+        self.inner.server_name()
+    }
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         peer: &'a PeerAddr,
@@ -43,6 +53,8 @@ where
             .send_rpc(peer, rpc_id, f)
             .with_metrics(future_metrics!(
                 "outbound_rpc",
+                StringLabel<"server_name"> => self.server_name().as_str(),
+                StringLabel<"tag"> => self.tag,
                 StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
                 StringLabel<"destination", Multiaddr> => &peer.addr
             ))
@@ -55,6 +67,8 @@ where
 
                 metrics::counter!(
                     "outbound_rpc_errors",
+                    StringLabel<"server_name"> => self.server_name().as_str(),
+                    StringLabel<"tag"> => self.tag,
                     StringLabel<"rpc_name"> => RpcName::new(rpc_id).as_str(),
                     StringLabel<"destination", Multiaddr> => &peer.addr,
                     StringLabel<"error_kind"> => error_kind
@@ -86,6 +100,10 @@ where
     A: Sync,
     C: Client<A>,
 {
+    fn server_name(&self) -> &ServerName {
+        self.inner.server_name()
+    }
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,
@@ -155,6 +173,10 @@ where
     C: Client<A>,
     R: RetryStrategy,
 {
+    fn server_name(&self) -> &ServerName {
+        self.inner.server_name()
+    }
+
     fn send_rpc<'a, Fut: Future<Output = Result<Ok>> + Send + 'a, Ok: Send>(
         &'a self,
         addr: &'a A,

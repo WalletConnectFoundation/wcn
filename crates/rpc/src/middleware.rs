@@ -10,6 +10,7 @@ use {
 #[derive(Clone, Debug)]
 pub struct Metered<T> {
     pub(crate) inner: T,
+    pub(crate) tag: &'static str,
 }
 
 /// RPC client or server with configured RPC timeouts.

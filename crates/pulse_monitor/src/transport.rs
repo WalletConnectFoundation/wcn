@@ -62,18 +62,19 @@ impl Transport for PulseApiTransport {
     }
 }
 
-pub(crate) struct PulseApiTransportFactory(pub PeerAddr);
+pub(crate) struct PulseApiTransportFactory {
+    pub addr: PeerAddr,
+    pub client: pulse_api::Client,
+}
 
 impl TransportFactory for PulseApiTransportFactory {
     type Transport = PulseApiTransport;
 
     fn address(&self) -> PeerAddr {
-        self.0.clone()
+        self.addr.clone()
     }
 
     async fn create(&self) -> Result<PulseApiTransport, pulse_api::client::Error> {
-        pulse_api::Client::new(self.0.clone())
-            .map(PulseApiTransport)
-            .map_err(|err| pulse_api::client::Error::Other(err.to_string()))
+        Ok(PulseApiTransport(self.client.clone()))
     }
 }

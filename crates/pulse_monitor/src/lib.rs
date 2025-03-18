@@ -4,8 +4,8 @@ use {
     monitor::ClusterMonitor,
     std::{collections::HashSet, sync::Arc, time::Duration},
     tokio::sync::RwLock,
-    transport::EchoApiTransportFactory,
-    wc::metrics::{self, StringLabel},
+    transport::{EchoApiTransportFactory, PulseApiTransportFactory},
+    wc::metrics::{self, enum_ordinalize::Ordinalize, EnumLabel, StringLabel},
     wcn_rpc::PeerAddr,
 };
 
@@ -26,14 +26,16 @@ where
     };
 
     let cluster = ArcSwap::new(cluster);
-    let registry = RwLock::new(ClusterMonitor::default());
+    let tcp_monitor = RwLock::new(ClusterMonitor::default());
+    let quic_monitor = RwLock::new(ClusterMonitor::default());
 
     let cluster_update_fut = async {
         let mut current_peers = HashSet::new();
 
         loop {
             current_peers = update_registry(
-                &mut *registry.write().await,
+                &mut *tcp_monitor.write().await,
+                &mut *quic_monitor.write().await,
                 &cluster.load_full(),
                 &current_peers,
             );
@@ -54,46 +56,69 @@ where
             interval.tick().await;
 
             let curr_cluster = cluster.load_full();
-            let registry = registry.read().await;
-            let nodes = registry.nodes();
-
-            for id in nodes {
-                let Some(status) = registry.status(id) else {
-                    continue;
-                };
-
-                let Some(node) = curr_cluster.node(id) else {
-                    continue;
-                };
-
-                let Ok(address) = node.addr().quic_socketaddr() else {
-                    continue;
-                };
-
-                let addr_str = address.to_string();
-                let available = status.is_monitoring && status.is_available;
-                let available = if available { 1.0 } else { 0.0 };
-
-                metrics::gauge!("wcn_pulse_monitor_availability", StringLabel<"destination"> => &addr_str)
-                    .set(available);
-
-                // Failure detector can't calculate suspicion level unless it's received at
-                // least one heartbeat.
-                if status.is_monitoring {
-                    metrics::gauge!("wcn_pulse_monitor_failure_suspicion", StringLabel<"destination"> => &addr_str)
-                        .set(status.suspicion_score);
-                    metrics::histogram!("wcn_pulse_monitor_latency", StringLabel<"destination"> => &addr_str)
-                        .record(status.latency);
-                }
-            }
+            produce_metrics(
+                &curr_cluster,
+                &*tcp_monitor.read().await,
+                TransportType::Tcp,
+            );
+            produce_metrics(
+                &curr_cluster,
+                &*quic_monitor.read().await,
+                TransportType::Quic,
+            );
         }
     };
 
     tokio::join!(cluster_update_fut, metrics_update_fut);
 }
 
+fn produce_metrics(cluster: &domain::Cluster, monitor: &ClusterMonitor, transport: TransportType) {
+    let nodes = monitor.nodes();
+
+    for id in nodes {
+        let Some(status) = monitor.status(id) else {
+            continue;
+        };
+
+        let Some(node) = cluster.node(id) else {
+            continue;
+        };
+
+        let Ok(address) = node.addr().quic_socketaddr() else {
+            continue;
+        };
+
+        let addr_str = address.to_string();
+        let available = status.is_monitoring && status.is_available;
+        let available = if available { 1.0 } else { 0.0 };
+
+        metrics::gauge!("wcn_pulse_monitor_availability",
+            EnumLabel<"transport", TransportType> => transport,
+            StringLabel<"destination"> => &addr_str
+        )
+        .set(available);
+
+        // Failure detector can't calculate suspicion level unless it's received at
+        // least one heartbeat.
+        if status.is_monitoring {
+            metrics::gauge!("wcn_pulse_monitor_failure_suspicion",
+                EnumLabel<"transport", TransportType> => transport,
+                StringLabel<"destination"> => &addr_str
+            )
+            .set(status.suspicion_score);
+
+            metrics::histogram!("wcn_pulse_monitor_latency",
+                EnumLabel<"transport", TransportType> => transport,
+                StringLabel<"destination"> => &addr_str
+            )
+            .record(status.latency);
+        }
+    }
+}
+
 fn update_registry(
-    registry: &mut ClusterMonitor,
+    tcp_registry: &mut ClusterMonitor,
+    quic_registry: &mut ClusterMonitor,
     cluster: &domain::Cluster,
     current_peers: &HashSet<PeerAddr>,
 ) -> HashSet<PeerAddr> {
@@ -104,19 +129,30 @@ fn update_registry(
 
     // Removed nodes.
     for addr in current_peers.difference(&next_peers) {
-        registry.remove(&addr.id);
+        tcp_registry.remove(&addr.id);
+        quic_registry.remove(&addr.id);
     }
 
     // Added nodes.
     for addr in next_peers.difference(current_peers) {
-        // Echo server is currently hosted on the same address we're using for storage
-        // API, but it's TCP instead of UDP.
-        if let Ok(socketaddr) = addr.quic_socketaddr() {
-            registry.insert(addr.id, EchoApiTransportFactory(socketaddr));
-        } else {
-            tracing::warn!(?addr, "failed to parse socket address for peer");
-        }
+        tcp_registry.insert(addr.id, EchoApiTransportFactory(addr.clone()));
+        quic_registry.insert(addr.id, PulseApiTransportFactory(addr.clone()));
     }
 
     next_peers
+}
+
+#[derive(Clone, Copy, Ordinalize)]
+enum TransportType {
+    Tcp = 0,
+    Quic = 1,
+}
+
+impl metrics::Enum for TransportType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Quic => "quic",
+        }
+    }
 }

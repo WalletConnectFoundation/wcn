@@ -4677,6 +4677,7 @@ dependencies = [
  "wc",
  "wcn_domain",
  "wcn_echo_api",
+ "wcn_pulse_api",
  "wcn_rpc",
 ]
 
@@ -6929,11 +6930,24 @@ dependencies = [
  "wcn_domain",
  "wcn_echo_api",
  "wcn_migration_api",
+ "wcn_pulse_api",
  "wcn_raft_api",
  "wcn_replication",
  "wcn_rpc",
  "wcn_storage_api",
  "xxhash-rust",
+]
+
+[[package]]
+name = "wcn_pulse_api"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tracing",
+ "wcn_rpc",
 ]
 
 [[package]]

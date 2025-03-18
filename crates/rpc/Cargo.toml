@@ -42,6 +42,8 @@ backoff = { version = "0.4", features = ["tokio"] }
 tap = "1"
 socket2 = "0.5.5"
 nix = { version = "0.28", default-features = false, features = ["socket", "net"] }
+governor = { version = "0.8", default-features = false, features = ["std"] }
+lru = "0.13"
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

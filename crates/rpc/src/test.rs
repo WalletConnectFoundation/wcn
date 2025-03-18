@@ -131,8 +131,10 @@ async fn suite() {
             name: "test_server",
             addr: addr.clone(),
             keypair: keypair.clone(),
-            max_concurrent_connections: 500,
-            max_concurrent_streams: 10000,
+            max_connections: 500,
+            max_connections_per_ip: 100,
+            max_connection_rate_per_ip: 100,
+            max_streams: 10000,
             priority: transport::Priority::High,
         };
 

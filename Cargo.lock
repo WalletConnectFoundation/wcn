@@ -7029,7 +7029,7 @@ dependencies = [
  "futures",
  "postcard",
  "serde",
- "thiserror",
+ "thiserror 1.0.64",
  "tracing",
  "wcn_rpc",
 ]

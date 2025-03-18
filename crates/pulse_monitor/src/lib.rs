@@ -136,7 +136,15 @@ fn update_registry(
     // Added nodes.
     for addr in next_peers.difference(current_peers) {
         tcp_registry.insert(addr.id, EchoApiTransportFactory(addr.clone()));
-        quic_registry.insert(addr.id, PulseApiTransportFactory(addr.clone()));
+
+        if let Ok(client) = pulse_api::Client::new(addr.clone())
+            .map_err(|err| tracing::warn!(?err, "pulse_api::Client::new"))
+        {
+            quic_registry.insert(addr.id, PulseApiTransportFactory {
+                addr: addr.clone(),
+                client,
+            });
+        }
     }
 
     next_peers

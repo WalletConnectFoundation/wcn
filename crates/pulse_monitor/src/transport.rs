@@ -1,9 +1,12 @@
-use std::{future::Future, net::SocketAddr, time::Duration};
+use {
+    std::{future::Future, time::Duration},
+    wcn_rpc::PeerAddr,
+};
 
 pub trait TransportFactory {
     type Transport: Transport;
 
-    fn address(&self) -> SocketAddr;
+    fn address(&self) -> PeerAddr;
 
     fn create(
         &self,
@@ -26,18 +29,51 @@ impl Transport for EchoApiTransport {
     }
 }
 
-pub struct EchoApiTransportFactory(pub SocketAddr);
+pub(crate) struct EchoApiTransportFactory(pub PeerAddr);
 
 impl TransportFactory for EchoApiTransportFactory {
     type Transport = EchoApiTransport;
 
-    fn address(&self) -> SocketAddr {
-        self.0
+    fn address(&self) -> PeerAddr {
+        self.0.clone()
     }
 
     async fn create(&self) -> Result<EchoApiTransport, echo_api::Error> {
-        echo_api::client::Client::create(self.0)
+        // Echo server is currently hosted on the same address we're using for storage
+        // API, but it's TCP instead of UDP.
+        let socketaddr = self
+            .0
+            .quic_socketaddr()
+            .map_err(|err| echo_api::Error::Other(err.to_string()))?;
+
+        echo_api::client::Client::create(socketaddr)
             .await
             .map(EchoApiTransport)
+    }
+}
+
+pub(crate) struct PulseApiTransport(pulse_api::Client);
+
+impl Transport for PulseApiTransport {
+    type Error = pulse_api::client::Error;
+
+    fn heartbeat(&self) -> impl Future<Output = Result<Duration, Self::Error>> {
+        self.0.heartbeat()
+    }
+}
+
+pub(crate) struct PulseApiTransportFactory(pub PeerAddr);
+
+impl TransportFactory for PulseApiTransportFactory {
+    type Transport = PulseApiTransport;
+
+    fn address(&self) -> PeerAddr {
+        self.0.clone()
+    }
+
+    async fn create(&self) -> Result<PulseApiTransport, pulse_api::client::Error> {
+        pulse_api::Client::new(self.0.clone())
+            .map(PulseApiTransport)
+            .map_err(|err| pulse_api::client::Error::Other(err.to_string()))
     }
 }

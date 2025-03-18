@@ -66,8 +66,10 @@ pub trait Server: Clone + Send + Sync + 'static {
             name: const { crate::RPC_SERVER_NAME.as_str() },
             addr: cfg.addr,
             keypair: cfg.keypair,
-            max_concurrent_connections: 10,
-            max_concurrent_streams: 100,
+            max_connections: 10,
+            max_connections_per_ip: 5,
+            max_connection_rate_per_ip: 10,
+            max_streams: 100,
             priority: transport::Priority::High,
         };
 

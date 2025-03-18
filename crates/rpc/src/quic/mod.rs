@@ -172,6 +172,9 @@ pub enum Error {
 
     #[error(transparent)]
     InvalidMultiaddr(#[from] InvalidMultiaddrError),
+
+    #[error("invalid connection rate limit")]
+    InvalidConnectionRate,
 }
 
 fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdError> {

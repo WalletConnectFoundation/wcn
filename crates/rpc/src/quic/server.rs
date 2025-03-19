@@ -8,7 +8,7 @@ use {
         ServerName,
     },
     derive_more::derive::Deref,
-    filter::{Filter, Permit, RejectionReason},
+    // filter::{Filter, Permit, RejectionReason},
     futures::{FutureExt, SinkExt as _, TryFutureExt as _},
     libp2p::{identity::Keypair, Multiaddr},
     quinn::crypto::rustls::QuicServerConfig,
@@ -20,11 +20,11 @@ use {
     },
     wc::{
         future::FutureExt as _,
-        metrics::{self, future_metrics, Enum, EnumLabel, FutureExt as _, StringLabel},
+        metrics::{self, future_metrics, FutureExt as _, StringLabel},
     },
 };
 
-mod filter;
+// mod filter;
 
 /// QUIC RPC server config.
 pub struct Config {
@@ -66,9 +66,9 @@ where
     S: Send + Sync + 'static,
     Server<S>: Multiplexer,
 {
-    let filter = Filter::new(&cfg)?;
+    // let filter = Filter::new(&cfg)?;
     let server = Server::new(rpc_servers, cfg)?;
-    Ok(server.serve(filter))
+    Ok(server.serve())
 }
 
 /// QUIC server.
@@ -119,43 +119,44 @@ where
         })))
     }
 
-    async fn serve(self, filter: Filter) {
+    async fn serve(self) {
         while let Some(incoming) = self.endpoint.accept().await {
-            match filter.try_acquire_permit(&incoming) {
-                Ok(permit) => match incoming.accept() {
-                    Ok(connecting) => self.accept_connection(connecting, permit),
+            // match filter.try_acquire_permit(&incoming) {
+            //     Ok(permit) =>
+            match incoming.accept() {
+                Ok(connecting) => self.accept_connection(connecting),
 
-                    Err(err) => tracing::warn!(?err, "failed to accept incoming connection"),
-                },
+                Err(err) => tracing::warn!(?err, "failed to accept incoming connection"),
+            }
 
-                Err(err) => {
-                    if err == RejectionReason::AddressNotValidated {
-                        // Signal the client to retry with validated address.
-                        let _ = incoming.retry();
-                    } else {
-                        tracing::debug!(
-                            server_name = self.name,
-                            reason = err.as_str(),
-                            remote_addr = ?incoming.remote_address().ip(),
-                            "inbound connection dropped"
-                        );
+            //     Err(err) => {
+            //         if err == RejectionReason::AddressNotValidated {
+            //             // Signal the client to retry with validated address.
+            //             let _ = incoming.retry();
+            //         } else {
+            //             tracing::debug!(
+            //                 server_name = self.name,
+            //                 reason = err.as_str(),
+            //                 remote_addr = ?incoming.remote_address().ip(),
+            //                 "inbound connection dropped"
+            //             );
 
-                        metrics::counter!(
-                            "wcn_rpc_quic_server_connections_dropped",
-                            EnumLabel<"reason", RejectionReason> => err,
-                            StringLabel<"server_name"> => self.name
-                        )
-                        .increment(1);
+            //             metrics::counter!(
+            //                 "wcn_rpc_quic_server_connections_dropped",
+            //                 EnumLabel<"reason", RejectionReason> => err,
+            //                 StringLabel<"server_name"> => self.name
+            //             )
+            //             .increment(1);
 
-                        // Calling `ignore()` instead of dropping avoids sending a response.
-                        incoming.ignore();
-                    }
-                }
-            };
+            //             // Calling `ignore()` instead of dropping avoids
+            // sending a response.             incoming.ignore();
+            //         }
+            //     }
+            // };
         }
     }
 
-    fn accept_connection(&self, connecting: quinn::Connecting, permit: Permit) {
+    fn accept_connection(&self, connecting: quinn::Connecting) {
         let this = self.clone();
 
         async move {
@@ -169,7 +170,7 @@ where
                 .await
                 .map_err(|_| ConnectionError::ReadHeaderTimeout)??;
 
-            let _permit = permit;
+            // let _permit = permit;
 
             this.route_connection(header.server_name, conn).await
         }

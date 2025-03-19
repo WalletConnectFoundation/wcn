@@ -1,18 +1,14 @@
 use {
     crate::quic,
     governor::DefaultDirectRateLimiter,
-    lru::LruCache,
+    mini_moka::sync::Cache,
     quinn::Incoming,
-    std::{
-        net::IpAddr,
-        num::{NonZeroU32, NonZeroUsize},
-        sync::Arc,
-    },
+    std::{net::IpAddr, num::NonZeroU32, sync::Arc},
     tokio::sync::{OwnedSemaphorePermit, Semaphore},
     wc::metrics::{self, enum_ordinalize::Ordinalize},
 };
 
-const LOCAL_LIMITERS_LRU_CAPACITY: usize = 500;
+const LOCAL_LIMITERS_LRU_CAPACITY: u64 = 500;
 
 /// Connection filter.
 ///
@@ -20,7 +16,7 @@ const LOCAL_LIMITERS_LRU_CAPACITY: usize = 500;
 /// from the same IP address, and number of incoming connections per second.
 pub struct Filter {
     global_semaphore: Arc<Semaphore>,
-    local_limiters: LruCache<IpAddr, LocalLimiters>,
+    local_limiters: Cache<IpAddr, Arc<LocalLimiters>>,
     max_connection_rate: NonZeroU32,
     max_connections_per_ip: u32,
 }
@@ -34,22 +30,28 @@ impl Filter {
 
         Ok(Self {
             global_semaphore: Arc::new(Semaphore::new(cfg.max_connections as usize)),
-            // Safe unwrap as long as `LOCAL_LIMITERS_LRU_CAPACITY` is >0.
-            local_limiters: LruCache::new(NonZeroUsize::new(LOCAL_LIMITERS_LRU_CAPACITY).unwrap()),
+            local_limiters: Cache::new(LOCAL_LIMITERS_LRU_CAPACITY),
             max_connection_rate,
             max_connections_per_ip: cfg.max_connections_per_ip,
         })
     }
 
-    pub fn try_acquire_permit(&mut self, incoming: &Incoming) -> Result<Permit, RejectionReason> {
+    pub fn try_acquire_permit(&self, incoming: &Incoming) -> Result<Permit, RejectionReason> {
         if !incoming.remote_address_validated() {
             return Err(RejectionReason::AddressNotValidated);
         }
 
         let remote_addr = incoming.remote_address().ip();
 
-        let limiters = self.local_limiters.get_or_insert(remote_addr, || {
-            LocalLimiters::new(self.max_connections_per_ip, self.max_connection_rate)
+        let limiters = self.local_limiters.get(&remote_addr).unwrap_or_else(|| {
+            let limiters = Arc::new(LocalLimiters::new(
+                self.max_connections_per_ip,
+                self.max_connection_rate,
+            ));
+
+            self.local_limiters.insert(remote_addr, limiters.clone());
+
+            limiters
         });
 
         if limiters.rate_limiter.check().is_err() {

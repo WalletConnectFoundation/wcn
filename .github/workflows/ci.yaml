@@ -8,6 +8,7 @@ on:
     paths:
       - "src/**"
       - "crates/**"
+      - "Cargo.lock"
       - "Cargo.toml"
       - "Dockerfile"
       - "build.rs"

@@ -119,7 +119,7 @@ where
         })))
     }
 
-    async fn serve(self, mut filter: Filter) {
+    async fn serve(self, filter: Filter) {
         while let Some(incoming) = self.endpoint.accept().await {
             match filter.try_acquire_permit(&incoming) {
                 Ok(permit) => match incoming.accept() {

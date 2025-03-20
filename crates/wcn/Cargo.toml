@@ -20,7 +20,7 @@ derive_more = { workspace = true, features = ["deref"] }
 clap = { version = "4", features = ["derive"] }
 eyre = "0.6"
 tracing = "0.1"
-node = { package = "wcn_node", path = "../../." }
+node = { package = "wcn_node", path = "../node" }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 anyhow = "1"
 thiserror = "1.0"

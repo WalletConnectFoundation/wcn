@@ -6,12 +6,10 @@ on:
 
   pull_request:
     paths:
-      - "src/**"
       - "crates/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "Dockerfile"
-      - "build.rs"
 
   workflow_dispatch:
     inputs:
@@ -58,7 +56,7 @@ jobs:
             cmd: |
               cargo test --workspace --doc --all-features \
               && RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node \
-              && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test --all-features --release
+              && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
             rust: 1.85.0
     env:
       RUST_BACKTRACE: full

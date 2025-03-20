@@ -32,7 +32,21 @@ static NEXT_PORT: AtomicU16 = AtomicU16::new(42100);
 const NETWORK_ID: &str = "wcn_integration_tests";
 
 fn next_port() -> u16 {
-    NEXT_PORT.fetch_add(1, Ordering::Relaxed)
+    use std::net::{Ipv4Addr, TcpListener, UdpSocket};
+
+    loop {
+        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+        if port == u16::MAX {
+            panic!("failed to find a free port");
+        }
+
+        let is_tcp_available = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok();
+        let is_udp_available = UdpSocket::bind((Ipv4Addr::LOCALHOST, port)).is_ok();
+
+        if is_tcp_available && is_udp_available {
+            return port;
+        }
+    }
 }
 
 fn authorized_client_keypair(n: u8) -> Keypair {

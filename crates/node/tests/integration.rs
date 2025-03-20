@@ -36,9 +36,7 @@ fn next_port() -> u16 {
 
     loop {
         let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
-        if port == u16::MAX {
-            panic!("failed to find a free port");
-        }
+        assert!(port != u16::MAX, "failed to find a free port");
 
         let is_tcp_available = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok();
         let is_udp_available = UdpSocket::bind((Ipv4Addr::LOCALHOST, port)).is_ok();

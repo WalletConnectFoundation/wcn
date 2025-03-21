@@ -4,8 +4,8 @@ name: Bump Version, Release & Generate Changelog
 
 on:
   push:
-    # branches:
-    #   - main
+    branches:
+      - main
     # Prevent triggering on VERSION-only pushes (avoiding infinite loops)
     paths-ignore:
       - 'VERSION'

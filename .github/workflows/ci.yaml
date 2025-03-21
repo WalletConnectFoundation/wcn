@@ -1,8 +1,11 @@
 name: ci
 
 on:
-  release:
-    types: ["published"]
+  push:
+    branches:
+      - main
+    paths:
+      - 'VERSION'
 
   pull_request:
     paths:

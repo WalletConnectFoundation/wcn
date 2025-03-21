@@ -111,9 +111,12 @@ pub fn exec() -> anyhow::Result<()> {
         }
     }
 
-    // TODO: Make this version consistent with the version in the repo, and find a
-    // way to set it automatically.
-    wc::metrics::gauge!("wcn_node_version").set(250319.0);
+    let version: f64 = include_str!("../../../VERSION")
+        .trim_end()
+        .parse()
+        .map_err(|err| tracing::warn!(?err, "Failed to parse VERSION file"))
+        .unwrap_or_default();
+    wc::metrics::gauge!("wcn_node_version").set(version);
 
     let cfg = Config::from_env().context("failed to parse config")?;
 

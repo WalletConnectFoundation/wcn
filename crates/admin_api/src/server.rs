@@ -135,6 +135,12 @@ where
                     })
                     .await
                 }
+                CompleteMigration::ID => {
+                    CompleteMigration::handle(stream, |_| {
+                        self.api_server.complete_migration().map(Ok)
+                    })
+                    .await
+                }
                 GetMemoryProfile::ID => {
                     GetMemoryProfile::handle(stream, |req| {
                         self.api_server.memory_profile(req.duration).map(Ok)

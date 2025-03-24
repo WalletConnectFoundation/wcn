@@ -1,7 +1,7 @@
 use {
     crate::{cluster, consensus, Config, Error, Node, TypeConfig},
     admin_api::Server as _,
-    client_api::Server,
+    client_api::Server as _,
     derive_more::AsRef,
     domain::HASHER,
     futures::{
@@ -825,6 +825,28 @@ impl admin_api::Server for AdminApiServer {
         };
 
         decommission_fut.and_then(|_| remove_raft_member_fut)
+    }
+
+    fn complete_migration(
+        &self,
+    ) -> impl Future<Output = admin_api::server::CompleteMigrationResult> + Send {
+        use admin_api::CompleteMigrationError as Error;
+
+        async {
+            let cluster_view = self.get_cluster_view().await;
+
+            for node in cluster_view.nodes.values() {
+                if let admin_api::NodeState::Pulling = node.state {
+                    self.node
+                        .consensus()
+                        .complete_pull(&node.id, cluster_view.keyspace_version)
+                        .await
+                        .map_err(|err| Error::Consensus(err.to_string()))?;
+                }
+            }
+
+            Ok(())
+        }
     }
 
     #[allow(unused)]

@@ -82,7 +82,7 @@ jobs:
           git config user.email "github@walletconnect.com"
           git add VERSION
           if ! git diff --cached --quiet; then
-            git commit -m "Bump version to $(cat VERSION)"
+            git commit -m "Release $(cat VERSION)"
             git push
           else
             echo "No changes in VERSION file to commit."
@@ -115,3 +115,4 @@ jobs:
         with:
           tag: ${{ steps.generate_version.outputs.version }}
           body: ${{ steps.release_notes.outputs.changelog }}
+          token: ${{ secrets.RELEASE_PAT }}

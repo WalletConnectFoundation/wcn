@@ -123,6 +123,9 @@ pub enum DecommissionNodeError {
 pub enum CompleteMigrationError {
     /// Consensus error.
     Consensus(String),
+
+    /// The node serving the Admin API is not allowed to complete the migration.
+    NotAllowed,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

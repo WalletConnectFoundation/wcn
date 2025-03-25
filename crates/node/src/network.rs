@@ -833,6 +833,10 @@ impl admin_api::Server for AdminApiServer {
         use admin_api::CompleteMigrationError as Error;
 
         async {
+            if !self.node.consensus().is_voter(self.node.id()) {
+                return Err(Error::NotAllowed);
+            };
+
             let cluster_view = self.get_cluster_view().await;
 
             for node in cluster_view.nodes.values() {

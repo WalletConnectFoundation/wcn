@@ -104,7 +104,7 @@ export ADMIN_API_SERVER_PORT=3013
 # Port of the Prometheus metrics server.
 export METRICS_SERVER_PORT=3014
 
-# Port of the Migration API metrics server.
+# Port of the Migration API server.
 export MIGRATION_API_SERVER_PORT=3015
 ```
 

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
   packages: write
 
 concurrency:
@@ -26,7 +27,6 @@ jobs:
   changed-files:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: changed
         with:
@@ -48,13 +48,13 @@ jobs:
             version:
               - 'VERSION'
     outputs:
-      rust: steps.changed.outputs.rust
-      cargo-toml: steps.changed.outputs.cargo-toml
-      rustfmt-toml: steps.changed.outputs.rustfmt-toml
-      clippy-toml: steps.changed.outputs.clippy-toml
-      deny-toml: steps.changed.outputs.deny-toml
-      dockerfile: steps.changed.outputs.dockerfile
-      version: steps.changed.outputs.version
+      rust: ${{ steps.changed.outputs.rust }}
+      cargo-toml: ${{ steps.changed.outputs.cargo-toml }}
+      rustfmt-toml: ${{ steps.changed.outputs.rustfmt-toml }}
+      clippy-toml: ${{ steps.changed.outputs.clippy-toml }}
+      deny-toml: ${{ steps.changed.outputs.deny-toml }}
+      dockerfile: ${{ steps.changed.outputs.dockerfile }}
+      version: ${{ steps.changed.outputs.version }}
 
   bump-version:
     needs: [changed-files]
@@ -82,6 +82,9 @@ jobs:
 
           echo NEW_VERSION=$NEW_VERSION >> $GITHUB_ENV
           echo "${NEW_VERSION}" > VERSION
+
+          git config user.name "Github Bot"
+          git config user.email "github@walletconnect.com"
           git add VERSION
           git commit -m "Bump VERSION to ${NEW_VERSION}"
           git push
@@ -91,7 +94,7 @@ jobs:
   misspell:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: reviewdog/action-misspell@v1
 
   cargo-build:
@@ -100,8 +103,10 @@ jobs:
     runs-on:
       group: ubuntu-runners
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@${{ env.RUST_STABLE }}
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_STABLE }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --all-features
 
@@ -118,8 +123,10 @@ jobs:
           - cmd: RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
           - cmd: RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@${{ env.RUST_STABLE }}
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_STABLE }}
       - uses: Swatinem/rust-cache@v2
       - run: ${{ matrix.test.cmd }}
 
@@ -129,8 +136,11 @@ jobs:
     runs-on:
       group: ubuntu-runners
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@${{ env.RUST_NIGHTLY }}
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY }}
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
 
@@ -140,8 +150,11 @@ jobs:
     runs-on:
       group: ubuntu-runners
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@${{ env.RUST_NIGHTLY }}
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY }}
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features --tests -- -D warnings
 
@@ -150,21 +163,22 @@ jobs:
     if: needs.changed-files.outputs.cargo-toml == 'true' || needs.changed-files.outputs.deny-toml == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           rust-version: ${{ env.RUST_STABLE }}
           command: check license
 
   docker-build-push:
-    needs: [changed-files, cargo]
+    needs: [changed-files, cargo-build, cargo-test, cargo-fmt, cargo-clippy, cargo-deny]
     if: |
+      needs.changed-files.result != 'failure' &&
+      (needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.dockerfile == 'true') &&
       needs.cargo-build.result != 'failure' &&
       needs.cargo-test.result != 'failure' &&
       needs.cargo-fmt.result != 'failure' &&
       needs.cargo-clippy.result != 'failure' &&
       needs.cargo-deny.result != 'failure' &&
-      (needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.dockerfile) &&
       !cancelled()
     runs-on:
       group: ubuntu-runners
@@ -205,7 +219,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=sha
-            ${{ if github.ref_name == 'main' && env.VERSION || '' }}
+            ${{ github.ref_name == 'main' && env.VERSION || '' }}
 
       - uses: docker/build-push-action@v3
         with:

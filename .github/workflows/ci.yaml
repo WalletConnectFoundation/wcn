@@ -69,6 +69,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref || github.ref_name }} 
+          token: ${{ secrets.RELEASE_PAT }}
       - id: bump-version
         run: |
           MAJOR=$(echo "$VERSION" | cut -d. -f1)

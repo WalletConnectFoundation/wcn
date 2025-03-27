@@ -116,7 +116,7 @@ jobs:
       - run: cargo build --workspace --all-features
 
   cargo-test:
-    needs: [changed-files, cargo-build]
+    needs: [changed-files]
     if: needs.changed-files.outputs.rust == 'true'
     runs-on:
       group: ubuntu-runners
@@ -132,7 +132,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: |
           TEST_KIND=${{ matrix.test }}
-          if [[ $TEST_KIND ]] == 'doc'; then
+          if [[ $TEST_KIND == 'doc' ]] ; then
             cargo test --workspace --doc --all-features
           elif [[ $TEST_KIND == 'unit' ]]; then
             RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node

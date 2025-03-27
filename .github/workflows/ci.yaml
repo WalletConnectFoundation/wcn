@@ -123,8 +123,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test:
-         kind: [doc, unit, integration]
+        test: [doc, unit, integration]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -132,7 +131,7 @@ jobs:
           toolchain: ${{ env.RUST_STABLE }}
       - uses: Swatinem/rust-cache@v2
       - run: |
-          TEST_KIND=${{ matrix.test.kind }}
+          TEST_KIND=${{ matrix.test }}
           if [[ $TEST_KIND ]] == 'doc'; then
             cargo test --workspace --doc --all-features
           elif [[ $TEST_KIND == 'unit' ]]; then

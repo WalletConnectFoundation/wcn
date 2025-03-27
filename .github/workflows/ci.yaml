@@ -124,9 +124,12 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - cmd: cargo test --workspace --doc --all-features
-          - cmd: RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
-          - cmd: RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
+          - name: doc
+            cmd: cargo test --workspace --doc --all-features
+          - name: unit
+            cmd: RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
+          - name: integration
+            cmd: RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

@@ -4,18 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'VERSION'
-
   pull_request:
-    paths:
-      - "crates/**"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "Dockerfile"
-
-  workflow_dispatch:
-    inputs:
 
 permissions:
   contents: read
@@ -29,94 +18,182 @@ concurrency:
   # If there is already a workflow running for the same pull request, cancel it
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  RUST_STABLE: 1.85.0
+  RUST_NIGHTLY: nightly-2025-02-23
+
 jobs:
-  tests:
-    name: "${{ matrix.cargo.name }}"
+  changed-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: changed
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            cargo-toml:
+              - '**/Cargo.toml'
+            rustfmt-toml:
+              - 'rustfmt.toml'
+            clippy-toml:
+              - 'clippy.toml'
+            deny-toml:
+              - 'deny.toml'
+            dockerfile:
+              - 'Dockerfile'
+            version:
+              - 'VERSION'
+    outputs:
+      rust: steps.changed.outputs.rust
+      cargo-toml: steps.changed.outputs.cargo-toml
+      rustfmt-toml: steps.changed.outputs.rustfmt-toml
+      clippy-toml: steps.changed.outputs.clippy-toml
+      deny-toml: steps.changed.outputs.deny-toml
+      dockerfile: steps.changed.outputs.dockerfile
+      version: steps.changed.outputs.version
+
+  bump-version:
+    needs: [changed-files]
+    if: github.event_name == 'pull_request' && (needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.dockerfile == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'main'
+      - id: get-current-version
+        run: echo VERSION=$(cat VERSION) >> $GITHUB_ENV
+      - uses: actions/checkout@v4
+      - id: bump-version
+        run: |
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+
+          TODAY=$(date +"%y%m%d")
+
+          if [[ $MAJOR == $TODAY ]]; then 
+            NEW_VERSION=$MAJOR.$((MINOR + 1))
+          else
+            NEW_VERSION=$TODAY.0
+          fi
+
+          echo NEW_VERSION=$NEW_VERSION >> $GITHUB_ENV
+          echo "${NEW_VERSION}" > VERSION
+          git add VERSION
+          git commit -m "Bump VERSION to ${NEW_VERSION}"
+          git push
+    outputs:
+      new-version: ${{ env.NEW_VERSION }}
+
+  misspell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: reviewdog/action-misspell@v1
+
+  cargo-build:
+    needs: [changed-files]
+    if: needs.changed-files.outputs.rust == 'true'
+    runs-on:
+      group: ubuntu-runners
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@${{ env.RUST_STABLE }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --all-features
+
+  cargo-test:
+    needs: [changed-files, cargo-build]
+    if: needs.changed-files.outputs.rust == 'true'
     runs-on:
       group: ubuntu-runners
     strategy:
       fail-fast: false
       matrix:
-        cargo:
-          - name: "clippy"
-            cmd: cargo clippy --workspace --all-targets --all-features --tests -- -D warnings
-            rust: nightly-2025-02-23
-          - name: "formatting"
-            cmd: cargo fmt --all --check
-            rust: nightly-2025-02-23
-          - name: "tests"
-            cmd: |
-              cargo test --workspace --doc --all-features \
-              && RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node \
-              && RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
-            rust: 1.85.0
-    env:
-      RUST_BACKTRACE: full
+        test:
+          - cmd: cargo test --workspace --doc --all-features
+          - cmd: RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
+          - cmd: RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: "Install Rust ${{ matrix.cargo.rust }}"
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.cargo.rust }}
-          profile: default
-          override: true
-
+      - uses: dtolnay/rust-toolchain@${{ env.RUST_STABLE }}
       - uses: Swatinem/rust-cache@v2
+      - run: ${{ matrix.test.cmd }}
 
-      - uses: taiki-e/install-action@v1
-        with:
-          tool: nextest
+  cargo-fmt:
+    needs: [changed-files]
+    if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.rustfmt-toml == 'true'
+    runs-on:
+      group: ubuntu-runners
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@${{ env.RUST_NIGHTLY }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
 
-      - name: "Validate ${{ matrix.cargo.name }}"
-        run: ${{ matrix.cargo.cmd }}
+  cargo-clippy:
+    needs: [changed-files]
+    if: needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.clippy-toml == 'true'
+    runs-on:
+      group: ubuntu-runners
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@${{ env.RUST_NIGHTLY }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --tests -- -D warnings
 
   cargo-deny:
+    needs: [changed-files]
+    if: needs.changed-files.outputs.cargo-toml == 'true' || needs.changed-files.outputs.deny-toml == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          rust-version: "1.85.0"
+          rust-version: ${{ env.RUST_STABLE }}
           command: check license
 
-  build:
-    name: "Build image"
+  docker-build-push:
+    needs: [changed-files, cargo]
+    if: |
+      needs.cargo-build.result != 'failure' &&
+      needs.cargo-test.result != 'failure' &&
+      needs.cargo-fmt.result != 'failure' &&
+      needs.cargo-clippy.result != 'failure' &&
+      needs.cargo-deny.result != 'failure' &&
+      (needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.dockerfile) &&
+      !cancelled()
     runs-on:
       group: ubuntu-runners
     strategy:
       fail-fast: false
     steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Login to ghcr.io
-        uses: docker/login-action@v2
+      - uses: actions/checkout@v4
+      
+      - uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
+      - uses: aws-actions/configure-aws-credentials@v1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
 
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v2
 
-      - name: Docker meta
-        id: meta
+      - id: read-version
+        run: echo VERSION=$(cat VERSION) >> $GITHUB_ENV
+
+      - id: docker-meta
         uses: docker/metadata-action@v4
         with:
           images: |
@@ -127,16 +204,45 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=ref,event=tag
             type=sha
+            ${{ if github.ref_name == 'main' && env.VERSION || '' }}
 
-      - name: Build and push the image
-        uses: docker/build-push-action@v3
+      - uses: docker/build-push-action@v3
         with:
           context: .
           file: ./Dockerfile
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=docker,dest=/tmp/image-wcn.tar
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.docker-meta.outputs.tags }}
           push: true
+
+  release:
+    needs: [changed-files, docker-build-push]
+    if: github.ref_name == 'main' && needs.changed-files.outputs.version == 'true' 
+    runs-on: ubuntu-latest
+    steps:
+      - id: generate-changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [[ "$LAST_TAG" ]]; then
+            CHANGELOG=$(git log ${LAST_TAG}..HEAD --pretty=format:"* %s")
+          else
+            CHANGELOG=$(git log --pretty=format:"* %s")
+          fi
+          echo "::set-output name=changelog::$CHANGELOG"
+
+      - name: push-tag
+        run: |
+          VERSION=$(cat VERSION) 
+
+          git tag $VERSION
+          git push origin "$VERSION"
+
+          echo VERSION=$VERSION >> $GITHUB_ENV
+
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.VERSION }}
+          body: ${{ steps.generate-changelog.outputs.changelog }}
+          token: ${{ secrets.RELEASE_PAT }}

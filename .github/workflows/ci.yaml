@@ -67,6 +67,8 @@ jobs:
       - id: get-current-version
         run: echo VERSION=$(cat VERSION) >> $GITHUB_ENV
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
       - id: bump-version
         run: |
           MAJOR=$(echo "$VERSION" | cut -d. -f1)

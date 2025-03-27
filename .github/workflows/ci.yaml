@@ -124,19 +124,25 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - name: doc
-            cmd: cargo test --workspace --doc --all-features
-          - name: unit
-            cmd: RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
-          - name: integration
-            cmd: RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
+         kind: [doc, unit, integration]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
       - uses: Swatinem/rust-cache@v2
-      - run: ${{ matrix.test.cmd }}
+      - run: |
+          TEST_KIND=${{ matrix.test.kind }}
+          if [[ $TEST_KIND ]] == 'doc'; then
+            cargo test --workspace --doc --all-features
+          elif [[ $TEST_KIND == 'unit' ]]; then
+            RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
+          elif [[ $TEST_KIND == 'integration' ]]; then
+            RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
+          else
+            echo Unexpected test kind $TEST_KIND
+            exit 1
+          fi 
 
   cargo-fmt:
     needs: [changed-files]

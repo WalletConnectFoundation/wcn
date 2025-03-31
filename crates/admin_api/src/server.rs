@@ -46,6 +46,11 @@ pub trait Server: Clone + Send + Sync + 'static {
         force: bool,
     ) -> impl Future<Output = DecommissionNodeResult> + Send;
 
+    /// Forcefully completes an ongoing data migration.
+    ///
+    /// Unsafe and may lead to data loss.
+    fn complete_migration(&self) -> impl Future<Output = CompleteMigrationResult> + Send;
+
     fn memory_profile(
         &self,
         duration: Duration,
@@ -87,6 +92,7 @@ pub trait Server: Clone + Send + Sync + 'static {
 
 pub type GetNodeStatusResult = Result<NodeStatus, GetNodeStatusError>;
 pub type DecommissionNodeResult = Result<(), DecommissionNodeError>;
+pub type CompleteMigrationResult = Result<(), CompleteMigrationError>;
 pub type MemoryProfileResult = Result<MemoryProfile, MemoryProfileError>;
 
 #[derive(Clone, Debug)]
@@ -126,6 +132,12 @@ where
                 DecommissionNode::ID => {
                     DecommissionNode::handle(stream, |req| {
                         self.api_server.decommission_node(req.id, req.force).map(Ok)
+                    })
+                    .await
+                }
+                CompleteMigration::ID => {
+                    CompleteMigration::handle(stream, |_| {
+                        self.api_server.complete_migration().map(Ok)
                     })
                     .await
                 }

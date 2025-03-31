@@ -832,6 +832,8 @@ impl admin_api::Server for AdminApiServer {
     ) -> impl Future<Output = admin_api::server::CompleteMigrationResult> + Send {
         use admin_api::CompleteMigrationError as Error;
 
+        tracing::warn!("Forcefully completing the ongoing migration");
+
         async {
             if !self.node.consensus().is_voter(self.node.id()) {
                 return Err(Error::NotAllowed);

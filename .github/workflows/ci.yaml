@@ -275,3 +275,10 @@ jobs:
           tag: ${{ env.VERSION }}
           body: ${{ steps.generate-changelog.outputs.changelog }}
           token: ${{ secrets.RELEASE_PAT }}
+
+  wtf:
+    needs: [changed-files]
+    if: github.ref_name == '202/merge' && needs.changed-files.outputs.version == 'true' 
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo A

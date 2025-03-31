@@ -245,7 +245,7 @@ jobs:
           push: true
 
   release:
-    needs: [changed-files, docker-build-push]
+    needs: [changed-files]
     if: github.ref_name == 'main' && needs.changed-files.outputs.version == 'true' 
     runs-on: ubuntu-latest
     steps:

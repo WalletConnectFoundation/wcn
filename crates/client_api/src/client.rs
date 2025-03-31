@@ -5,6 +5,7 @@ use {
     std::{collections::HashSet, convert::Infallible, sync::Arc, time::Duration},
     tokio::sync::{mpsc, oneshot},
     tokio_stream::wrappers::ReceiverStream,
+    wc::metrics::{self, StringLabel},
     wcn_rpc::{
         client::{
             middleware::{Timeouts, WithTimeouts, WithTimeoutsExt as _},
@@ -100,6 +101,7 @@ struct Inner {
     auth_token: Arc<ArcSwap<token::Token>>,
     cluster: Arc<ArcSwap<domain::Cluster>>,
     nodes: Vec<PeerAddr>,
+    metrics_tag: &'static str,
 }
 
 impl Inner {
@@ -190,9 +192,17 @@ async fn cluster_update(inner: &Inner, update_tx: mpsc::Sender<()>) {
             Ok(rx) => rx,
 
             Err(err) => {
-                tracing::error!(?err, "failed to subscribe to any peer");
+                tracing::error!(
+                    ?err,
+                    tag = inner.metrics_tag,
+                    "failed to subscribe to any peer"
+                );
 
-                wc::metrics::counter!("wcn_client_api_cluster_connection_failed").increment(1);
+                metrics::counter!(
+                    "wcn_client_api_cluster_connection_failed",
+                    StringLabel<"tag", &'static str> => &inner.metrics_tag
+                )
+                .increment(1);
 
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
@@ -203,20 +213,34 @@ async fn cluster_update(inner: &Inner, update_tx: mpsc::Sender<()>) {
             match rx.recv_message().await {
                 Ok(Ok(update)) => {
                     if let Err(err) = inner.apply_cluster_update(update).await {
-                        tracing::warn!(?err, "failed to apply cluster update");
+                        tracing::warn!(
+                            ?err,
+                            tag = inner.metrics_tag,
+                            "failed to apply cluster update"
+                        );
                     }
 
                     let _ = update_tx.try_send(());
-                    wc::metrics::counter!("wcn_client_api_cluster_updates").increment(1);
+
+                    metrics::counter!(
+                        "wcn_client_api_cluster_updates",
+                        StringLabel<"tag", &'static str> => &inner.metrics_tag
+                    )
+                    .increment(1);
                 }
 
                 res @ (Ok(Err(_)) | Err(_)) => {
                     tracing::warn!(
                         ?res,
+                        tag = inner.metrics_tag,
                         "failed to receive cluster update frame, resubscribing..."
                     );
 
-                    wc::metrics::counter!("wcn_client_api_cluster_updates_failed").increment(1);
+                    metrics::counter!(
+                        "wcn_client_api_cluster_updates_failed",
+                        StringLabel<"tag", &'static str> => &inner.metrics_tag
+                    )
+                    .increment(1);
 
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     break;
@@ -241,13 +265,25 @@ async fn auth_token_update(inner: &Inner) {
         tokio::time::sleep(next_delay).await;
 
         if let Err(err) = inner.refresh_auth_token().await {
-            tracing::warn!(?err, "failed to refresh auth token");
+            tracing::warn!(
+                ?err,
+                tag = inner.metrics_tag,
+                "failed to refresh auth token"
+            );
 
-            wc::metrics::counter!("wcn_client_api_token_updates_failed").increment(1);
+            metrics::counter!(
+                "wcn_client_api_token_updates_failed",
+                StringLabel<"tag", &'static str> => &inner.metrics_tag
+            )
+            .increment(1);
 
             next_delay = Duration::from_secs(1);
         } else {
-            wc::metrics::counter!("wcn_client_api_token_updates").increment(1);
+            metrics::counter!(
+                "wcn_client_api_token_updates",
+                StringLabel<"tag", &'static str> => &inner.metrics_tag
+            )
+            .increment(1);
 
             next_delay = normal_delay;
         }
@@ -297,6 +333,7 @@ impl Client {
             auth_token: Arc::new(ArcSwap::from_pointee(token::Token::default())),
             cluster: Arc::new(ArcSwap::from_pointee(domain::Cluster::new())),
             nodes,
+            metrics_tag: config.metrics_tag,
         });
 
         // Preload the client with initial auth token and cluster state.

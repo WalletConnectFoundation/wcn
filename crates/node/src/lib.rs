@@ -164,10 +164,10 @@ pub async fn run(
             region: cfg.region,
             organization: cfg.organization.clone(),
             eth_address: cfg.eth_address.clone(),
-            migration_api_addr: Some(socketaddr_to_multiaddr((
+            migration_api_addr: socketaddr_to_multiaddr((
                 cfg.server_addr,
                 cfg.migration_api_server_port,
-            ))),
+            )),
         },
         node_opts,
         consensus,

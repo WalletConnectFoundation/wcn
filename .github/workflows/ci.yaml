@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo ${{ github.ref_name }}
       - uses: dorny/paths-filter@v3
         id: changed
         with:
@@ -246,8 +245,8 @@ jobs:
           push: true
 
   release:
-    needs: [changed-files, docker-build-push]
-    if: github.ref_name == '202/merge' && needs.changed-files.outputs.version == 'true' 
+    needs: [changed-files]
+    if: github.ref_name == 'main' && needs.changed-files.outputs.version == 'true' 
     runs-on: ubuntu-latest
     steps:
       - id: generate-changelog

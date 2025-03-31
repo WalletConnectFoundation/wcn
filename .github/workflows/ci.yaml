@@ -249,6 +249,7 @@ jobs:
     if: github.ref_name == 'main' && needs.changed-files.outputs.version == 'true' 
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - id: generate-changelog
         run: |
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")

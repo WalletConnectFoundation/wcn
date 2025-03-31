@@ -31,6 +31,12 @@ type DecommissionNode = rpc::Unary<
     Result<(), DecommissionNodeError>,
 >;
 
+type CompleteMigration = rpc::Unary<
+    { rpc::id(b"complMigration") },
+    CompleteMigrationRequest,
+    Result<(), CompleteMigrationError>,
+>;
+
 type GetMemoryProfile = rpc::Unary<
     { rpc::id(b"mem_profile") },
     MemoryProfileRequest,
@@ -94,6 +100,9 @@ pub struct DecommissionNodeRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CompleteMigrationRequest;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DecommissionNodeError {
     /// Node is pulling data and can not be decommissioned yet.
     Pulling,
@@ -107,6 +116,15 @@ pub enum DecommissionNodeError {
 
     /// The node serving the Admin API is not allowed to decommission the
     /// requested node.
+    NotAllowed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CompleteMigrationError {
+    /// Consensus error.
+    Consensus(String),
+
+    /// The node serving the Admin API is not allowed to complete the migration.
     NotAllowed,
 }
 

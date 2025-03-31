@@ -115,6 +115,18 @@ impl Client {
             .map_err(Error::Api)
     }
 
+    /// Forcefully completes an ongoing data migration.
+    ///
+    /// Unsafe and may lead to data loss.
+    pub async fn complete_migration(&self) -> Result<(), CompleteMigrationError> {
+        let req = CompleteMigrationRequest;
+
+        CompleteMigration::send(&self.rpc_client, &self.server_addr, &req)
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::Api)
+    }
+
     /// Runs the memory profiler for a specified duration and returns the
     /// compressed profile data.
     pub async fn memory_profile(

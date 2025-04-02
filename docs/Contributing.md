@@ -31,18 +31,6 @@ run the project via `cargo run` (ctrl+c to exit).
 Testing the entire project can be done via `cargo test --all-features` from the
 repo root.
 
-Note that our current convention is to _avoid_ writing unit tests. We only write functional tests.
-(`cargo test` calls these "integration tests".)
-We believe unit tests slow you down when refactoring, don't provide regression
-safety because they require changes whenever you change the related code, and ultimately only become
-a maintenance burden that yields very little benefit. We test from the program interface level,
-which are the REST and websocket API.
-
-## Local Dev
-
-While working on code locally sometimes is convenient to have a hot reload to improve code changes and build time. Rust on it's own doesn't provide
-a hot reload mechanism but community has built [cargo-watch](https://crates.io/crates/cargo-watch) as a plugin for cargo.
-
 ## Documentation
 
 You can generate and open this repo's full documentation via:
@@ -85,4 +73,4 @@ purpose is obvious.
 This repo expects expressive commits where 1 commit = 1 logical change, with a
 clear status message and body explaining the purpose of the commit.
 
-We use [conventional commits](https://www.conventionalcommits.org) which are enforced by CI.
+We use [conventional commits](https://www.conventionalcommits.org).

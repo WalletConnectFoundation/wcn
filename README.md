@@ -2,44 +2,11 @@ WallectConnect Network Node. Implemented in Rust.
 
 Node operators, see [Node Operator onboarding](docs/node-operator-onboarding.md) doc before joining the network.
 
-## Running Locally
-
-Setup:
-
-- Install [`rust`](https://www.rust-lang.org/tools/install);
-- Install [`docker`](https://docs.docker.com/get-docker/);
-- Install [`just`](https://github.com/casey/just#packages);
-- Copy the env file:
-  ```sh
-  $ cp example.env .env
-  ```
-- Fill `.env` file with necessary values - access keys for AWS and other services. No changes are necessary if just running locally.
-
-Running the WCN Node:
-
-```sh
-just run
+The list of currently available CLI commands:
+```bash
+cargo run -p wcn --help
 ```
 
-Running checks & tests:
-
-```sh
-just devloop
-```
-
-Running all checks & tests including storage tests:
-
-```sh
-just devloop test-all
-```
-
-## Running a sandbox cluster
-
-Running dockerized sandbox cluster:
-
-```sh
-$ just run-docker
-```
 ## Contributing
 
 If you would like to contribute to the project, please read

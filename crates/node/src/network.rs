@@ -9,7 +9,6 @@ use {
         stream::{self, BoxStream},
         Future,
         FutureExt,
-        SinkExt,
         Stream,
         StreamExt,
         TryFutureExt,
@@ -55,14 +54,7 @@ use {
             middleware::{MeteredExt as _, WithTimeoutsExt as _},
             ClientConnectionInfo,
         },
-        transport::{
-            self,
-            BiDirectionalStream,
-            NoHandshake,
-            PostcardCodec,
-            RecvStream,
-            SendStream,
-        },
+        transport::{self, BiDirectionalStream, NoHandshake, PostcardCodec},
         Multiaddr,
         PeerAddr,
         ServerName,
@@ -72,39 +64,8 @@ use {
 pub const REPLICA_API_SERVER_NAME: ServerName = ServerName::new("replica_api");
 
 pub mod rpc {
-    pub mod migration {
-        use {
-            relay_rocks::db::migration::ExportItem,
-            serde::{Deserialize, Serialize},
-            std::ops::RangeInclusive,
-            wcn_rpc as rpc,
-        };
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct PullDataRequest {
-            pub keyrange: RangeInclusive<u64>,
-            pub keyspace_version: u64,
-        }
-
-        #[derive(Clone, Debug, thiserror::Error, Serialize, Deserialize)]
-        pub enum PullDataError {
-            #[error("Keyspace versions of puller and pullee don't match")]
-            KeyspaceVersionMismatch,
-            #[error("Storage export failed: {0}")]
-            StorageExport(String),
-            #[error("Puller is not a cluster member")]
-            NotClusterMember,
-        }
-
-        pub type PullDataResponse = Result<ExportItem, PullDataError>;
-
-        pub type PullData =
-            rpc::Streaming<{ rpc::id(b"pull_data") }, PullDataRequest, PullDataResponse>;
-    }
-
     pub mod broadcast {
         use {
-            libp2p::PeerId,
             serde::{Deserialize, Serialize},
             wcn_rpc as rpc,
         };
@@ -119,28 +80,6 @@ pub mod rpc {
         }
 
         pub type Pubsub = rpc::Oneshot<{ rpc::id(b"pubsub") }, PubsubEventPayload>;
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct HeartbeatMessage(pub PeerId);
-
-        pub type Heartbeat = rpc::Oneshot<{ rpc::id(b"heartbeat") }, HeartbeatMessage>;
-    }
-
-    pub use health::Health;
-    pub mod health {
-        use {
-            serde::{Deserialize, Serialize},
-            wcn_rpc as rpc,
-        };
-
-        pub type Request = ();
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct HealthResponse {
-            pub node_version: u64,
-        }
-
-        pub type Health = rpc::Unary<{ rpc::id(b"health") }, Request, HealthResponse>;
     }
 
     pub use metrics::Metrics;
@@ -414,34 +353,12 @@ impl ReplicaApiServer {
         &self,
         id: wcn_rpc::Id,
         stream: BiDirectionalStream,
-        conn_info: &ClientConnectionInfo<Self>,
+        _conn_info: &ClientConnectionInfo<Self>,
     ) {
-        let peer_id = &conn_info.peer_id;
-
         let _ = match id {
-            rpc::migration::PullData::ID => {
-                rpc::migration::PullData::handle(stream, |rx, tx| {
-                    self.handle_pull_data(peer_id, rx, tx)
-                })
-                .await
-            }
-
             rpc::broadcast::Pubsub::ID => {
                 rpc::broadcast::Pubsub::handle(stream, |evt| async { self.pubsub.publish(evt) })
                     .await
-            }
-
-            rpc::broadcast::Heartbeat::ID => {
-                rpc::broadcast::Heartbeat::handle(stream, |_heartbeat| async {}).await
-            }
-
-            rpc::Health::ID => {
-                rpc::Health::handle(stream, |_req| async {
-                    Ok(rpc::health::HealthResponse {
-                        node_version: crate::NODE_VERSION,
-                    })
-                })
-                .await
             }
 
             rpc::Metrics::ID => {
@@ -462,32 +379,6 @@ impl ReplicaApiServer {
                 "Failed to handle internal RPC"
             )
         });
-    }
-}
-
-impl ReplicaApiServer {
-    async fn handle_pull_data(
-        &self,
-        peer_id: &libp2p::PeerId,
-        mut rx: RecvStream<rpc::migration::PullDataRequest>,
-        mut tx: SendStream<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
-    ) -> server::Result<()> {
-        tx.set_low_priority();
-
-        let req = rx.recv_message().await?;
-
-        let resp = self
-            .node
-            .migration_manager()
-            .handle_pull_request(peer_id, req.keyrange, req.keyspace_version)
-            .await;
-
-        match resp {
-            Ok(data) => tx.send_all(&mut data.map(Ok).map(Ok).map(Ok)).await?,
-            Err(e) => tx.send(Ok(Err(e.into()))).await?,
-        };
-
-        Ok(())
     }
 }
 
@@ -574,15 +465,6 @@ fn migration_api_server_error(err: PullKeyrangeError) -> migration_api::server::
     }
 }
 
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum PullDataError {
-    #[error(transparent)]
-    Transport(#[from] transport::Error),
-
-    #[error(transparent)]
-    Rpc(rpc::migration::PullDataError),
-}
-
 impl wcn::migration::Network<cluster::Node> for Network {
     type DataStream = BoxStream<'static, migration_api::client::Result<ExportItem>>;
 
@@ -593,56 +475,15 @@ impl wcn::migration::Network<cluster::Node> for Network {
         keyspace_version: u64,
     ) -> impl Future<Output = Result<Self::DataStream, impl wcn::migration::AnyError>> + Send {
         async move {
-            if let Some(addr) = &from.migration_api_addr {
-                let addr = PeerAddr {
-                    id: from.id,
-                    addr: addr.clone(),
-                };
+            let addr = PeerAddr {
+                id: from.id,
+                addr: from.migration_api_addr.clone(),
+            };
 
-                return self
-                    .migration_api_client
-                    .pull_data(&addr, range, keyspace_version)
-                    .map_ok(|stream| stream.boxed())
-                    .await;
-            }
-
-            let range = &range;
-
-            rpc::migration::PullData::send(
-                &self.replica_api_client,
-                &from.addr(),
-                &move |mut tx, rx| async move {
-                    tx.send(rpc::migration::PullDataRequest {
-                        keyrange: range.clone(),
-                        keyspace_version,
-                    })
-                    .await?;
-
-                    // flatten error by converting the inner ones into the outer `io::Error`
-                    fn flatten_err(
-                        res: transport::Result<wcn_rpc::Result<rpc::migration::PullDataResponse>>,
-                    ) -> migration_api::client::Result<ExportItem> {
-                        match res {
-                            Ok(Ok(Ok(item))) => Ok(item),
-                            Ok(Ok(Err(err))) => Err(migration_api::client::Error::Other(
-                                wcn::migration::PullKeyrangeError::from(err).to_string(),
-                            )),
-                            Ok(Err(err)) => {
-                                Err(migration_api::client::Error::Other(err.to_string()))
-                            }
-                            Err(err) => {
-                                Err(migration_api::client::Error::Transport(err.to_string()))
-                            }
-                        }
-                    }
-                    let rx = rx.map(flatten_err);
-
-                    Ok(rx)
-                },
-            )
-            .await
-            .map(|stream| stream.boxed())
-            .map_err(|e| migration_api::client::Error::Transport(e.to_string()))
+            self.migration_api_client
+                .pull_data(&addr, range, keyspace_version)
+                .map_ok(|stream| stream.boxed())
+                .await
         }
     }
 }
@@ -909,9 +750,8 @@ pub struct Network {
 impl Network {
     pub fn new(cfg: &Config) -> Result<Self, Error> {
         // Set timeouts for everything except `PullData`.
-        let rpc_timeouts = Timeouts::new()
-            .with_default(Duration::from_millis(cfg.network_request_timeout))
-            .with::<{ rpc::migration::PullData::ID }>(None);
+        let rpc_timeouts =
+            Timeouts::new().with_default(Duration::from_millis(cfg.network_request_timeout));
 
         let known_peers = cfg
             .known_peers
@@ -994,9 +834,7 @@ impl Network {
             authorized_clients: cfg.authorized_admin_api_clients.clone(),
         };
 
-        let rpc_timeouts = Timeouts::new()
-            .with_default(default_timeout)
-            .with::<{ rpc::migration::PullData::ID }>(None);
+        let rpc_timeouts = Timeouts::new().with_default(default_timeout);
 
         let node = Arc::new(node);
 
@@ -1196,30 +1034,6 @@ impl PinnedDrop for Subscription {
             .unwrap()
             .subscribers
             .remove(&self.id);
-    }
-}
-
-impl From<wcn::migration::PullKeyrangeError> for rpc::migration::PullDataError {
-    fn from(err: wcn::migration::PullKeyrangeError) -> Self {
-        use wcn::migration::PullKeyrangeError as E;
-
-        match err {
-            E::KeyspaceVersionMismatch => Self::KeyspaceVersionMismatch,
-            E::StorageExport(s) => Self::StorageExport(s),
-            E::NotClusterMember => Self::NotClusterMember,
-        }
-    }
-}
-
-impl From<rpc::migration::PullDataError> for wcn::migration::PullKeyrangeError {
-    fn from(err: rpc::migration::PullDataError) -> Self {
-        use rpc::migration::PullDataError as E;
-
-        match err {
-            E::KeyspaceVersionMismatch => Self::KeyspaceVersionMismatch,
-            E::StorageExport(s) => Self::StorageExport(s),
-            E::NotClusterMember => Self::NotClusterMember,
-        }
     }
 }
 

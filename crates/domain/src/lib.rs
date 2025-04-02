@@ -162,7 +162,7 @@ mod test {
 
         let addr = || {
             format!(
-                "/ip4//udp/{}/quic-v1",
+                "/ip4/127.0.0.1/udp/{}/quic-v1",
                 PORT.fetch_add(1, Ordering::Relaxed)
             )
             .parse()

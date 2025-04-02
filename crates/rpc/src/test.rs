@@ -96,7 +96,7 @@ async fn suite() {
         let keypair = Keypair::generate_ed25519();
         (
             PeerId::from_public_key(&keypair.public()),
-            Multiaddr::from_str(&format!("/ip4//udp/300{n}/quic-v1")).unwrap(),
+            Multiaddr::from_str(&format!("/ip4/127.0.0.1/udp/300{n}/quic-v1")).unwrap(),
             keypair,
         )
     };
@@ -205,7 +205,7 @@ async fn suite() {
 #[test]
 fn peer_addr() {
     let encoded =
-        "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4//udp/3011/quic-v1";
+        "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4/127.0.0.1/udp/3011/quic-v1";
     let decoded = PeerAddr::from_str(encoded).unwrap();
 
     assert_eq!(
@@ -214,7 +214,7 @@ fn peer_addr() {
             "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp"
                 .parse()
                 .unwrap(),
-            "/ip4//udp/3011/quic-v1".parse().unwrap(),
+            "/ip4/127.0.0.1/udp/3011/quic-v1".parse().unwrap(),
         )
     );
 

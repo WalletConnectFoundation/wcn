@@ -92,7 +92,7 @@ mod test {
         pub(crate) fn new_test(inner: storage_api::client::Result<T>) -> Self {
             Self {
                 inner,
-                replica_addr: "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4//\
+                replica_addr: "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4/10.0.0.1/\
                                udp/3010/quic-v1"
                     .parse()
                     .unwrap(),
@@ -105,15 +105,15 @@ mod test {
     fn test_majority_quorum() {
         let addr1 = PeerAddr::new(
             PeerId::random(),
-            "/ip4//udp/3010/quic-v1".parse().unwrap(),
+            "/ip4/10.0.0.1/udp/3010/quic-v1".parse().unwrap(),
         );
         let addr2 = PeerAddr::new(
             PeerId::random(),
-            "/ip4//udp/3010/quic-v1".parse().unwrap(),
+            "/ip4/10.0.0.2/udp/3010/quic-v1".parse().unwrap(),
         );
         let addr3 = PeerAddr::new(
             PeerId::random(),
-            "/ip4//udp/3010/quic-v1".parse().unwrap(),
+            "/ip4/10.0.0.3/udp/3010/quic-v1".parse().unwrap(),
         );
 
         let mut quorum = MajorityQuorum::<u8>::new(2);

@@ -7,6 +7,11 @@ The list of currently available CLI commands:
 cargo run -p wcn --help
 ```
 
+## Contributing
+
+If you would like to contribute to the project, please read
+the [Contributing](./docs/Contributing.md) guide.
+
 ## License
 
 Licensed under [Apache License, Version 2.0](./LICENSE).

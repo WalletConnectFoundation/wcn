@@ -22,8 +22,7 @@ pub struct Node {
     pub organization: String,
     pub eth_address: Option<String>,
 
-    #[serde(default)]
-    pub migration_api_addr: Option<Multiaddr>,
+    pub migration_api_addr: Multiaddr,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,7 +172,7 @@ mod test {
         Node {
             id: PeerId::random(),
             addr: addr(),
-            migration_api_addr: Some(addr()),
+            migration_api_addr: addr(),
             region: match region {
                 "eu" => NodeRegion::Eu,
                 "us" => NodeRegion::Us,

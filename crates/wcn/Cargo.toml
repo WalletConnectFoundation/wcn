@@ -24,7 +24,7 @@ node = { package = "wcn_node", path = "../node" }
 vergen-pretty = { version = "0.3", features = ["trace"] }
 anyhow = "1"
 thiserror = "1.0"
-tokio = "1.37"
+tokio = "1.43"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 config = { version = "0.14", default-features = false, features = ["toml"] }

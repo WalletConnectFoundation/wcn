@@ -68,9 +68,10 @@ The following section depends on the network: Mainnet / Testnet.
   export NETWORK_ID=mainnet
   
   # For the initial launch of your node (bootstrap) you also need to specify a list of peers to connect to.   
-  export PEER_12D3KooWFJpHSpFCoHqFJsHyc9JA7C9XPTVhyXsiTRucU6TikGWe=/ip4/35.157.165.56/udp/3010/quic-v1
-  export PEER_12D3KooWDdSQWrrkcxs6JGcWYHygwQ4zyoK4SR6Y58f7dsmXsXyp=/ip4/18.210.232.235/udp/3010/quic-v1
-  export PEER_12D3KooWNhADaVPZFcRLxvbfp8abbuPLFz9NGxkh75aHivPHnjyP=/ip4/18.139.66.197/udp/3010/quic-v1
+  export PEER_12D3KooWFJpHSpFCoHqFJsHyc9JA7C9XPTVhyXsiTRucU6TikGWe=<Ask the team for the correct address>
+  export PEER_12D3KooWDdSQWrrkcxs6JGcWYHygwQ4zyoK4SR6Y58f7dsmXsXyp=<Ask the team for the correct address>
+  export PEER_12D3KooWNhADaVPZFcRLxvbfp8abbuPLFz9NGxkh75aHivPHnjyP=<Ask the team for the correct address>
+
   ```
 </details>
 <details>
@@ -81,9 +82,9 @@ The following section depends on the network: Mainnet / Testnet.
   export NETWORK_ID=testnet
 
   # For the initial launch of your node (bootstrap) you also need to specify a list of peers to connect to.   
-  export PEER_12D3KooWDBZx6LibN1Lxvtb45yFNBfons96bn79AokA2amcJpcZd=/ip4/35.157.219.93/udp/3010/quic-v1
-  export PEER_12D3KooWDfseE1zdkdPjhwHYfdSUSRZ5mGJoUTNUbiyehWrMDhDM=/ip4/3.211.214.115/udp/3010/quic-v1
-  export PEER_12D3KooWJTtT7wUsqWtcGufQrYCcPm8s5vHib9cCVZWiVUKMJz5a=/ip4/18.136.236.182/udp/3010/quic-v1
+  export PEER_12D3KooWDBZx6LibN1Lxvtb45yFNBfons96bn79AokA2amcJpcZd=<Ask the team for the correct address>
+  export PEER_12D3KooWDfseE1zdkdPjhwHYfdSUSRZ5mGJoUTNUbiyehWrMDhDM=<Ask the team for the correct address>
+  export PEER_12D3KooWJTtT7wUsqWtcGufQrYCcPm8s5vHib9cCVZWiVUKMJz5a=<Ask the team for the correct address>
   ```
 </details>
 

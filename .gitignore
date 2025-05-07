@@ -4,6 +4,9 @@ target/
 /bin
 /crates/*/target/
 /crates/*/Cargo.lock
+/contracts/dependencies/
+/contracts/out/
+/contracts/cache/
 .direnv
 .env
 .envrc

@@ -40,5 +40,24 @@ library NodesLib {
         delete self.slots[idx];
         self.freeSlotIndexes.push(idx);
     }
+
+    function length(Nodes storage self) public view returns (uint8) {
+        return uint8(self.slots.length - self.freeSlotIndexes.length);
+    }
+
+    function getView(Nodes storage self) public view returns (Node[] memory) {
+        Node[] memory nodes = new Node[](length(self));
+        uint256 j;
+        for (uint256 i = 0; i < self.slots.length; i++) {
+            if (self.slots[i].id != 0) {
+                nodes[j] = Node({
+                    id: self.slots[i].id,
+                    data: self.slots[i].data
+                });
+                j++;
+            }
+        }
+        return nodes;
+    }
 }
 

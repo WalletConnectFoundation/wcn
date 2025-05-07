@@ -21,6 +21,10 @@ struct NodeOperators {
     uint8[] freeSlotIndexes;
 }
 
+struct NodeOperatorsView {
+    NodeOperatorView[] slots;
+}
+
 library NodeOperatorsLib {
     using NodesLib for Nodes;
     using NodeOperatorsLib for NodeOperators;
@@ -71,5 +75,17 @@ library NodeOperatorsLib {
 
     function removeNode(NodeOperators storage self, address operator, uint256 id) public {
         self.slots[self.indexes[operator]].nodes.remove(id);
+    }
+
+    function getView(NodeOperators storage self) public view returns (NodeOperatorsView memory) {
+        NodeOperatorView[] memory slots = new NodeOperatorView[](length(self));
+        for (uint256 i = 0; i < self.slots.length; i++) {
+            slots[i] = NodeOperatorView({
+                addr: self.slots[i].addr,
+                nodes: self.slots[i].nodes.getView(),
+                data: self.slots[i].data
+            });
+        }
+        return NodeOperatorsView({ slots: slots });
     }
 }

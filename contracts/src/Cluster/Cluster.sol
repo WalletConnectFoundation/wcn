@@ -11,8 +11,13 @@ struct Settings {
     uint8 minNodes;
 }
 
-struct View {
-    NodeOperatorView[] operators
+struct ClusterView {
+    NodeOperatorsView operators;
+    MigrationView migration;
+    Maintenance maintenance;
+
+    uint64 keyspaceVersion;
+    uint128 version;
 }
 
 contract Cluster {
@@ -20,7 +25,7 @@ contract Cluster {
     using MigrationLib for Migration;
     using MaintenanceLib for Maintenance;
 
-    event MigrationStarted(address[] operatorsToRemove, NewNodeOperator[] operatorsToAdd, uint128 version);
+    event MigrationStarted(address[] operatorsToRemove, NodeOperatorView[] operatorsToAdd, uint128 version);
     event MigrationDataPullCompleted(address operator, uint128 version);
     event MigrationCompleted(uint128 version);
     event MigrationAborted(uint128 version);
@@ -41,7 +46,7 @@ contract Cluster {
     uint64 keyspaceVersion;
     uint128 version;
 
-    constructor(Settings memory initialSettings, NewNodeOperator[] memory initialOperators) {
+    constructor(Settings memory initialSettings, NodeOperatorView[] memory initialOperators) {
         owner = msg.sender;
         settings = initialSettings;
     
@@ -63,7 +68,7 @@ contract Cluster {
         _;
     }
 
-    function startMigration(address[] calldata operatorsToRemove, NewNodeOperator[] calldata operatorsToAdd) external onlyOwner {
+    function startMigration(address[] calldata operatorsToRemove, NodeOperatorView[] calldata operatorsToAdd) external onlyOwner {
         require(!maintenance.inProgress(), "maintenance is in progress");
 
         for (uint256 i = 0; i < operatorsToRemove.length; i++) {
@@ -153,7 +158,13 @@ contract Cluster {
         require(value <= 256, "too many nodes");
     }
 
-    function view() public view returns (View) {
-        
+    function getView() public view returns (ClusterView memory) {
+        return ClusterView({
+            operators: operators.getView(),
+            migration: migration.getView(operators.slots),
+            maintenance: maintenance,
+            keyspaceVersion: keyspaceVersion,
+            version: version
+        });
     }
 }

@@ -6,13 +6,13 @@ import "../src/Cluster/Cluster.sol";
 contract ClusterTestSuite is Test {
     mapping(address => uint256) privateKeys;
 
-    function newNodeOperator(uint256 privateKey, uint256 nodesCount) internal pure returns (NewNodeOperator memory) {
+    function newNodeOperator(uint256 privateKey, uint256 nodesCount) internal pure returns (NodeOperatorView memory) {
         Node[] memory nodes = new Node[](nodesCount);
         for (uint256 i = 0; i < nodesCount; i++) {
             nodes[i] = Node({ id: i + 1 , data: bytes("Some node specific data") });
         }
 
-        return NewNodeOperator({
+        return NodeOperatorView({
             addr: vm.addr(privateKey),
             nodes: nodes,
             data: bytes("Some operator specific data")
@@ -28,7 +28,7 @@ contract ClusterTestSuite is Test {
     }
 
     function newCluster(Settings memory settings, uint256 operatorsCount, uint256 nodesCount) internal returns (Cluster) {
-        NewNodeOperator[] memory operators = new NewNodeOperator[](operatorsCount);
+        NodeOperatorView[] memory operators = new NodeOperatorView[](operatorsCount);
         for (uint256 i = 0; i < operatorsCount; i++) {
             operators[i] = newNodeOperator(i + 1, nodesCount);
         }
@@ -74,23 +74,23 @@ contract ClusterTestSuite is Test {
         newCluster(Settings({ minOperators: 3, minNodes: 2 }), 3, 256);
     }
 
-    function startMigration(Cluster cluster, uint256 callerPrivateKey, uint256 removeCount, uint256 addCount) {
-        vm.prank(vm.addr(callerPrivateKey));
+    // function startMigration(Cluster cluster, uint256 callerPrivateKey, uint256 removeCount, uint256 addCount) {
+    //     vm.prank(vm.addr(callerPrivateKey));
 
-        address[] operatorsToRemove = new address[](removeCount);
-        for (uint256 i = 0; i < removeCount; i++) {
-            operatorsToRemove[i] = ;
-        }
+    //     address[] operatorsToRemove = new address[](removeCount);
+    //     for (uint256 i = 0; i < removeCount; i++) {
+    //         operatorsToRemove[i] = ;
+    //     }
 
-        NewNodeOperator[] operatorsToAdd = new NewNodeOperator[](addCount);
+    //     NodeOperatorView[] operatorsToAdd = new NodeOperatorView[](addCount);
         
-        cluster.startMigration()
-    }
+    //     cluster.startMigration()
+    // }
 
-    function test_arbitraryKeypairCanNotStartMigration() public {
-        Cluster cluster = newCluster();
-        newCluster(Settings({ minOperators: 3, minNodes: 2 }), 3, 256);
-    }
+    // function test_arbitraryKeypairCanNotStartMigration() public {
+    //     Cluster cluster = newCluster();
+    //     newCluster(Settings({ minOperators: 3, minNodes: 2 }), 3, 256);
+    // }
 
     // uint256 testNumber;
 

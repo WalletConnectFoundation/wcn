@@ -5,10 +5,17 @@ import "./NodeOperators.sol";
 
 struct Migration {
     address[] operatorsToRemove;
-    NewNodeOperator[] operatorsToAdd;
+    NodeOperatorView[] operatorsToAdd;
 
     mapping(address => bool) pullingOperators;
     uint8 pullingOperatorsCount;
+}
+
+struct MigrationView {
+    address[] operatorsToRemove;
+    NodeOperatorView[] operatorsToAdd;
+
+    address[] pullingOperators;
 }
 
 library MigrationLib {
@@ -18,7 +25,7 @@ library MigrationLib {
         Migration storage self,
         NodeOperator[] storage currentOperators,
         address[] calldata operatorsToRemove,
-        NewNodeOperator[] calldata operatorsToAdd
+        NodeOperatorView[] calldata operatorsToAdd
     ) public {
         require(!inProgress(self), "migration already in progress");
         require(operatorsToRemove.length > 0 || operatorsToRemove.length > 0, "nothing to do");
@@ -71,5 +78,32 @@ library MigrationLib {
 
     function inProgress(Migration storage self) public view returns (bool) {
         return (self.operatorsToRemove.length != 0 || self.operatorsToAdd.length != 0);
+    }
+
+    function getView(Migration storage self, NodeOperator[] storage currentOperators) public view returns (MigrationView memory) {
+        address[] memory toRemove = new address[](self.operatorsToRemove.length);
+        for (uint256 i = 0; i < self.operatorsToRemove.length; i++) {
+            toRemove[i] = self.operatorsToRemove[i];
+        }
+
+        NodeOperatorView[] memory toAdd = new NodeOperatorView[](self.operatorsToAdd.length);
+        for (uint256 i = 0; i < self.operatorsToAdd.length; i++) {
+            toAdd[i] = self.operatorsToAdd[i];
+        }
+
+        address[] memory pulling = new address[](self.pullingOperatorsCount);
+        uint256 j;
+        for (uint256 i = 0; i < currentOperators.length; i++) {
+            if (currentOperators[i].addr != address(0) && self.pullingOperators[currentOperators[i].addr]) {
+                pulling[j] = currentOperators[i].addr;
+                j++;
+            }
+        }
+
+        return MigrationView({
+            operatorsToRemove: toRemove,
+            operatorsToAdd: toAdd,
+            pullingOperators: pulling
+        });
     }
 }

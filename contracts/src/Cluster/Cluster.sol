@@ -68,6 +68,10 @@ contract Cluster {
         _;
     }
 
+    function transferOwnership(address newOwner) external onlyOwner {
+        owner = newOwner;
+    }
+
     function startMigration(address[] calldata operatorsToRemove, NodeOperatorView[] calldata operatorsToAdd) external onlyOwner {
         require(!maintenance.inProgress(), "maintenance is in progress");
 

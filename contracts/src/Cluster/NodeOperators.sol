@@ -30,6 +30,8 @@ library NodeOperatorsLib {
     using NodeOperatorsLib for NodeOperators;
 
     function add(NodeOperators storage self, NodeOperatorView calldata operator) public {
+        require(!exists(self, operator.addr), "operator already exists");
+
         uint8 idx;
     
         if (self.freeSlotIndexes.length > 0) {
@@ -41,6 +43,7 @@ library NodeOperatorsLib {
             self.slots.push();
         }
 
+        self.indexes[operator.addr] = idx;
         NodeOperator storage op = self.slots[idx];
         op.addr = operator.addr;
         op.data = operator.data;
@@ -62,7 +65,12 @@ library NodeOperatorsLib {
 
     function exists(NodeOperators storage self, address addr) public view returns (bool) {
         require(addr != address(0), "invalid address");
-        return ((self.indexes[addr] != 0 || self.slots[0].addr == addr));
+
+        if (self.slots.length > 0) {
+            return ((self.indexes[addr] != 0 || self.slots[0].addr == addr));
+        }
+        
+        return false;
     }
 
     function length(NodeOperators storage self) public view returns (uint8) {

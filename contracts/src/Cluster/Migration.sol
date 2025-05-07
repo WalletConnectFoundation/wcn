@@ -28,7 +28,7 @@ library MigrationLib {
         NodeOperatorView[] calldata operatorsToAdd
     ) public {
         require(!inProgress(self), "migration already in progress");
-        require(operatorsToRemove.length > 0 || operatorsToRemove.length > 0, "nothing to do");
+        require(operatorsToRemove.length > 0 || operatorsToAdd.length > 0, "nothing to do");
 
         self.operatorsToRemove = operatorsToRemove;
         self.operatorsToAdd = operatorsToAdd;

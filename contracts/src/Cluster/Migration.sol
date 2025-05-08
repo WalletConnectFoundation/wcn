@@ -30,9 +30,6 @@ library MigrationLib {
         require(!inProgress(self), "migration already in progress");
         require(operatorsToRemove.length > 0 || operatorsToAdd.length > 0, "nothing to do");
 
-        self.operatorsToRemove = operatorsToRemove;
-        self.operatorsToAdd = operatorsToAdd;
-
         for (uint256 i = 0; i < currentOperators.length; i++) {
             if (currentOperators[i].addr != address(0)) {
                 self.pullingOperators[currentOperators[i].addr] = true;
@@ -54,7 +51,7 @@ library MigrationLib {
     }
 
     function completeDataPull(Migration storage self, address operator) public {
-        require(self.pullingOperators[operator], "already completed");
+        require(self.pullingOperators[operator], "not pulling");
         self.pullingOperators[operator] = false;
         self.pullingOperatorsCount--;
     }

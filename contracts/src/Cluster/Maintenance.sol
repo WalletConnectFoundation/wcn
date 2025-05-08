@@ -8,13 +8,18 @@ struct Maintenance {
 library MaintenanceLib {
     function start(Maintenance storage self, address operator) public {
         require(operator != address(0), "invalid address");
-        require(self.slot == address(0), "already occupied");
+        require(self.slot == address(0), "another maintenance in progress");
         self.slot = operator;
     }
 
-    function finish(Maintenance storage self, address operator) public {
+    function complete(Maintenance storage self, address operator) public {
         require(operator != address(0), "invalid address");
-        require(self.slot == operator, "not occupied");
+        require(self.slot == operator, "not under maintenance");
+        delete self.slot;
+    }
+
+    function abort(Maintenance storage self) public {
+        require(self.slot != address(0), "not under maintenance");
         delete self.slot;
     }
 

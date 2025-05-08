@@ -31,7 +31,8 @@ contract Cluster {
     event MigrationAborted(uint128 version);
 
     event MaintenanceStarted(address operator, uint128 version);
-    event MaintenanceFinished(address operator, uint128 version);
+    event MaintenanceCompleted(address operator, uint128 version);
+    event MaintenanceAborted(uint128 version);
 
     event NodeSet(address operator, Node node, uint128 version);
     event NodeRemoved(address operator, uint256 id, uint128 version);
@@ -63,8 +64,8 @@ contract Cluster {
         _;
     }
 
-    modifier onlyMember() {
-        require(operators.exists(msg.sender), "not a member");
+    modifier onlyOperator() {
+        require(operators.exists(msg.sender), "not an operator");
         _;
     }
 
@@ -73,7 +74,7 @@ contract Cluster {
     }
 
     function startMigration(address[] calldata operatorsToRemove, NodeOperatorView[] calldata operatorsToAdd) external onlyOwner {
-        require(!maintenance.inProgress(), "maintenance is in progress");
+        require(!maintenance.inProgress(), "maintenance in progress");
 
         for (uint256 i = 0; i < operatorsToRemove.length; i++) {
             require(operators.exists(operatorsToRemove[i]), "unknown operator");
@@ -91,7 +92,7 @@ contract Cluster {
         emit MigrationStarted(operatorsToRemove, operatorsToAdd, version);
     }
 
-    function completeMigration() external onlyMember {
+    function completeMigration() external {
         migration.completeDataPull(msg.sender);
         version++;
         emit MigrationDataPullCompleted(msg.sender, version);
@@ -122,27 +123,33 @@ contract Cluster {
         emit MigrationAborted(version);
     }
 
-    function startMaintenance() external onlyMember {
-        require(!migration.inProgress(), "migration is in progress");
+    function startMaintenance() external onlyOperator {
+        require(!migration.inProgress(), "migration in progress");
 
         maintenance.start(msg.sender);
         version++;
         emit MaintenanceStarted(msg.sender, version);
     }
 
-    function finishMaintenance() external onlyMember {
-        maintenance.finish(msg.sender);
+    function completeMaintenance() external onlyOperator {
+        maintenance.complete(msg.sender);
         version++;
-        emit MaintenanceFinished(msg.sender, version);
+        emit MaintenanceCompleted(msg.sender, version);
     }
 
-    function setNode(Node calldata node) external onlyMember {
+    function abortMaintenance() external onlyOwner {
+        maintenance.abort();
+        version++;
+        emit MaintenanceAborted(version);
+    }
+
+    function setNode(Node calldata node) external onlyOperator {
         operators.setNode(msg.sender, node);
         version++;
         emit NodeSet(msg.sender, node, version);
     }
 
-    function removeNode(uint256 id) external onlyMember {
+    function removeNode(uint256 id) external onlyOperator {
         operators.removeNode(msg.sender, id);
         version++;
         emit NodeRemoved(msg.sender, id, version);

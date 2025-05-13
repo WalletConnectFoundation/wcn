@@ -856,20 +856,6 @@ contract ClusterTest is Test {
         assertEq(clusterView.maintenance.slot, address(0));
     }
 
-    // function assertMigrationOperatorsToRemoveCount(uint256 count) internal {
-    //     assertEq(clusterView.migration.operatorsToRemove.length, count);
-    // }
-
-    // function assertMigrationOperatorsToAddCount(uint256 count) internal {
-    //     assertEq(clusterView.migration.operatorsToAdd.length, count);
-    // }
-
-    // function assertMigrationOperatorToAdd(uint256 idx, uint256 privateKey, bytes: data, uint256 nodesCount) internal {
-    //     assertEq(clusterView.migration.operatorsToAdd[idx].addr, vm.addr(privateKey));
-    //     assertEq(clusterView.migration.operatorsToAdd[idx].data, data);
-    //     assertEq(clusterView.migration.operatorsToAdd[idx].nodes.length, nodesCount);
-    // }
-
     function newMigration() internal pure returns (TestMigration memory) {
         return TestMigration({
             vm: vm,

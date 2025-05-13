@@ -13,7 +13,7 @@ struct Nodes {
 }
 
 library NodesLib {
-    function set(Nodes storage self, Node calldata node) public {
+    function set(Nodes storage self, Node memory node) internal {
         require(node.id != 0, "invalid id");
 
         uint8 idx;
@@ -39,7 +39,7 @@ library NodesLib {
         self.slots[idx] = node;
     }
 
-    function remove(Nodes storage self, uint256 id) public {
+    function remove(Nodes storage self, uint256 id) internal {
         require(id != 0, "invalid id");
     
         uint8 idx = self.indexes[id];
@@ -49,11 +49,11 @@ library NodesLib {
         self.freeSlotIndexes.push(idx);
     }
 
-    function length(Nodes storage self) public view returns (uint256) {
+    function length(Nodes storage self) internal view returns (uint256) {
         return self.slots.length - self.freeSlotIndexes.length;
     }
 
-    function getView(Nodes storage self) public view returns (Node[] memory) {
+    function getView(Nodes storage self) internal view returns (Node[] memory) {
         Node[] memory nodes = new Node[](length(self));       
         uint256 j;
         for (uint256 i = 0; i < self.slots.length; i++) {

@@ -47,12 +47,12 @@ fork = "0.1"
 
 
 # Smart Contract Integration
-alloy = { git = "https://github.com/alloy-rs/alloy", features = [
-    "contract",
-    "providers",
-    "provider-http",
-    "signer-mnemonic",
-] }
+# alloy = { git = "https://github.com/alloy-rs/alloy", features = [
+#     "contract",
+#     "providers",
+#     "provider-http",
+#     "signer-mnemonic",
+# ] }
 
 [lints]
 workspace = true

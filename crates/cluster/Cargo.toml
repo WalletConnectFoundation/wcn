@@ -1,0 +1,13 @@
+[package]
+name = "cluster"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract"] }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false }

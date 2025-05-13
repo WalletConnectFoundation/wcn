@@ -29,7 +29,7 @@ library NodeOperatorsLib {
     using NodesLib for Nodes;
     using NodeOperatorsLib for NodeOperators;
 
-    function add(NodeOperators storage self, NodeOperatorView calldata operator) public {
+    function add(NodeOperators storage self, NodeOperatorView memory operator) internal {
         require(!exists(self, operator.addr), "operator already exists");
 
         uint8 idx;
@@ -52,7 +52,7 @@ library NodeOperatorsLib {
         }
     }
 
-    function remove(NodeOperators storage self, address addr) public {
+    function remove(NodeOperators storage self, address addr) internal {
         require(addr != address(0), "invalid address");
     
         uint8 idx = self.indexes[addr];
@@ -63,7 +63,7 @@ library NodeOperatorsLib {
         self.freeSlotIndexes.push(idx);
     }
 
-    function exists(NodeOperators storage self, address addr) public view returns (bool) {
+    function exists(NodeOperators storage self, address addr) internal view returns (bool) {
         require(addr != address(0), "invalid address");
 
         if (self.slots.length > 0) {
@@ -73,23 +73,23 @@ library NodeOperatorsLib {
         return false;
     }
 
-    function length(NodeOperators storage self) public view returns (uint256) {
+    function length(NodeOperators storage self) internal view returns (uint256) {
         return self.slots.length - self.freeSlotIndexes.length;
     }
 
-    function setNode(NodeOperators storage self, address operator, Node calldata node) public {
+    function setNode(NodeOperators storage self, address operator, Node calldata node) internal {
         self.slots[self.indexes[operator]].nodes.set(node);
     }
 
-    function removeNode(NodeOperators storage self, address operator, uint256 id) public {
+    function removeNode(NodeOperators storage self, address operator, uint256 id) internal {
         self.slots[self.indexes[operator]].nodes.remove(id);
     }
 
-    function nodesCount(NodeOperators storage self, address operator) public view returns (uint256) {
+    function nodesCount(NodeOperators storage self, address operator) internal view returns (uint256) {
         return self.slots[self.indexes[operator]].nodes.length();
     }
 
-    function getView(NodeOperators storage self) public view returns (NodeOperatorsView memory) {
+    function getView(NodeOperators storage self) internal view returns (NodeOperatorsView memory) {
         NodeOperatorView[] memory slots = new NodeOperatorView[](self.slots.length);
         for (uint256 i = 0; i < self.slots.length; i++) {
             slots[i] = NodeOperatorView({

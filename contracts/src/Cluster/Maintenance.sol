@@ -6,24 +6,24 @@ struct Maintenance {
 }
 
 library MaintenanceLib {
-    function start(Maintenance storage self, address operator) public {
+    function start(Maintenance storage self, address operator) internal {
         require(operator != address(0), "invalid address");
         require(self.slot == address(0), "another maintenance in progress");
         self.slot = operator;
     }
 
-    function complete(Maintenance storage self, address operator) public {
+    function complete(Maintenance storage self, address operator) internal {
         require(operator != address(0), "invalid address");
         require(self.slot == operator, "not under maintenance");
         delete self.slot;
     }
 
-    function abort(Maintenance storage self) public {
+    function abort(Maintenance storage self) internal {
         require(self.slot != address(0), "not under maintenance");
         delete self.slot;
     }
 
-    function inProgress(Maintenance calldata self) public pure returns (bool) {
+    function inProgress(Maintenance storage self) internal view returns (bool) {
         return (self.slot != address(0));
     }
 }

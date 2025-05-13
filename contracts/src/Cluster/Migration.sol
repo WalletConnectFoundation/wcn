@@ -26,7 +26,7 @@ library MigrationLib {
         NodeOperator[] storage currentOperators,
         address[] calldata operatorsToRemove,
         NodeOperatorView[] calldata operatorsToAdd
-    ) public {
+    ) internal {
         require(!inProgress(self), "migration already in progress");
         require(operatorsToRemove.length > 0 || operatorsToAdd.length > 0, "nothing to do");
 
@@ -50,19 +50,19 @@ library MigrationLib {
         }
     }
 
-    function completeDataPull(Migration storage self, address operator) public {
+    function completeDataPull(Migration storage self, address operator) internal {
         require(self.pullingOperators[operator], "not pulling");
         self.pullingOperators[operator] = false;
         self.pullingOperatorsCount--;
     }
 
-    function complete(Migration storage self) public {
+    function complete(Migration storage self) internal {
         require(inProgress(self), "not in progress");
         require(self.pullingOperatorsCount == 0, "data pull in progress");
         self.cleanup();
     }
 
-    function abort(Migration storage self) public {
+    function abort(Migration storage self) internal {
         require(inProgress(self), "not in progress");
         self.cleanup();
     }
@@ -73,11 +73,11 @@ library MigrationLib {
         delete self.pullingOperatorsCount;
     }
 
-    function inProgress(Migration storage self) public view returns (bool) {
+    function inProgress(Migration storage self) internal view returns (bool) {
         return (self.operatorsToRemove.length != 0 || self.operatorsToAdd.length != 0);
     }
 
-    function getView(Migration storage self, NodeOperator[] storage currentOperators) public view returns (MigrationView memory) {
+    function getView(Migration storage self, NodeOperator[] storage currentOperators) internal view returns (MigrationView memory) {
         address[] memory toRemove = new address[](self.operatorsToRemove.length);
         for (uint256 i = 0; i < self.operatorsToRemove.length; i++) {
             toRemove[i] = self.operatorsToRemove[i];

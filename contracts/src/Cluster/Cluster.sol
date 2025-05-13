@@ -20,22 +20,23 @@ struct ClusterView {
     uint128 version;
 }
 
+
+event MigrationStarted(address[] operatorsToRemove, NodeOperatorView[] operatorsToAdd, uint128 version);
+event MigrationDataPullCompleted(address operator, uint128 version);
+event MigrationCompleted(uint128 version);
+event MigrationAborted(uint128 version);
+
+event MaintenanceStarted(address operator, uint128 version);
+event MaintenanceCompleted(address operator, uint128 version);
+event MaintenanceAborted(uint128 version);
+
+event NodeSet(address operator, Node node, uint128 version);
+event NodeRemoved(address operator, uint256 id, uint128 version);
+
 contract Cluster {
     using NodeOperatorsLib for NodeOperators;
     using MigrationLib for Migration;
     using MaintenanceLib for Maintenance;
-
-    event MigrationStarted(address[] operatorsToRemove, NodeOperatorView[] operatorsToAdd, uint128 version);
-    event MigrationDataPullCompleted(address operator, uint128 version);
-    event MigrationCompleted(uint128 version);
-    event MigrationAborted(uint128 version);
-
-    event MaintenanceStarted(address operator, uint128 version);
-    event MaintenanceCompleted(address operator, uint128 version);
-    event MaintenanceAborted(uint128 version);
-
-    event NodeSet(address operator, Node node, uint128 version);
-    event NodeRemoved(address operator, uint256 id, uint128 version);
 
     address owner;
 
@@ -67,10 +68,6 @@ contract Cluster {
     modifier onlyOperator() {
         require(operators.exists(msg.sender), "not an operator");
         _;
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        owner = newOwner;
     }
 
     function startMigration(address[] calldata operatorsToRemove, NodeOperatorView[] calldata operatorsToAdd) external onlyOwner {
@@ -151,12 +148,17 @@ contract Cluster {
 
     function removeNode(uint256 id) external onlyOperator {
         operators.removeNode(msg.sender, id);
+        require(operators.nodesCount(msg.sender) >= settings.minNodes, "too few nodes");
         version++;
         emit NodeRemoved(msg.sender, id, version);
     }
 
     function updateSettings(Settings calldata newSettings) external onlyOwner {
         settings = newSettings;
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        owner = newOwner;
     }
 
     function validateOperatorsCount(uint256 value) view internal {

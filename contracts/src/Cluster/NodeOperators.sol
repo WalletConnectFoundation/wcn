@@ -73,8 +73,8 @@ library NodeOperatorsLib {
         return false;
     }
 
-    function length(NodeOperators storage self) public view returns (uint8) {
-        return uint8(self.slots.length - self.freeSlotIndexes.length);
+    function length(NodeOperators storage self) public view returns (uint256) {
+        return self.slots.length - self.freeSlotIndexes.length;
     }
 
     function setNode(NodeOperators storage self, address operator, Node calldata node) public {
@@ -85,8 +85,12 @@ library NodeOperatorsLib {
         self.slots[self.indexes[operator]].nodes.remove(id);
     }
 
+    function nodesCount(NodeOperators storage self, address operator) public view returns (uint256) {
+        return self.slots[self.indexes[operator]].nodes.length();
+    }
+
     function getView(NodeOperators storage self) public view returns (NodeOperatorsView memory) {
-        NodeOperatorView[] memory slots = new NodeOperatorView[](length(self));
+        NodeOperatorView[] memory slots = new NodeOperatorView[](self.slots.length);
         for (uint256 i = 0; i < self.slots.length; i++) {
             slots[i] = NodeOperatorView({
                 addr: self.slots[i].addr,

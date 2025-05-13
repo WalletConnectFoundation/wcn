@@ -17,7 +17,15 @@ library NodesLib {
         require(node.id != 0, "invalid id");
 
         uint8 idx;
-    
+
+        if (self.slots.length > 0) {
+            idx = self.indexes[node.id];
+            if (idx != 0 || self.slots[0].id == node.id) {
+                self.slots[idx] = node;
+                return;
+            } 
+        }
+
         if (self.freeSlotIndexes.length > 0) {
             idx = self.freeSlotIndexes[self.freeSlotIndexes.length - 1];
             self.freeSlotIndexes.pop();
@@ -41,12 +49,12 @@ library NodesLib {
         self.freeSlotIndexes.push(idx);
     }
 
-    function length(Nodes storage self) public view returns (uint8) {
-        return uint8(self.slots.length - self.freeSlotIndexes.length);
+    function length(Nodes storage self) public view returns (uint256) {
+        return self.slots.length - self.freeSlotIndexes.length;
     }
 
     function getView(Nodes storage self) public view returns (Node[] memory) {
-        Node[] memory nodes = new Node[](length(self));
+        Node[] memory nodes = new Node[](length(self));       
         uint256 j;
         for (uint256 i = 0; i < self.slots.length; i++) {
             if (self.slots[i].id != 0) {

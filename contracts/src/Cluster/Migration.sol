@@ -89,13 +89,21 @@ library MigrationLib {
         }
 
         address[] memory pulling = new address[](self.pullingOperatorsCount);
-        uint256 j;
-        for (uint256 i = 0; i < currentOperators.length; i++) {
-            if (currentOperators[i].addr != address(0) && self.pullingOperators[currentOperators[i].addr]) {
-                pulling[j] = currentOperators[i].addr;
-                j++;
+        if (self.pullingOperatorsCount > 0) {
+            uint256 j;
+            for (uint256 i = 0; i < currentOperators.length; i++) {
+                if (currentOperators[i].addr != address(0) && self.pullingOperators[currentOperators[i].addr]) {
+                    pulling[j] = currentOperators[i].addr;
+                    j++;
+                }
             }
-        }
+            for (uint256 i = 0; i < self.operatorsToAdd.length; i++) {
+                if (self.pullingOperators[self.operatorsToAdd[i].addr]) {
+                    pulling[j] = self.operatorsToAdd[i].addr;
+                    j++;
+                }
+            }
+        }     
 
         return MigrationView({
             operatorsToRemove: toRemove,

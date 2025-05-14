@@ -6,8 +6,17 @@ edition = "2021"
 [lints]
 workspace = true
 
+[features]
+default = ["evm"]
+evm = ["alloy"]
+
 [dependencies]
-alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract"] }
+sharding = { path = "../sharding" }
+
+alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract", "signer-local", "network"], optional = true }
+thiserror = "1"
+libp2p = { workspace = true }
 
 [dev-dependencies]
+alloy = { version = "0.13", default-features = false, features = ["provider-anvil-node"] }
 tokio = { version = "1", default-features = false }

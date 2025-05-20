@@ -1,10 +1,15 @@
-use {crate::node, std::future::Future};
+use {
+    crate::{node, View},
+    derive_more::Display,
+    serde::{Deserialize, Serialize},
+    std::{future::Future, sync::Arc},
+};
 
 #[cfg(feature = "evm")]
 pub mod evm;
 
 /// Public key on a chain hosting the [`SmartContract`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PublicKey(String);
 
 pub struct Settings {
@@ -33,6 +38,8 @@ pub enum Call {
 
 pub trait SmartContract<K = PublicKey> {
     fn call(&self, call: Call) -> impl Future<Output = Result<(), Error>> + Send;
+
+    fn view(&self) -> Arc<View>;
 }
 
 pub struct Error(String);

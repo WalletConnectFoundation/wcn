@@ -11,11 +11,26 @@ default = ["evm"]
 evm = ["alloy"]
 
 [dependencies]
+derive_more = { workspace = true }
+libp2p = { workspace = true }
+
 sharding = { path = "../sharding" }
 
 alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract", "signer-local", "network"], optional = true }
+
+anyhow = "1"
 thiserror = "1"
-libp2p = { workspace = true }
+
+tap = "1.0"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+
+fpe = "0.6"
+aes = "0.8"
+
+tokio = { version = "1", features = ["full"] }
+arc-swap = "1.7"
 
 [dev-dependencies]
 alloy = { version = "0.13", default-features = false, features = ["provider-anvil-node"] }

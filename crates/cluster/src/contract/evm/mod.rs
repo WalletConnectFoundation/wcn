@@ -1,6 +1,8 @@
 #[rustfmt::skip]
 mod bindings;
 
+mod operator_data;
+
 use {
     alloy::{
         network::EthereumWallet,
@@ -12,8 +14,7 @@ use {
 };
 
 pub struct ContractSettings {
-    pub min_operators: u8,
-    pub min_nodes: u8,
+    pub max_operator_data_bytes: u16,
 }
 
 pub struct ContractManager {
@@ -79,8 +80,7 @@ impl FromStr for RpcUrl {
 impl From<ContractSettings> for bindings::Cluster::Settings {
     fn from(s: ContractSettings) -> Self {
         Self {
-            minOperators: s.min_operators,
-            minNodes: s.min_nodes,
+            maxOperatorDataBytes: s.max_operator_data_bytes,
         }
     }
 }
@@ -96,3 +96,18 @@ pub struct InvalidPrivateKey(String);
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid address: {0:?}")]
 pub struct InvalidAddress(String);
+
+impl From<Address> for super::PublicKey {
+    fn from(addr: Address) -> Self {
+        // using `Debug` for raw non-checksummed format
+        Self(format!("{addr:?}"))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn address_to_from_public_key_conversion() {
+        todo!()
+    }
+}

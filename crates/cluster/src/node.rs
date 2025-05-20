@@ -7,7 +7,8 @@ use {
 /// Globally unique identifier of an [`Operator`];
 pub type OperatorId = contract::PublicKey;
 
-/// Locally unique identifier of an [`Operator`] within a regional WCN cluster.
+/// Locally unique identifier of an [`Operator`] within a regional WCN cluster
+/// keyspace.
 ///
 /// Refers to a position within the [`Operators`] slot map.
 pub type OperatorIdx = u8;

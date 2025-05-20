@@ -70,13 +70,13 @@ contract ClusterTest is Test {
         newCluster(vm, 256);
     }
 
-    function test_clusterContainsInitialOperatorsInPrimaryKeyspace() public view {
-        assertKeyspaceSlotsCount(clusterView.primaryKeyspace, 5);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 0, 1);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 1, 2);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 2, 3);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 3, 4);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 4, 5);
+    function test_clusterContainsInitialOperatorsInKeyspace() public view {
+        assertKeyspaceSlotsCount(clusterView.keyspace, 5);
+        assertKeyspaceSlot(clusterView.keyspace, 0, 1);
+        assertKeyspaceSlot(clusterView.keyspace, 1, 2);
+        assertKeyspaceSlot(clusterView.keyspace, 2, 3);
+        assertKeyspaceSlot(clusterView.keyspace, 3, 4);
+        assertKeyspaceSlot(clusterView.keyspace, 4, 5);
     }
 
     function test_clusterInitialVersionIs0() public view {
@@ -136,18 +136,18 @@ contract ClusterTest is Test {
         assertMigrationPullingOperator(5);
     }
 
-    function test_startMigrationPopulatesSecondaryKeyspace() public {
+    function test_startMigrationPopulatesMigrationKeyspace() public {
         registerNodeOperator(6, "operator6");
         registerNodeOperator(7, "operator7");
     
         startMigration(OWNER, newMigration().set(4, 6).set(5, 7).clear(2));
-        assertKeyspaceSlotsCount(clusterView.secondaryKeyspace, 6);
-        assertKeyspaceSlot(clusterView.secondaryKeyspace, 0, 1, "");
-        assertKeyspaceSlot(clusterView.secondaryKeyspace, 1, 2, "");
-        assertKeyspaceSlotEmpty(clusterView.secondaryKeyspace, 2);
-        assertKeyspaceSlot(clusterView.secondaryKeyspace, 3, 4, "");
-        assertKeyspaceSlot(clusterView.secondaryKeyspace, 4, 6, "operator6");
-        assertKeyspaceSlot(clusterView.secondaryKeyspace, 5, 7, "operator7");
+        assertKeyspaceSlotsCount(clusterView.migrationKeyspace, 6);
+        assertKeyspaceSlot(clusterView.migrationKeyspace, 0, 1, "");
+        assertKeyspaceSlot(clusterView.migrationKeyspace, 1, 2, "");
+        assertKeyspaceSlotEmpty(clusterView.migrationKeyspace, 2);
+        assertKeyspaceSlot(clusterView.migrationKeyspace, 3, 4, "");
+        assertKeyspaceSlot(clusterView.migrationKeyspace, 4, 6, "operator6");
+        assertKeyspaceSlot(clusterView.migrationKeyspace, 5, 7, "operator7");
     }
 
     // completeMigration
@@ -186,15 +186,15 @@ contract ClusterTest is Test {
         assertVersion(2);
     }
 
-    function test_completeMigrationDoesNotUpdatePrimaryKeyspaceIfNotCompleted() public {
+    function test_completeMigrationDoesNotUpdateKeyspaceIfNotCompleted() public {
         startMigration(OWNER, newMigration().set(5, 6));
         completeMigration(OPERATOR, 1, 0);
-        assertKeyspaceSlotsCount(clusterView.primaryKeyspace, 5);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 0, 1);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 1, 2);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 2, 3);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 3, 4);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 4, 5);
+        assertKeyspaceSlotsCount(clusterView.keyspace, 5);
+        assertKeyspaceSlot(clusterView.keyspace, 0, 1);
+        assertKeyspaceSlot(clusterView.keyspace, 1, 2);
+        assertKeyspaceSlot(clusterView.keyspace, 2, 3);
+        assertKeyspaceSlot(clusterView.keyspace, 3, 4);
+        assertKeyspaceSlot(clusterView.keyspace, 4, 5);
     }
 
     function test_completeMigrationUpdatesOperatorsIfCompleted() public {
@@ -205,12 +205,12 @@ contract ClusterTest is Test {
         completeMigration(3, 1, 2);
         completeMigration(4, 1, 3);
         completeMigration(6, 1, 4);
-        assertKeyspaceSlotsCount(clusterView.primaryKeyspace, 5);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 0, 1);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 1, 2);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 2, 3);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 3, 4);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 4, 6, "operator6");
+        assertKeyspaceSlotsCount(clusterView.keyspace, 5);
+        assertKeyspaceSlot(clusterView.keyspace, 0, 1);
+        assertKeyspaceSlot(clusterView.keyspace, 1, 2);
+        assertKeyspaceSlot(clusterView.keyspace, 2, 3);
+        assertKeyspaceSlot(clusterView.keyspace, 3, 4);
+        assertKeyspaceSlot(clusterView.keyspace, 4, 6, "operator6");
     }
 
     function test_completeMigrationDeletesMigrationIfCompleted() public {
@@ -293,15 +293,15 @@ contract ClusterTest is Test {
         assertKeyspaceVersion(0);
     }
 
-    function test_abortMigrationDoesNotUpdatePrimaryKeyspace() public {
+    function test_abortMigrationDoesNotUpdateKeyspace() public {
         startMigration(OWNER, newMigration().clear(0));
         abortMigration(OWNER);
-        assertKeyspaceSlotsCount(clusterView.primaryKeyspace, 5);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 0, 1);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 1, 2);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 2, 3);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 3, 4);
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 4, 5);
+        assertKeyspaceSlotsCount(clusterView.keyspace, 5);
+        assertKeyspaceSlot(clusterView.keyspace, 0, 1);
+        assertKeyspaceSlot(clusterView.keyspace, 1, 2);
+        assertKeyspaceSlot(clusterView.keyspace, 2, 3);
+        assertKeyspaceSlot(clusterView.keyspace, 3, 4);
+        assertKeyspaceSlot(clusterView.keyspace, 4, 5);
     }
 
     function test_abortMigrationDeletesMigration() public {
@@ -510,7 +510,7 @@ contract ClusterTest is Test {
 
     function test_updateNodeOperatorDataDoesUpdateTheData() public {
         updateNodeOperatorData(OPERATOR, 0, "new data");
-        assertKeyspaceSlot(clusterView.primaryKeyspace, 0, OPERATOR, "new data");
+        assertKeyspaceSlot(clusterView.keyspace, 0, OPERATOR, "new data");
     }
 
     function test_updateNodeOperatorDataBumpsVersion() public {
@@ -710,7 +710,7 @@ contract ClusterTest is Test {
         return TestMigration({
             vm: vm,
             plan: MigrationPlan({
-                slotsToUpdate: new KeyspaceSlot[](0),
+                slots: new KeyspaceSlot[](0),
                 replicationStrategy: 0
             })
         });
@@ -797,13 +797,13 @@ library TestMigrationLib {
     }
 
     function setSlot(TestMigration memory self, uint8 idx, KeyspaceSlot memory slot) internal pure returns (TestMigration memory) {
-        KeyspaceSlot[] memory slotsToUpdate = new KeyspaceSlot[](self.plan.slotsToUpdate.length + 1);
-        for (uint256 i = 0; i < self.plan.slotsToUpdate.length; i++) {
-            slotsToUpdate[i] = self.plan.slotsToUpdate[i];
+        KeyspaceSlot[] memory slots = new KeyspaceSlot[](self.plan.slots.length + 1);
+        for (uint256 i = 0; i < self.plan.slots.length; i++) {
+            slots[i] = self.plan.slots[i];
         }
 
-        slotsToUpdate[self.plan.slotsToUpdate.length] = slot;
-        self.plan.slotsToUpdate = slotsToUpdate;
+        slots[self.plan.slots.length] = slot;
+        self.plan.slots = slots;
 
         return self;
     }

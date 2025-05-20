@@ -21,6 +21,8 @@ event NodeOperatorDataUpdated(address operatorAddress, bytes data, uint128 clust
 contract Cluster {
     using Bitmask for uint256;
 
+    // TODO: Should we just make all the fields public?
+
     address owner;
     
     mapping(address => bytes) operatorData;
@@ -72,25 +74,25 @@ contract Cluster {
     function startMigration(MigrationPlan calldata plan) external onlyOwner noMigration noMaintenance {
         migration.id++;
     
-        uint256 prevKeyspaceIdx = keyspaceVersion % 2;
+        uint256 keyspaceIdx = keyspaceVersion % 2;
         keyspaceVersion++;
-        uint256 currKeyspaceIdx = keyspaceVersion % 2;
+        uint256 migrationKeyspaceIdx = keyspaceVersion % 2;
 
         // NOTE: We are not zeroing out the rest of the buffer, so there might be some junk left.
         // The source of truth on whether the value is set or not should be the bitmask!
-        for (uint256 i = 0; i <= keyspaces[prevKeyspaceIdx].operatorsBitmask.highest1(); i++) {
-            if (keyspaces[currKeyspaceIdx].operators[i] != keyspaces[prevKeyspaceIdx].operators[i]) {
-                keyspaces[currKeyspaceIdx].operators[i] = keyspaces[prevKeyspaceIdx].operators[i];
+        for (uint256 i = 0; i <= keyspaces[keyspaceIdx].operatorsBitmask.highest1(); i++) {
+            if (keyspaces[migrationKeyspaceIdx].operators[i] != keyspaces[keyspaceIdx].operators[i]) {
+                keyspaces[migrationKeyspaceIdx].operators[i] = keyspaces[keyspaceIdx].operators[i];
             }
         }
 
-        uint256 operatorsBitmask = keyspaces[prevKeyspaceIdx].operatorsBitmask;
+        uint256 operatorsBitmask = keyspaces[keyspaceIdx].operatorsBitmask;
 
         uint8 idx;
         address addr; 
-        for (uint256 i = 0; i < plan.slotsToUpdate.length; i++) {
-            idx = plan.slotsToUpdate[i].idx;
-            addr = plan.slotsToUpdate[i].operator;
+        for (uint256 i = 0; i < plan.slots.length; i++) {
+            idx = plan.slots[i].idx;
+            addr = plan.slots[i].operator;
 
             if (addr == address(0)) {
                 operatorsBitmask = operatorsBitmask.set0(idx);
@@ -98,11 +100,11 @@ contract Cluster {
                 operatorsBitmask = operatorsBitmask.set1(idx);
             }
 
-            keyspaces[currKeyspaceIdx].operators[idx] = addr;
+            keyspaces[migrationKeyspaceIdx].operators[idx] = addr;
         }
 
-        keyspaces[currKeyspaceIdx].operatorsBitmask = operatorsBitmask;
-        keyspaces[currKeyspaceIdx].replicationStrategy = plan.replicationStrategy;
+        keyspaces[migrationKeyspaceIdx].operatorsBitmask = operatorsBitmask;
+        keyspaces[migrationKeyspaceIdx].replicationStrategy = plan.replicationStrategy;
 
         migration.pullingOperatorsBitmask = operatorsBitmask;
 
@@ -168,19 +170,19 @@ contract Cluster {
     function updateNodeOperatorData(uint8 operatorIdx, bytes calldata data) external {
         validateOperatorDataSize(data.length);
 
-        bool inPrimaryKeyspace;
-        bool inSecondaryKeyspace;
+        bool inKeyspace;
+        bool inMigrationKeyspace;
 
         if (isMigrationInProgress()) {
-            inPrimaryKeyspace = keyspaces[(keyspaceVersion - 1) % 2].operators[operatorIdx] == msg.sender;
-            if (!inPrimaryKeyspace) {
-                inSecondaryKeyspace = keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender;
+            inKeyspace = keyspaces[(keyspaceVersion - 1) % 2].operators[operatorIdx] == msg.sender;
+            if (!inKeyspace) {
+                inMigrationKeyspace = keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender;
             }
         } else {
-            inPrimaryKeyspace = keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender;
+            inKeyspace = keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender;
         }
 
-        require(inPrimaryKeyspace || inSecondaryKeyspace, "wrong operator");
+        require(inKeyspace || inMigrationKeyspace, "wrong operator");
 
         operatorData[msg.sender] = data;
         version++;
@@ -198,7 +200,7 @@ contract Cluster {
     function getView() public view returns (ClusterView memory) {
         ClusterView memory clusterView;
 
-        uint256 primaryKeyspaceIdx;
+        uint256 keyspaceIdx;
         
         address addr;
         uint256 highestSlotIdx;
@@ -207,42 +209,42 @@ contract Cluster {
             clusterView.migration.id = migration.id;
             clusterView.migration.pullingOperatorsBitmask = migration.pullingOperatorsBitmask;
 
-            primaryKeyspaceIdx = (keyspaceVersion - 1) % 2;
-            uint256 secondaryKeyspaceIdx = keyspaceVersion % 2;
+            keyspaceIdx = (keyspaceVersion - 1) % 2;
+            uint256 migrationKeyspaceIdx = keyspaceVersion % 2;
 
-            highestSlotIdx = keyspaces[secondaryKeyspaceIdx].operatorsBitmask.highest1();
-            clusterView.secondaryKeyspace.operators = new NodeOperator[](highestSlotIdx + 1);
-            clusterView.secondaryKeyspace.replicationStrategy = keyspaces[secondaryKeyspaceIdx].replicationStrategy;
+            highestSlotIdx = keyspaces[migrationKeyspaceIdx].operatorsBitmask.highest1();
+            clusterView.migrationKeyspace.operators = new NodeOperator[](highestSlotIdx + 1);
+            clusterView.migrationKeyspace.replicationStrategy = keyspaces[migrationKeyspaceIdx].replicationStrategy;
             
             for (uint256 i = 0; i <= highestSlotIdx; i++) {
-                if (keyspaces[secondaryKeyspaceIdx].operatorsBitmask.is0(uint8(i))) {
+                if (keyspaces[migrationKeyspaceIdx].operatorsBitmask.is0(uint8(i))) {
                     continue;
                 }
             
-                addr = keyspaces[secondaryKeyspaceIdx].operators[i];
-                clusterView.secondaryKeyspace.operators[i].addr = addr;
+                addr = keyspaces[migrationKeyspaceIdx].operators[i];
+                clusterView.migrationKeyspace.operators[i].addr = addr;
 
                 // Populate data only if it won't be present in the primary keyspace view, to optimize the cluster view size.
-                if (keyspaces[primaryKeyspaceIdx].operatorsBitmask.is0(uint8(i)) || keyspaces[primaryKeyspaceIdx].operators[i] != addr) {
-                    clusterView.secondaryKeyspace.operators[i].data = operatorData[addr];
+                if (keyspaces[keyspaceIdx].operatorsBitmask.is0(uint8(i)) || keyspaces[keyspaceIdx].operators[i] != addr) {
+                    clusterView.migrationKeyspace.operators[i].data = operatorData[addr];
                 }
             }
         } else {
-            primaryKeyspaceIdx = keyspaceVersion % 2;
+            keyspaceIdx = keyspaceVersion % 2;
         }
 
-        highestSlotIdx = keyspaces[primaryKeyspaceIdx].operatorsBitmask.highest1();
-        clusterView.primaryKeyspace.operators = new NodeOperator[](highestSlotIdx + 1); 
-        clusterView.primaryKeyspace.replicationStrategy = keyspaces[primaryKeyspaceIdx].replicationStrategy;
+        highestSlotIdx = keyspaces[keyspaceIdx].operatorsBitmask.highest1();
+        clusterView.keyspace.operators = new NodeOperator[](highestSlotIdx + 1); 
+        clusterView.keyspace.replicationStrategy = keyspaces[keyspaceIdx].replicationStrategy;
 
         for (uint256 i = 0; i <= highestSlotIdx; i++) {
-            if (keyspaces[primaryKeyspaceIdx].operatorsBitmask.is0(uint8(i))) {
+            if (keyspaces[keyspaceIdx].operatorsBitmask.is0(uint8(i))) {
                 continue;
             }
 
-            addr = keyspaces[primaryKeyspaceIdx].operators[i];
-            clusterView.primaryKeyspace.operators[i].addr = addr;
-            clusterView.primaryKeyspace.operators[i].data = operatorData[addr];
+            addr = keyspaces[keyspaceIdx].operators[i];
+            clusterView.keyspace.operators[i].addr = addr;
+            clusterView.keyspace.operators[i].data = operatorData[addr];
         }
 
         clusterView.keyspaceVersion = keyspaceVersion;
@@ -290,10 +292,9 @@ struct KeyspaceSlot {
 }
 
 struct MigrationPlan {
-    KeyspaceSlot[] slotsToUpdate;
+    KeyspaceSlot[] slots;
     uint8 replicationStrategy;
 }
-
 
 struct Migration {
     uint64 id;
@@ -305,13 +306,14 @@ struct Maintenance {
 }
 
 struct ClusterView {
-    KeyspaceView primaryKeyspace;
-    KeyspaceView secondaryKeyspace;
-    uint64 keyspaceVersion;
+    KeyspaceView keyspace;
 
     Migration migration;
+    KeyspaceView migrationKeyspace;
+
     Maintenance maintenance;
 
+    uint64 keyspaceVersion;
     uint128 version;
 }
 

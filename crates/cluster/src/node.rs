@@ -1,65 +1,88 @@
+//! Node within a WCN cluster.
+
 use {
-    crate::contract,
     libp2p::identity::PeerId,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, net::SocketAddrV4},
+    std::net::SocketAddrV4,
 };
 
-/// Globally unique identifier of an [`Operator`];
-pub type OperatorId = contract::PublicKey;
-
-/// Locally unique identifier of an [`Operator`] within a WCN cluster.
+/// On-chain data of a [`Node`].
 ///
-/// Refers to a position within the [`Operators`] slot map.
-pub type OperatorIdx = u8;
-
-/// Name of an [`Operator`].
-///
-/// Used for informational purposes only.
-/// Expected to be unique within the cluster, but not enforced to.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OperatorName(String);
-
-impl OperatorName {
-    /// Maximum allowed length of an [`OperatorName`] (in bytes).
-    pub const MAX_LENGTH: usize = 32;
-
-    /// Tries to create a new [`OperatorName`] out of the provided [`ToString`].
+/// The IP address is currently being encrypted using a format-preserving
+/// encryption algorithm.
+#[derive(Debug)]
+pub struct Data {
+    /// [`PeerId`] of the [`Node`].
     ///
-    /// Returns `None` if the string length exceeds [`Self::MAX_LENGTH`].
-    pub fn new(s: impl ToString) -> Option<Self> {
-        let s = s.to_string();
-        (s.len() <= Self::MAX_LENGTH).then_some(Self(s))
-    }
+    /// Used for authentication. Multiple nodes managed by the same
+    /// node operator are allowed to have the same [`PeerId`].
+    pub peer_id: PeerId,
 
-    /// Returns a reference to the underlying string.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
+    /// [`SocketAddrV4`] of the [`Node`].
+    pub addr: SocketAddrV4,
 }
 
-/// Entity operating a set of WCN nodes within a regional WCN cluster.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Operator {
-    /// ID of this [`Operator`].
-    pub id: OperatorId,
-
-    /// Name of this [`Operator`].
-    pub name: OperatorName,
-
-    /// List of [`Node`]s being operated by this [`Operator`].
-    pub nodes: Vec<Node>,
-
-    /// List of clients of this [`Operator`].
-    ///
-    /// Those clients are allowed to use the WCN network on behalf of this
-    /// [`Operator`].
-    pub clients: Vec<PeerId>,
-}
-
-/// Node within a WCN network.
-#[derive(Debug, Serialize, Deserialize)]
+/// Node within a WCN cluster.
+#[derive(Debug)]
 pub struct Node {
+    data: VersionedData,
+}
+
+impl Node {
+    /// Returns [`PeerId`] of this [`Node`].
+    pub fn peer_id(&self) -> &PeerId {
+        match &self.data {
+            VersionedData::V0(data) => &data.peer_id,
+        }
+    }
+
+    /// Returns [`SocketAddrV4`] of this [`Node`].
+    pub fn addr(&self) -> SocketAddrV4 {
+        match self.data {
+            VersionedData::V0(data) => data.addr,
+        }
+    }
+
+    pub(super) fn encrypt(&mut self) {}
+
+    pub(super) fn decrypt(&mut self) {
+        // FF1::new(key, radix);
+
+        // let fpe_ff = FF1::<Aes256>::new(&[0; 32], 256).unwrap();
+    }
+}
+
+/// Borrowed [`Node`].
+#[derive(Debug)]
+pub struct NodeRef<'a> {
+    data: VersionedDataRef<'a>,
+}
+
+impl<'a> NodeRef<'a> {
+    /// Converts this [`NodeRef`] into an owned [`Node`].
+    pub fn to_owned(self) -> Node {
+        Node {
+            data: match self.data {
+                VersionedDataRef::V0(data) => VersionedData::V0(*data),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum VersionedData {
+    V0(DataV0),
+}
+
+#[derive(Debug)]
+enum VersionedDataRef<'a> {
+    V0(&'a DataV0),
+}
+
+// NOTE: The on-chain serialization is non self-describing! Every change to
+// the schema should be handled by creating a new version.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub(crate) struct DataV0 {
     /// [`PeerId`] of this [`Node`].
     ///
     /// Used for authentication. Multiple nodes managed by the same
@@ -70,41 +93,11 @@ pub struct Node {
     pub addr: SocketAddrV4,
 }
 
-impl Node {
-    pub fn decrypt(&mut self) {
-        // FF1::new(key, radix);
-
-        // let fpe_ff = FF1::<Aes256>::new(&[0; 32], 256).unwrap();
-    }
-}
-
-/// Slot map of [`Operator`]s.
-pub(super) struct Operators {
-    id_to_idx: HashMap<OperatorId, OperatorIdx>,
-
-    // TODO: assert length
-    slots: Vec<Option<Operator>>,
-}
-
-impl Operators {
-    /// Returns whether this map contains the [`Operator`] with the provided
-    /// [`OperatorId`].
-    pub(super) fn contains(&self, id: &OperatorId) -> bool {
-        self.get(id).is_some()
-    }
-
-    /// Gets an [`Operator`] by [`OperatorId`].
-    pub(super) fn get(&self, id: &OperatorId) -> Option<&Operator> {
-        self.get_by_idx(*self.id_to_idx.get(id)?)
-    }
-
-    /// Gets an [`Operator`] by [`OperatorIdx`].
-    pub(super) fn get_by_idx(&self, idx: OperatorIdx) -> Option<&Operator> {
-        self.slots.get(idx as usize)?.as_ref()
-    }
-
-    /// Returns the list of [`Operator`] slots.
-    pub(super) fn slots(&self) -> &[Option<Operator>] {
-        &self.slots
+impl From<Data> for DataV0 {
+    fn from(data: Data) -> Self {
+        Self {
+            peer_id: data.peer_id,
+            addr: data.addr,
+        }
     }
 }

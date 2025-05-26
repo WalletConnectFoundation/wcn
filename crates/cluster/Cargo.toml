@@ -6,17 +6,14 @@ edition = "2021"
 [lints]
 workspace = true
 
-[features]
-default = ["evm"]
-evm = ["alloy"]
-
 [dependencies]
-derive_more = { workspace = true }
+derive_more = { workspace = true, features = ["try_from"] }
 libp2p = { workspace = true }
+itertools = { workspace = true }
 
 sharding = { path = "../sharding" }
 
-alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract", "signer-local", "network"], optional = true }
+alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract", "signer-local", "network", "reqwest"] }
 
 anyhow = "1"
 thiserror = "1"

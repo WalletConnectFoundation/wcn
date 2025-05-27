@@ -1,7 +1,5 @@
 pub mod evm;
 
-mod operator_data;
-
 use {
     crate::{migration, node_operator, NewNodeOperator, Settings, View as ClusterView},
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},

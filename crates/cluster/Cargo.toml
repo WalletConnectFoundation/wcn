@@ -13,7 +13,7 @@ itertools = { workspace = true }
 
 sharding = { path = "../sharding" }
 
-alloy = { version = "0.13", default-features = false, features = ["sol-types", "contract", "signer-local", "network", "reqwest"] }
+alloy = { version = "1.0", default-features = false, features = ["sol-types", "contract", "signer-local", "network", "reqwest"] }
 
 anyhow = "1"
 thiserror = "1"
@@ -30,5 +30,5 @@ tokio = { version = "1", features = ["full"] }
 arc-swap = "1.7"
 
 [dev-dependencies]
-alloy = { version = "0.13", default-features = false, features = ["provider-anvil-node"] }
+alloy = { version = "1.0", default-features = false, features = ["provider-anvil-node"] }
 tokio = { version = "1", default-features = false }

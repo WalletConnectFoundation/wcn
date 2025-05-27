@@ -1,16 +1,18 @@
 use {
     super::{PublicKey, Result, RpcUrl, Signer},
     crate::{node, node_operator, NewNodeOperator, Settings},
-    alloy::providers::DynProvider,
+    alloy::{providers::DynProvider, sol, sol_types::SolConstructor},
 };
 
-#[rustfmt::skip]
-mod bindings;
+mod bindings {
+    alloy::sol!(
+        #[sol(rpc)]
+        "../../contracts/src/Cluster.sol"
+    );
+}
 
 #[derive(Clone)]
-pub struct SmartContract(
-    bindings::Cluster::ClusterInstance<(), DynProvider, alloy::network::Ethereum>,
-);
+pub struct SmartContract(bindings::Cluster::ClusterInstance<DynProvider, alloy::network::Ethereum>);
 
 pub(crate) type Address = alloy::primitives::Address;
 

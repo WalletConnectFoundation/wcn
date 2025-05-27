@@ -319,6 +319,10 @@ pub enum ServeError {
 pub struct Error(String);
 
 impl Error {
+    pub fn new(err: impl ToString) -> Self {
+        Self(err.to_string())
+    }
+
     fn into_rpc_error(self) -> wcn_rpc::Error {
         wcn_rpc::Error {
             code: "internal".into(),

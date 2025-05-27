@@ -362,8 +362,8 @@ where
 pub struct Error(String);
 
 impl Error {
-    pub fn new<E: std::error::Error>(err: E) -> Self {
-        Self(format!("{err}"))
+    pub fn new(err: impl ToString) -> Self {
+        Self(err.to_string())
     }
 
     fn into_rpc_error(self) -> wcn_rpc::Error {

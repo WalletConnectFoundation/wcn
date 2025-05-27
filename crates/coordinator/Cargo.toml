@@ -1,0 +1,70 @@
+[package]
+name = "wcn_coordinator"
+version = "0.1.0"
+edition = "2021"
+authors = [
+    "Ivan Reshetnikov <ivan@walletconnect.com>",
+    "Nodar Darksome <nodar@walletconnect.com>",
+    "Daniel Martinez <daniel@walletconnect.com>",
+]
+license = "Apache-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+name = "wcn_coordinator"
+
+[[bin]]
+path = "src/main.rs"
+name = "wcn_coordinator"
+
+[lints]
+workspace = true
+
+[dependencies]
+wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+logging = { path = "../logging" }
+metrics = { workspace = true }
+time = { workspace = true }
+wcn_rpc = { workspace = true, features = ["server"] }
+storage_api = { package = "wcn_storage_api", path = "../storage_api", features = [
+    "server",
+] }
+client_api = { package = "wcn_client_api", path = "../client_api", features = [
+    "server",
+] }
+replication = { package = "wcn_replication", path = "../replication" }
+anyhow = "1"
+atty = "0.2"
+axum = "0.6"
+base64 = "0.20"
+derive_more = { workspace = true, features = [
+    "as_ref",
+    "display",
+    "from",
+    "try_into",
+    "deref",
+] }
+derivative = "2"
+envy = "0.4"
+futures = "0.3"
+tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = "0.1"
+serde = "1"
+thiserror = "1"
+metrics-exporter-prometheus = "0.15"
+tracing = "0.1"
+tap = "1.0"
+vergen-pretty = { version = "0.3", features = ["trace"] }
+
+[dev-dependencies]
+
+[build-dependencies]
+vergen = { version = "8", default-features = false, features = [
+    "build",
+    "cargo",
+    "git",
+    "gitoxide",
+    "rustc",
+] }

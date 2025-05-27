@@ -30,6 +30,7 @@ workspace = true
 [dependencies]
 wcn = { package = "wcn_core", path = "../core" }
 sharding = { path = "../sharding" }
+logging = { path = "../logging" }
 auth = { workspace = true }
 domain = { workspace = true }
 raft_api = { workspace = true, features = ["server", "client"] }

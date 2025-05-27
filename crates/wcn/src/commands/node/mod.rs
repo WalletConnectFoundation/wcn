@@ -13,7 +13,7 @@ enum LogFormat {
     Json,
 }
 
-impl From<LogFormat> for node::logger::LogFormat {
+impl From<LogFormat> for logging::LogFormat {
     fn from(value: LogFormat) -> Self {
         match value {
             LogFormat::Text => Self::Text,

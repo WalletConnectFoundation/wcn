@@ -84,7 +84,7 @@ pub async fn exec(args: StartCmd) -> anyhow::Result<()> {
         log_file
     });
 
-    let _logger = node::Logger::init(args.log_format.into(), Some(&args.log_filter), log_file);
+    let _logger = logging::Logger::init(args.log_format.into(), Some(&args.log_filter), log_file);
 
     let config = super::config::Config::load_from_file(&args.config).map_err(Error::Config)?;
 

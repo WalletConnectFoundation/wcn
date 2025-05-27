@@ -36,7 +36,7 @@ pub async fn exec(args: StopCmd) -> anyhow::Result<()> {
         std::env::set_current_dir(working_dir).map_err(|_| Error::InaccessibleWorkingDir)?;
     }
 
-    let _logger = node::Logger::init(node::logger::LogFormat::Text, Some("info"), None);
+    let _logger = logging::Logger::init(logging::LogFormat::Text, Some("info"), None);
 
     let pid = Lockfile::new().owner().ok_or(Error::InstanceNotFound)?;
 

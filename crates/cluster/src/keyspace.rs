@@ -10,6 +10,9 @@ use {
 
 const REPLICATION_FACTOR: usize = 5;
 
+/// [`Keyspace`] version.
+pub type Version = u64;
+
 /// Strategy of replicating data within a [`Keyspace`] across a set of
 /// [`node::Operator`]s.
 #[repr(u8)]
@@ -41,7 +44,14 @@ pub struct Keyspace {
 }
 
 impl Keyspace {
-    pub(super) fn new(
+    /// Creates a new [`Keyspace`].
+    ///
+    /// It's highly CPU intensive to contruct a new [`Keyspace`] (order of
+    /// seconds), so the task is being [spawned](tokio::task::spawn_blocking)
+    /// to the [`tokio`] threadpool.
+    ///
+    /// May return `None` if the [`tokio`] task gets canceled for some reason.
+    pub(super) async fn new(
         operators: NodeOperators,
         replication_strategy: ReplicationStrategy,
         version: u64,
@@ -67,9 +77,22 @@ impl Keyspace {
             })
     }
 
+    /// Returns [`Version`] of this [`Keyspace`].
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
     /// Get [`NodeOperators`] of this [`Keyspace`].
     pub(super) fn operators(&self) -> &NodeOperators {
         &self.operators
+    }
+
+    /// Returns a mutable reference to [`NodeOperator`] data.
+    pub(super) fn operator_data_mut(
+        &mut self,
+        id: &node_operator::Id,
+    ) -> Option<&mut node_operator::VersionedData> {
+        self.operators.get_data_mut(id)
     }
 }
 

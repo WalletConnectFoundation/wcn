@@ -1,9 +1,18 @@
 //! Entity operating a set of nodes within a WCN cluster.
 
 use {
-    crate::{client, node, smart_contract, Node},
+    crate::{
+        client,
+        node,
+        smart_contract,
+        LogicalError,
+        Node,
+        Version as ClusterVersion,
+        View as ClusterView,
+    },
+    derive_more::From,
     serde::{Deserialize, Serialize},
-    std::collections::HashMap,
+    std::{collections::HashMap, ops::Sub},
 };
 
 /// Globally unique identifier of a [`NodeOperator`];
@@ -18,7 +27,7 @@ pub type Idx = u8;
 ///
 /// Used for informational purposes only.
 /// Expected to be unique within the cluster, but not enforced to.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Name(String);
 
 impl Name {
@@ -57,32 +66,79 @@ pub struct Data {
 #[derive(Debug)]
 pub struct SerializedData(Vec<u8>);
 
-impl SerializedData {
-    pub(super) fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
 /// New [`NodeOperator`] that is not a member of WCN cluster yet.
-pub struct NewNodeOperator {
-    /// [`Id`] of this [`NewNodeOperator`].
-    pub id: Id,
+pub type NewNodeOperator = NodeOperator<Data>;
 
-    /// [`Data`] of this [`NewNodeOperator`].
-    pub data: Data,
-}
+/// [`NodeOperator`] with [`SerializedData`].
+pub type SerializedNodeOperator = NodeOperator<SerializedData>;
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
-#[derive(Debug)]
-pub struct NodeOperator {
+#[derive(Clone, Debug)]
+pub struct NodeOperator<D = VersionedData> {
     id: Id,
-    data: VersionedData,
+    data: D,
+}
+
+impl<D> NodeOperator<D> {
+    /// Creates a [`NewNodeOperator`].
+    pub fn new(id: Id, data: Data) -> NewNodeOperator {
+        NewNodeOperator { id, data }
+    }
+
+    /// Returns [`Id`] of this [`NodeOperator`].
+    pub fn id(&self) -> &Id {
+        &self.id
+    }
+
+    /// Returns data of this [`NodeOperator`].
+    pub fn data(&self) -> &D {
+        &self.data
+    }
 }
 
 /// On-chain state of an [`NodeOperator`] has been updated.
 pub struct Updated {
     /// Updated [`NodeOperator`].
     pub operator: NodeOperator,
+
+    /// Updated [`ClusterVersion`].
+    pub cluster_version: ClusterVersion,
+}
+
+impl Updated {
+    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
+        let mut applied = false;
+
+        if let Some(migration) = &mut view.migration {
+            if let Some(data) = migration
+                .keyspace_mut()
+                .operator_data_mut(self.operator.id())
+            {
+                *data = self.operator.data.clone();
+                applied = true;
+            }
+        }
+
+        if let Some(data) = view.keyspace.operator_data_mut(self.operator.id()) {
+            *data = self.operator.data;
+            applied = true;
+        }
+
+        if !applied {
+            return Err(LogicalError::UnknownOperator(self.operator.id));
+        }
+
+        Ok(())
+    }
+}
+
+impl NewNodeOperator {
+    pub(super) fn serialize(self) -> Result<SerializedNodeOperator, DataSerializationError> {
+        Ok(NodeOperator {
+            id: self.id,
+            data: self.data.serialize()?,
+        })
+    }
 }
 
 impl Data {
@@ -107,8 +163,18 @@ impl Data {
     }
 }
 
-#[derive(Debug)]
-enum VersionedData {
+/// Backwards-compatible [`NodeOperator`] [`Data`] supporting multiple versions.
+#[derive(Debug, Clone, From)]
+pub struct VersionedData(VersionedDataInner);
+
+impl VersionedData {
+    fn v0(data: DataV0) -> Self {
+        Self(VersionedDataInner::V0(data))
+    }
+}
+
+#[derive(Debug, Clone)]
+enum VersionedDataInner {
     V0(DataV0),
 }
 
@@ -124,7 +190,7 @@ impl NodeOperator {
         let bytes = &data_bytes[1..];
 
         let data = match schema_version {
-            0 => postcard::from_bytes(bytes).map(VersionedData::V0),
+            0 => postcard::from_bytes(bytes).map(VersionedData::v0),
             ver => return Err(Error::UnknownSchemaVersion(ver)),
         }
         .map_err(Error::from_postcard)?;
@@ -135,7 +201,7 @@ impl NodeOperator {
 
 // NOTE: The on-chain serialization is non self-describing! Every change to
 // the schema should be handled by creating a new version.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct DataV0 {
     name: Name,
     nodes: Vec<node::DataV0>,
@@ -172,7 +238,31 @@ impl DataDeserializationError {
     }
 }
 
+impl SerializedData {
+    /// Validates that [`SerializedData`] size doesn't exceed the provided
+    /// `limit`.
+    pub(super) fn validate_size(&self, limit: u16) -> Result<(), DataTooLargeError> {
+        let value = self.0.len();
+        let limit = limit as usize;
+
+        if value > limit {
+            return Err(DataTooLargeError { value, limit });
+        }
+
+        Ok(())
+    }
+}
+
+/// [`SerializedData`] size is too large.
+#[derive(Debug, thiserror::Error)]
+#[error("Node operator data size is too large (value: {value}, limit: {limit})")]
+pub struct DataTooLargeError {
+    value: usize,
+    limit: usize,
+}
+
 /// Slot map of [`NodeOperator`]s.
+#[derive(Debug, Clone)]
 pub(super) struct NodeOperators {
     id_to_idx: HashMap<Id, Idx>,
 
@@ -181,6 +271,31 @@ pub(super) struct NodeOperators {
 }
 
 impl NodeOperators {
+    pub(super) fn set(&mut self, idx: Idx, slot: Option<NodeOperator>) {
+        if let Some(id) = self.get_by_idx(idx).map(|op| op.id) {
+            self.id_to_idx.remove(&id);
+        }
+
+        if self.slots.len() >= idx as usize {
+            self.expand(idx);
+        }
+
+        if let Some(operator) = &slot {
+            self.id_to_idx.insert(operator.id, idx);
+        }
+
+        self.slots[idx as usize] = slot;
+    }
+
+    fn expand(&mut self, idx: Idx) {
+        let desired_len = (idx as usize) + 1;
+        let slots_to_add = desired_len.checked_sub(self.slots.len());
+
+        for _ in 0..slots_to_add.unwrap_or_default() {
+            self.slots.push(None);
+        }
+    }
+
     /// Returns whether this map contains the [`NodeOperator`] with the provided
     /// [`Id`].
     pub(super) fn contains(&self, id: &Id) -> bool {
@@ -192,9 +307,20 @@ impl NodeOperators {
         self.get_by_idx(self.get_idx(id)?)
     }
 
+    /// Gets a mutable reference to a [`NodeOperator`] [`Data`].
+    pub(super) fn get_data_mut(&mut self, id: &Id) -> Option<&mut VersionedData> {
+        self.get_by_idx_mut(self.get_idx(id)?)
+            .map(|operator| &mut operator.data)
+    }
+
     /// Gets an [`NodeOperator`] by [`Idx`].
     pub(super) fn get_by_idx(&self, idx: Idx) -> Option<&NodeOperator> {
         self.slots.get(idx as usize)?.as_ref()
+    }
+
+    /// Mutable version of [`NodeOperators::get_by_idx`].
+    fn get_by_idx_mut(&mut self, idx: Idx) -> Option<&mut NodeOperator> {
+        self.slots.get_mut(idx as usize)?.as_mut()
     }
 
     /// Gets an [`Idx`] by [`Id`].

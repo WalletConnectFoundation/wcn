@@ -43,7 +43,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   [`SmartContract`]
     ///
     /// The implementation MUST emit [`migration::Started`] event on success.
-    async fn start_migration(&self, plan: migration::Plan) -> Result<()>;
+    async fn start_migration(&self, plan: migration::NewPlan) -> Result<()>;
 
     /// Marks that the [`signer`](SmartContract::signer) has completed the data
     /// pull required for completion of the current [`migration`].
@@ -158,7 +158,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type ReadResult<T, E = ReadError> = std::result::Result<T, E>;
 
-#[derive(Clone, Debug, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PublicKey(evm::Address);
 
 impl FromStr for PublicKey {

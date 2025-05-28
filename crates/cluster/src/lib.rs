@@ -8,6 +8,12 @@ use {
 pub mod smart_contract;
 pub use smart_contract::SmartContract;
 
+pub mod settings;
+pub use settings::Settings;
+
+pub mod ownership;
+pub use ownership::Ownership;
+
 pub mod client;
 pub use client::{Client, ClientRef};
 
@@ -15,7 +21,7 @@ pub mod node;
 pub use node::{Node, NodeRef};
 
 pub mod node_operator;
-pub use node_operator::{NewNodeOperator, NodeOperator};
+pub use node_operator::{NewNodeOperator, NodeOperator, SerializedNodeOperator};
 
 pub mod keyspace;
 pub use keyspace::Keyspace;
@@ -38,12 +44,6 @@ pub const MAX_OPERATORS: usize = 256;
 pub struct Cluster<SC = evm::SmartContract> {
     smart_contract: SC,
     view: ArcSwap<Arc<View>>,
-}
-
-/// WCN [`Cluster`] settings.
-pub struct Settings {
-    /// Maximum number of on-chain bytes stored for a single [`NodeOperator`].
-    pub max_node_operator_data_bytes: u16,
 }
 
 /// Version of a WCN [`Cluster`].
@@ -79,6 +79,12 @@ pub enum Event {
 
     /// On-chain state of an [`NodeOperator`] has been updated.
     NodeOperatorUpdated(node_operator::Updated),
+
+    /// [`Settings`] have been updated.
+    SettingsUpdated(settings::Updated),
+
+    /// [`Ownership`] has been transferred.
+    OwnershipTransferred(ownership::Transferred),
 }
 
 impl<SC: SmartContract> Cluster<SC> {
@@ -89,7 +95,13 @@ impl<SC: SmartContract> Cluster<SC> {
         initial_settings: Settings,
         initial_operators: Vec<NewNodeOperator>,
     ) -> Result<Self, DeploymentError> {
-        if initial_operators.iter().map(|op| &op.id).dedup().count() != initial_operators.len() {
+        if initial_operators
+            .iter()
+            .map(NodeOperator::id)
+            .dedup()
+            .count()
+            != initial_operators.len()
+        {
             return Err(DeploymentError::OperatorIdDuplicate);
         }
 
@@ -115,9 +127,7 @@ impl<SC: SmartContract> Cluster<SC> {
         add: Vec<NewNodeOperator>,
     ) -> Result<(), StartMigrationError> {
         let plan = self.using_view(move |view| {
-            if self.smart_contract.signer() != view.owner {
-                return Err(StartMigrationError::NotOwner);
-            }
+            view.ownership.validate_signer(&self.smart_contract)?;
 
             if view.migration().is_some() {
                 return Err(StartMigrationError::MigrationInProgress);
@@ -126,6 +136,19 @@ impl<SC: SmartContract> Cluster<SC> {
             if view.maintenance().is_some() {
                 return Err(StartMigrationError::MaintenanceInProgress);
             }
+
+            let add = add
+                .into_iter()
+                .map(|operator| {
+                    let operator = operator.serialize()?;
+
+                    operator
+                        .data()
+                        .validate_size(view.settings.max_node_operator_data_bytes)?;
+
+                    Ok::<_, StartMigrationError>(operator)
+                })
+                .try_collect()?;
 
             migration::Plan::new(view, remove, add).map_err(Into::into)
         })?;
@@ -173,9 +196,7 @@ impl<SC: SmartContract> Cluster<SC> {
     /// Calls [`SmartContract::abort_migration`].
     pub async fn abort_migration(&self, id: migration::Id) -> Result<(), AbortMigrationError> {
         self.using_view(|view| {
-            if self.smart_contract.signer() != view.owner {
-                return Err(AbortMigrationError::NotOwner);
-            }
+            view.ownership.validate_signer(&self.smart_contract)?;
 
             let migration = view.migration().ok_or(AbortMigrationError::NoMigration)?;
 
@@ -236,14 +257,12 @@ impl<SC: SmartContract> Cluster<SC> {
     /// Calls [`SmartContract::abort_maintenance`].
     pub async fn abort_maintenance(&self) -> Result<(), AbortMaintenanceError> {
         self.using_view(|view| {
-            if self.smart_contract.signer() != view.owner {
-                return Err(AbortMaintenanceError::NotOwner);
-            }
+            view.ownership.validate_signer(&self.smart_contract)?;
 
             view.maintenance()
                 .ok_or(AbortMaintenanceError::NoMaintenance)?;
 
-            Ok(())
+            Ok::<_, AbortMaintenanceError>(())
         })?;
 
         self.smart_contract
@@ -260,17 +279,16 @@ impl<SC: SmartContract> Cluster<SC> {
         id: node_operator::Id,
         data: node_operator::Data,
     ) -> Result<(), UpdateNodeOperatorError> {
-        let idx = self
-            .view
-            .load()
-            .operator_idx(&id)
-            .ok_or(UpdateNodeOperatorError::UnknownOperator)?;
+        let (idx, data) = self.using_view(|view| {
+            let idx = view
+                .operator_idx(&id)
+                .ok_or(UpdateNodeOperatorError::UnknownOperator)?;
 
-        let data = data.serialize()?;
+            let data = data.serialize()?;
 
-        if data.len() > self.view.load().settings.max_node_operator_data_bytes as usize {
-            return Err(UpdateNodeOperatorError::DataTooLarge);
-        }
+            data.validate_size(view.settings.max_node_operator_data_bytes)?;
+            Ok::<_, UpdateNodeOperatorError>((idx, data))
+        })?;
 
         self.smart_contract
             .update_node_operator(id, idx, data)
@@ -299,14 +317,20 @@ pub enum DeploymentError {
 /// [`Cluster::start_migration`] error.
 #[derive(Debug, thiserror::Error)]
 pub enum StartMigrationError {
-    #[error("Signer is not the owner of the smart-contract")]
-    NotOwner,
+    #[error(transparent)]
+    NotOwner(#[from] ownership::NotOwnerError),
 
     #[error("Another migration in progress")]
     MigrationInProgress,
 
     #[error("Maintenance in progress")]
     MaintenanceInProgress,
+
+    #[error("Data serialization: {0}")]
+    DataSerialization(#[from] node_operator::DataSerializationError),
+
+    #[error(transparent)]
+    NodeOperatorDataTooLarge(#[from] node_operator::DataTooLargeError),
 
     #[error("Plan: {0}")]
     Plan(#[from] migration::PlanError),
@@ -337,8 +361,8 @@ pub enum CompleteMigrationError {
 /// [`Cluster::abort_migration`] error.
 #[derive(Debug, thiserror::Error)]
 pub enum AbortMigrationError {
-    #[error("Signer is not the owner of the smart-contract")]
-    NotOwner,
+    #[error(transparent)]
+    NotOwner(#[from] ownership::NotOwnerError),
 
     #[error("No migration is currently in progress")]
     NoMigration,
@@ -382,8 +406,8 @@ pub enum CompleteMaintenanceError {
 /// [`Cluster::abort_maintenance`] error.
 #[derive(Debug, thiserror::Error)]
 pub enum AbortMaintenanceError {
-    #[error("Signer is not the owner of the smart-contract")]
-    NotOwner,
+    #[error(transparent)]
+    NotOwner(#[from] ownership::NotOwnerError),
 
     #[error("No maintenance is currently in progress")]
     NoMaintenance,
@@ -401,26 +425,96 @@ pub enum UpdateNodeOperatorError {
     #[error("Data serialization: {0}")]
     DataSerialization(#[from] node_operator::DataSerializationError),
 
-    #[error("Size of the provided operator data exceeds the configured setting")]
-    DataTooLarge,
+    #[error(transparent)]
+    DataTooLarge(#[from] node_operator::DataTooLargeError),
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::Error),
 }
 
+impl Event {
+    fn cluster_version(&self) -> Version {
+        match self {
+            Event::MigrationStarted(evt) => evt.cluster_version,
+            Event::MigrationDataPullCompleted(evt) => evt.cluster_version,
+            Event::MigrationCompleted(evt) => evt.cluster_version,
+            Event::MigrationAborted(evt) => evt.cluster_version,
+            Event::MaintenanceStarted(evt) => evt.cluster_version,
+            Event::MaintenanceCompleted(evt) => evt.cluster_version,
+            Event::MaintenanceAborted(evt) => evt.cluster_version,
+            Event::NodeOperatorUpdated(evt) => evt.cluster_version,
+            Event::SettingsUpdated(evt) => evt.cluster_version,
+            Event::OwnershipTransferred(evt) => evt.cluster_version,
+        }
+    }
+}
+
 /// Read-only view of a WCN cluster.
 pub struct View {
-    owner: smart_contract::PublicKey,
+    ownership: Ownership,
     settings: Settings,
 
     keyspace: Keyspace,
     migration: Option<Migration>,
     maintenance: Option<Maintenance>,
 
-    version: u128,
+    cluster_version: Version,
 }
 
 impl View {
+    fn no_migration(&self) -> Result<(), LogicalError> {
+        if let Some(migration) = self.migration() {
+            return Err(LogicalError::MigrationInProgress(migration.id()));
+        }
+
+        Ok(())
+    }
+
+    fn no_maintenance(&self) -> Result<(), LogicalError> {
+        if self.maintenance().is_some() {
+            return Err(LogicalError::MaintenanceInProgress);
+        }
+
+        Ok(())
+    }
+
+    fn has_migration(&mut self) -> Result<&mut Migration, LogicalError> {
+        self.migration.as_mut().ok_or(LogicalError::NoMigration)
+    }
+
+    fn has_maintenance(&mut self) -> Result<&mut Maintenance, LogicalError> {
+        self.maintenance.as_mut().ok_or(LogicalError::NoMaintenance)
+    }
+
+    /// Applies the provided [`Event`] to this [`View`].
+    pub async fn apply_event(mut self, event: Event) -> Result<Self, ApplyEventError> {
+        let new_version = event.cluster_version();
+
+        if new_version != self.cluster_version + 1 {
+            return Err(ApplyEventError::ClusterVersionMismatch {
+                current: self.cluster_version,
+                event: new_version,
+            });
+        }
+
+        match event {
+            Event::MigrationStarted(evt) => evt.apply(&mut self).await,
+            Event::MigrationDataPullCompleted(evt) => evt.apply(&mut self),
+            Event::MigrationCompleted(evt) => evt.apply(&mut self),
+            Event::MigrationAborted(evt) => evt.apply(&mut self),
+            Event::MaintenanceStarted(evt) => evt.apply(&mut self),
+            Event::MaintenanceCompleted(evt) => evt.apply(&mut self),
+            Event::MaintenanceAborted(evt) => evt.apply(&mut self),
+            Event::NodeOperatorUpdated(evt) => evt.apply(&mut self),
+            Event::SettingsUpdated(evt) => evt.apply(&mut self),
+            Event::OwnershipTransferred(evt) => evt.apply(&mut self),
+        }?;
+
+        self.cluster_version = new_version;
+
+        Ok(self)
+    }
+
     /// Returns the primary [`Keyspace`] of this WCN cluster.
     pub fn keyspace(&self) -> &Keyspace {
         &self.keyspace
@@ -448,4 +542,60 @@ impl View {
                 .and_then(|migration| migration.keyspace().operators().get_idx(&id))
         })
     }
+}
+
+/// Error of [`View::apply_event`]
+#[derive(Debug, thiserror::Error)]
+pub enum ApplyEventError {
+    /// [`Version`] inside the [`Event`] wasn't monotonic.
+    #[error("Cluster version mismatch (current: {current}, event: {event})")]
+    ClusterVersionMismatch { current: Version, event: Version },
+
+    /// [`LogicalError`] observed while applying an [`Event`].
+    #[error("Logic: {0}")]
+    Logic(#[from] LogicalError),
+}
+
+/// Logical error caused by a race condition or by an incorrect implementation
+/// of the [`SmartContract`]
+#[derive(Debug, thiserror::Error)]
+pub enum LogicalError {
+    #[error("Migration(id: {0}) is in progress, but it shouldn't be")]
+    MigrationInProgress(migration::Id),
+
+    #[error("Maintenance is in progress, but it shouldn't be")]
+    MaintenanceInProgress,
+
+    #[error("No migration, but there should be")]
+    NoMigration,
+
+    #[error("No maintenance, but there should be")]
+    NoMaintenance,
+
+    #[error("Migration ID mismatch (event: {event}, local: {event})")]
+    MigrationIdMismatch {
+        event: migration::Id,
+        local: migration::Id,
+    },
+
+    #[error("Node operator (id: {0}) is not currently pulling the data")]
+    NodeOperatorNotPulling(node_operator::Id),
+
+    #[error("There are still pulling operators remaining, but ther shouldn't be")]
+    PullingOperatorsRemaining,
+
+    #[error("Maintenance: node operator ID mismatch (event: {event}, local: {event})")]
+    MaintenanceNodeOperatorIdMismatch {
+        event: node_operator::Id,
+        local: node_operator::Id,
+    },
+
+    #[error("Node operator (id: {0}) is not within the cluster, but should be")]
+    UnknownOperator(node_operator::Id),
+
+    #[error("Settings unchanged, but they should have changed")]
+    SettingsUnchanged,
+
+    #[error("Owner unchanged, but it should have changed")]
+    OwnerUnchanged,
 }

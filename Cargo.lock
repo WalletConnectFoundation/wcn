@@ -6908,6 +6908,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "envy",
+ "futures",
+ "hyper 0.14.28",
+ "metrics-exporter-prometheus",
+ "serde",
+ "serde_json",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "vergen",
+ "vergen-pretty",
+ "wcn_storage_api",
+]
+
+[[package]]
 name = "wcn_domain"
 version = "0.1.0"
 dependencies = [

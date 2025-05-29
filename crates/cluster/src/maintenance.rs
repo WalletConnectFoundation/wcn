@@ -38,40 +38,13 @@ impl Started {
     }
 }
 
-/// [`Maintenance`] has been completed.
-pub struct Completed {
-    /// ID of the [`node_operator`] that completed the [`Maintenance`].
-    pub operator_id: node_operator::Id,
-
+/// [`Maintenance`] has been finished.
+pub struct Finished {
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
 }
 
-impl Completed {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        let maintenance = view.has_maintenance()?;
-
-        if maintenance.operator_id != self.operator_id {
-            return Err(LogicalError::MaintenanceNodeOperatorIdMismatch {
-                event: self.operator_id,
-                local: maintenance.operator_id,
-            });
-        }
-
-        drop(maintenance);
-        view.maintenance = None;
-
-        Ok(())
-    }
-}
-
-/// [`Maintenance`] has been aborted.
-pub struct Aborted {
-    /// Updated [`ClusterVersion`].
-    pub cluster_version: ClusterVersion,
-}
-
-impl Aborted {
+impl Finished {
     pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
         view.has_maintenance()?;
         view.maintenance = None;

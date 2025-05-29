@@ -96,7 +96,22 @@ impl<D> NodeOperator<D> {
     }
 }
 
-/// On-chain state of an [`NodeOperator`] has been updated.
+/// Event of a new [`NodeOperator`] being added to a WCN cluster.
+pub struct Added {
+    /// [`NodeOperator`] being added.
+    pub operator: NodeOperator,
+
+    /// Updated [`ClusterVersion`].
+    pub cluster_version: ClusterVersion,
+}
+
+impl Added {
+    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
+        todo!()
+    }
+}
+
+/// Event of a [`NodeOperator`] [`Data`] being updated.
 pub struct Updated {
     /// Updated [`NodeOperator`].
     pub operator: NodeOperator,
@@ -129,6 +144,21 @@ impl Updated {
         }
 
         Ok(())
+    }
+}
+
+/// Event of a [`NodeOperator`] being removed from a WCN cluster.
+pub struct Removed {
+    /// [`Id`] of the [`NodeOperator`] being removed.
+    pub id: Id,
+
+    /// Updated [`ClusterVersion`].
+    pub cluster_version: ClusterVersion,
+}
+
+impl Removed {
+    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
+        todo!()
     }
 }
 

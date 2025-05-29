@@ -5,7 +5,8 @@ target/
 /crates/*/target/
 /crates/*/Cargo.lock
 /contracts/dependencies/
-/contracts/out/
+/contracts/out/*
+!/contracts/out/Cluster.sol
 /contracts/cache/
 .direnv
 .env

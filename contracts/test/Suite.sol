@@ -104,7 +104,7 @@ contract ClusterTest is Test {
     }
 
     function test_canNotStartMigrationWhenMaintenanceInProgress() public {
-        startMaintenance(1, 0);
+        startMaintenance(1);
         expectRevert("maintenance in progress");
         startMigration(OWNER, newMigration().clear(0));
     }
@@ -127,6 +127,8 @@ contract ClusterTest is Test {
     }
 
     function test_startMigrationInitializesMigration() public {
+        createNodeOperator(OWNER, 6);
+        createNodeOperator(OWNER, 7);
         startMigration(OWNER, newMigration().set(4, 6).set(5, 7).clear(2));
         assertMigration(1, 5);
         assertMigrationPullingOperator(0);
@@ -137,8 +139,8 @@ contract ClusterTest is Test {
     }
 
     function test_startMigrationPopulatesMigrationKeyspace() public {
-        registerNodeOperator(6, "operator6");
-        registerNodeOperator(7, "operator7");
+        createNodeOperator(OWNER, 6, "operator6");
+        createNodeOperator(OWNER, 7, "operator7");
     
         startMigration(OWNER, newMigration().set(4, 6).set(5, 7).clear(2));
         assertKeyspaceSlotsCount(clusterView.migrationKeyspace, 6);
@@ -154,41 +156,43 @@ contract ClusterTest is Test {
 
     function test_anyoneCanNotCompleteMigration() public {
         startMigration(OWNER, newMigration().clear(0));
-        expectRevert("wrong operator");
-        completeMigration(ANYONE, 1, 0);
+        expectRevert("unknown operator");
+        completeMigration(ANYONE, 1);
     }
 
     function test_ownerCanNotCompleteMigration() public {
         startMigration(OWNER, newMigration().clear(0));
-        expectRevert("wrong operator");
-        completeMigration(OWNER, 1, 0);
+        expectRevert("unknown operator");
+        completeMigration(OWNER, 1);
     }
 
     function test_operatorCanNotCompleteNonExistentMigration() public {
         expectRevert("no migration");
-        completeMigration(OPERATOR, 1, 0);
+        completeMigration(OPERATOR, 1);
     }
 
     function test_operatorCanCompleteMigration() public {
         startMigration(OWNER, newMigration().clear(1));
-        completeMigration(OPERATOR, 1, 0);
+        completeMigration(OPERATOR, 1);
     }
 
-    function test_completeMigrationIsIdempotent() public {
+    function test_canNotCompleteMigrationTwice() public {
         startMigration(OWNER, newMigration().clear(1));
-        completeMigration(OPERATOR, 1, 0);
-        completeMigration(OPERATOR, 1, 0);
+        completeMigration(OPERATOR, 1);
+        expectRevert("not pulling");
+        completeMigration(OPERATOR, 1);
     }
 
     function test_completeMigrationBumpsVersion() public {
         startMigration(OWNER, newMigration().clear(1));
-        completeMigration(OPERATOR, 1, 0);
+        completeMigration(OPERATOR, 1);
         assertVersion(2);
     }
 
     function test_completeMigrationDoesNotUpdateKeyspaceIfNotCompleted() public {
+        createNodeOperator(OWNER, 6);
         startMigration(OWNER, newMigration().set(5, 6));
-        completeMigration(OPERATOR, 1, 0);
+        completeMigration(OPERATOR, 1);
         assertKeyspaceSlotsCount(clusterView.keyspace, 5);
         assertKeyspaceSlot(clusterView.keyspace, 0, 1);
         assertKeyspaceSlot(clusterView.keyspace, 1, 2);
@@ -198,13 +202,13 @@ contract ClusterTest is Test {
     }
 
     function test_completeMigrationUpdatesOperatorsIfCompleted() public {
-        registerNodeOperator(6, "operator6");
+        createNodeOperator(OWNER, 6, "operator6");
         startMigration(OWNER, newMigration().set(4, 6));
-        completeMigration(1, 1, 0);
-        completeMigration(2, 1, 1);
-        completeMigration(3, 1, 2);
-        completeMigration(4, 1, 3);
-        completeMigration(6, 1, 4);
+        completeMigration(1, 1);
+        completeMigration(2, 1);
+        completeMigration(3, 1);
+        completeMigration(4, 1);
+        completeMigration(6, 1);
         assertKeyspaceSlotsCount(clusterView.keyspace, 5);
         assertKeyspaceSlot(clusterView.keyspace, 0, 1);
         assertKeyspaceSlot(clusterView.keyspace, 1, 2);
@@ -215,46 +219,49 @@ contract ClusterTest is Test {
 
     function test_completeMigrationDeletesMigrationIfCompleted() public {
         startMigration(OWNER, newMigration().clear(3).clear(4));
-        completeMigration(1, 1, 0);
-        completeMigration(2, 1, 1);
-        completeMigration(3, 1, 2);
+        completeMigration(1, 1);
+        completeMigration(2, 1);
+        completeMigration(3, 1);
         assertNoMigration();
     }
 
     function test_completeMigrationRemovesPullingOperatorBitIfNotCompleted() public {
+        createNodeOperator(OWNER, 10);
         startMigration(OWNER, newMigration().set(2, 10));
-        completeMigration(1, 1, 0);
+        completeMigration(1, 1);
         assert(clusterView.migration.pullingOperatorsBitmask.is0(0));
     }
 
     function test_completeMigrationDoesNotBumpKeyspaceVersionIfNotCompleted() public {
+        createNodeOperator(OWNER, 10);
         startMigration(OWNER, newMigration().set(2, 10));
-        completeMigration(1, 1, 0);
+        completeMigration(1, 1);
         assertKeyspaceVersion(1);
     }
 
     function test_completeMigrationDoesNotBumpKeyspaceVersionIfCompleted() public {
         startMigration(OWNER, newMigration().clear(3).clear(4));
-        completeMigration(1, 1, 0);
-        completeMigration(2, 1, 1);
-        completeMigration(3, 1, 2);
+        completeMigration(1, 1);
+        completeMigration(2, 1);
+        completeMigration(3, 1);
         assertKeyspaceVersion(1);
     }
 
     function test_completeMigrationEmitsMigrationDataPullCompletedEventIfNotCompleted() public {
+        createNodeOperator(OWNER, 10);
         startMigration(OWNER, newMigration().set(2, 10));
         vm.expectEmit();
-        emit MigrationDataPullCompleted(1, vm.addr(1), 2);
-        completeMigration(1, 1, 0);
+        emit MigrationDataPullCompleted(1, vm.addr(1), 3);
+        completeMigration(1, 1);
     }
 
     function test_completeMigrationEmitsMigrationCompletedEventIfCompleted() public {
         startMigration(OWNER, newMigration().clear(3).clear(4));
-        completeMigration(1, 1, 0);
-        completeMigration(2, 1, 1);
+        completeMigration(1, 1);
+        completeMigration(2, 1);
         vm.expectEmit();
         emit MigrationCompleted(1, vm.addr(3), 4);
-        completeMigration(3, 1, 2);
+        completeMigration(3, 1);
     }
 
     // abortMigration
@@ -320,213 +327,172 @@ contract ClusterTest is Test {
     // startMaintenance 
 
     function test_anyoneCanNotStartMaintenance() public {
-        expectRevert("wrong operator");
-        startMaintenance(ANYONE, 0);
+        expectRevert("unauthorized");
+        startMaintenance(ANYONE);
     }
 
-    function test_ownerCanNotStartMaintenance() public {
-        expectRevert("wrong operator");
-        startMaintenance(OWNER, 0);
+    function test_ownerCanStartMaintenance() public {
+        startMaintenance(OWNER);
     }
 
     function test_operatorCanStartMaintenance() public {
-        startMaintenance(OPERATOR, 0);
+        startMaintenance(OPERATOR);
     }
 
     function test_canNotStartMoreThanOneMaintenance() public {
-        startMaintenance(1, 0);
+        startMaintenance(1);
         expectRevert("maintenance in progress");
-        startMaintenance(2, 1);
+        startMaintenance(2);
     }
 
     function test_operatorCanNotStartMaintenanceWhenMigrationInProgress() public {
         startMigration(OWNER, newMigration().clear(1));
         expectRevert("migration in progress");
-        startMaintenance(1, 0);
+        startMaintenance(1);
     }
 
     function test_startMaintenanceBumpsVersion() public {
-        startMaintenance(1, 0);
+        startMaintenance(1);
         assertVersion(1);
     }
 
     function test_startMaintenanceDoesNotBumpKeyspaceVersion() public {
-        startMaintenance(1, 0);
+        startMaintenance(1);
         assertKeyspaceVersion(0);
     }
 
     function test_startMaintenanceUpdatesMaintenance() public {
-        startMaintenance(1, 0);
+        startMaintenance(1);
         assertMaintenance(1);
     }
 
     function test_startMaintenanceEmitsMaintenanceStartedEvent() public {
         vm.expectEmit();
         emit MaintenanceStarted(vm.addr(1), 1);
-        startMaintenance(1, 0);
+        startMaintenance(1);
     }
 
-    // completeMaintenance
+    // finishMaintenance
 
     function test_anyoneCanNotCompleteMaintenance() public {
-        startMaintenance(1, 0);
-        expectRevert("wrong operator");
-        completeMaintenance(ANYONE);
+        startMaintenance(1);
+        expectRevert("unauthorized");
+        finishMaintenance(ANYONE);
     }
 
     function test_anotherOperatorCanNotCompleteMaintenance() public {
-        startMaintenance(2, 1);
-        expectRevert("wrong operator");
-        completeMaintenance(OPERATOR);
+        startMaintenance(2);
+        expectRevert("unauthorized");
+        finishMaintenance(OPERATOR);
     }
 
-    function test_ownerCanNotCompleteMaintenance() public {
-        startMaintenance(1, 0);
-        expectRevert("wrong operator");
-        completeMaintenance(OWNER);
+    function test_ownerCanCompleteMaintenance() public {
+        startMaintenance(1);
+        finishMaintenance(OWNER);
     }
 
     function test_sameOperatorCanCompleteMaintenance() public {
-        startMaintenance(1, 0);
-        completeMaintenance(OPERATOR);
+        startMaintenance(1);
+        finishMaintenance(OPERATOR);
     }
 
     function test_canNotCompleteNonExistentMaintenance() public {
         expectRevert("no maintenance");
-        completeMaintenance(OPERATOR);
+        finishMaintenance(OPERATOR);
     }
 
-    function test_completeMaintenanceBumpsVersion() public {
-        startMaintenance(1, 0);
-        completeMaintenance(1);
+    function test_finishMaintenanceBumpsVersion() public {
+        startMaintenance(1);
+        finishMaintenance(1);
         assertVersion(2);
     }
 
-    function test_completeMaintenanceDoesNotBumpKeyspaceVersion() public {
-        startMaintenance(1, 0);
-        completeMaintenance(1);
+    function test_finishMaintenanceDoesNotBumpKeyspaceVersion() public {
+        startMaintenance(1);
+        finishMaintenance(1);
         assertKeyspaceVersion(0);
     }
 
-    function test_completeMaintenanceDeletesMaintenance() public {
-        startMaintenance(1, 0);
-        completeMaintenance(1);
+    function test_finishMaintenanceDeletesMaintenance() public {
+        startMaintenance(1);
+        finishMaintenance(1);
         assertNoMaintenance();
     }
     
-    function test_completeMaintenanceEmitsMaintenanceCompletedEvent() public {
-        startMaintenance(1, 0);
+    function test_finishMaintenanceEmitsMaintenanceFinishedEvent() public {
+        startMaintenance(1);
         vm.expectEmit();
-        emit MaintenanceCompleted(vm.addr(1), 2);
-        completeMaintenance(1);
+        emit MaintenanceFinished(vm.addr(1), 2);
+        finishMaintenance(1);
     }
 
-    // abortMaintenance
-
-    function test_anyoneCanNotAbortMaintenance() public {
-        startMaintenance(1, 0);
-        expectRevert("not the owner");
-        abortMaintenance(ANYONE);
-    }
-
-    function test_operatorCanNotAbortMaintenance() public {
-        startMaintenance(1, 0);
-        expectRevert("not the owner");
-        abortMaintenance(OPERATOR);
-    }
-
-    function test_ownerCanAbortMaintenance() public {
-        startMaintenance(1, 0);
-        abortMaintenance(OWNER);
-    }
-
-    function test_canNotAbortNonExistentMaintenance() public {
-        expectRevert("no maintenance");
-        abortMaintenance(OWNER);
-    }
-
-    function test_abortMaintenanceBumpsVersion() public {
-        startMaintenance(1, 0);
-        abortMaintenance(OWNER);
-        assertVersion(2);
-    }
-
-    function test_abortMaintenanceDoesNotBumpKeyspaceVersion() public {
-        startMaintenance(1, 0);
-        abortMaintenance(OWNER);
-        assertKeyspaceVersion(0);
-    }
-
-    function test_abortMaintenanceDeletesMaintenance() public {
-        startMaintenance(1, 0);
-        abortMaintenance(OWNER);
-        assertNoMaintenance();
-    }
-
-    function test_abortMaintenanceEmitsMaintenanceAbortedEvent() public {
-        startMaintenance(1, 0);
-        vm.expectEmit();
-        emit MaintenanceAborted(2);
-        abortMaintenance(OWNER);
-    }
-
-    // registerNodeOperator
+    // createNodeOperator
     
-    function test_anyoneCanRegisterNodeOperator() public {
-        registerNodeOperator(ANYONE, "anyone");
+    function test_anyoneCanNotCreateNodeOperator() public {
+        expectRevert("not the owner");
+        createNodeOperator(ANYONE, 42, "data");
     }
 
-    function test_registerNodeOperatorDoesNotBumpVersion() public {
-        registerNodeOperator(ANYONE, "anyone");
-        assertVersion(0);
+    function test_operatorCanNotCreateAnotherNodeOperator() public {
+        expectRevert("not the owner");
+        createNodeOperator(OPERATOR, 42, "data");
     }
 
-    function test_registerNodeOperatorDoesNotBumpKeyspaceVersion() public {
-        registerNodeOperator(ANYONE, "anyone");
-        assertKeyspaceVersion(0);
+    function test_ownerCanCreateNodeOperator() public {
+        createNodeOperator(OWNER, 42, "data");
     }
 
-    function test_registerNodeOperatorDoesNotEmitEvents() public {
-        vm.recordLogs();
-        registerNodeOperator(ANYONE, "anyone");
-        assertEq(vm.getRecordedLogs().length, 0);
-    }
-
-    // updateNodeOperatorData
-
-    function test_anyoneCanNotUpdateNodeOperatorData() public {
-        expectRevert("wrong operator");
-        updateNodeOperatorData(ANYONE, 0, "new data");
-    }
-
-    function test_ownerCanNotUpdateNodeOperatorData() public {
-        expectRevert("wrong operator");
-        updateNodeOperatorData(OWNER, 0, "new data");
-    }
-
-    function test_operatorCanUpdateNodeOperatorData() public {
-        updateNodeOperatorData(OPERATOR, 0, "new data");
-    }
-
-    function test_updateNodeOperatorDataDoesUpdateTheData() public {
-        updateNodeOperatorData(OPERATOR, 0, "new data");
-        assertKeyspaceSlot(clusterView.keyspace, 0, OPERATOR, "new data");
-    }
-
-    function test_updateNodeOperatorDataBumpsVersion() public {
-        updateNodeOperatorData(OPERATOR, 0, "new data");
+    function test_createNodeOperatorBumpsVersion() public {
+        createNodeOperator(OWNER, 42, "data");
         assertVersion(1);
     }
 
-    function test_updateNodeOperatorDataDoesNotBumpKeyspaceVersion() public {
-        updateNodeOperatorData(OPERATOR, 0, "new data");
+    function test_createNodeOperatorDoesNotBumpKeyspaceVersion() public {
+        createNodeOperator(OWNER, 42, "data");
         assertKeyspaceVersion(0);
     }
 
-    function test_updateNodeOperatorDataEmitsEventNodeOperatorDataUpdated() public {
+    function test_createNodeOperatorEmitsEventNodeOperatorCreated() public {
         vm.expectEmit();
-        emit NodeOperatorDataUpdated(vm.addr(OPERATOR), "new data", 1);
-        updateNodeOperatorData(OPERATOR, 0, "new data");
+        emit NodeOperatorCreated(NodeOperator({ addr: vm.addr(42), data: "data" }), 1);
+        createNodeOperator(OWNER, 42, "data");
+    }
+
+    // updateNodeOperator
+
+    function test_anyoneCanNotUpdateNodeOperator() public {
+        expectRevert("unauthorized");
+        updateNodeOperator(ANYONE, 1, "new data");
+    }
+
+    function test_ownerCanNotUpdateNodeOperator() public {
+        // expectRevert("wrong operator");
+        updateNodeOperator(OWNER, 1, "new data");
+    }
+
+    function test_operatorCanUpdateNodeOperator() public {
+        updateNodeOperator(OPERATOR, 1, "new data");
+    }
+
+    function test_updateNodeOperatorDoesUpdateTheData() public {
+        updateNodeOperator(OPERATOR, 1, "new data");
+        assertKeyspaceSlot(clusterView.keyspace, 0, OPERATOR, "new data");
+    }
+
+    function test_updateNodeOperatorBumpsVersion() public {
+        updateNodeOperator(OPERATOR, 1, "new data");
+        assertVersion(1);
+    }
+
+    function test_updateNodeOperatorDoesNotBumpKeyspaceVersion() public {
+        updateNodeOperator(OPERATOR, 1, "new data");
+        assertKeyspaceVersion(0);
+    }
+
+    function test_updateNodeOperatorEmitsEventNodeOperatorUpdated() public {
+        vm.expectEmit();
+        emit NodeOperatorUpdated(NodeOperator({ addr: vm.addr(OPERATOR), data: "new data" }), 1);
+        updateNodeOperator(OPERATOR, 1, "new data");
     }
     
     // updateSettings
@@ -548,7 +514,7 @@ contract ClusterTest is Test {
     function test_updateSettingsUpdatesMaxOperatorDataBytes() public {
         updateSettings(OWNER, Settings({ maxOperatorDataBytes: 5 }));
         expectRevert("operator data too large");
-        registerNodeOperator(10, "123456");
+        createNodeOperator(OWNER, 10, "123456");
     }
 
     // transferOwnership
@@ -575,36 +541,36 @@ contract ClusterTest is Test {
     // full lifecycle
 
     function test_fullClusterLifecycle() public {
-        updateNodeOperatorData(1, 0, "operator1");
-        startMaintenance(2, 1);
-        updateNodeOperatorData(3, 2, "operator3");
-        completeMaintenance(2);
+        updateNodeOperator(1, 1, "operator1");
+        startMaintenance(2);
+        updateNodeOperator(3, 3, "operator3");
+        finishMaintenance(2);
 
-        registerNodeOperator(6, "operator6");
-        registerNodeOperator(7, "operator7");
-        registerNodeOperator(8, "operator8");
+        createNodeOperator(OWNER, 6, "operator6");
+        createNodeOperator(OWNER, 7, "operator7");
+        createNodeOperator(OWNER, 8, "operator8");
         startMigration(OWNER, newMigration().set(5, 6).set(6, 7).set(7, 8));
-        updateNodeOperatorData(1, 0, "operator1'");
+        updateNodeOperator(1, 1, "operator1'");
         for (uint256 i = 0; i < 8; i++) {
-            completeMigration(i + 1, 1, uint8(i));
+            completeMigration(i + 1, 1);
         }
-        updateNodeOperatorData(3, 2, "operator3'");
-        startMaintenance(7, 6);
-        updateNodeOperatorData(7, 6, "operator8");
-        abortMaintenance(OWNER);
+        updateNodeOperator(3, 3, "operator3'");
+        startMaintenance(7);
+        updateNodeOperator(7, 7, "operator8");
+        finishMaintenance(OWNER);
 
         startMigration(OWNER, newMigration().clear(6));
         for (uint256 i = 0; i < 8; i++) {
             if (i != 6) {
-                completeMigration(i + 1, 2, uint8(i));
+                completeMigration(i + 1, 2);
             }
         }
 
-        registerNodeOperator(9, "operator9");
+        createNodeOperator(OWNER, 9, "operator9");
         startMigration(OWNER, newMigration().set(6, 9));
         for (uint256 i = 0; i < 8; i++) {
             if (i != 6) {
-                completeMigration(i + 1, 3, uint8(i));
+                completeMigration(i + 1, 3);
             }
         }
         abortMigration(OWNER);
@@ -628,19 +594,16 @@ contract ClusterTest is Test {
     function newCluster(Vm vm, Settings memory settings, uint256 operatorsCount) internal {
         setCaller(OWNER);
 
-        address[] memory operators = new address[](operatorsCount);
+        NodeOperator[] memory operators = new NodeOperator[](operatorsCount);
         for (uint256 i = 0; i < operatorsCount; i++) {
-            operators[i] = vm.addr(i + 1);
+            operators[i].addr = vm.addr(i + 1);
+            operators[i].data = DEFAULT_OPERATOR_DATA;
         }
 
         cluster = new Cluster(settings, operators);
         // ECRecover address. Constructor failed
         if (address(cluster) == address(1)) {
             return;
-        }
-
-        for (uint256 i = 0; i < operatorsCount; i++) {
-            registerNodeOperator(i + 1);
         }
 
         updateClusterView();
@@ -722,9 +685,9 @@ contract ClusterTest is Test {
         updateClusterView();
     }
 
-    function completeMigration(uint256 caller, uint64 id, uint8 operatorIdx) internal {
+    function completeMigration(uint256 caller, uint64 id) internal {
         setCaller(caller);
-        cluster.completeMigration(id, operatorIdx);
+        cluster.completeMigration(id);
         updateClusterView();
     }
 
@@ -734,37 +697,31 @@ contract ClusterTest is Test {
         updateClusterView();
     }
 
-    function startMaintenance(uint256 caller, uint8 operatorIdx) internal {
+    function startMaintenance(uint256 caller) internal {
         setCaller(caller);
-        cluster.startMaintenance(operatorIdx);
+        cluster.startMaintenance();
         updateClusterView();
     }
 
-    function completeMaintenance(uint256 caller) internal {
+    function finishMaintenance(uint256 caller) internal {
         setCaller(caller);
-        cluster.completeMaintenance();
+        cluster.finishMaintenance();
         updateClusterView();
     }
 
-    function abortMaintenance(uint256 caller) internal {
+    function createNodeOperator(uint256 caller, uint256 privKey) internal {
+        createNodeOperator(caller, privKey, DEFAULT_OPERATOR_DATA);
+    }
+
+    function createNodeOperator(uint256 caller, uint256 privKey, bytes memory data) internal {
         setCaller(caller);
-        cluster.abortMaintenance();
+        cluster.createNodeOperator(NodeOperator({ addr: vm.addr(privKey), data: data }));
         updateClusterView();
     }
 
-    function registerNodeOperator(uint256 caller) internal {
-        registerNodeOperator(caller, DEFAULT_OPERATOR_DATA);
-    }
-
-    function registerNodeOperator(uint256 caller, bytes memory data) internal {
+    function updateNodeOperator(uint256 caller, uint256 privKey, bytes memory data) internal {
         setCaller(caller);
-        cluster.registerNodeOperator(data);
-        updateClusterView();
-    }
-
-    function updateNodeOperatorData(uint256 caller, uint8 idx, bytes memory data) internal {
-        setCaller(caller);
-        cluster.updateNodeOperatorData(idx, data);
+        cluster.updateNodeOperator(NodeOperator({ addr: vm.addr(privKey), data: data }));
         updateClusterView();
     }
 
@@ -787,12 +744,12 @@ struct TestMigration {
 
 library TestMigrationLib {
     function set(TestMigration memory self, uint8 idx, uint256 privateKey) internal pure returns (TestMigration memory) {
-        TestMigrationLib.setSlot(self, idx, KeyspaceSlot({ idx: idx, operator: self.vm.addr(privateKey) }));
+        TestMigrationLib.setSlot(self, idx, KeyspaceSlot({ idx: idx, operatorAddress: self.vm.addr(privateKey) }));
         return self;
     }
 
     function clear(TestMigration memory self, uint8 idx) internal pure returns (TestMigration memory) {
-        TestMigrationLib.setSlot(self, idx, KeyspaceSlot({ idx: idx, operator: address(0) }));
+        TestMigrationLib.setSlot(self, idx, KeyspaceSlot({ idx: idx, operatorAddress: address(0) }));
         return self;
     }
 

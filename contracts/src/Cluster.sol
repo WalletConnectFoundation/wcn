@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// import '../dependencies/openzeppelin-contracts/contracts/utils/math/Math.sol';
+import './../dependencies/openzeppelin-contracts/contracts/utils/math/Math.sol';
 
 struct Settings {
     uint16 maxOperatorDataBytes;
@@ -13,10 +13,15 @@ event MigrationCompleted(uint64 id, address operatorAddress, uint128 clusterVers
 event MigrationAborted(uint64 id, uint128 clusterVersion);
 
 event MaintenanceStarted(address operatorAddress, uint128 clusterVersion);
-event MaintenanceCompleted(address operatorAddress, uint128 clusterVersion);
-event MaintenanceAborted(uint128 clusterVersion);
+event MaintenanceFinished(address operatorAddress, uint128 clusterVersion);
 
-event NodeOperatorDataUpdated(address operatorAddress, bytes data, uint128 clusterVersion);
+event NodeOperatorCreated(NodeOperator operator, uint128 clusterVersion);
+event NodeOperatorUpdated(NodeOperator operator, uint128 clusterVersion);
+event NodeOperatorDeleted(address operatorAddress, uint128 clusterVersion);
+
+event SettingsUpdated(Settings newSettings, uint128 clusterVersion);
+
+event OwnershipTransferred(address newOwner, uint128 cluserVersion);
 
 contract Cluster {
     using Bitmask for uint256;
@@ -36,13 +41,21 @@ contract Cluster {
 
     uint128 version;
 
-    constructor(Settings memory initialSettings, address[] memory initialOperators) {
+    constructor(Settings memory initialSettings, NodeOperator[] memory initialOperators) {
+        require(initialOperators.length <= 256, "too many operators");
+
         owner = msg.sender;
         settings = initialSettings;
-    
+                
         for (uint256 i = 0; i < initialOperators.length; i++) {
-            keyspaces[0].operators[i] = initialOperators[i]; 
+            validateOperatorDataSize(initialOperators[i].data.length);
+            require(operatorData[initialOperators[i].addr].length == 0, "duplicate operator");
+
+            keyspaces[0].operators[i] = initialOperators[i].addr;
+            keyspaces[0].operatorIndexes[initialOperators[i].addr] = OptionU8({ is_some: true, value: uint8(i) });
+            operatorData[initialOperators[i].addr] = initialOperators[i].data;
         }
+
         keyspaces[0].operatorsBitmask = Bitmask.fill(uint8(initialOperators.length));
     }
 
@@ -74,52 +87,90 @@ contract Cluster {
     function startMigration(MigrationPlan calldata plan) external onlyOwner noMigration noMaintenance {
         migration.id++;
     
-        uint256 keyspaceIdx = keyspaceVersion % 2;
+        Keyspace storage keyspace = keyspaces[keyspaceVersion % 2];
         keyspaceVersion++;
-        uint256 migrationKeyspaceIdx = keyspaceVersion % 2;
+        Keyspace storage newKeyspace = keyspaces[keyspaceVersion % 2];
 
-        // NOTE: We are not zeroing out the rest of the buffer, so there might be some junk left.
-        // The source of truth on whether the value is set or not should be the bitmask!
-        for (uint256 i = 0; i <= keyspaces[keyspaceIdx].operatorsBitmask.highest1(); i++) {
-            if (keyspaces[migrationKeyspaceIdx].operators[i] != keyspaces[keyspaceIdx].operators[i]) {
-                keyspaces[migrationKeyspaceIdx].operators[i] = keyspaces[keyspaceIdx].operators[i];
-            }
-        }
+        // Make sure that initially the new keyspace is identical to the old one.
+        cloneKeyspace(keyspace, newKeyspace);
 
-        uint256 operatorsBitmask = keyspaces[keyspaceIdx].operatorsBitmask;
+        applyMigrationPlan(newKeyspace, plan);
 
-        uint8 idx;
-        address addr; 
-        for (uint256 i = 0; i < plan.slots.length; i++) {
-            idx = plan.slots[i].idx;
-            addr = plan.slots[i].operator;
-
-            if (addr == address(0)) {
-                operatorsBitmask = operatorsBitmask.set0(idx);
-            } else {
-                operatorsBitmask = operatorsBitmask.set1(idx);
-            }
-
-            keyspaces[migrationKeyspaceIdx].operators[idx] = addr;
-        }
-
-        keyspaces[migrationKeyspaceIdx].operatorsBitmask = operatorsBitmask;
-        keyspaces[migrationKeyspaceIdx].replicationStrategy = plan.replicationStrategy;
-
-        migration.pullingOperatorsBitmask = operatorsBitmask;
+        migration.pullingOperatorsBitmask = newKeyspace.operatorsBitmask;
 
         version++;
         emit MigrationStarted(migration.id, plan, version);
     }
 
-    function completeMigration(uint64 id, uint8 operatorIdx) external hasMigration {
-        require(id == migration.id, "wrong migration id");
-        require(keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender, "wrong operator");
-        if (migration.pullingOperatorsBitmask.is0(operatorIdx)) {
-            return;
+    function cloneKeyspace(Keyspace storage src, Keyspace storage dst) internal {
+        // Pick highest out of two to ensure that all non-empty slots are being processed.
+        uint256 highestSlot = Math.max(src.operatorsBitmask.highest1(), dst.operatorsBitmask.highest1());
+        address srcAddr;
+        address dstAddr;
+        for (uint256 i = 0; i <= highestSlot; i++) {
+            srcAddr = src.operators[i];
+            dstAddr = dst.operators[i];
+
+            if (srcAddr == dstAddr) {
+                continue;
+            }
+
+            if (dstAddr != address(0)) {
+                delete(dst.operatorIndexes[dstAddr]);
+            }
+
+            if (srcAddr != address(0)) {
+                dst.operatorIndexes[srcAddr] = OptionU8({ is_some: true, value: uint8(i) });
+            }
+
+            dst.operators[i] = srcAddr;
         }
 
-        migration.pullingOperatorsBitmask = migration.pullingOperatorsBitmask.set0(operatorIdx);
+        dst.replicationStrategy = src.replicationStrategy;
+        dst.operatorsBitmask = src.operatorsBitmask;
+    }
+
+    function applyMigrationPlan(Keyspace storage keyspace, MigrationPlan calldata plan) internal {
+        uint256 operatorsBitmask = keyspace.operatorsBitmask;
+
+        uint8 idx;
+        address addr;
+        address newAddr;
+        for (uint256 i = 0; i < plan.slots.length; i++) {
+            idx = plan.slots[i].idx;
+            newAddr = plan.slots[i].operatorAddress;
+            addr = keyspace.operators[idx];
+
+            require(addr != newAddr, "unchanged slot");
+
+            if (addr != address(0)) {
+                delete(keyspace.operatorIndexes[addr]);
+            }
+
+            if (newAddr == address(0)) {
+                operatorsBitmask = operatorsBitmask.set0(idx);
+            } else {
+                require(operatorData[newAddr].length != 0, "unknown operator");
+                require(!keyspace.operatorIndexes[newAddr].is_some, "operator duplicate");
+                operatorsBitmask = operatorsBitmask.set1(idx);
+            }
+
+            keyspace.operators[idx] = newAddr;
+            keyspace.operatorIndexes[newAddr] = OptionU8({ is_some: true, value: idx });
+        }
+
+        keyspace.operatorsBitmask = operatorsBitmask;
+        keyspace.replicationStrategy = plan.replicationStrategy;
+    }
+
+    function completeMigration(uint64 id) external hasMigration {
+        require(id == migration.id, "wrong migration id");
+
+        OptionU8 memory operatorIdx = keyspaces[keyspaceVersion % 2].operatorIndexes[msg.sender];
+        require(operatorIdx.is_some, "unknown operator");        
+        require(migration.pullingOperatorsBitmask.is1(operatorIdx.value), "not pulling");
+
+        migration.pullingOperatorsBitmask = migration.pullingOperatorsBitmask.set0(operatorIdx.value);
     
         version++;
         if (migration.pullingOperatorsBitmask == 0) {
@@ -137,8 +188,8 @@ contract Cluster {
         emit MigrationAborted(migration.id, version);
     }
 
-    function startMaintenance(uint8 operatorIdx) external noMigration noMaintenance {
-        require(keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender, "wrong operator");
+    function startMaintenance() external noMigration noMaintenance {
+        require(keyspaces[keyspaceVersion % 2].operatorIndexes[msg.sender].is_some || msg.sender == owner, "unauthorized");
         
         maintenance.slot = msg.sender;
 
@@ -146,55 +197,59 @@ contract Cluster {
         emit MaintenanceStarted(msg.sender, version);
     }
 
-    function completeMaintenance() external hasMaintenance {
-        require(maintenance.slot == msg.sender, "wrong operator");
+    function finishMaintenance() external hasMaintenance {
+        require(msg.sender == owner || maintenance.slot == msg.sender, "unauthorized");
 
         maintenance.slot = address(0);
 
         version++;
-        emit MaintenanceCompleted(msg.sender, version);
+        emit MaintenanceFinished(msg.sender, version);
     }
 
-    function abortMaintenance() external onlyOwner hasMaintenance {
-        maintenance.slot = address(0);
-        
+    function createNodeOperator(NodeOperator calldata operator) external onlyOwner {
+        require(operatorData[operator.addr].length == 0, "operator already exists");
+        validateOperatorDataSize(operator.data.length);
+
+        operatorData[operator.addr] = operator.data;
         version++;
-        emit MaintenanceAborted(version);
+        emit NodeOperatorCreated(operator, version);
     }
 
-    function registerNodeOperator(bytes calldata data) external {
-        validateOperatorDataSize(data.length);
-        operatorData[msg.sender] = data;
+    function updateNodeOperator(NodeOperator calldata operator) external {
+        require(msg.sender == owner || msg.sender == operator.addr, "unauthorized");
+        require(operatorData[operator.addr].length != 0, "unknown operator");
+        validateOperatorDataSize(operator.data.length);
+
+        operatorData[operator.addr] = operator.data;
+        version++;
+        emit NodeOperatorUpdated(operator, version);
     }
 
-    function updateNodeOperatorData(uint8 operatorIdx, bytes calldata data) external {
-        validateOperatorDataSize(data.length);
-
-        bool inKeyspace;
-        bool inMigrationKeyspace;
+    function deleteNodeOperator(address operatorAddress) external onlyOwner {
+        require(operatorData[operatorAddress].length != 0, "unknown operator");
 
         if (isMigrationInProgress()) {
-            inKeyspace = keyspaces[(keyspaceVersion - 1) % 2].operators[operatorIdx] == msg.sender;
-            if (!inKeyspace) {
-                inMigrationKeyspace = keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender;
-            }
+            require(!keyspaces[0].operatorIndexes[operatorAddress].is_some, "in keyspace");
+            require(!keyspaces[1].operatorIndexes[operatorAddress].is_some, "in keyspace");
         } else {
-            inKeyspace = keyspaces[keyspaceVersion % 2].operators[operatorIdx] == msg.sender;
+            require(!keyspaces[keyspaceVersion % 2].operatorIndexes[operatorAddress].is_some, "in keyspace");
         }
 
-        require(inKeyspace || inMigrationKeyspace, "wrong operator");
-
-        operatorData[msg.sender] = data;
+        delete(operatorData[operatorAddress]);
         version++;
-        emit NodeOperatorDataUpdated(msg.sender, data, version);
+        emit NodeOperatorDeleted(operatorAddress, version);
     }
 
     function updateSettings(Settings calldata newSettings) external onlyOwner {
         settings = newSettings;
+        version++;
+        emit SettingsUpdated(newSettings, version);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
         owner = newOwner;
+        version++;
+        emit OwnershipTransferred(newOwner, version);
     }
 
     function getView() public view returns (ClusterView memory) {
@@ -274,10 +329,21 @@ struct NodeOperator {
 }
 
 struct Keyspace {
+    mapping(address => OptionU8) operatorIndexes;
     address[256] operators;
     uint256 operatorsBitmask;
 
     uint8 replicationStrategy;
+}
+
+struct OptionU8 {
+    bool is_some;
+    uint8 value;
+}
+
+struct OptionalUInt8 {
+    bool exists;
+    uint8 value;
 }
 
 struct KeyspaceView {
@@ -288,7 +354,7 @@ struct KeyspaceView {
 
 struct KeyspaceSlot {
     uint8 idx;
-    address operator;
+    address operatorAddress;
 }
 
 struct MigrationPlan {

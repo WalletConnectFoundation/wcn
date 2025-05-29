@@ -7,7 +7,8 @@ use {
 mod bindings {
     alloy::sol!(
         #[sol(rpc)]
-        "../../contracts/src/Cluster.sol"
+        Cluster,
+        "../../contracts/out/Cluster.sol/Cluster.json",
     );
 }
 

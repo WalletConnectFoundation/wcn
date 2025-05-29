@@ -71,14 +71,17 @@ pub enum Event {
     /// [`Maintenance`] has started.
     MaintenanceStarted(maintenance::Started),
 
-    /// [`Maintenance`] has been completed.
-    MaintenanceCompleted(maintenance::Completed),
+    /// [`Maintenance`] has been finished.
+    MaintenanceFinished(maintenance::Finished),
 
-    /// [`Maintenance`] has been aborted.
-    MaintenanceAborted(maintenance::Aborted),
+    /// [`NodeOperator`] has been updated.
+    NodeOperatorAdded(node_operator::Added),
 
-    /// On-chain state of an [`NodeOperator`] has been updated.
+    /// [`NodeOperator`] has been updated.
     NodeOperatorUpdated(node_operator::Updated),
+
+    /// [`NodeOperator`] has been removed.
+    NodeOperatorRemoved(node_operator::Removed),
 
     /// [`Settings`] have been updated.
     SettingsUpdated(settings::Updated),
@@ -440,9 +443,10 @@ impl Event {
             Event::MigrationCompleted(evt) => evt.cluster_version,
             Event::MigrationAborted(evt) => evt.cluster_version,
             Event::MaintenanceStarted(evt) => evt.cluster_version,
-            Event::MaintenanceCompleted(evt) => evt.cluster_version,
-            Event::MaintenanceAborted(evt) => evt.cluster_version,
+            Event::MaintenanceFinished(evt) => evt.cluster_version,
+            Event::NodeOperatorAdded(evt) => evt.cluster_version,
             Event::NodeOperatorUpdated(evt) => evt.cluster_version,
+            Event::NodeOperatorRemoved(evt) => evt.cluster_version,
             Event::SettingsUpdated(evt) => evt.cluster_version,
             Event::OwnershipTransferred(evt) => evt.cluster_version,
         }
@@ -503,9 +507,10 @@ impl View {
             Event::MigrationCompleted(evt) => evt.apply(&mut self),
             Event::MigrationAborted(evt) => evt.apply(&mut self),
             Event::MaintenanceStarted(evt) => evt.apply(&mut self),
-            Event::MaintenanceCompleted(evt) => evt.apply(&mut self),
-            Event::MaintenanceAborted(evt) => evt.apply(&mut self),
+            Event::MaintenanceFinished(evt) => evt.apply(&mut self),
+            Event::NodeOperatorAdded(evt) => evt.apply(&mut self),
             Event::NodeOperatorUpdated(evt) => evt.apply(&mut self),
+            Event::NodeOperatorRemoved(evt) => evt.apply(&mut self),
             Event::SettingsUpdated(evt) => evt.apply(&mut self),
             Event::OwnershipTransferred(evt) => evt.apply(&mut self),
         }?;
@@ -583,12 +588,6 @@ pub enum LogicalError {
 
     #[error("There are still pulling operators remaining, but ther shouldn't be")]
     PullingOperatorsRemaining,
-
-    #[error("Maintenance: node operator ID mismatch (event: {event}, local: {event})")]
-    MaintenanceNodeOperatorIdMismatch {
-        event: node_operator::Id,
-        local: node_operator::Id,
-    },
 
     #[error("Node operator (id: {0}) is not within the cluster, but should be")]
     UnknownOperator(node_operator::Id),

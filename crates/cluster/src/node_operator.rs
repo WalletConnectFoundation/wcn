@@ -10,9 +10,10 @@ use {
         Version as ClusterVersion,
         View as ClusterView,
     },
+    arc_swap::ArcSwap,
     derive_more::From,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, ops::Sub},
+    std::{collections::HashMap, ops::Sub, sync::Arc},
 };
 
 /// Globally unique identifier of a [`NodeOperator`];
@@ -49,7 +50,7 @@ impl Name {
 }
 
 /// On-chain data of a [`NodeOperator`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Data {
     /// Name of the [`NodeOperator`].
     pub name: Name,
@@ -66,23 +67,29 @@ pub struct Data {
 #[derive(Debug)]
 pub struct SerializedData(Vec<u8>);
 
-/// New [`NodeOperator`] that is not a member of WCN cluster yet.
-pub type NewNodeOperator = NodeOperator<Data>;
-
-/// [`NodeOperator`] with [`SerializedData`].
-pub type SerializedNodeOperator = NodeOperator<SerializedData>;
+/// [`NodeOperator`] [`Data`] that can be shared and modified across threads.
+pub struct SharedData(Arc<ArcSwap<VersionedData>>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
 #[derive(Clone, Debug)]
-pub struct NodeOperator<D = VersionedData> {
+pub struct NodeOperator<D = Data> {
     id: Id,
     data: D,
 }
 
+/// [`NodeOperator`] with [`SerializedData`].
+pub type SerializedNodeOperator = NodeOperator<SerializedData>;
+
+/// [`NodeOperator`] with [`VersionedData`].
+pub type VersionedNodeOperator = NodeOperator<VersionedData>;
+
+/// [`NodeOperator`] with [`SharedData`].
+pub type SharedNodeOperator = NodeOperator<SharedData>;
+
 impl<D> NodeOperator<D> {
     /// Creates a [`NewNodeOperator`].
-    pub fn new(id: Id, data: Data) -> NewNodeOperator {
-        NewNodeOperator { id, data }
+    pub fn new(id: Id, data: Data) -> NodeOperator {
+        NodeOperator { id, data }
     }
 
     /// Returns [`Id`] of this [`NodeOperator`].
@@ -99,7 +106,7 @@ impl<D> NodeOperator<D> {
 /// Event of a new [`NodeOperator`] being added to a WCN cluster.
 pub struct Added {
     /// [`NodeOperator`] being added.
-    pub operator: NodeOperator,
+    pub operator: VersionedNodeOperator,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
@@ -111,10 +118,10 @@ impl Added {
     }
 }
 
-/// Event of a [`NodeOperator`] [`Data`] being updated.
+/// Event of a [`NodeOperator`] being updated.
 pub struct Updated {
     /// Updated [`NodeOperator`].
-    pub operator: NodeOperator,
+    pub operator: VersionedNodeOperator,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
@@ -162,9 +169,9 @@ impl Removed {
     }
 }
 
-impl NewNodeOperator {
+impl NodeOperator {
     pub(super) fn serialize(self) -> Result<SerializedNodeOperator, DataSerializationError> {
-        Ok(NodeOperator {
+        Ok(VersionedNodeOperator {
             id: self.id,
             data: self.data.serialize()?,
         })
@@ -208,7 +215,7 @@ enum VersionedDataInner {
     V0(DataV0),
 }
 
-impl NodeOperator {
+impl VersionedNodeOperator {
     fn deserialize(id: Id, data_bytes: &[u8]) -> Result<Self, DataDeserializationError> {
         use DataDeserializationError as Error;
 
@@ -297,11 +304,11 @@ pub(super) struct NodeOperators {
     id_to_idx: HashMap<Id, Idx>,
 
     // TODO: assert length
-    slots: Vec<Option<NodeOperator>>,
+    slots: Vec<Option<VersionedNodeOperator>>,
 }
 
 impl NodeOperators {
-    pub(super) fn set(&mut self, idx: Idx, slot: Option<NodeOperator>) {
+    pub(super) fn set(&mut self, idx: Idx, slot: Option<VersionedNodeOperator>) {
         if let Some(id) = self.get_by_idx(idx).map(|op| op.id) {
             self.id_to_idx.remove(&id);
         }
@@ -333,7 +340,7 @@ impl NodeOperators {
     }
 
     /// Gets an [`NodeOperator`] by [`Id`].
-    pub(super) fn get(&self, id: &Id) -> Option<&NodeOperator> {
+    pub(super) fn get(&self, id: &Id) -> Option<&VersionedNodeOperator> {
         self.get_by_idx(self.get_idx(id)?)
     }
 
@@ -344,12 +351,12 @@ impl NodeOperators {
     }
 
     /// Gets an [`NodeOperator`] by [`Idx`].
-    pub(super) fn get_by_idx(&self, idx: Idx) -> Option<&NodeOperator> {
+    pub(super) fn get_by_idx(&self, idx: Idx) -> Option<&VersionedNodeOperator> {
         self.slots.get(idx as usize)?.as_ref()
     }
 
     /// Mutable version of [`NodeOperators::get_by_idx`].
-    fn get_by_idx_mut(&mut self, idx: Idx) -> Option<&mut NodeOperator> {
+    fn get_by_idx_mut(&mut self, idx: Idx) -> Option<&mut VersionedNodeOperator> {
         self.slots.get_mut(idx as usize)?.as_mut()
     }
 
@@ -359,7 +366,7 @@ impl NodeOperators {
     }
 
     /// Returns the list of [`NodeOperator`] slots.
-    pub(super) fn slots(&self) -> &[Option<NodeOperator>] {
+    pub(super) fn slots(&self) -> &[Option<VersionedNodeOperator>] {
         &self.slots
     }
 

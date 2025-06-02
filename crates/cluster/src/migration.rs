@@ -4,9 +4,9 @@ use {
         node_operator,
         Keyspace,
         LogicalError,
-        NodeOperator,
         SerializedNodeOperator,
         Version as ClusterVersion,
+        VersionedNodeOperator,
         View as ClusterView,
     },
     itertools::Itertools,
@@ -78,7 +78,7 @@ impl Migration {
 pub type NewPlan = Plan<SerializedNodeOperator>;
 
 /// [`Migration`] plan.
-pub struct Plan<Operator = NodeOperator> {
+pub struct Plan<Operator = VersionedNodeOperator> {
     slots: Vec<(node_operator::Idx, Option<Operator>)>,
     replication_strategy: ReplicationStrategy,
 }
@@ -92,7 +92,7 @@ impl Plan {
     ) -> Result<NewPlan, PlanError> {
         let slot_count = remove
             .iter()
-            .chain(add.iter().map(NodeOperator::id))
+            .chain(add.iter().map(VersionedNodeOperator::id))
             .dedup()
             .count();
 

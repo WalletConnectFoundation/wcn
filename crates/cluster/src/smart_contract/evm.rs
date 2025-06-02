@@ -1,6 +1,6 @@
 use {
     super::{PublicKey, Result, RpcUrl, Signer},
-    crate::{node, node_operator, NewNodeOperator, Settings},
+    crate::{node, node_operator, NodeOperator, Settings},
     alloy::{providers::DynProvider, sol, sol_types::SolConstructor},
 };
 
@@ -24,7 +24,7 @@ impl super::SmartContract for SmartContract {
         signer: Signer,
         rpc_url: RpcUrl,
         initial_settings: Settings,
-        initial_operators: Vec<NewNodeOperator>,
+        initial_operators: Vec<NodeOperator>,
     ) -> Result<Self> {
         todo!()
 
@@ -91,11 +91,7 @@ impl super::SmartContract for SmartContract {
         todo!()
     }
 
-    async fn complete_maintenance(&self) -> Result<()> {
-        todo!()
-    }
-
-    async fn abort_maintenance(&self) -> Result<()> {
+    async fn finish_maintenance(&self) -> Result<()> {
         todo!()
     }
 

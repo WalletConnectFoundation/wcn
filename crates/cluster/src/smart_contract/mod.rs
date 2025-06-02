@@ -1,7 +1,14 @@
 pub mod evm;
 
 use {
-    crate::{migration, node_operator, NewNodeOperator, Settings, View as ClusterView},
+    crate::{
+        migration,
+        node_operator,
+        NodeOperator,
+        SerializedNodeOperator,
+        Settings,
+        View as ClusterView,
+    },
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
     derive_more::derive::Display,
     serde::{Deserialize, Serialize},
@@ -20,7 +27,7 @@ pub trait SmartContract: ReadOnlySmartContract {
         signer: Signer,
         rpc_url: RpcUrl,
         initial_settings: Settings,
-        initial_operators: Vec<NewNodeOperator>,
+        initial_operators: Vec<NodeOperator>,
     ) -> Result<Self>;
 
     /// Connects to an existing smart-contract.
@@ -100,17 +107,9 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///
     /// The implementation MUST emit [`maintenance::Completed`] event on
     /// success.
-    async fn complete_maintenance(&self) -> Result<()>;
+    async fn finish_maintenance(&self) -> Result<()>;
 
-    /// Aborts the ongoing [`maintenance`] process.
-    ///
-    /// The implementation MUST validate the following invariants:
-    /// - there's an ongoing maintenance
-    /// - [`signer`](SmartContract::signer) is the owner of the
-    ///   [`SmartContract`]
-    ///
-    /// The implementation MUST emit [`maintenance::Aborted`] event on success.
-    async fn abort_maintenance(&self) -> Result<()>;
+    async fn add_node_operator(&self, operator: SerializedNodeOperator) -> Result<()>;
 
     /// Updates on-chain data of a [`node::Operator`].
     ///
@@ -121,10 +120,13 @@ pub trait SmartContract: ReadOnlySmartContract {
     /// The implementation MUST emit [`node::OperatorUpdated`] event on success.
     async fn update_node_operator(
         &self,
+        operator: SerializedNodeOperator,
         id: node_operator::Id,
         idx: node_operator::Idx,
         data: node_operator::SerializedData,
     ) -> Result<()>;
+
+    async fn remove_node_operator(&self, operator_id: node_operator::Id) -> Result<()>;
 }
 
 /// Read-only handle to a smart-contract managing the state of a WCN cluster.

@@ -1,10 +1,12 @@
 use {
     crate::{
         node_operator::{self, NodeOperators},
-        NodeOperator,
+        VersionedNodeOperator,
     },
+    arc_swap::ArcSwap,
     derive_more::TryFrom,
     sharding::ShardId,
+    std::sync::Arc,
     tap::TapOptional,
 };
 
@@ -46,7 +48,7 @@ pub struct Keyspace {
 impl Keyspace {
     /// Creates a new [`Keyspace`].
     ///
-    /// It's highly CPU intensive to contruct a new [`Keyspace`] (order of
+    /// It's highly CPU intensive to construct a new [`Keyspace`] (order of
     /// seconds), so the task is being [spawned](tokio::task::spawn_blocking)
     /// to the [`tokio`] threadpool.
     ///
@@ -66,7 +68,7 @@ impl Keyspace {
 
     /// Returns the set of [`NodeOperator`]s the data under the specified key
     /// should be replicated to.
-    pub fn replicas(&self, key: u64) -> impl Iterator<Item = &NodeOperator> + '_ {
+    pub fn replicas(&self, key: u64) -> impl Iterator<Item = &VersionedNodeOperator> + '_ {
         self.sharding
             .shard_replicas(ShardId::from_key(key))
             .iter()
@@ -97,3 +99,8 @@ impl Keyspace {
 }
 
 struct Snapshot {}
+
+pub struct Replica {
+    idx: node_operator::Idx,
+    node_operator: Arc<VersionedNodeOperator>,
+}

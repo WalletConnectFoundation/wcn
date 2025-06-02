@@ -2,7 +2,11 @@ use {
     arc_swap::ArcSwap,
     itertools::Itertools,
     smart_contract::evm,
-    std::{collections::HashSet, future::Future, sync::Arc},
+    std::{
+        collections::{HashMap, HashSet},
+        future::Future,
+        sync::Arc,
+    },
 };
 
 pub mod smart_contract;
@@ -21,7 +25,7 @@ pub mod node;
 pub use node::{Node, NodeRef};
 
 pub mod node_operator;
-pub use node_operator::{NewNodeOperator, NodeOperator, SerializedNodeOperator};
+pub use node_operator::{NodeOperator, SerializedNodeOperator, VersionedNodeOperator};
 
 pub mod keyspace;
 pub use keyspace::Keyspace;
@@ -96,11 +100,11 @@ impl<SC: SmartContract> Cluster<SC> {
         signer: smart_contract::Signer,
         rpc_url: smart_contract::RpcUrl,
         initial_settings: Settings,
-        initial_operators: Vec<NewNodeOperator>,
+        initial_operators: Vec<NodeOperator>,
     ) -> Result<Self, DeploymentError> {
         if initial_operators
             .iter()
-            .map(NodeOperator::id)
+            .map(VersionedNodeOperator::id)
             .dedup()
             .count()
             != initial_operators.len()
@@ -127,7 +131,7 @@ impl<SC: SmartContract> Cluster<SC> {
     pub async fn start_migration(
         &self,
         remove: Vec<node_operator::Id>,
-        add: Vec<NewNodeOperator>,
+        add: Vec<NodeOperator>,
     ) -> Result<(), StartMigrationError> {
         let plan = self.using_view(move |view| {
             view.ownership.validate_signer(&self.smart_contract)?;
@@ -238,8 +242,8 @@ impl<SC: SmartContract> Cluster<SC> {
         Ok(())
     }
 
-    /// Calls [`SmartContract::complete_maintenance`].
-    pub async fn complete_maintenance(&self) -> Result<(), CompleteMaintenanceError> {
+    /// Calls [`SmartContract::finish_maintenance`].
+    pub async fn finish_maintenance(&self) -> Result<(), CompleteMaintenanceError> {
         self.using_view(|view| {
             let maintenance = view
                 .maintenance()
@@ -252,39 +256,19 @@ impl<SC: SmartContract> Cluster<SC> {
             Ok(())
         })?;
 
-        self.smart_contract.complete_maintenance().await?;
+        self.smart_contract.finish_maintenance().await?;
 
         Ok(())
     }
 
-    /// Calls [`SmartContract::abort_maintenance`].
-    pub async fn abort_maintenance(&self) -> Result<(), AbortMaintenanceError> {
-        self.using_view(|view| {
-            view.ownership.validate_signer(&self.smart_contract)?;
-
-            view.maintenance()
-                .ok_or(AbortMaintenanceError::NoMaintenance)?;
-
-            Ok::<_, AbortMaintenanceError>(())
-        })?;
-
-        self.smart_contract
-            .abort_maintenance()
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Updates on-chain data of a [`NodeOperator`].
-    ///
-    /// Emits [`node_operator::Updated`] event on success.
+    /// Calls [`SmartContract::update_node_operator`].
     pub async fn update_node_operator(
         &self,
-        id: node_operator::Id,
-        data: node_operator::Data,
+        operator: NodeOperator,
     ) -> Result<(), UpdateNodeOperatorError> {
         let (idx, data) = self.using_view(|view| {
             let idx = view
-                .operator_idx(&id)
+                .operator_idx(operator.id())
                 .ok_or(UpdateNodeOperatorError::UnknownOperator)?;
 
             let data = data.serialize()?;
@@ -455,6 +439,8 @@ impl Event {
 
 /// Read-only view of a WCN cluster.
 pub struct View {
+    node_operators: HashMap<node_operator::Id, Arc<VersionedNodeOperator>>,
+
     ownership: Ownership,
     settings: Settings,
 

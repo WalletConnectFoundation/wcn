@@ -7,9 +7,10 @@ edition = "2021"
 workspace = true
 
 [dependencies]
-derive_more = { workspace = true, features = ["try_from"] }
+derive_more = { workspace = true, features = ["try_from", "into"] }
 libp2p = { workspace = true }
 itertools = { workspace = true }
+futures = { workspace = true }
 
 sharding = { path = "../sharding" }
 
@@ -23,6 +24,7 @@ tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1.0", default-features = false, features = ["alloc"] }
 
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 fpe = "0.6"
 aes = "0.8"
 

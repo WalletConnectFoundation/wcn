@@ -10,7 +10,7 @@ use {
 ///
 /// The IP address is currently being encrypted using a format-preserving
 /// encryption algorithm.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Data {
     /// [`PeerId`] of the [`Node`].
     ///

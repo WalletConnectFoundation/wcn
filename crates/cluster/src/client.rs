@@ -6,7 +6,7 @@ use {
 };
 
 /// On-chain data of a [`Client`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Data {
     /// [`PeerId`] of the [`Client`]. Used for authentication.
     pub peer_id: PeerId,

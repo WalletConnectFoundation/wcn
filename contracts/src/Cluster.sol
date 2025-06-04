@@ -86,6 +86,13 @@ contract Cluster {
 
     function startMigration(Keyspace calldata newKeyspace) external onlyOwner noMigration noMaintenance {
         require(newKeyspace.operatorsBitmask.isSubsetOf(nodeOperators.bitmask), "invalid bitmask");
+
+        Keyspace memory oldKeyspace = keyspaces[keyspaceVersion % 2];
+        require(
+            oldKeyspace.operatorsBitmask != newKeyspace.operatorsBitmask
+            || oldKeyspace.replicationStrategy != newKeyspace.replicationStrategy,
+            "same keyspace"
+        );
     
         migration.id++;
 
@@ -115,7 +122,9 @@ contract Cluster {
         }
     }
 
-    function abortMigration() external onlyOwner hasMigration {
+    function abortMigration(uint64 id) external onlyOwner hasMigration {
+        require(id == migration.id, "wrong migration id");
+
         keyspaceVersion--;
         migration.pullingOperatorsBitmask = 0;
 

@@ -1,23 +1,15 @@
 //! Entity operating a set of nodes within a WCN cluster.
 
 use {
-    crate::{
-        client,
-        node,
-        smart_contract,
-        LogicalError,
-        Node,
-        Version as ClusterVersion,
-        View as ClusterView,
-    },
-    arc_swap::ArcSwap,
-    derive_more::From,
+    crate::{self as cluster, client, node, smart_contract, Version as ClusterVersion},
+    derive_more::derive::{From, Into},
+    itertools::Itertools as _,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, ops::Sub, sync::Arc},
+    std::collections::HashMap,
 };
 
 /// Globally unique identifier of a [`NodeOperator`];
-pub type Id = smart_contract::PublicKey;
+pub type Id = smart_contract::AccountAddress;
 
 /// Locally unique identifier of a [`NodeOperator`] within a WCN cluster.
 ///
@@ -64,11 +56,8 @@ pub struct Data {
 }
 
 /// [`NodeOperator`] [`Data`] serialized for on-chain storage.
-#[derive(Debug)]
-pub struct SerializedData(Vec<u8>);
-
-/// [`NodeOperator`] [`Data`] that can be shared and modified across threads.
-pub struct SharedData(Arc<ArcSwap<VersionedData>>);
+#[derive(Debug, Into)]
+pub struct SerializedData(pub(crate) Vec<u8>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
 #[derive(Clone, Debug)]
@@ -83,12 +72,9 @@ pub type SerializedNodeOperator = NodeOperator<SerializedData>;
 /// [`NodeOperator`] with [`VersionedData`].
 pub type VersionedNodeOperator = NodeOperator<VersionedData>;
 
-/// [`NodeOperator`] with [`SharedData`].
-pub type SharedNodeOperator = NodeOperator<SharedData>;
-
 impl<D> NodeOperator<D> {
-    /// Creates a [`NewNodeOperator`].
-    pub fn new(id: Id, data: Data) -> NodeOperator {
+    /// Creates a [`NodeOperator`].
+    pub fn new(id: Id, data: D) -> NodeOperator<D> {
         NodeOperator { id, data }
     }
 
@@ -101,21 +87,24 @@ impl<D> NodeOperator<D> {
     pub fn data(&self) -> &D {
         &self.data
     }
+
+    /// Converts this [`NodeOperator`] into the inner `data`.
+    pub fn into_data(self) -> D {
+        self.data
+    }
 }
 
 /// Event of a new [`NodeOperator`] being added to a WCN cluster.
 pub struct Added {
+    /// [`Idx`] in the [`NodeOperators`] slot map the [`NodeOperator`] is being
+    /// placed to.
+    pub idx: Idx,
+
     /// [`NodeOperator`] being added.
     pub operator: VersionedNodeOperator,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
-}
-
-impl Added {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        todo!()
-    }
 }
 
 /// Event of a [`NodeOperator`] being updated.
@@ -127,33 +116,6 @@ pub struct Updated {
     pub cluster_version: ClusterVersion,
 }
 
-impl Updated {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        let mut applied = false;
-
-        if let Some(migration) = &mut view.migration {
-            if let Some(data) = migration
-                .keyspace_mut()
-                .operator_data_mut(self.operator.id())
-            {
-                *data = self.operator.data.clone();
-                applied = true;
-            }
-        }
-
-        if let Some(data) = view.keyspace.operator_data_mut(self.operator.id()) {
-            *data = self.operator.data;
-            applied = true;
-        }
-
-        if !applied {
-            return Err(LogicalError::UnknownOperator(self.operator.id));
-        }
-
-        Ok(())
-    }
-}
-
 /// Event of a [`NodeOperator`] being removed from a WCN cluster.
 pub struct Removed {
     /// [`Id`] of the [`NodeOperator`] being removed.
@@ -163,15 +125,9 @@ pub struct Removed {
     pub cluster_version: ClusterVersion,
 }
 
-impl Removed {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        todo!()
-    }
-}
-
 impl NodeOperator {
     pub(super) fn serialize(self) -> Result<SerializedNodeOperator, DataSerializationError> {
-        Ok(VersionedNodeOperator {
+        Ok(NodeOperator {
             id: self.id,
             data: self.data.serialize()?,
         })
@@ -215,9 +171,11 @@ enum VersionedDataInner {
     V0(DataV0),
 }
 
-impl VersionedNodeOperator {
-    fn deserialize(id: Id, data_bytes: &[u8]) -> Result<Self, DataDeserializationError> {
+impl SerializedNodeOperator {
+    fn deserialize(self) -> Result<VersionedNodeOperator, DataDeserializationError> {
         use DataDeserializationError as Error;
+
+        let data_bytes = self.data.0;
 
         if data_bytes.is_empty() {
             return Err(DataDeserializationError::EmptyBuffer);
@@ -232,7 +190,7 @@ impl VersionedNodeOperator {
         }
         .map_err(Error::from_postcard)?;
 
-        Ok(Self { id, data })
+        Ok(NodeOperator { id: self.id, data })
     }
 }
 
@@ -276,11 +234,11 @@ impl DataDeserializationError {
 }
 
 impl SerializedData {
-    /// Validates that [`SerializedData`] size doesn't exceed the provided
-    /// `limit`.
-    pub(super) fn validate_size(&self, limit: u16) -> Result<(), DataTooLargeError> {
+    /// Validates that [`SerializedData`] size doesn't exceed
+    /// [`cluster::Settings::max_node_operator_data_bytes`].
+    pub(super) fn validate(&self, settings: &cluster::Settings) -> Result<(), DataTooLargeError> {
         let value = self.0.len();
-        let limit = limit as usize;
+        let limit = settings.max_node_operator_data_bytes as usize;
 
         if value > limit {
             return Err(DataTooLargeError { value, limit });
@@ -300,15 +258,44 @@ pub struct DataTooLargeError {
 
 /// Slot map of [`NodeOperator`]s.
 #[derive(Debug, Clone)]
-pub(super) struct NodeOperators {
+pub struct NodeOperators<Data = VersionedData> {
     id_to_idx: HashMap<Id, Idx>,
 
     // TODO: assert length
-    slots: Vec<Option<VersionedNodeOperator>>,
+    slots: Vec<Option<NodeOperator<Data>>>,
 }
 
-impl NodeOperators {
-    pub(super) fn set(&mut self, idx: Idx, slot: Option<VersionedNodeOperator>) {
+impl<Data> NodeOperators<Data> {
+    pub(super) fn new(
+        slots: impl IntoIterator<Item = Option<NodeOperator<Data>>>,
+    ) -> Result<Self, SlotMapCreationError> {
+        let slots: Vec<_> = slots.into_iter().collect();
+
+        if slots.len() > cluster::MAX_OPERATORS {
+            return Err(SlotMapCreationError::TooManyOperatorSlots(slots.len()));
+        }
+
+        let mut this = Self {
+            id_to_idx: HashMap::with_capacity(slots.len()),
+            slots: Vec::with_capacity(slots.len()),
+        };
+
+        for (idx, slot) in slots.iter().enumerate() {
+            if let Some(operator) = &slot {
+                if this.id_to_idx.insert(*operator.id(), idx as u8).is_some() {
+                    return Err(SlotMapCreationError::OperatorDuplicate(*operator.id()));
+                };
+            }
+        }
+
+        Ok(this)
+    }
+
+    pub(super) fn into_slots(self) -> Vec<Option<NodeOperator<Data>>> {
+        self.slots
+    }
+
+    pub(super) fn set(&mut self, idx: Idx, slot: Option<NodeOperator<Data>>) {
         if let Some(id) = self.get_by_idx(idx).map(|op| op.id) {
             self.id_to_idx.remove(&id);
         }
@@ -336,27 +323,33 @@ impl NodeOperators {
     /// Returns whether this map contains the [`NodeOperator`] with the provided
     /// [`Id`].
     pub(super) fn contains(&self, id: &Id) -> bool {
-        self.get(id).is_some()
+        self.get_idx(id).is_some()
+    }
+
+    /// Returns whether this map contains the [`NodeOperator`] with the provided
+    /// [`Idx`].
+    pub(super) fn contains_idx(&self, idx: Idx) -> bool {
+        self.get_by_idx(idx).is_some()
     }
 
     /// Gets an [`NodeOperator`] by [`Id`].
-    pub(super) fn get(&self, id: &Id) -> Option<&VersionedNodeOperator> {
+    pub(super) fn get(&self, id: &Id) -> Option<&NodeOperator<Data>> {
         self.get_by_idx(self.get_idx(id)?)
     }
 
     /// Gets a mutable reference to a [`NodeOperator`] [`Data`].
-    pub(super) fn get_data_mut(&mut self, id: &Id) -> Option<&mut VersionedData> {
+    pub(super) fn get_data_mut(&mut self, id: &Id) -> Option<&mut Data> {
         self.get_by_idx_mut(self.get_idx(id)?)
             .map(|operator| &mut operator.data)
     }
 
     /// Gets an [`NodeOperator`] by [`Idx`].
-    pub(super) fn get_by_idx(&self, idx: Idx) -> Option<&VersionedNodeOperator> {
+    pub(super) fn get_by_idx(&self, idx: Idx) -> Option<&NodeOperator<Data>> {
         self.slots.get(idx as usize)?.as_ref()
     }
 
     /// Mutable version of [`NodeOperators::get_by_idx`].
-    fn get_by_idx_mut(&mut self, idx: Idx) -> Option<&mut VersionedNodeOperator> {
+    fn get_by_idx_mut(&mut self, idx: Idx) -> Option<&mut NodeOperator<Data>> {
         self.slots.get_mut(idx as usize)?.as_mut()
     }
 
@@ -365,15 +358,67 @@ impl NodeOperators {
         self.id_to_idx.get(id).copied()
     }
 
-    /// Returns the list of [`NodeOperator`] slots.
-    pub(super) fn slots(&self) -> &[Option<VersionedNodeOperator>] {
-        &self.slots
-    }
-
-    pub(super) fn freeSlots(&self) -> impl Iterator<Item = Idx> + '_ {
+    pub(super) fn occupied_indexes(&self) -> impl Iterator<Item = Idx> + '_ {
         self.slots
             .iter()
             .enumerate()
-            .filter_map(|(idx, slot)| slot.is_none().then_some(idx.try_into().unwrap()))
+            .filter_map(|(idx, slot)| slot.is_some().then_some(idx as u8))
+    }
+
+    pub(super) fn require_idx(&self, id: &Id) -> Result<Idx, NotFoundError> {
+        self.get_idx(id).ok_or_else(|| NotFoundError(*id))
+    }
+
+    pub(super) fn require_not_exists(&self, id: &Id) -> Result<&Self, AlreadyExistsError> {
+        if self.contains(id) {
+            return Err(AlreadyExistsError(*id));
+        }
+
+        Ok(self)
+    }
+
+    pub(super) fn require_free_slot(&self, idx: Idx) -> Result<&Self, SlotOccupiedError> {
+        if self.contains_idx(idx) {
+            return Err(SlotOccupiedError(idx));
+        }
+
+        Ok(self)
     }
 }
+
+impl NodeOperators<SerializedData> {
+    pub(super) fn deserialize(self) -> Result<NodeOperators, DataDeserializationError> {
+        Ok(NodeOperators {
+            id_to_idx: self.id_to_idx,
+            slots: self
+                .slots
+                .into_iter()
+                .map(|slot| slot.map(SerializedNodeOperator::deserialize).transpose())
+                .try_collect()?,
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SlotMapCreationError {
+    #[error("Too many operator slots: {_0} > {}", cluster::MAX_OPERATORS)]
+    TooManyOperatorSlots(usize),
+
+    #[error("Too few operators: {_0} < {}", cluster::MIN_OPERATORS)]
+    TooFewOperators(usize),
+
+    #[error("Duplicate NodeOperator(id: {_0})")]
+    OperatorDuplicate(Id),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Node operator (id: {0}) is not a member of this cluster")]
+pub struct NotFoundError(pub Id);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Node operator (id: {0}) is already a member of the cluster")]
+pub struct AlreadyExistsError(pub Id);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Slot {_0} in NodeOperators slot map is already occupied")]
+pub struct SlotOccupiedError(pub Idx);

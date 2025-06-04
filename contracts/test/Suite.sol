@@ -379,28 +379,28 @@ contract ClusterTest is Test {
     function test_anyoneCanNotAbortMigration() public {
         startMigration(OWNER, newKeyspace("01111"));
         expectRevert("not the owner");
-        abortMigration(ANYONE);
+        abortMigration(ANYONE, 1);
     }
 
     function test_operatorCanNotAbortMigration() public {
         startMigration(OWNER, newKeyspace("01111"));
         expectRevert("not the owner");
-        abortMigration(OPERATOR);
+        abortMigration(OPERATOR, 1);
     }
 
     function test_ownerCanAbortMigration() public {
         startMigration(OWNER, newKeyspace("01111"));
-        abortMigration(OWNER);
+        abortMigration(OWNER, 1);
     }
 
     function test_canNotAbortNonExistentMigration() public {
         expectRevert("no migration");
-        abortMigration(OWNER);
+        abortMigration(OWNER, 1);
     }
 
     function test_abortMigrationBumpsVersion() public {
         startMigration(OWNER, newKeyspace("01111"));
-        abortMigration(OWNER);
+        abortMigration(OWNER, 1);
         assertVersion(2);
     }
 
@@ -408,13 +408,13 @@ contract ClusterTest is Test {
         assertKeyspaceVersion(0);
         startMigration(OWNER, newKeyspace("01111"));
         assertKeyspaceVersion(1);
-        abortMigration(OWNER);
+        abortMigration(OWNER, 1);
         assertKeyspaceVersion(0);
     }
 
     function test_abortMigrationClearsPullingOperators() public {
         startMigration(OWNER, newKeyspace("01111"));
-        abortMigration(OWNER);
+        abortMigration(OWNER, 1);
         assertMigration(1, "00000");
     }
 
@@ -422,7 +422,7 @@ contract ClusterTest is Test {
         startMigration(OWNER, newKeyspace("01111"));
         vm.expectEmit();
         emit MigrationAborted(1, 2);
-        abortMigration(OWNER);
+        abortMigration(OWNER, 1);
     }
 
     // startMaintenance 
@@ -615,7 +615,7 @@ contract ClusterTest is Test {
                 completeMigration(i + 1, 3);
             }
         }
-        abortMigration(OWNER);
+        abortMigration(OWNER, 3);
 
         transferOwnership(OWNER, NEW_OWNER);
         updateSettings(NEW_OWNER, Settings({ maxOperatorDataBytes: 1024 }));
@@ -711,9 +711,9 @@ contract ClusterTest is Test {
         updateClusterView();
     }
 
-    function abortMigration(uint256 caller) internal {
+    function abortMigration(uint256 caller, uint64 id) internal {
         setCaller(caller);
-        cluster.abortMigration();
+        cluster.abortMigration(id);
         updateClusterView();
     }
 

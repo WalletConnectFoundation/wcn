@@ -3,13 +3,8 @@ use {
         keyspace::{self, ReplicationStrategy},
         node_operator,
         Keyspace,
-        LogicalError,
-        SerializedNodeOperator,
         Version as ClusterVersion,
-        VersionedNodeOperator,
-        View as ClusterView,
     },
-    itertools::Itertools,
     std::collections::HashSet,
 };
 
@@ -17,38 +12,35 @@ use {
 pub type Id = u64;
 
 /// Data migration process within a WCN cluster.
-pub struct Migration {
+pub struct Migration<Shards = ()> {
     id: Id,
-    keyspace: Keyspace,
-    pulling_operators: HashSet<node_operator::Id>,
+    keyspace: Keyspace<Shards>,
+    pulling_operators: HashSet<node_operator::Idx>,
 }
 
-impl Migration {
+/// [`Migration`] plan.
+pub struct Plan {
+    /// Set of [`node_operator`]s to remove from the current [`Keyspace`].
+    pub remove: HashSet<node_operator::Id>,
+
+    /// Set of [`node_operator`]s to add to the current [`Keyspace`].
+    pub add: HashSet<node_operator::Id>,
+
+    /// New [`ReplicationStrategy`] to use.
+    pub replication_strategy: ReplicationStrategy,
+}
+
+impl<Shards> Migration<Shards> {
     /// Creates a new [`Migration`].
-    pub(super) async fn new(id: Id, old_keyspace: &Keyspace, plan: Plan) -> Self {
-        let mut operators = old_keyspace.operators().clone();
-        for (idx, slot) in plan.slots {
-            operators.set(idx, slot);
-        }
-
-        let new_keyspace = Keyspace::new(
-            operators,
-            plan.replication_strategy,
-            old_keyspace.version() + 1,
-        )
-        .await;
-
-        let pulling_operators = new_keyspace
-            .operators()
-            .slots()
-            .iter()
-            .filter_map(|slot| slot.as_ref().map(|operator| *operator.id()))
-            .collect();
-
+    pub(super) fn new(
+        id: Id,
+        keyspace: Keyspace<Shards>,
+        pulling_operators: impl IntoIterator<Item = node_operator::Idx>,
+    ) -> Self {
         Self {
             id,
-            keyspace: new_keyspace,
-            pulling_operators,
+            keyspace,
+            pulling_operators: pulling_operators.into_iter().collect(),
         }
     }
 
@@ -58,103 +50,73 @@ impl Migration {
     }
 
     /// Returns the new [`Keyspace`] this [`Migration`] is migrating to.
-    pub fn keyspace(&self) -> &Keyspace {
+    pub fn keyspace(&self) -> &Keyspace<Shards> {
         &self.keyspace
     }
 
-    /// Mutable version of [`Migration::keyspace`].
-    pub fn keyspace_mut(&mut self) -> &mut Keyspace {
-        &mut self.keyspace
+    // /// Mutable version of [`Migration::keyspace`].
+    // pub fn keyspace_mut(&mut self) -> &mut Keyspace {
+    //     &mut self.keyspace
+    // }
+
+    pub(super) fn into_keyspace(self) -> Keyspace<Shards> {
+        self.keyspace
     }
 
     /// Indicates whether the specified [`node_operator`] is still in process of
     /// pulling the data.
-    pub fn is_pulling(&self, id: &node_operator::Id) -> bool {
-        self.pulling_operators.contains(&id)
+    pub fn is_pulling(&self, idx: node_operator::Idx) -> bool {
+        self.pulling_operators.contains(&idx)
+    }
+
+    pub(crate) fn pulling_operators_count(&self) -> usize {
+        self.pulling_operators.len()
+    }
+
+    pub(crate) fn complete_pull(&mut self, idx: node_operator::Idx) {
+        self.pulling_operators.remove(&idx);
+    }
+
+    pub(crate) fn require_id(&self, id: Id) -> Result<&Migration<Shards>, WrongIdError> {
+        if id != self.id {
+            return Err(WrongIdError(id, self.id));
+        }
+
+        Ok(self)
+    }
+
+    pub(crate) fn require_pulling(
+        &self,
+        idx: node_operator::Idx,
+    ) -> Result<&Migration<Shards>, OperatorNotPullingError> {
+        if !self.is_pulling(idx) {
+            return Err(OperatorNotPullingError(idx));
+        }
+
+        Ok(self)
+    }
+
+    pub(crate) fn require_pulling_count(
+        &self,
+        expected: usize,
+    ) -> Result<&Migration<Shards>, WrongPullingOperatorsCountError> {
+        let count = self.pulling_operators.len();
+        if count != expected {
+            return Err(WrongPullingOperatorsCountError(expected, count));
+        }
+
+        Ok(self)
     }
 }
 
-/// [`Plan`] that is not yet published on-chain.
-pub type NewPlan = Plan<SerializedNodeOperator>;
-
-/// [`Migration`] plan.
-pub struct Plan<Operator = VersionedNodeOperator> {
-    slots: Vec<(node_operator::Idx, Option<Operator>)>,
-    replication_strategy: ReplicationStrategy,
-}
-
-impl Plan {
-    /// Creates a new migration [`Plan`].
-    pub(super) fn new(
-        cluster_view: &ClusterView,
-        remove: Vec<node_operator::Id>,
-        add: Vec<SerializedNodeOperator>,
-    ) -> Result<NewPlan, PlanError> {
-        let slot_count = remove
-            .iter()
-            .chain(add.iter().map(VersionedNodeOperator::id))
-            .dedup()
-            .count();
-
-        if slot_count != remove.len() + add.len() {
-            return Err(PlanError::DuplicateIds);
+impl Migration {
+    pub(crate) async fn calculate_keyspace_shards(self) -> Migration<keyspace::Shards> {
+        Migration {
+            id: self.id,
+            keyspace: self.keyspace.calculate_shards().await,
+            pulling_operators: self.pulling_operators,
         }
-
-        if cluster_view.migration.is_some() {
-            return Err(PlanError::MigrationInProgress);
-        }
-
-        let mut slots = Vec::with_capacity(slot_count);
-        let operators = cluster_view.keyspace.operators();
-
-        for id in remove {
-            operators
-                .get_idx(&id)
-                .map(|idx| slots.push((idx, None)))
-                .ok_or_else(|| PlanError::UnknownOperator(id))?;
-        }
-
-        let add = &mut add.into_iter();
-
-        // First populate the slots that were cleared just now.
-        for (id, slot) in add.zip(slots.iter_mut()) {
-            slot.1 = Some(id);
-        }
-
-        for item in add.zip_longest(operators.freeSlots()) {
-            match item.left_and_right() {
-                (Some(_), None) => return Err(PlanError::TooManyOperators),
-                (None, _) => break,
-                (Some(operator), _) if operators.contains(operator.id()) => {
-                    return Err(PlanError::OperatorAlreadyExists(*operator.id()))
-                }
-                (Some(id), Some(idx)) => slots.push((idx, Some(id))),
-            };
-        }
-
-        Ok(NewPlan {
-            slots,
-            replication_strategy: keyspace::ReplicationStrategy::default(),
-        })
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PlanError {
-    #[error("Another migration is already in progress")]
-    MigrationInProgress,
-
-    #[error("Duplicate operator IDs provided")]
-    DuplicateIds,
-
-    #[error("Unknown operator: {0}")]
-    UnknownOperator(node_operator::Id),
-
-    #[error("Operator already exists: {0}")]
-    OperatorAlreadyExists(node_operator::Id),
-
-    #[error("Too many operators")]
-    TooManyOperators,
 }
 
 /// [`Migration`] has started.
@@ -162,22 +124,11 @@ pub struct Started {
     /// [`Id`] of the [`Migration`] being started.
     pub migration_id: Id,
 
-    /// Migration [`Plan`] being used.
-    pub plan: Plan,
+    /// New [`Keyspace`] to migrate to.
+    pub new_keyspace: Keyspace,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
-}
-
-impl Started {
-    pub(super) async fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        view.no_migration()?;
-        view.no_maintenance()?;
-
-        view.migration = Some(Migration::new(self.migration_id, &view.keyspace, self.plan).await);
-
-        Ok(())
-    }
 }
 
 /// [`NodeOperator`](crate::NodeOperator) has completed the data pull.
@@ -192,18 +143,6 @@ pub struct DataPullCompleted {
     pub cluster_version: ClusterVersion,
 }
 
-impl DataPullCompleted {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        let migration = view.has_migration()?.with_correct_id(self.migration_id)?;
-
-        if !migration.pulling_operators.remove(&self.operator_id) {
-            return Err(LogicalError::NodeOperatorNotPulling(self.operator_id));
-        }
-
-        Ok(())
-    }
-}
-
 /// [`Migration`] has been completed.
 pub struct Completed {
     /// [`Id`] of the completed [`Migration`].
@@ -216,24 +155,6 @@ pub struct Completed {
     pub cluster_version: ClusterVersion,
 }
 
-impl Completed {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        let migration = view.has_migration()?.with_correct_id(self.migration_id)?;
-
-        if !migration.pulling_operators.remove(&self.operator_id) {
-            return Err(LogicalError::NodeOperatorNotPulling(self.operator_id));
-        }
-
-        if !migration.pulling_operators.is_empty() {
-            return Err(LogicalError::PullingOperatorsRemaining);
-        }
-
-        view.keyspace = view.migration.take().unwrap().keyspace;
-
-        Ok(())
-    }
-}
-
 /// [`Migration`] has been aborted.
 pub struct Aborted {
     /// [`Id`] of the [`Migration`].
@@ -243,23 +164,22 @@ pub struct Aborted {
     pub cluster_version: ClusterVersion,
 }
 
-impl Aborted {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        view.has_migration()?.with_correct_id(self.migration_id)?;
-        view.migration = None;
+#[derive(Debug, thiserror::Error)]
+#[error("Migration(id: {_0}) in progress")]
+pub struct InProgressError(pub Id);
 
-        Ok(())
-    }
-}
+#[derive(Debug, thiserror::Error)]
+#[error("No migration")]
+pub struct NotFoundError;
 
-impl Migration {
-    fn with_correct_id(&mut self, id: Id) -> Result<&mut Self, LogicalError> {
-        if id != self.id {
-            return Err(LogicalError::MigrationIdMismatch {
-                event: id,
-                local: self.id,
-            });
-        }
-        Ok(self)
-    }
-}
+#[derive(Debug, thiserror::Error)]
+#[error("Wrong migration ID: {_0} != {_1}")]
+pub struct WrongIdError(pub Id, pub Id);
+
+#[derive(Debug, thiserror::Error)]
+#[error("NodeOperator(idx: {_0}) is not currently pulling data")]
+pub struct OperatorNotPullingError(pub node_operator::Idx);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Wrong pulling operators count: {_0} != {_1}")]
+pub struct WrongPullingOperatorsCountError(pub usize, pub usize);

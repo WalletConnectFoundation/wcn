@@ -1680,6 +1680,7 @@ dependencies = [
  "arc-swap",
  "derive_more 1.0.0",
  "fpe",
+ "futures",
  "itertools 0.12.1",
  "libp2p",
  "postcard",
@@ -1689,6 +1690,7 @@ dependencies = [
  "thiserror 1.0.64",
  "tokio",
  "tracing",
+ "xxhash-rust",
 ]
 
 [[package]]

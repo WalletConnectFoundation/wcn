@@ -50,6 +50,7 @@ libp2p = { version = "0.54", default-features = false, features = ["serde"] }
 tokio-serde = { git = "https://github.com/xDarksome/tokio-serde.git", rev = "6df9ff9" }
 tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcard.git", rev = "5e1b77a" }
 itertools = "0.12"
+futures = "0.3"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

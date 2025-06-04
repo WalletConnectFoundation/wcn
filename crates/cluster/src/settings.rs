@@ -1,5 +1,5 @@
 //! WCN cluster settings.
-use crate::{LogicalError, Version as ClusterVersion, View as ClusterView};
+use crate::Version as ClusterVersion;
 
 /// WCN cluster settings.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -15,16 +15,4 @@ pub struct Updated {
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
-}
-
-impl Updated {
-    pub(super) fn apply(self, view: &mut ClusterView) -> Result<(), LogicalError> {
-        if view.settings == self.settings {
-            return Err(LogicalError::SettingsUnchanged);
-        }
-
-        view.settings = self.settings;
-
-        Ok(())
-    }
 }

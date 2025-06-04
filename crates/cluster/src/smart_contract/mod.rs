@@ -1,21 +1,24 @@
+//! Smart-contract managing the state of a WCN cluster.
+
 pub mod evm;
 
 use {
     crate::{
+        self as cluster,
         migration,
         node_operator,
-        NodeOperator,
+        Keyspace,
+        NodeOperators,
         SerializedNodeOperator,
         Settings,
-        View as ClusterView,
     },
-    alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
-    derive_more::derive::Display,
+    alloy::{network::TxSigner as _, signers::local::PrivateKeySigner, transports::http::reqwest},
+    derive_more::derive::{Display, From},
     serde::{Deserialize, Serialize},
     std::str::FromStr,
 };
 
-/// Handle to a smart-contract managing the state of a WCN cluster.
+/// Smart-contract managing the state of a WCN cluster.
 ///
 /// Logic invariants documented on the methods of this trait MUST be
 /// implemented inside the on-chain implementation of the smart-contract itself.
@@ -27,18 +30,22 @@ pub trait SmartContract: ReadOnlySmartContract {
         signer: Signer,
         rpc_url: RpcUrl,
         initial_settings: Settings,
-        initial_operators: Vec<NodeOperator>,
+        initial_operators: NodeOperators<node_operator::SerializedData>,
     ) -> Result<Self>;
 
     /// Connects to an existing smart-contract.
-    async fn connect(signer: Signer, rpc_url: RpcUrl) -> Result<Self>;
+    async fn connect(
+        address: Address,
+        signer: Signer,
+        rpc_url: RpcUrl,
+    ) -> Result<Self, ConnectError>;
 
     /// Connects to an existing smart-contract in read-only mode.
-    async fn connect_ro(rpc_url: RpcUrl) -> Result<Self::ReadOnly>;
+    async fn connect_ro(address: Address, rpc_url: RpcUrl) -> Result<Self::ReadOnly, ConnectError>;
 
-    /// Returns the [`PublicKey`] of the [`Signer`] which is currently being
-    /// used for this [`SmartContract`] handle.
-    fn signer(&self) -> PublicKey;
+    /// Returns the [`AccountAddress`] of the [`Signer`] which is currently
+    /// being used for signing transactions of [`SmartContract`] instance.
+    fn signer(&self) -> &AccountAddress;
 
     /// Starts a new data [`migration`] process using the provided
     /// [`migration::Plan`].
@@ -50,7 +57,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   [`SmartContract`]
     ///
     /// The implementation MUST emit [`migration::Started`] event on success.
-    async fn start_migration(&self, plan: migration::NewPlan) -> Result<()>;
+    async fn start_migration(&self, new_keyspace: Keyspace) -> Result<()>;
 
     /// Marks that the [`signer`](SmartContract::signer) has completed the data
     /// pull required for completion of the current [`migration`].
@@ -69,11 +76,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///
     /// The implementation MAY be idempotent. In case of an idempotent
     /// execution the event MUST not be emitted.
-    async fn complete_migration(
-        &self,
-        id: migration::Id,
-        operator_idx: node_operator::Idx,
-    ) -> Result<()>;
+    async fn complete_migration(&self, id: migration::Id) -> Result<()>;
 
     /// Aborts the ongoing data [`migration`] process restoring the WCN cluster
     /// to the original state it had before the migration had started.
@@ -96,7 +99,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   provided [`node::OperatorIdx`]
     ///
     /// The implementation MUST emit [`maintenance::Started`] event on success.
-    async fn start_maintenance(&self, operator_idx: node_operator::Idx) -> Result<()>;
+    async fn start_maintenance(&self) -> Result<()>;
 
     /// Completes the ongoing [`maintenance`] process.
     ///
@@ -109,7 +112,11 @@ pub trait SmartContract: ReadOnlySmartContract {
     /// success.
     async fn finish_maintenance(&self) -> Result<()>;
 
-    async fn add_node_operator(&self, operator: SerializedNodeOperator) -> Result<()>;
+    async fn add_node_operator(
+        &self,
+        idx: node_operator::Idx,
+        operator: SerializedNodeOperator,
+    ) -> Result<()>;
 
     /// Updates on-chain data of a [`node::Operator`].
     ///
@@ -118,28 +125,49 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   provided [`node::OperatorIdx`]
     ///
     /// The implementation MUST emit [`node::OperatorUpdated`] event on success.
-    async fn update_node_operator(
-        &self,
-        operator: SerializedNodeOperator,
-        id: node_operator::Id,
-        idx: node_operator::Idx,
-        data: node_operator::SerializedData,
-    ) -> Result<()>;
+    async fn update_node_operator(&self, operator: SerializedNodeOperator) -> Result<()>;
 
-    async fn remove_node_operator(&self, operator_id: node_operator::Id) -> Result<()>;
+    async fn remove_node_operator(&self, id: node_operator::Id) -> Result<()>;
+
+    async fn update_settings(&self, new_settings: Settings) -> Result<()>;
+
+    async fn transfer_ownership(&self, new_owner: AccountAddress) -> Result<()>;
 }
 
 /// Read-only handle to a smart-contract managing the state of a WCN cluster.
 pub trait ReadOnlySmartContract: Sized + Send + Sync + 'static {
     /// Returns the current [`ClusterView`].
-    async fn cluster_view(&self) -> Result<ClusterView>;
+    async fn cluster_view(&self) -> Result<cluster::View<(), node_operator::SerializedData>>;
 }
 
-// impl From<alloy::contract::Error> for Error {
-//     fn from(err: alloy::contract::Error) -> Self {
-//         Self(format!("{err:?}"))
-//     }
-// }
+/// [`SmartContract`] address.
+#[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Address(evm::Address);
+
+/// Account address on the chain hosting WCN cluster [`SmartContract`].
+#[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AccountAddress(evm::Address);
+
+/// Transaction signer.
+pub struct Signer {
+    inner: SignerInner,
+}
+
+/// RPC provider URL.
+pub struct RpcUrl(reqwest::Url);
+
+/// Error of [`SmartContract::connect`] and [`SmartContract::connect_ro`].
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    #[error("Smart-contract with the provided address doesn't exist")]
+    UnknownContract,
+
+    #[error("Smart-contract with the provided address is not a WCN cluster")]
+    WrongContract,
+
+    #[error("Other: {0}")]
+    Other(String),
+}
 
 /// [`SmartContract`] error.
 #[derive(Debug, thiserror::Error)]
@@ -156,33 +184,24 @@ pub enum Error {
 #[error("{0}")]
 pub struct ReadError(String);
 
+/// [`SmartContract`] result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// [`ReadOnlySmartContract`] result.
 pub type ReadResult<T, E = ReadError> = std::result::Result<T, E>;
 
-#[derive(Clone, Copy, Debug, Display, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PublicKey(evm::Address);
-
-impl FromStr for PublicKey {
-    type Err = InvalidPublicKey;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        alloy::primitives::Address::from_str(s)
-            .map(PublicKey)
-            .map_err(|err| InvalidPublicKey(err.to_string()))
-    }
-}
-
-pub struct Signer {
-    inner: SignerInner,
-}
-
 impl Signer {
-    pub fn try_from_private_key(hex: &str) -> Result<Self, InvalidPrivateKey> {
+    pub fn try_from_private_key(hex: &str) -> Result<Self, InvalidPrivateKeyError> {
         PrivateKeySigner::from_str(hex)
             .map(SignerInner::PrivateKey)
             .map(|inner| Self { inner })
-            .map_err(|err| InvalidPrivateKey(err.to_string()))
+            .map_err(|err| InvalidPrivateKeyError(err.to_string()))
+    }
+
+    pub fn address(&self) -> AccountAddress {
+        match &self.inner {
+            SignerInner::PrivateKey(key) => AccountAddress(key.address()),
+        }
     }
 }
 
@@ -190,48 +209,48 @@ enum SignerInner {
     PrivateKey(PrivateKeySigner),
 }
 
-pub struct RpcUrl(reqwest::Url);
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid RPC URL: {0:?}")]
+pub struct InvalidRpcUrlError(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid private key: {0:?}")]
+pub struct InvalidPrivateKeyError(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid account address: {0:?}")]
+pub struct InvalidAccountAddressError(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid smart-contract address: {0:?}")]
+pub struct InvalidAddressError(String);
 
 impl FromStr for RpcUrl {
-    type Err = InvalidRpcUrl;
+    type Err = InvalidRpcUrlError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         reqwest::Url::from_str(s)
             .map(Self)
-            .map_err(|err| InvalidRpcUrl(err.to_string()))
+            .map_err(|err| InvalidRpcUrlError(err.to_string()))
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid RPC URL: {0:?}")]
-pub struct InvalidRpcUrl(String);
+impl FromStr for AccountAddress {
+    type Err = InvalidAccountAddressError;
 
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid private key: {0:?}")]
-pub struct InvalidPrivateKey(String);
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        alloy::primitives::Address::from_str(s)
+            .map(AccountAddress)
+            .map_err(|err| InvalidAccountAddressError(err.to_string()))
+    }
+}
 
-#[derive(Debug, thiserror::Error)]
-#[error("Invalid public key: {0:?}")]
-pub struct InvalidPublicKey(String);
+impl FromStr for Address {
+    type Err = InvalidAddressError;
 
-// impl TryFrom<bindings::Cluster::KeyspaceView> for Keyspace {
-//     type Error = Error;
-
-//     fn try_from(view: bindings::Cluster::KeyspaceView) -> Result<Self> {
-//         let replication_strategy = view
-//             .replicationStrategy
-//             .try_into()
-//             .map_err(|err| Error(format!("Invalid ReplicationStrategy:
-// {err}")))?;
-
-//         Ok(Keyspace::new(replication_strategy))
-//     }
-// }
-
-// #[cfg(test)]
-// mod test {
-//     #[test]
-//     fn address_to_from_public_key_conversion() {
-//         todo!()
-//     }
-// }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        alloy::primitives::Address::from_str(s)
+            .map(Address)
+            .map_err(|err| InvalidAddressError(err.to_string()))
+    }
+}

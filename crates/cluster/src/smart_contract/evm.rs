@@ -62,18 +62,17 @@ impl super::SmartContract for SmartContract {
     ) -> Result<Self> {
         let signer_addr = signer.address();
 
-        bindings::Cluster::deploy(
-            new_provier(signer, rpc_url),
-            initial_settings.into(),
-            initial_operators
-                .into_slots()
-                .into_iter()
-                .filter_map(|op| op.map(Into::into))
-                .collect(),
-        )
-        .await
-        .map(|alloy| Self { signer_addr, alloy })
-        .map_err(Into::into)
+        let settings = initial_settings.into();
+        let operators = initial_operators
+            .into_slots()
+            .into_iter()
+            .filter_map(|op| op.map(Into::into))
+            .collect();
+
+        bindings::Cluster::deploy(new_provier(signer, rpc_url), settings, operators)
+            .await
+            .map(|alloy| Self { signer_addr, alloy })
+            .map_err(Into::into)
     }
 
     async fn connect(

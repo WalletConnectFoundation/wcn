@@ -290,20 +290,17 @@ impl<Data> NodeOperators<Data> {
             return Err(SlotMapCreationError::TooManyOperatorSlots(slots.len()));
         }
 
-        let mut this = Self {
-            id_to_idx: HashMap::with_capacity(slots.len()),
-            slots: Vec::with_capacity(slots.len()),
-        };
+        let mut id_to_idx = HashMap::with_capacity(slots.len());
 
         for (idx, slot) in slots.iter().enumerate() {
             if let Some(operator) = &slot {
-                if this.id_to_idx.insert(*operator.id(), idx as u8).is_some() {
+                if id_to_idx.insert(*operator.id(), idx as u8).is_some() {
                     return Err(SlotMapCreationError::OperatorDuplicate(*operator.id()));
                 };
             }
         }
 
-        Ok(this)
+        Ok(Self { id_to_idx, slots })
     }
 
     pub(super) fn into_slots(self) -> Vec<Option<NodeOperator<Data>>> {

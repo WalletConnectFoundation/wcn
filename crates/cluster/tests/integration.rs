@@ -18,10 +18,18 @@ async fn test_suite() {
         max_node_operator_data_bytes: 4096,
     };
 
-    let signer =
-        Signer::try_from_private_key(&std::env::var("SIGNER_PRIVATE_KEY").unwrap()).unwrap();
+    // let signer =
+    //     Signer::try_from_private_key(&std::env::var("SIGNER_PRIVATE_KEY").
+    // unwrap()).unwrap();
 
-    let rpc_url = "https://mainnet.optimism.io".parse().unwrap();
+    let signer = Signer::try_from_private_key(
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    )
+    .unwrap();
+
+    // let rpc_url = "https://mainnet.optimism.io".parse().unwrap();
+
+    let rpc_url = "http://127.0.0.1:8545".parse().unwrap();
 
     let operators = (1..=5).map(|n| test_node_operator(n)).collect();
 

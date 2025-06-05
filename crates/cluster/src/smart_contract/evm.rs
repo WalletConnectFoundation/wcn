@@ -13,7 +13,6 @@ use {
         NodeOperator,
         NodeOperators,
         Ownership,
-        SerializedNodeOperator,
         Settings,
     },
     alloy::{
@@ -125,12 +124,12 @@ impl super::SmartContract for SmartContract {
     async fn add_node_operator(
         &self,
         idx: node_operator::Idx,
-        operator: SerializedNodeOperator,
+        operator: NodeOperator<node_operator::SerializedData>,
     ) -> Result<()> {
         check_receipt(self.alloy.addNodeOperator(idx, operator.into())).await
     }
 
-    async fn update_node_operator(&self, operator: SerializedNodeOperator) -> super::Result<()> {
+    async fn update_node_operator(&self, operator: node_operator::Serialized) -> super::Result<()> {
         check_receipt(self.alloy.updateNodeOperator(operator.into())).await
     }
 
@@ -221,24 +220,21 @@ impl From<alloy::providers::PendingTransactionError> for Error {
     }
 }
 
-impl From<SerializedNodeOperator> for bindings::Cluster::NodeOperator {
-    fn from(op: SerializedNodeOperator) -> Self {
-        let addr = op.id().0;
-        let data: Vec<u8> = op.into_data().into();
-
+impl From<node_operator::Serialized> for bindings::Cluster::NodeOperator {
+    fn from(op: node_operator::Serialized) -> Self {
         Self {
-            addr,
-            data: data.into(),
+            addr: op.id.0,
+            data: op.data.0.into(),
         }
     }
 }
 
-impl From<bindings::Cluster::NodeOperator> for SerializedNodeOperator {
+impl From<bindings::Cluster::NodeOperator> for node_operator::Serialized {
     fn from(op: bindings::Cluster::NodeOperator) -> Self {
-        NodeOperator::new(
-            smart_contract::AccountAddress(op.addr),
-            node_operator::SerializedData(op.data.into()),
-        )
+        NodeOperator {
+            id: smart_contract::AccountAddress(op.addr),
+            data: node_operator::SerializedData(op.data.into()),
+        }
     }
 }
 

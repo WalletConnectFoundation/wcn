@@ -21,15 +21,13 @@ pub mod client;
 pub use client::Client;
 
 pub mod node;
-pub use node::{Node, NodeRef};
+pub use node::Node;
 
 pub mod node_operator;
-pub use node_operator::{
-    NodeOperator,
-    NodeOperators,
-    SerializedNodeOperator,
-    VersionedNodeOperator,
-};
+pub use node_operator::NodeOperator;
+
+pub mod node_operators;
+pub use node_operators::NodeOperators;
 
 pub mod keyspace;
 pub use keyspace::Keyspace;
@@ -113,7 +111,7 @@ impl<SC: SmartContract> Cluster<SC> {
             .into_iter()
             .map(|op| {
                 let op = op.serialize()?;
-                op.data().validate(&initial_settings)?;
+                op.data.validate(&initial_settings)?;
                 Ok::<_, DeploymentError>(op)
             })
             .try_collect()?;
@@ -280,11 +278,11 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
     ) -> Result<(), AddNodeOperatorError> {
         let operator = self.using_view(|view| {
             view.ownership().require_owner(&self.smart_contract)?;
-            view.node_operators().require_not_exists(operator.id())?;
+            view.node_operators().require_not_exists(&operator.id)?;
             view.node_operators().require_free_slot(idx)?;
 
             let operator = operator.serialize()?;
-            operator.data().validate(view.settings())?;
+            operator.data.validate(view.settings())?;
 
             Ok::<_, AddNodeOperatorError>(operator)
         })?;
@@ -302,14 +300,14 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
         let signer = self.smart_contract.signer();
 
         let operator = self.using_view(|view| {
-            if !(signer == operator.id() || view.ownership().is_owner(signer)) {
+            if !(signer == &operator.id || view.ownership().is_owner(signer)) {
                 return Err(UpdateNodeOperatorError::Unauthorized);
             }
 
-            let _idx = view.node_operators().require_idx(operator.id())?;
+            let _idx = view.node_operators().require_idx(&operator.id)?;
 
             let operator = operator.serialize()?;
-            operator.data().validate(view.settings())?;
+            operator.data.validate(view.settings())?;
 
             Ok::<_, UpdateNodeOperatorError>(operator)
         })?;
@@ -354,7 +352,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
 #[derive(Debug, thiserror::Error)]
 pub enum DeploymentError {
     #[error(transparent)]
-    NodeOperatorSlotMapCreation(#[from] node_operator::SlotMapCreationError),
+    NodeOperatorsCreation(#[from] node_operators::CreationError),
 
     #[error(transparent)]
     DataSerialization(#[from] node_operator::DataSerializationError),
@@ -487,7 +485,7 @@ pub enum AddNodeOperatorError {
     AlreadyExists(#[from] node_operator::AlreadyExistsError),
 
     #[error(transparent)]
-    SlotOccupied(#[from] node_operator::SlotOccupiedError),
+    SlotOccupied(#[from] node_operators::SlotOccupiedError),
 
     #[error(transparent)]
     DataSerialization(#[from] node_operator::DataSerializationError),

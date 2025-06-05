@@ -3,15 +3,7 @@
 pub mod evm;
 
 use {
-    crate::{
-        self as cluster,
-        migration,
-        node_operator,
-        Keyspace,
-        NodeOperators,
-        SerializedNodeOperator,
-        Settings,
-    },
+    crate::{self as cluster, migration, node_operator, Keyspace, NodeOperators, Settings},
     alloy::{network::TxSigner as _, signers::local::PrivateKeySigner, transports::http::reqwest},
     derive_more::derive::{Display, From},
     serde::{Deserialize, Serialize},
@@ -115,7 +107,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     async fn add_node_operator(
         &self,
         idx: node_operator::Idx,
-        operator: SerializedNodeOperator,
+        operator: node_operator::Serialized,
     ) -> Result<()>;
 
     /// Updates on-chain data of a [`node::Operator`].
@@ -125,7 +117,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   provided [`node::OperatorIdx`]
     ///
     /// The implementation MUST emit [`node::OperatorUpdated`] event on success.
-    async fn update_node_operator(&self, operator: SerializedNodeOperator) -> Result<()>;
+    async fn update_node_operator(&self, operator: node_operator::Serialized) -> Result<()>;
 
     async fn remove_node_operator(&self, id: node_operator::Id) -> Result<()>;
 

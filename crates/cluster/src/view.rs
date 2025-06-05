@@ -6,13 +6,15 @@ use {
         keyspace,
         maintenance,
         migration,
-        node_operator::{self, NodeOperators},
+        node_operator,
+        node_operators,
         ownership,
         settings,
         Event,
         Keyspace,
         Maintenance,
         Migration,
+        NodeOperators,
         Ownership,
         Settings,
     },
@@ -20,17 +22,17 @@ use {
 };
 
 /// Read-only view of a WCN cluster.
-pub struct View<Shards = (), OperatorData = node_operator::VersionedData> {
-    pub(crate) node_operators: NodeOperators<OperatorData>,
+pub struct View<Shards = (), OperatorData = node_operator::Data> {
+    pub(super) node_operators: NodeOperators<OperatorData>,
 
-    pub(crate) ownership: Ownership,
-    pub(crate) settings: Settings,
+    pub(super) ownership: Ownership,
+    pub(super) settings: Settings,
 
-    pub(crate) keyspace: Keyspace<Shards>,
-    pub(crate) migration: Option<Migration<Shards>>,
-    pub(crate) maintenance: Option<Maintenance>,
+    pub(super) keyspace: Keyspace<Shards>,
+    pub(super) migration: Option<Migration<Shards>>,
+    pub(super) maintenance: Option<Maintenance>,
 
-    pub(crate) cluster_version: cluster::Version,
+    pub(super) cluster_version: cluster::Version,
 }
 
 impl<Shards> View<Shards> {
@@ -237,7 +239,7 @@ impl maintenance::Finished {
 impl node_operator::Added {
     pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
         view.node_operators()
-            .require_not_exists(self.operator.id())?
+            .require_not_exists(&self.operator.id)?
             .require_free_slot(self.idx)?;
 
         view.node_operators.set(self.idx, Some(self.operator));
@@ -248,7 +250,7 @@ impl node_operator::Added {
 
 impl node_operator::Updated {
     pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
-        let idx = view.node_operators.require_idx(self.operator.id())?;
+        let idx = view.node_operators.require_idx(&self.operator.id)?;
         view.node_operators.set(idx, Some(self.operator));
 
         Ok(())
@@ -318,7 +320,7 @@ pub enum Error {
     OperatorAlreadyExists(#[from] node_operator::AlreadyExistsError),
 
     #[error(transparent)]
-    OperatorSlotOccupied(#[from] node_operator::SlotOccupiedError),
+    OperatorSlotOccupied(#[from] node_operators::SlotOccupiedError),
 }
 
 /// Result of [`View::apply_event`].

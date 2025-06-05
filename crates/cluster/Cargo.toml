@@ -34,3 +34,4 @@ arc-swap = "1.7"
 [dev-dependencies]
 alloy = { version = "1.0", default-features = false, features = ["provider-anvil-node"] }
 tokio = { version = "1", default-features = false }
+hex = "0.4"

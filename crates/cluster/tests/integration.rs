@@ -1,31 +1,57 @@
 use {
     alloy::providers::ProviderBuilder,
-    cluster::contract::{
-        self,
-        Cluster::{NodeOperatorView, Settings},
+    cluster::{
+        node,
+        node_operator,
+        smart_contract::{self, evm, RpcUrl, Signer},
+        Cluster,
+        NodeOperator,
+        Settings,
     },
+    libp2p::PeerId,
+    std::net::SocketAddrV4,
 };
 
 #[tokio::test]
 async fn test_suite() {
-    let provider = ProviderBuilder::new().on_anvil_with_wallet();
-
     let settings = Settings {
-        minOperators: 5,
-        minNodes: 1,
+        max_node_operator_data_bytes: 4096,
     };
 
-    let contract = contract::Cluster::deploy(&provider, settings).await?;
+    let signer =
+        Signer::try_from_private_key(&std::env::var("SIGNER_PRIVATE_KEY").unwrap()).unwrap();
 
-    // // 2. Use Anvil's first default private key
-    // let wallet: LocalWallet =
-    // "0x59c6995e998f97a5a0044976f51e2bc4a26b19f3c6d8ff2b67d46e2b4103b3b3"
-    //     .parse::<LocalWallet>()?
-    //     .with_chain_id(31337);
+    let rpc_url = "https://mainnet.optimism.io".parse().unwrap();
 
-    // let client = Arc::new(provider.with_signer(wallet));
+    let operators = (1..=5).map(|n| test_node_operator(n)).collect();
 
-    // // 3. Deploy Counter contract
-    // let deployer = Counter::deploy(client.clone(), ())?; // No constructor
-    // args let contract = deployer.send().await?;
+    let contract = Cluster::<evm::SmartContract>::deploy(signer, rpc_url, settings, operators)
+        .await
+        .unwrap();
+
+    // let contract_address = "0xcefa8836c9cd102c3b118b7681cf09d839cb324e"
+    //     .parse()
+    //     .unwrap();
+
+    // let contract = Cluster::<evm::SmartContract>::connect(contract_address,
+    // signer, rpc_url)     .await
+    //     .unwrap();
+}
+
+fn test_node_operator(n: u8) -> NodeOperator {
+    let data = node_operator::Data {
+        name: node_operator::Name::new(format!("Operator{n}")).unwrap(),
+        nodes: vec![node::Data {
+            peer_id: PeerId::random(),
+            addr: SocketAddrV4::new([127, 0, 0, 1].into(), 40000 + n as u16),
+        }],
+        clients: vec![],
+    };
+
+    let mut private_key: [u8; 32] = Default::default();
+    private_key[0] = n;
+
+    let signer = Signer::try_from_private_key(&format!("0x{}", hex::encode(&private_key))).unwrap();
+
+    NodeOperator::new(signer.address(), data)
 }

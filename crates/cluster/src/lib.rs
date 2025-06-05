@@ -18,7 +18,7 @@ pub mod ownership;
 pub use ownership::Ownership;
 
 pub mod client;
-pub use client::{Client, ClientRef};
+pub use client::Client;
 
 pub mod node;
 pub use node::{Node, NodeRef};
@@ -122,6 +122,21 @@ impl<SC: SmartContract> Cluster<SC> {
 
         let contract = SC::deploy(signer, rpc_url, initial_settings, operators).await?;
 
+        let view = contract.cluster_view().await?.deserialize()?;
+
+        Ok(Self {
+            smart_contract: contract,
+            view: ArcSwap::new(Arc::new(Arc::new(view))),
+        })
+    }
+
+    /// Connects to an existing WCN [`Cluster`].
+    pub async fn connect(
+        smart_contract_address: smart_contract::Address,
+        signer: smart_contract::Signer,
+        rpc_url: smart_contract::RpcUrl,
+    ) -> Result<Self, ConnectError> {
+        let contract = SC::connect(smart_contract_address, signer, rpc_url).await?;
         let view = contract.cluster_view().await?.deserialize()?;
 
         Ok(Self {
@@ -352,6 +367,19 @@ pub enum DeploymentError {
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::Error),
+}
+
+/// [`Cluster::connect`] error.
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    #[error(transparent)]
+    SmartContract(#[from] smart_contract::ConnectError),
+
+    #[error(transparent)]
+    GetClusterView(#[from] smart_contract::Error),
+
+    #[error(transparent)]
+    DataDeserialization(#[from] node_operator::DataDeserializationError),
 }
 
 /// [`Cluster::start_migration`] error.

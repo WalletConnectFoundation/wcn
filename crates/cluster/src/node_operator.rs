@@ -1,7 +1,7 @@
 //! Entity operating a set of nodes within a WCN cluster.
 
 use {
-    crate::{self as cluster, client, node, smart_contract, Version as ClusterVersion},
+    crate::{self as cluster, client, node, smart_contract, NodeRef, Version as ClusterVersion},
     derive_more::derive::{From, Into},
     itertools::Itertools as _,
     serde::{Deserialize, Serialize},
@@ -149,7 +149,7 @@ impl Data {
         let size = postcard::experimental::serialized_size(&data).map_err(Error::from_postcard)?;
 
         // reserve first byte for versioning
-        let mut buf = Vec::with_capacity(size + 1);
+        let mut buf = vec![0; size + 1];
         buf[0] = 0; // current schema version
         postcard::to_slice(&data, &mut buf[1..]).map_err(Error::from_postcard)?;
         Ok(SerializedData(buf))
@@ -192,6 +192,21 @@ impl SerializedNodeOperator {
 
         Ok(NodeOperator { id: self.id, data })
     }
+}
+
+impl VersionedNodeOperator {
+    /// Returns [`Name`] of this [`NodeOperator`].
+    pub fn name(&self) -> &Name {
+        match &self.data.0 {
+            VersionedDataInner::V0(data) => &data.name,
+        }
+    }
+
+    // pub fn nodes(&self) -> impl Iterator<Item = NodeRef<'a>> {
+    //     match &self.data.0 {
+    //         VersionedDataInner::V0(data) => &data.nodes,
+    //     }
+    // }
 }
 
 // NOTE: The on-chain serialization is non self-describing! Every change to

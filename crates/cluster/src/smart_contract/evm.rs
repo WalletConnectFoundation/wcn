@@ -28,6 +28,7 @@ use {
 mod bindings {
     alloy::sol!(
         #[sol(rpc)]
+        #[derive(Debug)]
         Cluster,
         "../../contracts/out/Cluster.sol/Cluster.json",
     );
@@ -198,6 +199,7 @@ fn new_provier(signer: Signer, rpc_url: RpcUrl) -> DynProvider {
 
     let provider = ProviderBuilder::new()
         .wallet(wallet)
+        // .with_chain_id(10)
         .connect_http(rpc_url.0);
 
     DynProvider::new(provider)
@@ -289,7 +291,7 @@ impl Keyspace {
             .map_err(|err| Error::Other(format!("Invalid ReplicationStrategy: {err:?}")))?;
 
         Self::new(operators, replication_strategy, version)
-            .map_err(|err| Error::Other(format!("Invalid Kespace: {err:?}")))
+            .map_err(|err| Error::Other(format!("Invalid Keyspace: {err:?}")))
     }
 }
 
@@ -339,11 +341,11 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
             |version| Keyspace::try_from_alloy(&view.keyspaces[version as usize % 2], version);
 
         let (keyspace, migration) = if view.migration.pullingOperatorsBitmask == U256::ZERO {
-            // migration not in progress
+            // migration is not in progress
 
             (try_keyspace(view.keyspaceVersion)?, None)
         } else {
-            // migration in progress
+            // migration is in progress
 
             let prev_keyspace_version = view
                 .keyspaceVersion

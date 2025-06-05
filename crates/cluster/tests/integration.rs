@@ -1,10 +1,9 @@
 use {
-    alloy::providers::ProviderBuilder,
     cluster::{
-        node,
         node_operator,
-        smart_contract::{self, evm, RpcUrl, Signer},
+        smart_contract::{evm, Signer},
         Cluster,
+        Node,
         NodeOperator,
         Settings,
     },
@@ -49,7 +48,7 @@ async fn test_suite() {
 fn test_node_operator(n: u8) -> NodeOperator {
     let data = node_operator::Data {
         name: node_operator::Name::new(format!("Operator{n}")).unwrap(),
-        nodes: vec![node::Data {
+        nodes: vec![Node {
             peer_id: PeerId::random(),
             addr: SocketAddrV4::new([127, 0, 0, 1].into(), 40000 + n as u16),
         }],
@@ -61,5 +60,8 @@ fn test_node_operator(n: u8) -> NodeOperator {
 
     let signer = Signer::try_from_private_key(&format!("0x{}", hex::encode(&private_key))).unwrap();
 
-    NodeOperator::new(signer.address(), data)
+    NodeOperator {
+        id: signer.address(),
+        data,
+    }
 }

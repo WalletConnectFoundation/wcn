@@ -3,7 +3,7 @@
 # Build args
 #
 ################################################################################
-ARG                 BASE="1.87-bullseye"
+ARG                 BASE="rust:1.87-bullseye"
 ARG                 RUNTIME="debian:bullseye-slim"
 ARG                 VERSION="unknown"
 ARG                 SHA="unknown"

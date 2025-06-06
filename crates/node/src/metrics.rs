@@ -200,7 +200,7 @@ pub(crate) fn serve(
             axum::routing::get(move || async move { prometheus.render() }),
         )
         .route(
-            "/metrics/:peer_id",
+            "/metrics/{peer_id}",
             axum::routing::get(move |axum::extract::Path(peer_id)| {
                 scrape_prometheus(prometheus_.clone(), node.clone(), peer_id)
             }),

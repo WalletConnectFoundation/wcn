@@ -210,10 +210,12 @@ pub(crate) fn serve(
     Ok(async move {
         tracing::info!(?addr, "starting metrics server");
 
-        let result = axum::Server::bind(&addr)
-            .serve(svc)
-            .await
-            .map_err(Into::into);
+        let result = async move {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, svc).await
+        }
+        .await
+        .map_err(Error::MetricsServer);
 
         let _ = tx.send(());
 

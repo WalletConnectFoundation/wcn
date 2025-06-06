@@ -3,8 +3,8 @@
 # Build args
 #
 ################################################################################
-ARG                 BASE="rust:1.79-buster"
-ARG                 RUNTIME="debian:buster-slim"
+ARG                 BASE="1.87-bullseye"
+ARG                 RUNTIME="debian:bullseye-slim"
 ARG                 VERSION="unknown"
 ARG                 SHA="unknown"
 ARG                 MAINTAINER="WalletConnect"

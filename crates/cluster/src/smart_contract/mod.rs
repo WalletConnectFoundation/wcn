@@ -1,0 +1,298 @@
+//! Smart-contract managing the state of a WCN cluster.
+
+pub mod evm;
+
+use {
+    crate::{
+        self as cluster,
+        migration,
+        node_operator,
+        Keyspace,
+        NodeOperators,
+        SerializedEvent,
+        Settings,
+    },
+    alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
+    derive_more::derive::{Display, From},
+    futures::Stream,
+    serde::{Deserialize, Serialize},
+    std::{future::Future, str::FromStr},
+};
+
+/// Deployer of WCN Cluster [`SmartContract`]s.
+pub trait Deployer<SC> {
+    /// Deploys a new [`SmartContract`].
+    fn deploy(
+        &self,
+        initial_settings: Settings,
+        initial_operators: NodeOperators<node_operator::SerializedData>,
+    ) -> impl Future<Output = Result<SC, DeploymentError>>;
+}
+
+/// Connector to WCN Cluster [`SmartContract`]s.
+pub trait Connector<SC> {
+    /// Connects to an existing [`SmartContract`].
+    fn connect(&self, address: Address) -> impl Future<Output = Result<SC, ConnectionError>>;
+}
+
+/// Smart-contract managing the state of a WCN cluster.
+pub trait SmartContract: Read + Write {}
+
+/// Write [`SmartContract`] calls.
+///
+/// Logic invariants documented on the methods of this trait MUST be
+/// implemented inside the on-chain implementation of the smart-contract itself.
+// TODO: docs are outdated, revisit
+pub trait Write {
+    /// Returns the [`Signer`] being used to sign transactions.
+    fn signer(&self) -> &Signer;
+
+    /// Starts a new data [`migration`] process using the provided
+    /// [`migration::Plan`].
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - there's no ongoing data migration
+    /// - there's no ongoing maintenance
+    /// - [`signer`](SmartContract::signer) is the owner of the
+    ///   [`SmartContract`]
+    ///
+    /// The implementation MUST emit [`migration::Started`] event on success.
+    fn start_migration(&self, new_keyspace: Keyspace) -> impl Future<Output = WriteResult<()>>;
+
+    /// Marks that the [`signer`](SmartContract::signer) has completed the data
+    /// pull required for completion of the current [`migration`].
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - there's an ongoing data migration
+    /// - the provided [`migration::Id`] matches the ID of the migration
+    /// - [`signer`](Smart::signer) is a [`node::Operator`] under the provided
+    ///   [`node::OperatorIdx`]
+    ///
+    /// If this [`node::Operator`] is the last remaining one left to complete
+    /// the data pull then the migration MUST be completed and
+    /// [`migration::Completed`] event MUST be emitted.
+    /// Otherwise the data pull MUST be marked as completed for the
+    /// [`node::Operator`] and [`migration::DataPullCompleted`] MUST be emitted.
+    ///
+    /// The implementation MAY be idempotent. In case of an idempotent
+    /// execution the event MUST not be emitted.
+    fn complete_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
+
+    /// Aborts the ongoing data [`migration`] process restoring the WCN cluster
+    /// to the original state it had before the migration had started.
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - there's an ongoing data migration
+    /// - [`signer`](SmartContract::signer) is the owner of the
+    ///   [`SmartContract`]
+    ///
+    /// The implementation MUST emit [`migration::Aborted`] event on success.
+    fn abort_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
+
+    /// Starts a [`maintenance`] process for the [`node::Operator`] being the
+    /// current [`signer`](Manager::signer).
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - there's no ongoing data migration
+    /// - there's no ongoing maintenance
+    /// - [`signer`](SmartContract::signer) is a [`node::Operator`] under the
+    ///   provided [`node::OperatorIdx`]
+    ///
+    /// The implementation MUST emit [`maintenance::Started`] event on success.
+    fn start_maintenance(&self) -> impl Future<Output = WriteResult<()>>;
+
+    /// Completes the ongoing [`maintenance`] process.
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - there's an ongoing maintenance
+    /// - [`signer`](SmartContract::signer) is the one who
+    ///   [started](Manager::start_maintenance) the maintenance
+    ///
+    /// The implementation MUST emit [`maintenance::Completed`] event on
+    /// success.
+    fn finish_maintenance(&self) -> impl Future<Output = WriteResult<()>>;
+
+    fn add_node_operator(
+        &self,
+        idx: node_operator::Idx,
+        operator: node_operator::Serialized,
+    ) -> impl Future<Output = WriteResult<()>>;
+
+    /// Updates on-chain data of a [`node::Operator`].
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - [`signer`](SmartContract::signer) is a [`node::Operator`] under the
+    ///   provided [`node::OperatorIdx`]
+    ///
+    /// The implementation MUST emit [`node::OperatorUpdated`] event on success.
+    fn update_node_operator(
+        &self,
+        operator: node_operator::Serialized,
+    ) -> impl Future<Output = WriteResult<()>>;
+
+    fn remove_node_operator(&self, id: node_operator::Id) -> impl Future<Output = WriteResult<()>>;
+
+    fn update_settings(&self, new_settings: Settings) -> impl Future<Output = WriteResult<()>>;
+
+    fn transfer_ownership(
+        &self,
+        new_owner: AccountAddress,
+    ) -> impl Future<Output = WriteResult<()>>;
+}
+
+/// Read [`SmartContract`] calls.
+pub trait Read: Sized + Send + Sync + 'static {
+    /// Returns [`Address`] of this [`SmartContract`].
+    fn address(&self) -> Address;
+
+    /// Returns the current [`cluster::View`].
+    fn cluster_view(
+        &self,
+    ) -> impl Future<Output = ReadResult<cluster::View<(), node_operator::SerializedData>>> + Send;
+
+    /// Subscribes to WCN Cluster [`Events`].
+    fn events(
+        &self,
+    ) -> impl Future<
+        Output = ReadResult<impl Stream<Item = ReadResult<SerializedEvent>> + Send + 'static>,
+    > + Send;
+}
+
+/// [`SmartContract`] address.
+#[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Address(evm::Address);
+
+/// Account address on the chain hosting WCN cluster [`SmartContract`].
+#[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AccountAddress(evm::Address);
+
+/// Transaction signer.
+#[derive(Clone)]
+pub struct Signer {
+    address: AccountAddress,
+    kind: SignerKind,
+}
+
+/// RPC provider URL.
+pub struct RpcUrl(reqwest::Url);
+
+/// Error of [`Deployer::deploy`].
+#[derive(Debug, thiserror::Error)]
+#[error("{_0}")]
+pub struct DeploymentError(String);
+
+/// Error of [`Connector::connect`].
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectionError {
+    #[error("Smart-contract with the provided address doesn't exist")]
+    UnknownContract,
+
+    #[error("Smart-contract with the provided address is not a WCN cluster")]
+    WrongContract,
+
+    #[error("Other: {0}")]
+    Other(String),
+}
+
+/// [`Write`] error.
+#[derive(Debug, thiserror::Error)]
+pub enum WriteError {
+    #[error("Transport: {0}")]
+    Transport(String),
+
+    #[error("Transaction reverted: {0}")]
+    Revert(String),
+
+    #[error("Other: {0}")]
+    Other(String),
+}
+
+/// [`Read`] error.
+#[derive(Debug, thiserror::Error)]
+
+pub enum ReadError {
+    #[error("Transport: {0}")]
+    Transport(String),
+
+    #[error("Invalid data: {0}")]
+    InvalidData(String),
+
+    #[error("Other: {0}")]
+    Other(String),
+}
+
+/// [`Write`] result.
+pub type WriteResult<T> = std::result::Result<T, WriteError>;
+
+/// [`Read`] result.
+pub type ReadResult<T> = std::result::Result<T, ReadError>;
+
+impl Signer {
+    pub fn try_from_private_key(hex: &str) -> Result<Self, InvalidPrivateKeyError> {
+        let private_key = PrivateKeySigner::from_str(hex)
+            .map_err(|err| InvalidPrivateKeyError(err.to_string()))?;
+
+        Ok(Self {
+            address: AccountAddress(private_key.address()),
+            kind: SignerKind::PrivateKey(private_key),
+        })
+    }
+
+    /// Returns [`AccountAddress`] of this [`Signer`].
+    pub fn address(&self) -> &AccountAddress {
+        &self.address
+    }
+}
+
+#[derive(Clone)]
+enum SignerKind {
+    PrivateKey(PrivateKeySigner),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid RPC URL: {0:?}")]
+pub struct InvalidRpcUrlError(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid private key: {0:?}")]
+pub struct InvalidPrivateKeyError(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid account address: {0:?}")]
+pub struct InvalidAccountAddressError(String);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid smart-contract address: {0:?}")]
+pub struct InvalidAddressError(String);
+
+impl FromStr for RpcUrl {
+    type Err = InvalidRpcUrlError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        reqwest::Url::from_str(s)
+            .map(Self)
+            .map_err(|err| InvalidRpcUrlError(err.to_string()))
+    }
+}
+
+impl FromStr for AccountAddress {
+    type Err = InvalidAccountAddressError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        alloy::primitives::Address::from_str(s)
+            .map(AccountAddress)
+            .map_err(|err| InvalidAccountAddressError(err.to_string()))
+    }
+}
+
+impl FromStr for Address {
+    type Err = InvalidAddressError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        alloy::primitives::Address::from_str(s)
+            .map(Address)
+            .map_err(|err| InvalidAddressError(err.to_string()))
+    }
+}
+
+impl<SC> SmartContract for SC where SC: Read + Write {}

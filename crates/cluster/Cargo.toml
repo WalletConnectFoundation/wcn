@@ -1,0 +1,46 @@
+[package]
+name = "cluster"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+derive_more = { workspace = true, features = ["try_from", "into"] }
+derivative = { workspace = true }
+libp2p = { workspace = true }
+itertools = { workspace = true }
+futures = { workspace = true }
+backoff = { workspace = true }
+tracing = { workspace = true }
+tokio-stream = { workspace = true }
+
+sharding = { path = "../sharding" }
+
+alloy = { version = "1.0", default-features = false, features = ["sol-types", "contract", "signer-local", "network", "reqwest", "provider-ws", "rpc-types"] }
+
+anyhow = "1"
+thiserror = "1"
+
+tap = "1.0"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
+fpe = "0.6"
+aes = "0.8"
+
+tokio = { version = "1", features = ["full"] }
+arc-swap = "1.7"
+
+[dev-dependencies]
+alloy = { version = "1.0", default-features = false, features = ["provider-anvil-node"] }
+tokio = { version = "1", default-features = false }
+hex = "0.4"
+
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "parking_lot",
+    "json",
+] }

@@ -1,27 +1,48 @@
 //! EVM implementation of [`SmartContract`](super::SmartContract).
 
 use {
-    super::{AccountAddress, ConnectError, Error, Result, RpcUrl, Signer, SignerInner},
+    super::{
+        AccountAddress,
+        ConnectionError,
+        Connector,
+        Deployer,
+        DeploymentError,
+        ReadError,
+        ReadResult,
+        RpcUrl,
+        Signer,
+        SignerKind,
+        WriteError,
+        WriteResult,
+    },
     crate::{
         self as cluster,
+        maintenance,
         migration,
         node_operator,
+        ownership,
+        settings,
         smart_contract,
+        Event,
         Keyspace,
         Maintenance,
         Migration,
         NodeOperator,
         NodeOperators,
         Ownership,
+        SerializedEvent,
         Settings,
     },
     alloy::{
         contract::{CallBuilder, CallDecoder},
         network::EthereumWallet,
         primitives::Uint,
-        providers::{DynProvider, Provider, ProviderBuilder},
+        providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
+        rpc::types::{Filter, Log},
+        sol_types::SolEvent,
     },
-    std::{collections::HashSet, time::Duration},
+    futures::{Stream, StreamExt as _},
+    std::{collections::HashSet, fmt, sync::Arc, time::Duration},
 };
 
 mod bindings {
@@ -33,33 +54,66 @@ mod bindings {
     );
 }
 
+pub(crate) type Address = alloy::primitives::Address;
+
 type AlloyContract = bindings::Cluster::ClusterInstance<DynProvider, alloy::network::Ethereum>;
 
 type U256 = Uint<256, 4>;
 
-/// EVM implementation of [`SmartContract`](super::SmartContract).
+/// RPC provider for EVM chains.
+pub struct RpcProvider<S = ()> {
+    signer: S,
+    alloy: DynProvider,
+}
+
+impl RpcProvider {
+    /// Creates a new [`RpcProvider`].
+    pub async fn new(
+        url: RpcUrl,
+        signer: Signer,
+    ) -> Result<RpcProvider<Signer>, RpcProviderCreationError> {
+        let wallet: EthereumWallet = match &signer.kind {
+            SignerKind::PrivateKey(key) => key.clone().into(),
+        };
+
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_ws(WsConnect::new(url.0))
+            .await?;
+
+        Ok(RpcProvider {
+            signer,
+            alloy: DynProvider::new(provider),
+        })
+    }
+
+    /// Creates a new read-only [`RpcProvider`].
+    pub async fn new_ro(self, url: RpcUrl) -> Result<RpcProvider<()>, RpcProviderCreationError> {
+        let provider = ProviderBuilder::new()
+            .connect_ws(WsConnect::new(url.0))
+            .await?;
+
+        Ok(RpcProvider {
+            signer: (),
+            alloy: DynProvider::new(provider),
+        })
+    }
+}
+
+/// EVM implementation of WCN Cluster smart contract.
 #[derive(Clone)]
-pub struct SmartContract<S = AccountAddress> {
-    signer_addr: S,
+pub struct SmartContract<S = ()> {
+    signer: S,
     alloy: AlloyContract,
 }
 
-/// EVM implementation of
-/// [`ReadOnlySmartContract`](super::ReadOnlySmartContract).
-pub type SmartContractRO = SmartContract<()>;
-
-pub(crate) type Address = alloy::primitives::Address;
-
-impl super::SmartContract for SmartContract {
-    type ReadOnly = SmartContractRO;
-
+impl Deployer<SmartContract<Signer>> for RpcProvider<Signer> {
     async fn deploy(
-        signer: Signer,
-        rpc_url: RpcUrl,
+        &self,
         initial_settings: Settings,
         initial_operators: NodeOperators<node_operator::SerializedData>,
-    ) -> Result<Self> {
-        let signer_addr = signer.address();
+    ) -> Result<SmartContract<Signer>, DeploymentError> {
+        let signer = self.signer.clone();
 
         let settings = initial_settings.into();
         let operators = initial_operators
@@ -68,56 +122,64 @@ impl super::SmartContract for SmartContract {
             .filter_map(|op| op.map(Into::into))
             .collect();
 
-        bindings::Cluster::deploy(new_provier(signer, rpc_url), settings, operators)
+        bindings::Cluster::deploy(self.alloy.clone(), settings, operators)
             .await
-            .map(|alloy| Self { signer_addr, alloy })
+            .map(|alloy| SmartContract { signer, alloy })
             .map_err(Into::into)
     }
+}
 
+impl<S: Clone> Connector<SmartContract<S>> for RpcProvider<S> {
     async fn connect(
+        &self,
         address: smart_contract::Address,
-        signer: Signer,
-        rpc_url: RpcUrl,
-    ) -> Result<Self, ConnectError> {
-        let signer_addr = signer.address();
+    ) -> Result<SmartContract<S>, ConnectionError> {
+        let signer = self.signer.clone();
 
-        connect(address, new_provier(signer, rpc_url))
+        let code = self
+            .alloy
+            .get_code_at(address.0)
             .await
-            .map(|alloy| Self { signer_addr, alloy })
+            .map_err(|err| ConnectionError::Other(err.to_string()))?;
+
+        if code.is_empty() {
+            return Err(ConnectionError::UnknownContract);
+        }
+
+        // TODO: false positive
+        // if code != bindings::Cluster::BYTECODE {
+        //     return Err(ConnectionError::WrongContract);
+        // }
+
+        Ok(SmartContract {
+            signer,
+            alloy: bindings::Cluster::new(address.0, self.alloy.clone()),
+        })
+    }
+}
+
+impl smart_contract::Write for SmartContract<Signer> {
+    fn signer(&self) -> &Signer {
+        &self.signer
     }
 
-    async fn connect_ro(
-        address: smart_contract::Address,
-        rpc_url: RpcUrl,
-    ) -> Result<Self::ReadOnly, ConnectError> {
-        let signer_addr = ();
-
-        connect(address, new_ro_provier(rpc_url))
-            .await
-            .map(|alloy| Self::ReadOnly { signer_addr, alloy })
-    }
-
-    fn signer(&self) -> &AccountAddress {
-        &self.signer_addr
-    }
-
-    async fn start_migration(&self, new_keyspace: Keyspace) -> Result<()> {
+    async fn start_migration(&self, new_keyspace: Keyspace) -> WriteResult<()> {
         check_receipt(self.alloy.startMigration(new_keyspace.into())).await
     }
 
-    async fn complete_migration(&self, id: migration::Id) -> Result<()> {
+    async fn complete_migration(&self, id: migration::Id) -> WriteResult<()> {
         check_receipt(self.alloy.completeMigration(id)).await
     }
 
-    async fn abort_migration(&self, id: migration::Id) -> Result<()> {
+    async fn abort_migration(&self, id: migration::Id) -> WriteResult<()> {
         check_receipt(self.alloy.abortMigration(id)).await
     }
 
-    async fn start_maintenance(&self) -> Result<()> {
+    async fn start_maintenance(&self) -> WriteResult<()> {
         check_receipt(self.alloy.startMaintenance()).await
     }
 
-    async fn finish_maintenance(&self) -> Result<()> {
+    async fn finish_maintenance(&self) -> WriteResult<()> {
         check_receipt(self.alloy.finishMaintenance()).await
     }
 
@@ -125,28 +187,28 @@ impl super::SmartContract for SmartContract {
         &self,
         idx: node_operator::Idx,
         operator: NodeOperator<node_operator::SerializedData>,
-    ) -> Result<()> {
+    ) -> WriteResult<()> {
         check_receipt(self.alloy.addNodeOperator(idx, operator.into())).await
     }
 
-    async fn update_node_operator(&self, operator: node_operator::Serialized) -> super::Result<()> {
+    async fn update_node_operator(&self, operator: node_operator::Serialized) -> WriteResult<()> {
         check_receipt(self.alloy.updateNodeOperator(operator.into())).await
     }
 
-    async fn remove_node_operator(&self, id: node_operator::Id) -> Result<()> {
+    async fn remove_node_operator(&self, id: node_operator::Id) -> WriteResult<()> {
         check_receipt(self.alloy.removeNodeOperator(id.0)).await
     }
 
-    async fn update_settings(&self, new_settings: Settings) -> Result<()> {
+    async fn update_settings(&self, new_settings: Settings) -> WriteResult<()> {
         check_receipt(self.alloy.updateSettings(new_settings.into())).await
     }
 
-    async fn transfer_ownership(&self, new_owner: AccountAddress) -> Result<()> {
+    async fn transfer_ownership(&self, new_owner: AccountAddress) -> WriteResult<()> {
         check_receipt(self.alloy.transferOwnership(new_owner.0)).await
     }
 }
 
-async fn check_receipt<D>(call: CallBuilder<&DynProvider, D>) -> Result<(), Error>
+async fn check_receipt<D>(call: CallBuilder<&DynProvider, D>) -> WriteResult<()>
 where
     D: CallDecoder,
 {
@@ -158,65 +220,194 @@ where
         .await?;
 
     if !receipt.status() {
-        return Err(Error::Revert(format!("{}", receipt.transaction_hash)));
+        return Err(WriteError::Revert(format!("{}", receipt.transaction_hash)));
     }
 
     Ok(())
 }
 
-impl<S: Send + Sync + 'static> super::ReadOnlySmartContract for SmartContract<S> {
-    async fn cluster_view(&self) -> Result<cluster::View<(), node_operator::SerializedData>> {
+impl<S: Send + Sync + 'static> smart_contract::Read for SmartContract<S> {
+    fn address(&self) -> smart_contract::Address {
+        smart_contract::Address(*self.alloy.address())
+    }
+
+    async fn cluster_view(&self) -> ReadResult<cluster::View<(), node_operator::SerializedData>> {
         self.alloy.getView().call().await?.try_into()
     }
-}
 
-async fn connect(
-    address: smart_contract::Address,
-    provider: DynProvider,
-) -> Result<AlloyContract, ConnectError> {
-    let code = provider
-        .get_code_at(address.0)
-        .await
-        .map_err(|err| ConnectError::Other(err.to_string()))?;
+    async fn events(
+        &self,
+    ) -> ReadResult<impl Stream<Item = ReadResult<SerializedEvent>> + Send + 'static> {
+        let filter = Filter::new().address(*self.alloy.address());
 
-    if code.is_empty() {
-        return Err(ConnectError::UnknownContract);
-    }
-
-    if code != bindings::Cluster::BYTECODE {
-        return Err(ConnectError::WrongContract);
-    }
-
-    Ok(bindings::Cluster::new(address.0, provider))
-}
-
-fn new_provier(signer: Signer, rpc_url: RpcUrl) -> DynProvider {
-    let wallet: EthereumWallet = match signer.inner {
-        SignerInner::PrivateKey(key) => key.into(),
-    };
-
-    let provider = ProviderBuilder::new()
-        .wallet(wallet)
-        // .with_chain_id(10)
-        .connect_http(rpc_url.0);
-
-    DynProvider::new(provider)
-}
-
-fn new_ro_provier(rpc_url: RpcUrl) -> DynProvider {
-    let provider = ProviderBuilder::new().connect_http(rpc_url.0);
-    DynProvider::new(provider)
-}
-
-impl From<alloy::contract::Error> for Error {
-    fn from(err: alloy::contract::Error) -> Self {
-        Self::Other(format!("{err:?}"))
+        Ok(self
+            .alloy
+            .provider()
+            .subscribe_logs(&filter)
+            .await?
+            .into_stream()
+            .map(TryFrom::try_from))
     }
 }
 
-impl From<alloy::providers::PendingTransactionError> for Error {
-    fn from(err: alloy::providers::PendingTransactionError) -> Self {
-        Self::Other(format!("{err:?}"))
+impl TryFrom<Log> for Event<node_operator::SerializedData> {
+    type Error = ReadError;
+
+    fn try_from(log: Log) -> Result<Self, Self::Error> {
+        use bindings::Cluster;
+
+        let topics = log.topics();
+        let data = &log.data().data;
+
+        Ok(match log.topics().get(0) {
+            Some(&Cluster::MigrationStarted::SIGNATURE_HASH) => {
+                Cluster::MigrationStarted::decode_raw_log_validate(topics, data)?.try_into()?
+            }
+            Some(&Cluster::MigrationDataPullCompleted::SIGNATURE_HASH) => {
+                Cluster::MigrationDataPullCompleted::decode_raw_log_validate(topics, data)?.into()
+            }
+            Some(&Cluster::MigrationCompleted::SIGNATURE_HASH) => {
+                Cluster::MigrationCompleted::decode_raw_log_validate(topics, data)?.into()
+            }
+            Some(&Cluster::MigrationAborted::SIGNATURE_HASH) => {
+                Cluster::MigrationAborted::decode_raw_log_validate(topics, data)?.into()
+            }
+
+            Some(&Cluster::MaintenanceStarted::SIGNATURE_HASH) => {
+                Cluster::MaintenanceStarted::decode_raw_log_validate(topics, data)?.into()
+            }
+            Some(&Cluster::MaintenanceFinished::SIGNATURE_HASH) => {
+                Cluster::MaintenanceFinished::decode_raw_log_validate(topics, data)?.into()
+            }
+
+            Some(&Cluster::NodeOperatorAdded::SIGNATURE_HASH) => {
+                Cluster::NodeOperatorAdded::decode_raw_log_validate(topics, data)?.into()
+            }
+            Some(&Cluster::NodeOperatorUpdated::SIGNATURE_HASH) => {
+                Cluster::NodeOperatorUpdated::decode_raw_log_validate(topics, data)?.into()
+            }
+            Some(&Cluster::NodeOperatorRemoved::SIGNATURE_HASH) => {
+                Cluster::NodeOperatorRemoved::decode_raw_log_validate(topics, data)?.into()
+            }
+
+            Some(&Cluster::SettingsUpdated::SIGNATURE_HASH) => {
+                Cluster::SettingsUpdated::decode_raw_log_validate(topics, data)?.into()
+            }
+
+            Some(&Cluster::OwnershipTransferred::SIGNATURE_HASH) => {
+                Cluster::OwnershipTransferred::decode_raw_log_validate(topics, data)?.into()
+            }
+
+            other => {
+                return Err(ReadError::InvalidData(format!(
+                    "Unexpected event: {other:?}"
+                )))
+            }
+        })
+    }
+}
+
+impl<D> TryFrom<bindings::Cluster::MigrationStarted> for Event<D> {
+    type Error = ReadError;
+
+    fn try_from(evt: bindings::Cluster::MigrationStarted) -> ReadResult<Self> {
+        Ok(Self::MigrationStarted(migration::Started {
+            migration_id: evt.id,
+            new_keyspace: Keyspace::try_from_alloy(&evt.newKeyspace, evt.newKeyspaceVersion)?,
+            cluster_version: evt.clusterVersion,
+        }))
+    }
+}
+
+impl<D> From<bindings::Cluster::MigrationDataPullCompleted> for Event<D> {
+    fn from(evt: bindings::Cluster::MigrationDataPullCompleted) -> Self {
+        Self::MigrationDataPullCompleted(migration::DataPullCompleted {
+            migration_id: evt.id,
+            operator_id: evt.operatorAddress.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::MigrationCompleted> for Event<D> {
+    fn from(evt: bindings::Cluster::MigrationCompleted) -> Self {
+        Self::MigrationCompleted(migration::Completed {
+            migration_id: evt.id,
+            operator_id: evt.operatorAddress.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::MigrationAborted> for Event<D> {
+    fn from(evt: bindings::Cluster::MigrationAborted) -> Self {
+        Self::MigrationAborted(migration::Aborted {
+            migration_id: evt.id,
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::MaintenanceStarted> for Event<D> {
+    fn from(evt: bindings::Cluster::MaintenanceStarted) -> Self {
+        Self::MaintenanceStarted(maintenance::Started {
+            operator_id: evt.addr.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::MaintenanceFinished> for Event<D> {
+    fn from(evt: bindings::Cluster::MaintenanceFinished) -> Self {
+        Self::MaintenanceFinished(maintenance::Finished {
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl From<bindings::Cluster::NodeOperatorAdded> for Event<node_operator::SerializedData> {
+    fn from(evt: bindings::Cluster::NodeOperatorAdded) -> Self {
+        Self::NodeOperatorAdded(node_operator::Added {
+            idx: evt.idx,
+            operator: evt.operator.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl From<bindings::Cluster::NodeOperatorUpdated> for Event<node_operator::SerializedData> {
+    fn from(evt: bindings::Cluster::NodeOperatorUpdated) -> Self {
+        Self::NodeOperatorUpdated(node_operator::Updated {
+            operator: evt.operator.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::NodeOperatorRemoved> for Event<D> {
+    fn from(evt: bindings::Cluster::NodeOperatorRemoved) -> Self {
+        Self::NodeOperatorRemoved(node_operator::Removed {
+            id: evt.operatorAddress.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::SettingsUpdated> for Event<D> {
+    fn from(evt: bindings::Cluster::SettingsUpdated) -> Self {
+        Self::SettingsUpdated(settings::Updated {
+            settings: evt.newSettings.into(),
+            cluster_version: evt.clusterVersion,
+        })
+    }
+}
+
+impl<D> From<bindings::Cluster::OwnershipTransferred> for Event<D> {
+    fn from(evt: bindings::Cluster::OwnershipTransferred) -> Self {
+        Self::OwnershipTransferred(ownership::Transferred {
+            new_owner: evt.newOwner.into(),
+            cluster_version: evt.cluserVersion,
+        })
     }
 }
 
@@ -270,7 +461,10 @@ impl From<Keyspace> for bindings::Cluster::Keyspace {
 }
 
 impl Keyspace {
-    fn try_from_alloy(keyspace: &bindings::Cluster::Keyspace, version: u64) -> Result<Self, Error> {
+    fn try_from_alloy(
+        keyspace: &bindings::Cluster::Keyspace,
+        version: u64,
+    ) -> Result<Self, ReadError> {
         let mut operators = HashSet::new();
 
         // TODO: do less iterations
@@ -280,13 +474,12 @@ impl Keyspace {
             }
         }
 
-        let replication_strategy = keyspace
-            .replicationStrategy
-            .try_into()
-            .map_err(|err| Error::Other(format!("Invalid ReplicationStrategy: {err:?}")))?;
+        let replication_strategy = keyspace.replicationStrategy.try_into().map_err(|err| {
+            ReadError::InvalidData(format!("Invalid ReplicationStrategy: {err:?}"))
+        })?;
 
         Self::new(operators, replication_strategy, version)
-            .map_err(|err| Error::Other(format!("Invalid Keyspace: {err:?}")))
+            .map_err(|err| ReadError::InvalidData(format!("Invalid Keyspace: {err:?}")))
     }
 }
 
@@ -316,7 +509,7 @@ impl From<bindings::Cluster::Maintenance> for Option<Maintenance> {
 }
 
 impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator::SerializedData> {
-    type Error = Error;
+    type Error = ReadError;
 
     fn try_from(view: bindings::Cluster::ClusterView) -> Result<Self, Self::Error> {
         let node_operators =
@@ -327,7 +520,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
                     Some(operator.into())
                 }
             }))
-            .map_err(|err| Error::Other(format!("Invalid NodeOperators: {err:?}")))?;
+            .map_err(|err| ReadError::InvalidData(format!("Invalid NodeOperators: {err:?}")))?;
 
         // assert array length
         let _: &[_; 2] = &view.keyspaces;
@@ -345,7 +538,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
             let prev_keyspace_version = view
                 .keyspaceVersion
                 .checked_sub(1)
-                .ok_or_else(|| Error::Other(format!("Invalid keyspace::Version")))?;
+                .ok_or_else(|| ReadError::InvalidData(format!("Invalid keyspace::Version")))?;
 
             let keyspace = try_keyspace(prev_keyspace_version)?;
             let migration_keyspace = try_keyspace(view.keyspaceVersion)?;
@@ -358,10 +551,68 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
             node_operators,
             ownership: Ownership::new(view.owner.into()),
             settings: view.settings.into(),
-            keyspace,
+            keyspace: Arc::new(keyspace),
             migration,
             maintenance: view.maintenance.into(),
             cluster_version: view.version,
         })
+    }
+}
+
+impl From<alloy::contract::Error> for DeploymentError {
+    fn from(err: alloy::contract::Error) -> Self {
+        Self(format!("{err:?}"))
+    }
+}
+
+impl<E: fmt::Debug> From<alloy::transports::RpcError<E>> for WriteError {
+    fn from(err: alloy::transports::RpcError<E>) -> Self {
+        WriteError::Transport(format!("{err:?}"))
+    }
+}
+
+impl<E: fmt::Debug> From<alloy::transports::RpcError<E>> for ReadError {
+    fn from(err: alloy::transports::RpcError<E>) -> Self {
+        ReadError::Transport(format!("{err:?}"))
+    }
+}
+
+impl From<alloy::providers::PendingTransactionError> for WriteError {
+    fn from(err: alloy::providers::PendingTransactionError) -> Self {
+        Self::Other(format!("{err:?}"))
+    }
+}
+
+impl From<alloy::contract::Error> for WriteError {
+    fn from(err: alloy::contract::Error) -> Self {
+        match err {
+            alloy::contract::Error::TransportError(err) => Self::Transport(format!("{err:?}")),
+            _ => Self::Other(format!("{err:?}")),
+        }
+    }
+}
+
+impl From<alloy::contract::Error> for ReadError {
+    fn from(err: alloy::contract::Error) -> Self {
+        match err {
+            alloy::contract::Error::TransportError(err) => Self::Transport(format!("{err:?}")),
+            _ => Self::Other(format!("{err:?}")),
+        }
+    }
+}
+
+impl From<alloy::sol_types::Error> for ReadError {
+    fn from(err: alloy::sol_types::Error) -> Self {
+        ReadError::InvalidData(format!("{err:?}"))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{_0}")]
+pub struct RpcProviderCreationError(String);
+
+impl From<alloy::transports::TransportError> for RpcProviderCreationError {
+    fn from(err: alloy::transports::TransportError) -> Self {
+        Self(format!("alloy transport: {err:?}"))
     }
 }

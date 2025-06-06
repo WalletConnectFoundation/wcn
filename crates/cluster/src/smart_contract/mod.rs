@@ -3,41 +3,49 @@
 pub mod evm;
 
 use {
-    crate::{self as cluster, migration, node_operator, Keyspace, NodeOperators, Settings},
-    alloy::{network::TxSigner as _, signers::local::PrivateKeySigner, transports::http::reqwest},
+    crate::{
+        self as cluster,
+        migration,
+        node_operator,
+        Keyspace,
+        NodeOperators,
+        SerializedEvent,
+        Settings,
+    },
+    alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
     derive_more::derive::{Display, From},
+    futures::Stream,
     serde::{Deserialize, Serialize},
-    std::str::FromStr,
+    std::{future::Future, str::FromStr},
 };
 
+/// Deployer of WCN Cluster [`SmartContract`]s.
+pub trait Deployer<SC> {
+    /// Deploys a new [`SmartContract`].
+    fn deploy(
+        &self,
+        initial_settings: Settings,
+        initial_operators: NodeOperators<node_operator::SerializedData>,
+    ) -> impl Future<Output = Result<SC, DeploymentError>>;
+}
+
+/// Connector to WCN Cluster [`SmartContract`]s.
+pub trait Connector<SC> {
+    /// Connects to an existing [`SmartContract`].
+    fn connect(&self, address: Address) -> impl Future<Output = Result<SC, ConnectionError>>;
+}
+
 /// Smart-contract managing the state of a WCN cluster.
+pub trait SmartContract: Read + Write {}
+
+/// Write [`SmartContract`] calls.
 ///
 /// Logic invariants documented on the methods of this trait MUST be
 /// implemented inside the on-chain implementation of the smart-contract itself.
-pub trait SmartContract: ReadOnlySmartContract {
-    type ReadOnly: ReadOnlySmartContract;
-
-    /// Deploys a new smart-contract.
-    async fn deploy(
-        signer: Signer,
-        rpc_url: RpcUrl,
-        initial_settings: Settings,
-        initial_operators: NodeOperators<node_operator::SerializedData>,
-    ) -> Result<Self>;
-
-    /// Connects to an existing smart-contract.
-    async fn connect(
-        address: Address,
-        signer: Signer,
-        rpc_url: RpcUrl,
-    ) -> Result<Self, ConnectError>;
-
-    /// Connects to an existing smart-contract in read-only mode.
-    async fn connect_ro(address: Address, rpc_url: RpcUrl) -> Result<Self::ReadOnly, ConnectError>;
-
-    /// Returns the [`AccountAddress`] of the [`Signer`] which is currently
-    /// being used for signing transactions of [`SmartContract`] instance.
-    fn signer(&self) -> &AccountAddress;
+// TODO: docs are outdated, revisit
+pub trait Write {
+    /// Returns the [`Signer`] being used to sign transactions.
+    fn signer(&self) -> &Signer;
 
     /// Starts a new data [`migration`] process using the provided
     /// [`migration::Plan`].
@@ -49,7 +57,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   [`SmartContract`]
     ///
     /// The implementation MUST emit [`migration::Started`] event on success.
-    async fn start_migration(&self, new_keyspace: Keyspace) -> Result<()>;
+    fn start_migration(&self, new_keyspace: Keyspace) -> impl Future<Output = WriteResult<()>>;
 
     /// Marks that the [`signer`](SmartContract::signer) has completed the data
     /// pull required for completion of the current [`migration`].
@@ -68,7 +76,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///
     /// The implementation MAY be idempotent. In case of an idempotent
     /// execution the event MUST not be emitted.
-    async fn complete_migration(&self, id: migration::Id) -> Result<()>;
+    fn complete_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
 
     /// Aborts the ongoing data [`migration`] process restoring the WCN cluster
     /// to the original state it had before the migration had started.
@@ -79,7 +87,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   [`SmartContract`]
     ///
     /// The implementation MUST emit [`migration::Aborted`] event on success.
-    async fn abort_migration(&self, id: migration::Id) -> Result<()>;
+    fn abort_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
 
     /// Starts a [`maintenance`] process for the [`node::Operator`] being the
     /// current [`signer`](Manager::signer).
@@ -91,7 +99,7 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   provided [`node::OperatorIdx`]
     ///
     /// The implementation MUST emit [`maintenance::Started`] event on success.
-    async fn start_maintenance(&self) -> Result<()>;
+    fn start_maintenance(&self) -> impl Future<Output = WriteResult<()>>;
 
     /// Completes the ongoing [`maintenance`] process.
     ///
@@ -102,13 +110,13 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///
     /// The implementation MUST emit [`maintenance::Completed`] event on
     /// success.
-    async fn finish_maintenance(&self) -> Result<()>;
+    fn finish_maintenance(&self) -> impl Future<Output = WriteResult<()>>;
 
-    async fn add_node_operator(
+    fn add_node_operator(
         &self,
         idx: node_operator::Idx,
         operator: node_operator::Serialized,
-    ) -> Result<()>;
+    ) -> impl Future<Output = WriteResult<()>>;
 
     /// Updates on-chain data of a [`node::Operator`].
     ///
@@ -117,19 +125,37 @@ pub trait SmartContract: ReadOnlySmartContract {
     ///   provided [`node::OperatorIdx`]
     ///
     /// The implementation MUST emit [`node::OperatorUpdated`] event on success.
-    async fn update_node_operator(&self, operator: node_operator::Serialized) -> Result<()>;
+    fn update_node_operator(
+        &self,
+        operator: node_operator::Serialized,
+    ) -> impl Future<Output = WriteResult<()>>;
 
-    async fn remove_node_operator(&self, id: node_operator::Id) -> Result<()>;
+    fn remove_node_operator(&self, id: node_operator::Id) -> impl Future<Output = WriteResult<()>>;
 
-    async fn update_settings(&self, new_settings: Settings) -> Result<()>;
+    fn update_settings(&self, new_settings: Settings) -> impl Future<Output = WriteResult<()>>;
 
-    async fn transfer_ownership(&self, new_owner: AccountAddress) -> Result<()>;
+    fn transfer_ownership(
+        &self,
+        new_owner: AccountAddress,
+    ) -> impl Future<Output = WriteResult<()>>;
 }
 
-/// Read-only handle to a smart-contract managing the state of a WCN cluster.
-pub trait ReadOnlySmartContract: Sized + Send + Sync + 'static {
-    /// Returns the current [`ClusterView`].
-    async fn cluster_view(&self) -> Result<cluster::View<(), node_operator::SerializedData>>;
+/// Read [`SmartContract`] calls.
+pub trait Read: Sized + Send + Sync + 'static {
+    /// Returns [`Address`] of this [`SmartContract`].
+    fn address(&self) -> Address;
+
+    /// Returns the current [`cluster::View`].
+    fn cluster_view(
+        &self,
+    ) -> impl Future<Output = ReadResult<cluster::View<(), node_operator::SerializedData>>> + Send;
+
+    /// Subscribes to WCN Cluster [`Events`].
+    fn events(
+        &self,
+    ) -> impl Future<
+        Output = ReadResult<impl Stream<Item = ReadResult<SerializedEvent>> + Send + 'static>,
+    > + Send;
 }
 
 /// [`SmartContract`] address.
@@ -141,16 +167,23 @@ pub struct Address(evm::Address);
 pub struct AccountAddress(evm::Address);
 
 /// Transaction signer.
+#[derive(Clone)]
 pub struct Signer {
-    inner: SignerInner,
+    address: AccountAddress,
+    kind: SignerKind,
 }
 
 /// RPC provider URL.
 pub struct RpcUrl(reqwest::Url);
 
-/// Error of [`SmartContract::connect`] and [`SmartContract::connect_ro`].
+/// Error of [`Deployer::deploy`].
 #[derive(Debug, thiserror::Error)]
-pub enum ConnectError {
+#[error("{_0}")]
+pub struct DeploymentError(String);
+
+/// Error of [`Connector::connect`].
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectionError {
     #[error("Smart-contract with the provided address doesn't exist")]
     UnknownContract,
 
@@ -161,43 +194,58 @@ pub enum ConnectError {
     Other(String),
 }
 
-/// [`SmartContract`] error.
+/// [`Write`] error.
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Revert: {0}")]
+pub enum WriteError {
+    #[error("Transport: {0}")]
+    Transport(String),
+
+    #[error("Transaction reverted: {0}")]
     Revert(String),
 
     #[error("Other: {0}")]
     Other(String),
 }
 
-/// [`ReadOnlySmartContract`] error.
+/// [`Read`] error.
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct ReadError(String);
 
-/// [`SmartContract`] result.
-pub type Result<T, E = Error> = std::result::Result<T, E>;
+pub enum ReadError {
+    #[error("Transport: {0}")]
+    Transport(String),
 
-/// [`ReadOnlySmartContract`] result.
-pub type ReadResult<T, E = ReadError> = std::result::Result<T, E>;
+    #[error("Invalid data: {0}")]
+    InvalidData(String),
+
+    #[error("Other: {0}")]
+    Other(String),
+}
+
+/// [`Write`] result.
+pub type WriteResult<T> = std::result::Result<T, WriteError>;
+
+/// [`Read`] result.
+pub type ReadResult<T> = std::result::Result<T, ReadError>;
 
 impl Signer {
     pub fn try_from_private_key(hex: &str) -> Result<Self, InvalidPrivateKeyError> {
-        PrivateKeySigner::from_str(hex)
-            .map(SignerInner::PrivateKey)
-            .map(|inner| Self { inner })
-            .map_err(|err| InvalidPrivateKeyError(err.to_string()))
+        let private_key = PrivateKeySigner::from_str(hex)
+            .map_err(|err| InvalidPrivateKeyError(err.to_string()))?;
+
+        Ok(Self {
+            address: AccountAddress(private_key.address()),
+            kind: SignerKind::PrivateKey(private_key),
+        })
     }
 
-    pub fn address(&self) -> AccountAddress {
-        match &self.inner {
-            SignerInner::PrivateKey(key) => AccountAddress(key.address()),
-        }
+    /// Returns [`AccountAddress`] of this [`Signer`].
+    pub fn address(&self) -> &AccountAddress {
+        &self.address
     }
 }
 
-enum SignerInner {
+#[derive(Clone)]
+enum SignerKind {
     PrivateKey(PrivateKeySigner),
 }
 
@@ -246,3 +294,5 @@ impl FromStr for Address {
             .map_err(|err| InvalidAddressError(err.to_string()))
     }
 }
+
+impl<SC> SmartContract for SC where SC: Read + Write {}

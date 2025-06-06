@@ -83,24 +83,13 @@ impl<Data> NodeOperators<Data> {
     }
 
     /// Gets an [`NodeOperator`] by [`Id`].
-    pub(super) fn get(&self, id: &node_operator::Id) -> Option<&NodeOperator<Data>> {
+    pub fn get(&self, id: &node_operator::Id) -> Option<&NodeOperator<Data>> {
         self.get_by_idx(self.get_idx(id)?)
-    }
-
-    /// Gets a mutable reference to a [`NodeOperator`] [`Data`].
-    pub(super) fn get_data_mut(&mut self, id: &node_operator::Id) -> Option<&mut Data> {
-        self.get_by_idx_mut(self.get_idx(id)?)
-            .map(|operator| &mut operator.data)
     }
 
     /// Gets an [`NodeOperator`] by [`Idx`].
     pub(super) fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&NodeOperator<Data>> {
         self.slots.get(idx as usize)?.as_ref()
-    }
-
-    /// Mutable version of [`NodeOperators::get_by_idx`].
-    fn get_by_idx_mut(&mut self, idx: node_operator::Idx) -> Option<&mut NodeOperator<Data>> {
-        self.slots.get_mut(idx as usize)?.as_mut()
     }
 
     /// Gets an [`Idx`] by [`Id`].

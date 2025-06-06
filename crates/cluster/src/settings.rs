@@ -9,6 +9,7 @@ pub struct Settings {
 }
 
 /// Event of [`Settings`] being updated.
+#[derive(Debug)]
 pub struct Updated {
     /// Updated [`Settings`].
     pub settings: Settings,

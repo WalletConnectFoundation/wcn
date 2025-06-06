@@ -10,6 +10,7 @@ use {
         node_operators,
         ownership,
         settings,
+        smart_contract,
         Event,
         Keyspace,
         Maintenance,
@@ -19,16 +20,18 @@ use {
         Settings,
     },
     futures::future::OptionFuture,
+    std::sync::Arc,
 };
 
 /// Read-only view of a WCN cluster.
+#[derive(Clone)]
 pub struct View<Shards = (), OperatorData = node_operator::Data> {
     pub(super) node_operators: NodeOperators<OperatorData>,
 
     pub(super) ownership: Ownership,
     pub(super) settings: Settings,
 
-    pub(super) keyspace: Keyspace<Shards>,
+    pub(super) keyspace: Arc<Keyspace<Shards>>,
     pub(super) migration: Option<Migration<Shards>>,
     pub(super) maintenance: Option<Maintenance>,
 
@@ -36,6 +39,13 @@ pub struct View<Shards = (), OperatorData = node_operator::Data> {
 }
 
 impl<Shards> View<Shards> {
+    pub(super) async fn fetch(contract: &impl smart_contract::Read) -> Result<View, FetchError>
+    where
+        Keyspace: keyspace::sealed::Calculate<Shards>,
+    {
+        Ok(contract.cluster_view().await?.deserialize()?)
+    }
+
     /// Returns [`Ownership`] of the WCN cluster.
     pub fn ownership(&self) -> &Ownership {
         &self.ownership
@@ -125,17 +135,20 @@ impl<Shards> View<Shards> {
 }
 
 impl View {
-    pub(super) async fn calculate_keyspace_shards(self) -> View<keyspace::Shards> {
+    pub(super) async fn calculate_keyspace<Shards>(self) -> View<Shards>
+    where
+        Keyspace: keyspace::sealed::Calculate<Shards>,
+    {
         let (keyspace, migration) = tokio::join!(
-            self.keyspace.calculate_shards(),
-            OptionFuture::from(self.migration.map(Migration::calculate_keyspace_shards))
+            (*self.keyspace).clone().calculate(),
+            OptionFuture::from(self.migration.map(Migration::calculate_keyspace))
         );
 
         View {
             node_operators: self.node_operators,
             ownership: self.ownership,
             settings: self.settings,
-            keyspace,
+            keyspace: Arc::new(keyspace),
             migration,
             maintenance: self.maintenance,
             cluster_version: self.cluster_version,
@@ -170,7 +183,7 @@ impl migration::Started {
 
         view.migration = Some(Migration::new(
             self.migration_id,
-            self.new_keyspace.calculate_shards().await,
+            self.new_keyspace.calculate().await,
             view.node_operators.occupied_indexes(),
         ));
 
@@ -325,3 +338,13 @@ pub enum Error {
 
 /// Result of [`View::apply_event`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Error of fetching [`View`] from a [`smart_contract`].
+#[derive(Debug, thiserror::Error)]
+pub enum FetchError {
+    #[error(transparent)]
+    DataDeserialization(#[from] node_operator::DataDeserializationError),
+
+    #[error("Smart-contract: {0}")]
+    SmartContractRead(#[from] smart_contract::ReadError),
+}

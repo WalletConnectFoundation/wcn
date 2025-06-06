@@ -1,8 +1,12 @@
+//! WalletConnect Network Cluster.
+
 use {
     arc_swap::ArcSwap,
+    futures::Stream,
     itertools::Itertools,
     smart_contract::evm,
     std::{collections::HashSet, sync::Arc},
+    tokio::sync::watch,
 };
 
 pub mod smart_contract;
@@ -38,6 +42,9 @@ pub use migration::Migration;
 pub mod maintenance;
 pub use maintenance::Maintenance;
 
+mod task;
+use task::Task;
+
 /// Maximum number of [`NodeOperator`]s within a WCN [`Cluster`].
 pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;
 
@@ -50,9 +57,15 @@ pub const MIN_OPERATORS: usize = keyspace::REPLICATION_FACTOR;
 ///
 /// Performs preliminary invariant validation before calling the actual
 /// [`SmartContract`] methods.
-pub struct Cluster<SC = evm::SmartContractRO, Shards = ()> {
+pub struct Cluster<SC = evm::SmartContract, Shards = ()> {
+    inner: Arc<Inner<SC, Shards>>,
+    _task_guard: Arc<task::Guard>,
+}
+
+struct Inner<SC, Shards> {
     smart_contract: SC,
-    view: ArcSwap<Arc<View<Shards>>>,
+    view: ArcSwap<View<Shards>>,
+    watch: watch::Receiver<()>,
 }
 
 /// Version of a WCN [`Cluster`].
@@ -64,7 +77,8 @@ pub struct Cluster<SC = evm::SmartContractRO, Shards = ()> {
 pub type Version = u128;
 
 /// Events happening within a WCN [`Cluster`].
-pub enum Event {
+#[derive(Debug)]
+pub enum Event<D = node_operator::Data> {
     /// [`Migration`] has started.
     MigrationStarted(migration::Started),
 
@@ -84,10 +98,10 @@ pub enum Event {
     MaintenanceFinished(maintenance::Finished),
 
     /// [`NodeOperator`] has been updated.
-    NodeOperatorAdded(node_operator::Added),
+    NodeOperatorAdded(node_operator::Added<D>),
 
     /// [`NodeOperator`] has been updated.
-    NodeOperatorUpdated(node_operator::Updated),
+    NodeOperatorUpdated(node_operator::Updated<D>),
 
     /// [`NodeOperator`] has been removed.
     NodeOperatorRemoved(node_operator::Removed),
@@ -99,11 +113,18 @@ pub enum Event {
     OwnershipTransferred(ownership::Transferred),
 }
 
-impl<SC: SmartContract> Cluster<SC> {
+/// [`Event`] with [`node_operator::SerializedData`].
+pub type SerializedEvent = Event<node_operator::SerializedData>;
+
+impl<SC, Shards> Cluster<SC, Shards>
+where
+    SC: smart_contract::Read,
+    Shards: Clone + Send + Sync + 'static,
+    Keyspace: keyspace::sealed::Calculate<Shards>,
+{
     /// Deploys a new WCN [`Cluster`].
     pub async fn deploy(
-        signer: smart_contract::Signer,
-        rpc_url: smart_contract::RpcUrl,
+        deployer: &impl smart_contract::Deployer<SC>,
         initial_settings: Settings,
         initial_operators: Vec<NodeOperator>,
     ) -> Result<Self, DeploymentError> {
@@ -118,29 +139,70 @@ impl<SC: SmartContract> Cluster<SC> {
 
         let operators = NodeOperators::new(operators.into_iter().map(Some))?;
 
-        let contract = SC::deploy(signer, rpc_url, initial_settings, operators).await?;
+        let contract = deployer.deploy(initial_settings, operators).await?;
 
-        let view = contract.cluster_view().await?.deserialize()?;
-
-        Ok(Self {
-            smart_contract: contract,
-            view: ArcSwap::new(Arc::new(Arc::new(view))),
-        })
+        Self::new(contract).await.map_err(Into::into)
     }
 
     /// Connects to an existing WCN [`Cluster`].
     pub async fn connect(
-        smart_contract_address: smart_contract::Address,
-        signer: smart_contract::Signer,
-        rpc_url: smart_contract::RpcUrl,
-    ) -> Result<Self, ConnectError> {
-        let contract = SC::connect(smart_contract_address, signer, rpc_url).await?;
-        let view = contract.cluster_view().await?.deserialize()?;
+        connector: &impl smart_contract::Connector<SC>,
+        contract_address: smart_contract::Address,
+    ) -> Result<Self, ConnectionError> {
+        let contract = connector.connect(contract_address).await?;
+        Self::new(contract).await.map_err(Into::into)
+    }
+
+    async fn new(contract: SC) -> Result<Self, view::FetchError> {
+        let events = contract.events().await?;
+        let view = View::fetch(&contract).await?.calculate_keyspace().await;
+
+        let (tx, rx) = watch::channel(());
+        let inner = Arc::new(Inner {
+            smart_contract: contract,
+            view: ArcSwap::new(Arc::new(view)),
+            watch: rx,
+        });
+
+        let guard = Task {
+            initial_events: Some(events),
+            inner: inner.clone(),
+            watch: tx,
+        }
+        .spawn();
 
         Ok(Self {
-            smart_contract: contract,
-            view: ArcSwap::new(Arc::new(Arc::new(view))),
+            inner,
+            _task_guard: Arc::new(guard),
         })
+    }
+}
+
+impl<SC, Shards> Cluster<SC, Shards> {
+    /// Passes the current [`cluster::View`] into the provided closure.
+    ///
+    /// More efficient than calling [`Cluster::view`].
+    pub fn using_view<T>(&self, f: impl FnOnce(&View<Shards>) -> T) -> T {
+        f(&self.inner.view.load())
+    }
+
+    /// Returns the current [`cluster::View`].
+    pub fn view(&self) -> Arc<View<Shards>> {
+        self.inner.view.load_full()
+    }
+
+    /// Returns a [`Stream`] that emits an item each time a [`Cluster`] update
+    /// occurs.
+    ///
+    /// Caller is expected to use [`Cluster::using_view`] or [`Cluster::view`]
+    /// to see the updated state.
+    pub fn updates(&self) -> impl Stream<Item = ()> + Send + 'static {
+        tokio_stream::wrappers::WatchStream::new(self.inner.watch.clone())
+    }
+
+    /// Returns reference to the underlying [`SmartContract`].
+    pub fn smart_contract(&self) -> &SC {
+        &self.inner.smart_contract
     }
 }
 
@@ -149,7 +211,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
     /// calls [`SmartContract::start_migration`].
     pub async fn start_migration(&self, plan: migration::Plan) -> Result<(), StartMigrationError> {
         let new_keyspace = self.using_view(move |view| {
-            view.ownership().require_owner(&self.smart_contract)?;
+            view.ownership().require_owner(&self.inner.smart_contract)?;
             view.require_no_migration()?;
             view.require_no_maintenance()?;
 
@@ -189,7 +251,10 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok(new_keyspace)
         })?;
 
-        self.smart_contract.start_migration(new_keyspace).await?;
+        self.inner
+            .smart_contract
+            .start_migration(new_keyspace)
+            .await?;
 
         Ok(())
     }
@@ -202,7 +267,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
         self.using_view(|view| {
             let operator_idx = view
                 .node_operators()
-                .require_idx(self.smart_contract.signer())?;
+                .require_idx(self.inner.smart_contract.signer().address())?;
 
             view.require_migration()?
                 .require_id(id)?
@@ -211,7 +276,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok::<_, CompleteMigrationError>(())
         })?;
 
-        self.smart_contract.complete_migration(id).await?;
+        self.inner.smart_contract.complete_migration(id).await?;
 
         Ok(())
     }
@@ -219,13 +284,14 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
     /// Calls [`SmartContract::abort_migration`].
     pub async fn abort_migration(&self, id: migration::Id) -> Result<(), AbortMigrationError> {
         self.using_view(|view| {
-            view.ownership().require_owner(&self.smart_contract)?;
+            view.ownership().require_owner(&self.inner.smart_contract)?;
             view.require_migration()?.require_id(id)?;
 
             Ok::<_, AbortMigrationError>(())
         })?;
 
-        self.smart_contract
+        self.inner
+            .smart_contract
             .abort_migration(id)
             .await
             .map_err(Into::into)
@@ -233,7 +299,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
 
     /// Calls [`SmartContract::start_maintenance`].
     pub async fn start_maintenance(&self) -> Result<(), StartMaintenanceError> {
-        let signer = self.smart_contract.signer();
+        let signer = self.inner.smart_contract.signer().address();
 
         self.using_view(move |view| {
             if !(view.node_operators().contains(signer) || view.ownership().is_owner(signer)) {
@@ -246,14 +312,14 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok::<_, StartMaintenanceError>(())
         })?;
 
-        self.smart_contract.start_maintenance().await?;
+        self.inner.smart_contract.start_maintenance().await?;
 
         Ok(())
     }
 
     /// Calls [`SmartContract::finish_maintenance`].
     pub async fn finish_maintenance(&self) -> Result<(), FinishMaintenanceError> {
-        let signer = self.smart_contract.signer();
+        let signer = self.inner.smart_contract.signer().address();
 
         self.using_view(|view| {
             let maintenance = view.require_maintenance()?;
@@ -265,7 +331,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok(())
         })?;
 
-        self.smart_contract.finish_maintenance().await?;
+        self.inner.smart_contract.finish_maintenance().await?;
 
         Ok(())
     }
@@ -277,7 +343,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
         operator: NodeOperator,
     ) -> Result<(), AddNodeOperatorError> {
         let operator = self.using_view(|view| {
-            view.ownership().require_owner(&self.smart_contract)?;
+            view.ownership().require_owner(&self.inner.smart_contract)?;
             view.node_operators().require_not_exists(&operator.id)?;
             view.node_operators().require_free_slot(idx)?;
 
@@ -287,7 +353,10 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok::<_, AddNodeOperatorError>(operator)
         })?;
 
-        self.smart_contract.add_node_operator(idx, operator).await?;
+        self.inner
+            .smart_contract
+            .add_node_operator(idx, operator)
+            .await?;
 
         Ok(())
     }
@@ -297,7 +366,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
         &self,
         operator: NodeOperator,
     ) -> Result<(), UpdateNodeOperatorError> {
-        let signer = self.smart_contract.signer();
+        let signer = self.inner.smart_contract.signer().address();
 
         let operator = self.using_view(|view| {
             if !(signer == &operator.id || view.ownership().is_owner(signer)) {
@@ -312,7 +381,10 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok::<_, UpdateNodeOperatorError>(operator)
         })?;
 
-        self.smart_contract.update_node_operator(operator).await?;
+        self.inner
+            .smart_contract
+            .update_node_operator(operator)
+            .await?;
 
         Ok(())
     }
@@ -338,13 +410,36 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
             Ok::<_, RemoveNodeOperatorError>(())
         })?;
 
-        self.smart_contract.remove_node_operator(id).await?;
+        self.inner.smart_contract.remove_node_operator(id).await?;
 
         Ok(())
     }
 
-    fn using_view<T>(&self, f: impl FnOnce(&View<Shards>) -> T) -> T {
-        f(&self.view.load())
+    /// Calls [`SmartContract::update_settings`].
+    pub async fn update_settings(&self, new_settings: Settings) -> Result<(), UpdateSettingsError> {
+        self.using_view(move |view| view.ownership().require_owner(&self.inner.smart_contract))?;
+
+        self.inner
+            .smart_contract
+            .update_settings(new_settings)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Calls [`SmartContract::transfer_ownership`].
+    pub async fn transfer_ownership(
+        &self,
+        new_owner: smart_contract::AccountAddress,
+    ) -> Result<(), TransferOwnershipError> {
+        self.using_view(move |view| view.ownership().require_owner(&self.inner.smart_contract))?;
+
+        self.inner
+            .smart_contract
+            .transfer_ownership(new_owner)
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -363,21 +458,21 @@ pub enum DeploymentError {
     #[error(transparent)]
     DataTooLarge(#[from] node_operator::DataTooLargeError),
 
+    #[error(transparent)]
+    FetchView(#[from] view::FetchError),
+
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::DeploymentError),
 }
 
 /// [`Cluster::connect`] error.
 #[derive(Debug, thiserror::Error)]
-pub enum ConnectError {
+pub enum ConnectionError {
     #[error(transparent)]
-    SmartContract(#[from] smart_contract::ConnectError),
+    SmartContract(#[from] smart_contract::ConnectionError),
 
     #[error(transparent)]
-    GetClusterView(#[from] smart_contract::Error),
-
-    #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
+    FetchView(#[from] view::FetchError),
 }
 
 /// [`Cluster::start_migration`] error.
@@ -408,7 +503,7 @@ pub enum StartMigrationError {
     SameKeyspace(#[from] keyspace::SameKeyspaceError),
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::complete_migration`] error.
@@ -427,7 +522,7 @@ pub enum CompleteMigrationError {
     OperatorNotPulling(#[from] migration::OperatorNotPullingError),
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::abort_migration`] error.
@@ -443,7 +538,7 @@ pub enum AbortMigrationError {
     WrongMigrationId(#[from] migration::WrongIdError),
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::start_maintenance`] error.
@@ -459,7 +554,7 @@ pub enum StartMaintenanceError {
     MaintenanceInProgress(#[from] maintenance::InProgressError),
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::finish_maintenance`] error.
@@ -472,7 +567,7 @@ pub enum FinishMaintenanceError {
     Unauthorized,
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::add_node_operator`] error.
@@ -494,7 +589,7 @@ pub enum AddNodeOperatorError {
     DataTooLarge(#[from] node_operator::DataTooLargeError),
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::update_node_operator`] error.
@@ -513,7 +608,7 @@ pub enum UpdateNodeOperatorError {
     DataTooLarge(#[from] node_operator::DataTooLargeError),
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 /// [`Cluster::remove_node_operator`] error.
@@ -529,7 +624,27 @@ pub enum RemoveNodeOperatorError {
     InKeyspace,
 
     #[error("Smart-contract: {0}")]
-    SmartContract(#[from] smart_contract::Error),
+    SmartContract(#[from] smart_contract::WriteError),
+}
+
+/// [`Cluster::update_settings`] error.
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateSettingsError {
+    #[error(transparent)]
+    NotOwner(#[from] ownership::NotOwnerError),
+
+    #[error("Smart-contract: {0}")]
+    SmartContract(#[from] smart_contract::WriteError),
+}
+
+/// [`Cluster::transfer_ownership`] error.
+#[derive(Debug, thiserror::Error)]
+pub enum TransferOwnershipError {
+    #[error(transparent)]
+    NotOwner(#[from] ownership::NotOwnerError),
+
+    #[error("Smart-contract: {0}")]
+    SmartContract(#[from] smart_contract::WriteError),
 }
 
 impl Event {
@@ -547,5 +662,23 @@ impl Event {
             Event::SettingsUpdated(evt) => evt.cluster_version,
             Event::OwnershipTransferred(evt) => evt.cluster_version,
         }
+    }
+}
+
+impl SerializedEvent {
+    fn deserialize(self) -> Result<Event, node_operator::DataDeserializationError> {
+        Ok(match self {
+            Event::MigrationStarted(evt) => Event::MigrationStarted(evt),
+            Event::MigrationDataPullCompleted(evt) => Event::MigrationDataPullCompleted(evt),
+            Event::MigrationCompleted(evt) => Event::MigrationCompleted(evt),
+            Event::MigrationAborted(evt) => Event::MigrationAborted(evt),
+            Event::MaintenanceStarted(evt) => Event::MaintenanceStarted(evt),
+            Event::MaintenanceFinished(evt) => Event::MaintenanceFinished(evt),
+            Event::NodeOperatorAdded(evt) => Event::NodeOperatorAdded(evt.deserialize()?),
+            Event::NodeOperatorUpdated(evt) => Event::NodeOperatorUpdated(evt.deserialize()?),
+            Event::NodeOperatorRemoved(evt) => Event::NodeOperatorRemoved(evt),
+            Event::SettingsUpdated(evt) => Event::SettingsUpdated(evt),
+            Event::OwnershipTransferred(evt) => Event::OwnershipTransferred(evt),
+        })
     }
 }

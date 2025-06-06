@@ -79,28 +79,50 @@ pub struct NodeOperator<D = Data> {
 }
 
 /// Event of a new [`NodeOperator`] being added to a WCN cluster.
-pub struct Added {
+#[derive(Debug)]
+pub struct Added<D = Data> {
     /// [`Idx`] in the [`NodeOperators`] slot map the [`NodeOperator`] is being
     /// placed to.
     pub idx: Idx,
 
     /// [`NodeOperator`] being added.
-    pub operator: NodeOperator,
+    pub operator: NodeOperator<D>,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
+}
+
+impl Added<SerializedData> {
+    pub(super) fn deserialize(self) -> Result<Added, DataDeserializationError> {
+        Ok(Added {
+            idx: self.idx,
+            operator: self.operator.deserialize()?,
+            cluster_version: self.cluster_version,
+        })
+    }
 }
 
 /// Event of a [`NodeOperator`] being updated.
-pub struct Updated {
+#[derive(Debug)]
+pub struct Updated<D = Data> {
     /// Updated [`NodeOperator`].
-    pub operator: NodeOperator,
+    pub operator: NodeOperator<D>,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
 }
 
+impl Updated<SerializedData> {
+    pub(super) fn deserialize(self) -> Result<Updated, DataDeserializationError> {
+        Ok(Updated {
+            operator: self.operator.deserialize()?,
+            cluster_version: self.cluster_version,
+        })
+    }
+}
+
 /// Event of a [`NodeOperator`] being removed from a WCN cluster.
+#[derive(Debug)]
 pub struct Removed {
     /// [`Id`] of the [`NodeOperator`] being removed.
     pub id: Id,

@@ -10,6 +10,7 @@ use {
 ///
 /// The IP address is currently being encrypted using a format-preserving
 /// encryption algorithm.
+// TODO: encrypt
 #[derive(Debug, Clone, Copy)]
 pub struct Node {
     /// [`PeerId`] of the [`Node`].
@@ -20,18 +21,6 @@ pub struct Node {
 
     /// [`SocketAddrV4`] of the [`Node`].
     pub addr: SocketAddrV4,
-}
-
-impl Node {
-    pub(super) fn encrypt(&mut self) {
-        // TODO
-    }
-
-    pub(super) fn decrypt(&mut self) {
-        // TODO
-        // FF1::new(key, radix);
-        // let fpe_ff = FF1::<Aes256>::new(&[0; 32], 256).unwrap();
-    }
 }
 
 // NOTE: The on-chain serialization is non self-describing! Every change to

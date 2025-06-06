@@ -26,6 +26,7 @@ derive_more = { version = "1.0.0", features = [
     "try_into",
     "deref",
 ] }
+derivative = "2"
 core = { package = "wcn_core", path = "crates/core" }
 auth = { package = "wcn_auth", path = "crates/auth" }
 domain = { package = "wcn_domain", path = "crates/domain" }
@@ -46,11 +47,14 @@ wcn_rpc = { path = "crates/rpc" }
 relay_rocks = { path = "crates/rocks" }
 metrics = "0.23"
 time = "0.3"
-libp2p = { version = "0.54", default-features = false, features = ["serde"] }
+libp2p = { version = "0.55", default-features = false, features = ["serde"] }
 tokio-serde = { git = "https://github.com/xDarksome/tokio-serde.git", rev = "6df9ff9" }
 tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcard.git", rev = "5e1b77a" }
 itertools = "0.12"
 futures = "0.3"
+backoff = { version = "0.4", features = ["tokio"] }
+tracing = "0.1"
+tokio-stream = "0.1"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

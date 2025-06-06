@@ -6,6 +6,7 @@ use crate::{smart_contract, SmartContract, Version as ClusterVersion};
 ///
 /// Cluster has a single owner, and some [`smart_contract`] methods are
 /// resticted to be executed only by the owner.
+#[derive(Clone)]
 pub struct Ownership {
     owner: smart_contract::AccountAddress,
 }
@@ -23,7 +24,7 @@ impl Ownership {
         &self,
         smart_contract: &impl SmartContract,
     ) -> Result<(), NotOwnerError> {
-        if !self.is_owner(smart_contract.signer()) {
+        if !self.is_owner(smart_contract.signer().address()) {
             return Err(NotOwnerError);
         }
 
@@ -36,6 +37,7 @@ impl Ownership {
 }
 
 /// Event of [`Ownership`] being transferred.
+#[derive(Debug)]
 pub struct Transferred {
     /// New owner of the WCN cluster.
     pub new_owner: smart_contract::AccountAddress,

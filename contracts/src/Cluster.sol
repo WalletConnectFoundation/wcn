@@ -7,7 +7,7 @@ struct Settings {
     uint16 maxOperatorDataBytes;
 }
 
-event MigrationStarted(uint64 id, Keyspace newKeyspace, uint128 clusterVersion);
+event MigrationStarted(uint64 id, Keyspace newKeyspace, uint64 newKeyspaceVersion, uint128 clusterVersion);
 event MigrationDataPullCompleted(uint64 id, address operatorAddress, uint128 clusterVersion);
 event MigrationCompleted(uint64 id, address operatorAddress, uint128 clusterVersion);
 event MigrationAborted(uint64 id, uint128 clusterVersion);
@@ -102,7 +102,7 @@ contract Cluster {
         migration.pullingOperatorsBitmask = newKeyspace.operatorsBitmask;
 
         version++;
-        emit MigrationStarted(migration.id, newKeyspace, version);
+        emit MigrationStarted(migration.id, newKeyspace, keyspaceVersion, version);
     }
 
     function completeMigration(uint64 id) external hasMigration {

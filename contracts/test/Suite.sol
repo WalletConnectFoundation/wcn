@@ -269,7 +269,7 @@ contract ClusterTest is Test {
     function test_startMigrationEmitsMigrationStartedEvent() public {
         Keyspace memory keyspace = newKeyspace("01111");
         vm.expectEmit();
-        emit MigrationStarted(1, keyspace, 1);
+        emit MigrationStarted(1, keyspace, 1, 1);
         startMigration(OWNER, keyspace);
     }
 

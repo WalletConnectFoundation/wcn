@@ -4,6 +4,7 @@ use crate::{node_operator, Version as ClusterVersion};
 ///
 /// Only a single [`node_operator`] at a time is allowed to be under
 /// maintenance.
+#[derive(Clone)]
 pub struct Maintenance {
     slot: node_operator::Id,
 }
@@ -20,6 +21,7 @@ impl Maintenance {
 }
 
 /// [`Maintenance`] has started.
+#[derive(Debug)]
 pub struct Started {
     /// ID of the [`node_operator`] that started the [`Maintenance`].
     pub operator_id: node_operator::Id,
@@ -29,6 +31,7 @@ pub struct Started {
 }
 
 /// [`Maintenance`] has been finished.
+#[derive(Debug)]
 pub struct Finished {
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,

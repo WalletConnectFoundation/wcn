@@ -5,16 +5,17 @@ use {
         Keyspace,
         Version as ClusterVersion,
     },
-    std::collections::HashSet,
+    std::{collections::HashSet, sync::Arc},
 };
 
 /// Identifier of a [`Migration`].
 pub type Id = u64;
 
 /// Data migration process within a WCN cluster.
+#[derive(Clone)]
 pub struct Migration<Shards = ()> {
     id: Id,
-    keyspace: Keyspace<Shards>,
+    keyspace: Arc<Keyspace<Shards>>,
     pulling_operators: HashSet<node_operator::Idx>,
 }
 
@@ -39,7 +40,7 @@ impl<Shards> Migration<Shards> {
     ) -> Self {
         Self {
             id,
-            keyspace,
+            keyspace: Arc::new(keyspace),
             pulling_operators: pulling_operators.into_iter().collect(),
         }
     }
@@ -59,7 +60,7 @@ impl<Shards> Migration<Shards> {
     //     &mut self.keyspace
     // }
 
-    pub(super) fn into_keyspace(self) -> Keyspace<Shards> {
+    pub(super) fn into_keyspace(self) -> Arc<Keyspace<Shards>> {
         self.keyspace
     }
 
@@ -67,10 +68,6 @@ impl<Shards> Migration<Shards> {
     /// pulling the data.
     pub fn is_pulling(&self, idx: node_operator::Idx) -> bool {
         self.pulling_operators.contains(&idx)
-    }
-
-    pub(crate) fn pulling_operators_count(&self) -> usize {
-        self.pulling_operators.len()
     }
 
     pub(crate) fn complete_pull(&mut self, idx: node_operator::Idx) {
@@ -110,16 +107,20 @@ impl<Shards> Migration<Shards> {
 }
 
 impl Migration {
-    pub(crate) async fn calculate_keyspace_shards(self) -> Migration<keyspace::Shards> {
+    pub(crate) async fn calculate_keyspace<Shards>(self) -> Migration<Shards>
+    where
+        Keyspace: keyspace::sealed::Calculate<Shards>,
+    {
         Migration {
             id: self.id,
-            keyspace: self.keyspace.calculate_shards().await,
+            keyspace: Arc::new((*self.keyspace).clone().calculate().await),
             pulling_operators: self.pulling_operators,
         }
     }
 }
 
 /// [`Migration`] has started.
+#[derive(Debug)]
 pub struct Started {
     /// [`Id`] of the [`Migration`] being started.
     pub migration_id: Id,
@@ -132,6 +133,7 @@ pub struct Started {
 }
 
 /// [`NodeOperator`](crate::NodeOperator) has completed the data pull.
+#[derive(Debug)]
 pub struct DataPullCompleted {
     /// [`Id`] of the [`Migration`].
     pub migration_id: Id,
@@ -144,6 +146,7 @@ pub struct DataPullCompleted {
 }
 
 /// [`Migration`] has been completed.
+#[derive(Debug)]
 pub struct Completed {
     /// [`Id`] of the completed [`Migration`].
     pub migration_id: Id,
@@ -156,6 +159,7 @@ pub struct Completed {
 }
 
 /// [`Migration`] has been aborted.
+#[derive(Debug)]
 pub struct Aborted {
     /// [`Id`] of the [`Migration`].
     pub migration_id: Id,

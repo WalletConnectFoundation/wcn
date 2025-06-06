@@ -1,5 +1,6 @@
 use {
     crate::node_operator::{self},
+    derivative::Derivative,
     derive_more::TryFrom,
     sharding::ShardId,
     std::collections::HashSet,
@@ -16,9 +17,14 @@ pub const REPLICATION_FACTOR: usize = 5;
 ///
 /// [`Keyspace`] is being split into a set of equally sized [`Shards`],
 /// and each [`Shard`] is being assigned to a set of [`node_operator`]s.
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub struct Keyspace<S = ()> {
     operators: HashSet<node_operator::Idx>,
+
+    #[derivative(Debug = "ignore")]
     shards: S,
+
     replication_strategy: ReplicationStrategy,
 
     version: u64,
@@ -72,7 +78,7 @@ impl Keyspace {
         })
     }
 
-    pub(crate) async fn calculate_shards<Shards>(self) -> Keyspace<Shards>
+    pub(crate) async fn calculate<Shards>(self) -> Keyspace<Shards>
     where
         Self: sealed::Calculate<Shards>,
     {
@@ -141,6 +147,8 @@ pub enum CreationError {
 pub struct SameKeyspaceError;
 
 pub(crate) mod sealed {
+    use std::future::Future;
+
     #[allow(unused_imports)]
     use super::*;
 
@@ -151,7 +159,7 @@ pub(crate) mod sealed {
         /// It's highly CPU intensive task (order of seconds), so the task is
         /// being [spawned](tokio::task::spawn_blocking) to the
         /// [`tokio`] threadpool.
-        async fn calculate_shards(self) -> Keyspace<Shards>;
+        fn calculate_shards(self) -> impl Future<Output = Keyspace<Shards>> + Send;
     }
 }
 

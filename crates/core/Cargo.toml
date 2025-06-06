@@ -26,7 +26,6 @@ derive_more = { workspace = true, features = ["as_ref", "display", "from", "try_
 futures = "0.3"
 dashmap = "5.4"
 tap = "1.0"
-async-trait = "0.1"
 bitflags = { version = "2.3", default-features = false, features = ["serde"] }
 chrono = { version = "0.4", default-features = false, features = [
     "alloc",

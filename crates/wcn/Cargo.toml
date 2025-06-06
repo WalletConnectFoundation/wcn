@@ -45,14 +45,5 @@ pidlock = "0.1"
 nix = { version = "0.28", default-features = false, features = ["signal"] }
 fork = "0.1"
 
-
-# Smart Contract Integration
-alloy = { git = "https://github.com/alloy-rs/alloy", features = [
-    "contract",
-    "providers",
-    "provider-http",
-    "signer-mnemonic",
-] }
-
 [lints]
 workspace = true

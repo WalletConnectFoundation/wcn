@@ -43,24 +43,22 @@ where
     }
 
     async fn run(mut self) {
-        loop {
-            // apply initial events until they finish / first error
-            if let Some(events) = self.initial_events.take() {
-                match self.apply_events(events).await {
-                    Ok(()) => tracing::warn!("Initial event stream finished"),
-                    Err(err) => tracing::error!(%err, "Failed to apply initial events"),
-                }
+        // apply initial events until they finish / first error
+        if let Some(events) = self.initial_events.take() {
+            match self.apply_events(events).await {
+                Ok(()) => tracing::warn!("Initial event stream finished"),
+                Err(err) => tracing::error!(%err, "Failed to apply initial events"),
             }
+        }
 
-            loop {
-                // when we fail for whatever reason - subscribe again and refetch the whole
-                // state
-                match self.update_view().await {
-                    Ok(()) => tracing::warn!("Event stream finished"),
-                    Err(err) => {
-                        tracing::error!(%err, "Failed to update cluster::View");
-                        tokio::time::sleep(Duration::from_secs(60)).await;
-                    }
+        loop {
+            // when we fail for whatever reason - subscribe again and refetch the whole
+            // state
+            match self.update_view().await {
+                Ok(()) => tracing::warn!("Event stream finished"),
+                Err(err) => {
+                    tracing::error!(%err, "Failed to update cluster::View");
+                    tokio::time::sleep(Duration::from_secs(60)).await;
                 }
             }
         }
@@ -79,6 +77,7 @@ where
         self.apply_events(events).await
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)] // otherwise `Steam` is required to be `Sync`
     async fn apply_events(
         &mut self,
         events: impl Stream<Item = smart_contract::ReadResult<SerializedEvent>>,

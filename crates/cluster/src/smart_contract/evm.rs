@@ -259,7 +259,7 @@ impl TryFrom<Log> for Event<node_operator::SerializedData> {
         let topics = log.topics();
         let data = &log.data().data;
 
-        Ok(match log.topics().get(0) {
+        Ok(match log.topics().first() {
             Some(&Cluster::MigrationStarted::SIGNATURE_HASH) => {
                 Cluster::MigrationStarted::decode_raw_log_validate(topics, data)?.try_into()?
             }
@@ -538,7 +538,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
             let prev_keyspace_version = view
                 .keyspaceVersion
                 .checked_sub(1)
-                .ok_or_else(|| ReadError::InvalidData(format!("Invalid keyspace::Version")))?;
+                .ok_or_else(|| ReadError::InvalidData("Invalid keyspace::Version".into()))?;
 
             let keyspace = try_keyspace(prev_keyspace_version)?;
             let migration_keyspace = try_keyspace(view.keyspaceVersion)?;

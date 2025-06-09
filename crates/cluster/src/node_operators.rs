@@ -108,8 +108,7 @@ impl<Data> NodeOperators<Data> {
         &self,
         id: &node_operator::Id,
     ) -> Result<node_operator::Idx, node_operator::NotFoundError> {
-        self.get_idx(id)
-            .ok_or_else(|| node_operator::NotFoundError(*id))
+        self.get_idx(id).ok_or(node_operator::NotFoundError(*id))
     }
 
     pub(super) fn require_not_exists(

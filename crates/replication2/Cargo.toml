@@ -1,0 +1,26 @@
+[package]
+name = "wcn_replication2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+wc = { workspace = true, features = ["metrics"] }
+storage_api = { package = "wcn_storage_api", path = "../storage_api", features = ["client"] }
+client_api = { package = "wcn_client_api", path = "../client_api", features = ["client"] }
+domain = { workspace = true }
+
+wcn_core = { path = "../core" }
+
+futures = "0.3"
+tap = "1.0"
+smallvec = { version = "1.11" }
+tokio = { version = "1", default-features = false }
+tracing = "0.1"
+
+derive_more = { version = "1.0.0", features = ["as_ref"] }
+
+thiserror = "1"
+
+[lints]
+workspace = true

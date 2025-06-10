@@ -391,7 +391,7 @@ contract ClusterTest is Test {
         address[] memory operators = getSortedOperatorArray(4);
         cluster.startMigration(operators, 0);
         
-        (uint64 id, uint8 remaining, bool inProgress) = cluster.getMigrationStatus();
+        (uint64 id, uint16 remaining, bool inProgress) = cluster.getMigrationStatus();
         assertEq(id, 1, "Migration ID");
         assertEq(remaining, 4, "Remaining operators");
         assertTrue(inProgress, "Migration in progress");
@@ -406,12 +406,44 @@ contract ClusterTest is Test {
     }
 
     function test_RevertWhen_MigrationWithTooManyOperators() public asOwner {
-        address[] memory operators = new address[](256);
-        for (uint256 i = 0; i < 256; i++) {
+        address[] memory operators = new address[](257);
+        for (uint256 i = 0; i < 257; i++) {
             operators[i] = vm.addr(i + 1);
         }
         vm.expectRevert(Cluster.TooManyOperators.selector);
         cluster.startMigration(operators, 0);
+    }
+
+    function test_MigrationWith256Operators() public asOwner {
+        // Create a cluster with 256 operators
+        NodeOperator[] memory initialOperators = new NodeOperator[](256);
+        for (uint256 i = 0; i < 256; i++) {
+            initialOperators[i] = newNodeOperator(i + 1, DEFAULT_OPERATOR_DATA);
+        }
+        
+        Cluster maxCluster = new Cluster(Settings({ maxOperatorDataBytes: MAX_OPERATOR_DATA_BYTES }), initialOperators);
+        
+        // Get all operators (should be sorted)
+        address[] memory allOperators = maxCluster.getAllOperators();
+        assertEq(allOperators.length, 256, "Should have 256 operators");
+        
+        // Verify initial keyspace has replication strategy 0
+        (, uint8 initialStrategy) = maxCluster.getCurrentKeyspace();
+        assertEq(initialStrategy, 0, "Initial replication strategy should be 0");
+        
+        // Migrate all 256 operators with a different replication strategy
+        // This should succeed because replication strategy is different
+        maxCluster.startMigration(allOperators, 1);
+        
+        (uint64 id, uint16 remaining, bool inProgress) = maxCluster.getMigrationStatus();
+        assertEq(id, 1, "Migration ID");
+        assertEq(remaining, 256, "All 256 operators should be pulling");
+        assertTrue(inProgress, "Migration should be in progress");
+        
+        // Verify new keyspace has different replication strategy
+        (address[] memory newOperators, uint8 newStrategy) = maxCluster.getCurrentKeyspace();
+        assertEq(newOperators.length, 256, "Should have 256 operators in new keyspace");
+        assertEq(newStrategy, 1, "New replication strategy should be 1");
     }
 
     function test_RevertWhen_UnsortedOperators() public asOwner {
@@ -542,7 +574,7 @@ contract ClusterTest is Test {
         cluster.completeMigration(1);
         vm.stopPrank();
         
-        (,uint8 remaining,) = cluster.getMigrationStatus();
+        (,uint16 remaining,) = cluster.getMigrationStatus();
         assertEq(remaining, 3, "Remaining operators should decrease");
     }
 
@@ -705,7 +737,7 @@ contract ClusterTest is Test {
         address[] memory operators = getSortedOperatorArray(1);
         cluster.startMigration(operators, 0);
         
-        (uint64 id, uint8 remaining, bool inProgress) = cluster.getMigrationStatus();
+        (uint64 id, uint16 remaining, bool inProgress) = cluster.getMigrationStatus();
         assertEq(id, 1, "Migration ID");
         assertEq(remaining, 1, "Remaining operators");
         assertTrue(inProgress, "Migration in progress");
@@ -909,7 +941,7 @@ contract ClusterTest is Test {
     }
 
     function test_GetMigrationStatus() public asOwner {
-        (uint64 id, uint8 remaining, bool inProgress) = cluster.getMigrationStatus();
+        (uint64 id, uint16 remaining, bool inProgress) = cluster.getMigrationStatus();
         assertEq(id, 0, "Initial migration ID");
         assertEq(remaining, 0, "Initial remaining count");
         assertFalse(inProgress, "No migration in progress initially");

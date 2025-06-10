@@ -30,8 +30,6 @@ contract Cluster is Ownable2Step {
 
     // Maximum number of operators per cluster
     uint256 constant MAX_OPERATORS = 256;
-    // Maximum number of operators per migration (uint8 limit for pullingCount)
-    uint256 constant MAX_MIGRATION_OPERATORS = 255;
 
     error Unauthorized();
     error MigrationInProgress();
@@ -83,7 +81,7 @@ contract Cluster is Ownable2Step {
     // Migration
     uint64 public migrationId;
     mapping(address => bool) public isPulling;
-    uint8 public pullingCount;
+    uint16 public pullingCount;
 
     // Storage gap for future variables (reserves space for rewards layer)
     uint256[45] private __gap;
@@ -135,7 +133,7 @@ contract Cluster is Ownable2Step {
 
     function startMigration(address[] calldata newOperators, uint8 replicationStrategy) external onlyOwner onlyInitialized {
         if (pullingCount > 0) revert MigrationInProgress();
-        if (newOperators.length > MAX_MIGRATION_OPERATORS) revert TooManyOperators();
+        if (newOperators.length > MAX_OPERATORS) revert TooManyOperators();
         
         // Validate operators are sorted, unique, and exist (single loop for gas optimization)
         if (newOperators.length > 1 && !newOperators.isSortedAndUniquified()) revert InvalidOperator();
@@ -145,7 +143,7 @@ contract Cluster is Ownable2Step {
             isPulling[op] = true; // Set pulling in same loop
             unchecked { ++i; }
         }
-        pullingCount = uint8(newOperators.length);
+        pullingCount = uint16(newOperators.length);
         
         // Check if different from current keyspace
         Keyspace memory current = keyspaces[keyspaceVersion % 2];
@@ -299,7 +297,7 @@ contract Cluster is Ownable2Step {
         return (current.members, current.replicationStrategy);
     }
 
-    function getMigrationStatus() external view returns (uint64 id, uint8 remaining, bool inProgress) {
+    function getMigrationStatus() external view returns (uint64 id, uint16 remaining, bool inProgress) {
         return (migrationId, pullingCount, pullingCount > 0);
     }
 

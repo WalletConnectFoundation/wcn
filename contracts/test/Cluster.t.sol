@@ -31,14 +31,14 @@ contract ClusterTest is Test {
                                 EVENTS
     //////////////////////////////////////////////////////////////////////////*/
 
-    event ClusterInitialized(uint256 operatorCount);
+    event ClusterInitialized(uint256 operatorCount, Settings settings, uint128 version);
     event MigrationStarted(uint64 indexed id, address[] operators, uint8 replicationStrategy, uint64 keyspaceVersion, uint128 version);
     event MigrationDataPullCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
 
-    event NodeOperatorAdded(address indexed operator, uint128 version);
-    event NodeOperatorUpdated(address indexed operator, uint128 version);
+    event NodeOperatorAdded(address indexed operator, NodeOperator operatorData, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, NodeOperator operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint128 version);
 
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
@@ -134,8 +134,10 @@ contract ClusterTest is Test {
     }
 
     function test_Constructor_EmitsInitializedEvent() public {
+        Settings memory expectedSettings = Settings({ maxOperatorDataBytes: MAX_OPERATOR_DATA_BYTES });
+        
         vm.expectEmit(true, true, true, true);
-        emit ClusterInitialized(3);
+        emit ClusterInitialized(3, expectedSettings, 0);
         newCluster(3);
     }
 
@@ -186,7 +188,7 @@ contract ClusterTest is Test {
         uint256 newOperatorKey = 6;
         NodeOperator memory operator = newNodeOperator(newOperatorKey);
         vm.expectEmit(true, true, true, true);
-        emit NodeOperatorAdded(operator.addr, 1);
+        emit NodeOperatorAdded(operator.addr, operator, 1);
         cluster.addNodeOperator(operator);
     }
 
@@ -262,7 +264,7 @@ contract ClusterTest is Test {
         uint256 operatorKey = 1;
         NodeOperator memory operator = newNodeOperator(operatorKey, "new data");
         vm.expectEmit(true, true, true, true);
-        emit NodeOperatorUpdated(operator.addr, 1);
+        emit NodeOperatorUpdated(operator.addr, operator, 1);
         cluster.updateNodeOperator(operator);
     }
 

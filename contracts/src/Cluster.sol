@@ -50,14 +50,14 @@ contract Cluster is Ownable2Step {
                                 EVENTS
     //////////////////////////////////////////////////////////////////////////*/
 
-    event ClusterInitialized(uint256 operatorCount);
+    event ClusterInitialized(uint256 operatorCount, Settings settings, uint128 version);
     event MigrationStarted(uint64 indexed id, address[] operators, uint8 replicationStrategy, uint64 keyspaceVersion, uint128 version);
     event MigrationDataPullCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
 
-    event NodeOperatorAdded(address indexed operator, uint128 version);
-    event NodeOperatorUpdated(address indexed operator, uint128 version);
+    event NodeOperatorAdded(address indexed operator, NodeOperator operatorData, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, NodeOperator operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint128 version);
 
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
@@ -110,7 +110,7 @@ contract Cluster is Ownable2Step {
         sortedOperators.sort();
         keyspaces[0].members = sortedOperators;
 
-        emit ClusterInitialized(initialOperators.length);
+        emit ClusterInitialized(initialOperators.length, settings, version);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -215,7 +215,7 @@ contract Cluster is Ownable2Step {
         if (!_operators.add(operator.addr)) revert OperatorExists();
         
         info[operator.addr] = operator;
-        emit NodeOperatorAdded(operator.addr, ++version);
+        emit NodeOperatorAdded(operator.addr, operator, ++version);
     }
 
     function updateNodeOperator(NodeOperator calldata operator) external onlyOperatorOrOwner(operator.addr) onlyInitialized {
@@ -223,7 +223,7 @@ contract Cluster is Ownable2Step {
         if (!_operators.contains(operator.addr)) revert OperatorNotFound();
         
         info[operator.addr] = operator;
-        emit NodeOperatorUpdated(operator.addr, ++version);
+        emit NodeOperatorUpdated(operator.addr, operator, ++version);
     }
 
     function removeNodeOperator(address operatorAddr) external onlyOwner {

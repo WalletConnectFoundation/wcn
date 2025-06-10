@@ -26,78 +26,9 @@ pub struct Config<A> {
 }
 
 /// Storage API server.
-pub trait Server: Clone + Send + Sync + 'static {
+pub trait Server: StorageApi<Error = Error> + Clone + Send + Sync + 'static {
     /// Returns the current keyspace version of this [`Server`].
     fn keyspace_version(&self) -> u64;
-
-    /// Gets a [`Record`] by the provided [`Key`].
-    fn get(&self, key: Key) -> impl Future<Output = Result<Option<Record>>> + Send;
-
-    /// Sets the provided [`Entry`] only if the version of the existing
-    /// [`Entry`] is < than the new one.
-    fn set(&self, entry: Entry) -> impl Future<Output = Result<()>> + Send;
-
-    /// Deletes an [`Entry`] by the provided [`Key`] only if the version of the
-    /// [`Entry`] is < than the provided `version`.
-    fn del(&self, key: Key, version: EntryVersion) -> impl Future<Output = Result<()>> + Send;
-
-    /// Gets an [`EntryExpiration`] by the provided [`Key`].
-    fn get_exp(&self, key: Key) -> impl Future<Output = Result<Option<EntryExpiration>>> + Send;
-
-    /// Sets [`Expiration`] on the [`Entry`] with the provided [`Key`] only if
-    /// the version of the [`Entry`] is < than the provided `version`.
-    fn set_exp(
-        &self,
-        key: Key,
-        expiration: impl Into<EntryExpiration>,
-        version: EntryVersion,
-    ) -> impl Future<Output = Result<()>> + Send;
-
-    /// Gets a map [`Record`] by the provided [`Key`] and [`Field`].
-    fn hget(&self, key: Key, field: Field) -> impl Future<Output = Result<Option<Record>>> + Send;
-
-    /// Sets the provided [`MapEntry`] only if the version of the existing
-    /// [`MapEntry`] is < than the new one.
-    fn hset(&self, entry: MapEntry) -> impl Future<Output = Result<()>> + Send;
-
-    /// Deletes a [`MapEntry`] by the provided [`Key`] only if the version of
-    /// the [`MapEntry`] is < than the provided `version`.
-    fn hdel(
-        &self,
-        key: Key,
-        field: Field,
-        version: EntryVersion,
-    ) -> impl Future<Output = Result<()>> + Send;
-
-    /// Gets an [`EntryExpiration`] by the provided [`Key`] and [`Field`].
-    fn hget_exp(
-        &self,
-        key: Key,
-        field: Field,
-    ) -> impl Future<Output = Result<Option<EntryExpiration>>> + Send;
-
-    /// Sets [`Expiration`] on the [`MapEntry`] with the provided [`Key`] and
-    /// [`Field`] only if the version of the [`MapEntry`] is < than the
-    /// provided `version`.
-    fn hset_exp(
-        &self,
-        key: Key,
-        field: Field,
-        expiration: impl Into<EntryExpiration>,
-        version: EntryVersion,
-    ) -> impl Future<Output = Result<()>> + Send;
-
-    /// Returns cardinality of the map with the provided [`Key`].
-    fn hcard(&self, key: Key) -> impl Future<Output = Result<u64>> + Send;
-
-    /// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
-    /// the provided [`Key`].
-    fn hscan(
-        &self,
-        key: Key,
-        count: u32,
-        cursor: Option<Field>,
-    ) -> impl Future<Output = Result<MapPage>> + Send;
 
     /// Converts this Storage API [`Server`] into an [`rpc::Server`].
     fn into_rpc_server(self, cfg: Config<impl Authenticator>) -> impl rpc::Server {
@@ -152,7 +83,9 @@ impl<S: Server> RpcHandler<'_, S> {
     async fn get(&self, req: GetRequest) -> wcn_rpc::Result<Option<GetResponse>> {
         let record = self
             .api_server
-            .get(self.prepare_key(req.key)?)
+            .execute_get(operation::Get {
+                key: self.prepare_key(req.key)?,
+            })
             .await
             .map_err(Error::into_rpc_error)?;
 
@@ -172,14 +105,17 @@ impl<S: Server> RpcHandler<'_, S> {
         };
 
         self.api_server
-            .set(entry)
+            .execute_set(operation::Set { entry })
             .await
             .map_err(Error::into_rpc_error)
     }
 
     async fn del(&self, req: DelRequest) -> wcn_rpc::Result<()> {
         self.api_server
-            .del(self.prepare_key(req.key)?, EntryVersion::from(req.version))
+            .execute_del(operation::Del {
+                key: self.prepare_key(req.key)?,
+                version: EntryVersion::from(req.version),
+            })
             .await
             .map_err(Error::into_rpc_error)
     }
@@ -187,7 +123,9 @@ impl<S: Server> RpcHandler<'_, S> {
     async fn get_exp(&self, req: GetExpRequest) -> wcn_rpc::Result<Option<GetExpResponse>> {
         let expiration = self
             .api_server
-            .get_exp(self.prepare_key(req.key)?)
+            .execute_get_exp(operation::GetExp {
+                key: self.prepare_key(req.key)?,
+            })
             .await
             .map_err(Error::into_rpc_error)?;
 
@@ -198,11 +136,11 @@ impl<S: Server> RpcHandler<'_, S> {
 
     async fn set_exp(&self, req: SetExpRequest) -> wcn_rpc::Result<()> {
         self.api_server
-            .set_exp(
-                self.prepare_key(req.key)?,
-                EntryExpiration::from(req.expiration),
-                EntryVersion::from(req.version),
-            )
+            .execute_set_exp(operation::SetExp {
+                key: self.prepare_key(req.key)?,
+                expiration: EntryExpiration::from(req.expiration),
+                version: EntryVersion::from(req.version),
+            })
             .await
             .map_err(Error::into_rpc_error)
     }
@@ -210,7 +148,10 @@ impl<S: Server> RpcHandler<'_, S> {
     async fn hget(&self, req: HGetRequest) -> wcn_rpc::Result<Option<HGetResponse>> {
         let record = self
             .api_server
-            .hget(self.prepare_key(req.key)?, req.field)
+            .execute_hget(operation::HGet {
+                key: self.prepare_key(req.key)?,
+                field: req.field,
+            })
             .await
             .map_err(Error::into_rpc_error)?;
 
@@ -231,18 +172,18 @@ impl<S: Server> RpcHandler<'_, S> {
         };
 
         self.api_server
-            .hset(entry)
+            .execute_hset(operation::HSet { entry })
             .await
             .map_err(Error::into_rpc_error)
     }
 
     async fn hdel(&self, req: HDelRequest) -> wcn_rpc::Result<()> {
         self.api_server
-            .hdel(
-                self.prepare_key(req.key)?,
-                req.field,
-                EntryVersion::from(req.version),
-            )
+            .execute_hdel(operation::HDel {
+                key: self.prepare_key(req.key)?,
+                field: req.field,
+                version: EntryVersion::from(req.version),
+            })
             .await
             .map_err(Error::into_rpc_error)
     }
@@ -250,7 +191,10 @@ impl<S: Server> RpcHandler<'_, S> {
     async fn hget_exp(&self, req: HGetExpRequest) -> wcn_rpc::Result<Option<HGetExpResponse>> {
         let expiration = self
             .api_server
-            .hget_exp(self.prepare_key(req.key)?, req.field)
+            .execute_hget_exp(operation::HGetExp {
+                key: self.prepare_key(req.key)?,
+                field: req.field,
+            })
             .await
             .map_err(Error::into_rpc_error)?;
 
@@ -261,19 +205,21 @@ impl<S: Server> RpcHandler<'_, S> {
 
     async fn hset_exp(&self, req: HSetExpRequest) -> wcn_rpc::Result<()> {
         self.api_server
-            .hset_exp(
-                self.prepare_key(req.key)?,
-                req.field,
-                EntryExpiration::from(req.expiration),
-                EntryVersion::from(req.version),
-            )
+            .execute_hset_exp(operation::HSetExp {
+                key: self.prepare_key(req.key)?,
+                field: req.field,
+                expiration: EntryExpiration::from(req.expiration),
+                version: EntryVersion::from(req.version),
+            })
             .await
             .map_err(Error::into_rpc_error)
     }
 
     async fn hcard(&self, req: HCardRequest) -> wcn_rpc::Result<HCardResponse> {
         self.api_server
-            .hcard(self.prepare_key(req.key)?)
+            .execute_hcard(operation::HCard {
+                key: self.prepare_key(req.key)?,
+            })
             .await
             .map(|cardinality| HCardResponse { cardinality })
             .map_err(Error::into_rpc_error)
@@ -282,7 +228,11 @@ impl<S: Server> RpcHandler<'_, S> {
     async fn hscan(&self, req: HScanRequest) -> wcn_rpc::Result<HScanResponse> {
         let page = self
             .api_server
-            .hscan(self.prepare_key(req.key)?, req.count, req.cursor)
+            .execute_hscan(operation::HScan {
+                key: self.prepare_key(req.key)?,
+                count: req.count,
+                cursor: req.cursor,
+            })
             .await
             .map_err(Error::into_rpc_error)?;
 
@@ -466,5 +416,11 @@ pub trait Authenticator: Clone + Send + Sync + 'static {
         }
 
         Ok(claims)
+    }
+}
+
+impl From<operation::WrongOutput> for Error {
+    fn from(err: operation::WrongOutput) -> Self {
+        Self(err.to_string())
     }
 }

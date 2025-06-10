@@ -41,6 +41,7 @@ use {
         sync::{Arc, RwLock},
         time::Duration,
     },
+    storage_api::StorageApi,
     tap::Pipe,
     tokio::sync::mpsc,
     wc::metrics::{future_metrics, FutureExt as _},
@@ -145,16 +146,14 @@ fn generic_key(key: storage_api::Key) -> GenericKey {
     GenericKey::new(HASHER.hash_one(key.as_bytes()), key.into_bytes())
 }
 
-impl storage_api::Server for StorageApiServer {
-    fn keyspace_version(&self) -> u64 {
-        self.node.consensus().cluster().keyspace_version()
-    }
+impl StorageApi for StorageApiServer {
+    type Error = storage_api::server::Error;
 
-    fn get(
+    fn execute_get(
         &self,
-        key: storage_api::Key,
+        get: storage_api::operation::Get,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::Record>>> + Send {
-        async move { self.string_storage().get(&generic_key(key)).await }
+        async move { self.string_storage().get(&generic_key(get.key)).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
             .map_ok(|opt| {
                 opt.map(|rec| storage_api::Record {
@@ -168,39 +167,38 @@ impl storage_api::Server for StorageApiServer {
             .map_err(storage_api::server::Error::new)
     }
 
-    fn set(
+    fn execute_set(
         &self,
-        entry: storage_api::Entry,
+        set: storage_api::operation::Set,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        let key = generic_key(entry.key);
-        let val = entry.value;
-        let exp = entry.expiration.unix_timestamp_secs();
-        let ver = entry.version.unix_timestamp_micros();
+        let key = generic_key(set.entry.key);
+        let val = set.entry.value;
+        let exp = set.entry.expiration.unix_timestamp_secs();
+        let ver = set.entry.version.unix_timestamp_micros();
 
         async move { self.string_storage().set(&key, &val, exp, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
             .map_err(storage_api::server::Error::new)
     }
 
-    fn del(
+    fn execute_del(
         &self,
-        key: storage_api::Key,
-        version: storage_api::EntryVersion,
+        del: storage_api::operation::Del,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        let key = generic_key(key);
-        let ver = version.unix_timestamp_micros();
+        let key = generic_key(del.key);
+        let ver = del.version.unix_timestamp_micros();
 
         async move { self.string_storage().del(&key, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
             .map_err(storage_api::server::Error::new)
     }
 
-    fn get_exp(
+    fn execute_get_exp(
         &self,
-        key: storage_api::Key,
+        get_exp: storage_api::operation::GetExp,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
     {
-        async move { self.string_storage().exp(&generic_key(key)).await }
+        async move { self.string_storage().exp(&generic_key(get_exp.key)).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
             .map(|res| match res {
                 Ok(timestamp) => Ok(Some(
@@ -211,106 +209,104 @@ impl storage_api::Server for StorageApiServer {
             })
     }
 
-    fn set_exp(
+    fn execute_set_exp(
         &self,
-        key: storage_api::Key,
-        expiration: impl Into<storage_api::EntryExpiration>,
-        version: storage_api::EntryVersion,
+        set_exp: storage_api::operation::SetExp,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        let key = generic_key(key);
-        let exp = expiration.into().unix_timestamp_secs();
-        let ver = version.unix_timestamp_micros();
+        let key = generic_key(set_exp.key);
+        let exp = set_exp.expiration.unix_timestamp_secs();
+        let ver = set_exp.version.unix_timestamp_micros();
 
         async move { self.string_storage().setexp(&key, exp, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
             .map_err(storage_api::server::Error::new)
     }
 
-    fn hget(
+    fn execute_hget(
         &self,
-        key: storage_api::Key,
-        field: storage_api::Field,
+        hget: storage_api::operation::HGet,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::Record>>> + Send {
-        async move { self.map_storage().hget(&generic_key(key), &field).await }
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
-            .map_ok(|opt| {
-                opt.map(|rec| storage_api::Record {
-                    value: rec.value,
-                    expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(
-                        rec.expiration,
-                    ),
-                    version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
-                })
+        async move {
+            self.map_storage()
+                .hget(&generic_key(hget.key), &hget.field)
+                .await
+        }
+        .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
+        .map_ok(|opt| {
+            opt.map(|rec| storage_api::Record {
+                value: rec.value,
+                expiration: storage_api::EntryExpiration::from_unix_timestamp_secs(rec.expiration),
+                version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
             })
-            .map_err(storage_api::server::Error::new)
+        })
+        .map_err(storage_api::server::Error::new)
     }
 
-    fn hset(
+    fn execute_hset(
         &self,
-        entry: storage_api::MapEntry,
+        hset: storage_api::operation::HSet,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        let key = generic_key(entry.key);
-        let pair = Pair::new(entry.field, entry.value);
-        let exp = entry.expiration.unix_timestamp_secs();
-        let ver = entry.version.unix_timestamp_micros();
+        let key = generic_key(hset.entry.key);
+        let pair = Pair::new(hset.entry.field, hset.entry.value);
+        let exp = hset.entry.expiration.unix_timestamp_secs();
+        let ver = hset.entry.version.unix_timestamp_micros();
 
         async move { self.map_storage().hset(&key, &pair, exp, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
             .map_err(storage_api::server::Error::new)
     }
 
-    fn hdel(
+    fn execute_hdel(
         &self,
-        key: storage_api::Key,
-        field: storage_api::Field,
-        version: storage_api::EntryVersion,
+        hdel: storage_api::operation::HDel,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        let key = generic_key(key);
-        let ver = version.unix_timestamp_micros();
+        let key = generic_key(hdel.key);
+        let ver = hdel.version.unix_timestamp_micros();
 
-        async move { self.map_storage().hdel(&key, &field, ver).await }
+        async move { self.map_storage().hdel(&key, &hdel.field, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
             .map_err(storage_api::server::Error::new)
     }
 
-    fn hget_exp(
+    fn execute_hget_exp(
         &self,
-        key: storage_api::Key,
-        field: storage_api::Field,
+        hget_exp: storage_api::operation::HGetExp,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
     {
-        async move { self.map_storage().hexp(&generic_key(key), &field).await }
-            .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
-            .map(|res| match res {
-                Ok(timestamp) => Ok(Some(
-                    storage_api::EntryExpiration::from_unix_timestamp_secs(timestamp),
-                )),
-                Err(rocksdb::Error::EntryNotFound) => Ok(None),
-                Err(err) => Err(storage_api::server::Error::new(err)),
-            })
+        async move {
+            self.map_storage()
+                .hexp(&generic_key(hget_exp.key), &hget_exp.field)
+                .await
+        }
+        .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
+        .map(|res| match res {
+            Ok(timestamp) => Ok(Some(
+                storage_api::EntryExpiration::from_unix_timestamp_secs(timestamp),
+            )),
+            Err(rocksdb::Error::EntryNotFound) => Ok(None),
+            Err(err) => Err(storage_api::server::Error::new(err)),
+        })
     }
 
-    fn hset_exp(
+    fn execute_hset_exp(
         &self,
-        key: storage_api::Key,
-        field: storage_api::Field,
-        expiration: impl Into<storage_api::EntryExpiration>,
-        version: storage_api::EntryVersion,
+        hset_exp: storage_api::operation::HSetExp,
     ) -> impl Future<Output = storage_api::server::Result<()>> + Send {
-        let key = generic_key(key);
-        let exp = expiration.into().unix_timestamp_secs();
-        let ver = version.unix_timestamp_micros();
+        let key = generic_key(hset_exp.key);
+        let field = hset_exp.field;
+        let exp = hset_exp.expiration.unix_timestamp_secs();
+        let ver = hset_exp.version.unix_timestamp_micros();
 
         async move { self.map_storage().hsetexp(&key, &field, exp, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
             .map_err(storage_api::server::Error::new)
     }
 
-    fn hcard(
+    fn execute_hcard(
         &self,
-        key: storage_api::Key,
+        hcard: storage_api::operation::HCard,
     ) -> impl Future<Output = storage_api::server::Result<u64>> + Send {
-        let key = generic_key(key);
+        let key = generic_key(hcard.key);
 
         async move { self.map_storage().hcard(&key).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
@@ -318,14 +314,12 @@ impl storage_api::Server for StorageApiServer {
             .map_err(storage_api::server::Error::new)
     }
 
-    fn hscan(
+    fn execute_hscan(
         &self,
-        key: storage_api::Key,
-        count: u32,
-        cursor: Option<storage_api::Field>,
+        hscan: storage_api::operation::HScan,
     ) -> impl Future<Output = storage_api::server::Result<storage_api::MapPage>> + Send {
-        let key = generic_key(key);
-        let opts = ScanOptions::new(count as usize).with_cursor(cursor);
+        let key = generic_key(hscan.key);
+        let opts = ScanOptions::new(hscan.count as usize).with_cursor(hscan.cursor);
 
         async move { self.map_storage().hscan(&key, opts).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
@@ -345,6 +339,40 @@ impl storage_api::Server for StorageApiServer {
                 has_next: res.has_more,
             })
             .map_err(storage_api::server::Error::new)
+    }
+
+    async fn execute(
+        &self,
+        operation: impl Into<storage_api::Operation> + Send,
+    ) -> storage_api::server::Result<storage_api::operation::Output> {
+        match operation.into() {
+            storage_api::Operation::Get(get) => self.execute_get(get).await.map(Into::into),
+            storage_api::Operation::Set(set) => self.execute_set(set).await.map(Into::into),
+            storage_api::Operation::Del(del) => self.execute_del(del).await.map(Into::into),
+            storage_api::Operation::GetExp(get_exp) => {
+                self.execute_get_exp(get_exp).await.map(Into::into)
+            }
+            storage_api::Operation::SetExp(set_exp) => {
+                self.execute_set_exp(set_exp).await.map(Into::into)
+            }
+            storage_api::Operation::HGet(hget) => self.execute_hget(hget).await.map(Into::into),
+            storage_api::Operation::HSet(hset) => self.execute_hset(hset).await.map(Into::into),
+            storage_api::Operation::HDel(hdel) => self.execute_hdel(hdel).await.map(Into::into),
+            storage_api::Operation::HGetExp(hget_exp) => {
+                self.execute_hget_exp(hget_exp).await.map(Into::into)
+            }
+            storage_api::Operation::HSetExp(hset_exp) => {
+                self.execute_hset_exp(hset_exp).await.map(Into::into)
+            }
+            storage_api::Operation::HCard(hcard) => self.execute_hcard(hcard).await.map(Into::into),
+            storage_api::Operation::HScan(hscan) => self.execute_hscan(hscan).await.map(Into::into),
+        }
+    }
+}
+
+impl storage_api::Server for StorageApiServer {
+    fn keyspace_version(&self) -> u64 {
+        self.node.consensus().cluster().keyspace_version()
     }
 }
 

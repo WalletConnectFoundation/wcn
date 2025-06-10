@@ -8,7 +8,7 @@ use {
     domain::{Cluster, HASHER},
     futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
     std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
-    storage_api::client::RemoteStorage,
+    storage_api::{client::RemoteStorage, operation, StorageApi},
     tap::{Pipe, TapFallible as _},
     wc::metrics::{
         self,
@@ -23,6 +23,16 @@ use {
 
 mod consistency;
 mod reconciliation;
+
+// /// Machinery managing the state of a WCN cluster.
+// pub trait Cluster: Clone + Send + Sync + 'static {
+//     type ReplicaSet;
+
+//     /// Return
+//     fn primary_replica_set(&self, key_hash: u64) -> Self::ReplicaSet;
+
+//     fn secondary_replica_set(&self, key_hash: u64) ->
+// Option<Self::ReplicaSet>; }
 
 /// WCN replication driver.
 #[derive(Clone)]
@@ -319,6 +329,17 @@ impl Driver {
     }
 }
 
+impl StorageApi for Driver {
+    type Error = Error;
+
+    async fn execute(
+        &self,
+        operation: impl Into<storage_api::Operation>,
+    ) -> Result<operation::Output, Self::Error> {
+        todo!()
+    }
+}
+
 type Quorum<T> = consistency::MajorityQuorum<T>;
 
 struct ReplicationTask<Op: StorageOperation> {
@@ -386,43 +407,46 @@ impl<Op: StorageOperation> ReplicationTask<Op> {
     async fn execute_operation(&mut self) -> Result<consistency::MajorityQuorum<Op::Output>> {
         let cluster = self.driver.cluster();
 
-        let replica_set = match cluster.replica_set(self.key_hash, Op::IS_WRITE) {
-            Ok(set) => set,
-            Err(err) => return Err(Error::Cluster(err)),
-        };
+        todo!()
 
-        let mut result_stream: FuturesUnordered<_> = replica_set
-            .nodes
-            .map(|node| async {
-                let peer = PeerAddr::new(node.id, node.addr.clone());
+        // let replica_set = match cluster.primary_replica_set(self.key_hash,
+        // Op::IS_WRITE) {     Ok(set) => set,
+        //     Err(err) => return Err(Error::Cluster(err)),
+        // };
 
-                self.operation
-                    .execute(self.driver.storage_api.remote_storage(&peer))
-                    .map(|res| (peer.clone(), res))
-                    .await
-            })
-            .collect();
+        // let mut result_stream: FuturesUnordered<_> = replica_set
+        //     .nodes
+        //     .map(|node| async {
+        //         let peer = PeerAddr::new(node.id, node.addr.clone());
 
-        let mut quorum = consistency::MajorityQuorum::new(replica_set.required_count);
+        //         self.operation
+        //             .execute(self.driver.storage_api.remote_storage(&peer))
+        //             .map(|res| (peer.clone(), res))
+        //             .await
+        //     })
+        //     .collect();
 
-        while let Some((peer, result)) = result_stream.next().await {
-            quorum.push(peer, result);
+        // let mut quorum =
+        // consistency::MajorityQuorum::new(replica_set.required_count);
 
-            let Some(result) = quorum.is_reached() else {
-                continue;
-            };
+        // while let Some((peer, result)) = result_stream.next().await {
+        //     quorum.push(peer, result);
 
-            match result {
-                Ok(value) => {
-                    if let Some(channel) = self.result_channel.take() {
-                        let _ = channel.send(Ok(value.clone()));
-                    }
-                }
-                Err(err) => return Err(Error::StorageApi(err.clone())),
-            };
-        }
+        //     let Some(result) = quorum.is_reached() else {
+        //         continue;
+        //     };
 
-        Ok(quorum)
+        //     match result {
+        //         Ok(value) => {
+        //             if let Some(channel) = self.result_channel.take() {
+        //                 let _ = channel.send(Ok(value.clone()));
+        //             }
+        //         }
+        //         Err(err) => return Err(Error::StorageApi(err.clone())),
+        //     };
+        // }
+
+        // Ok(quorum)
     }
 
     async fn repair(&self, quorum: &Quorum<Op::Output>, value: &Op::Output) {
@@ -884,6 +908,9 @@ pub enum Error {
 
     #[error("Client API: {_0}")]
     ClientApi(client_api::client::Error),
+
+    #[error(transparent)]
+    WrongOperationOutput(#[from] storage_api::operation::WrongOutput),
 }
 
 impl Error {
@@ -938,6 +965,7 @@ impl Error {
                 ClientError::NodeNotAvailable => "client_node_not_available",
                 ClientError::Other(_) => "client_other",
             },
+            Self::WrongOperationOutput(_) => "wrong_operation_output",
         }
     }
 }

@@ -8035,8 +8035,10 @@ name = "wcn_storage_api"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "derive_more 1.0.0",
  "futures",
  "serde",
+ "strum",
  "thiserror 1.0.64",
  "time",
  "tracing",

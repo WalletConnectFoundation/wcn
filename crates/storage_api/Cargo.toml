@@ -12,8 +12,10 @@ client = ["wcn_rpc/client", "arc-swap"]
 server = ["wcn_rpc/server"]
 
 [dependencies]
-wc = { workspace = true, features = ["future"] }
+wc = { workspace = true, features = ["future", "metrics"] }
 auth = { workspace = true }
+derive_more = { workspace = true, features = ["from", "try_into"] }
+strum = { workspace = true }
 
 wcn_rpc = { workspace = true }
 serde = "1"

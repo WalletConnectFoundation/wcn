@@ -15,6 +15,11 @@ struct NodeOperator {
     bool maintenance;
 }
 
+struct NodeOperatorData {
+    bytes data;
+    bool maintenance;
+}
+
 struct Keyspace {
     address[] members;
     uint8 replicationStrategy;
@@ -56,8 +61,8 @@ contract Cluster is Ownable2Step {
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
 
-    event NodeOperatorAdded(address indexed operator, NodeOperator operatorData, uint128 version);
-    event NodeOperatorUpdated(address indexed operator, NodeOperator operatorData, uint128 version);
+    event NodeOperatorAdded(address indexed operator, NodeOperatorData operatorData, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, NodeOperatorData operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint128 version);
 
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
@@ -215,7 +220,7 @@ contract Cluster is Ownable2Step {
         if (!_operators.add(operator.addr)) revert OperatorExists();
         
         info[operator.addr] = operator;
-        emit NodeOperatorAdded(operator.addr, operator, ++version);
+        emit NodeOperatorAdded(operator.addr, NodeOperatorData({data: operator.data, maintenance: operator.maintenance}), ++version);
     }
 
     function updateNodeOperator(NodeOperator calldata operator) external onlyOperatorOrOwner(operator.addr) onlyInitialized {
@@ -223,7 +228,7 @@ contract Cluster is Ownable2Step {
         if (!_operators.contains(operator.addr)) revert OperatorNotFound();
         
         info[operator.addr] = operator;
-        emit NodeOperatorUpdated(operator.addr, operator, ++version);
+        emit NodeOperatorUpdated(operator.addr, NodeOperatorData({data: operator.data, maintenance: operator.maintenance}), ++version);
     }
 
     function removeNodeOperator(address operatorAddr) external onlyOwner {

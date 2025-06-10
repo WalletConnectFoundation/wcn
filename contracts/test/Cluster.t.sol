@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-import {Cluster, Settings, NodeOperator} from "../src/Cluster.sol";
+import {Cluster, Settings, NodeOperator, NodeOperatorData} from "../src/Cluster.sol";
 import {Ownable} from "@openzeppelin-contracts/access/Ownable.sol";
 import {LibSort} from "solady/utils/LibSort.sol";
 
@@ -37,8 +37,8 @@ contract ClusterTest is Test {
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
 
-    event NodeOperatorAdded(address indexed operator, NodeOperator operatorData, uint128 version);
-    event NodeOperatorUpdated(address indexed operator, NodeOperator operatorData, uint128 version);
+    event NodeOperatorAdded(address indexed operator, NodeOperatorData operatorData, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, NodeOperatorData operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint128 version);
 
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
@@ -188,7 +188,7 @@ contract ClusterTest is Test {
         uint256 newOperatorKey = 6;
         NodeOperator memory operator = newNodeOperator(newOperatorKey);
         vm.expectEmit(true, true, true, true);
-        emit NodeOperatorAdded(operator.addr, operator, 1);
+        emit NodeOperatorAdded(operator.addr, NodeOperatorData({data: operator.data, maintenance: operator.maintenance}), 1);
         cluster.addNodeOperator(operator);
     }
 
@@ -264,7 +264,7 @@ contract ClusterTest is Test {
         uint256 operatorKey = 1;
         NodeOperator memory operator = newNodeOperator(operatorKey, "new data");
         vm.expectEmit(true, true, true, true);
-        emit NodeOperatorUpdated(operator.addr, operator, 1);
+        emit NodeOperatorUpdated(operator.addr, NodeOperatorData({data: operator.data, maintenance: operator.maintenance}), 1);
         cluster.updateNodeOperator(operator);
     }
 

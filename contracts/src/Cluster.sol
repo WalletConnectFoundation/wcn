@@ -1,330 +1,356 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import '../dependencies/openzeppelin-contracts/utils/math/Math.sol';
+import {EnumerableSet} from "@openzeppelin-contracts/utils/structs/EnumerableSet.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin-contracts/access/Ownable2Step.sol";
+import {LibSort} from "solady/utils/LibSort.sol";
 
 struct Settings {
     uint16 maxOperatorDataBytes;
 }
 
-event MigrationStarted(uint64 id, Keyspace newKeyspace, uint64 newKeyspaceVersion, uint128 clusterVersion);
-event MigrationDataPullCompleted(uint64 id, address operatorAddress, uint128 clusterVersion);
-event MigrationCompleted(uint64 id, address operatorAddress, uint128 clusterVersion);
-event MigrationAborted(uint64 id, uint128 clusterVersion);
-
-event MaintenanceStarted(address addr, uint128 clusterVersion);
-event MaintenanceFinished(uint128 clusterVersion);
-
-event NodeOperatorAdded(uint8 idx, NodeOperator operator, uint128 clusterVersion);
-event NodeOperatorUpdated(NodeOperator operator, uint128 clusterVersion);
-event NodeOperatorRemoved(address operatorAddress, uint128 clusterVersion);
-
-event SettingsUpdated(Settings newSettings, uint128 clusterVersion);
-
-event OwnershipTransferred(address newOwner, uint128 cluserVersion);
-
-contract Cluster {
-    using Bitmask for uint256;
-
-    // TODO: Should we just make all the fields public?
-
-    address owner;
-
-    NodeOperators nodeOperators;
-
-    Keyspace[2] keyspaces;
-    uint64 keyspaceVersion;
-
-    Settings settings;
-    Migration migration;
-    Maintenance maintenance;
-
-    uint128 version;
-
-    constructor(Settings memory initialSettings, NodeOperator[] memory initialOperators) {
-        require(initialOperators.length <= 256, "too many operators");
-
-        owner = msg.sender;
-        settings = initialSettings;
-                
-        for (uint256 i = 0; i < initialOperators.length; i++) {
-            validateOperatorDataSize(initialOperators[i].data.length);
-            require(!nodeOperators.indexes[initialOperators[i].addr].is_some, "duplicate operator");
-
-            nodeOperators.indexes[initialOperators[i].addr] = OptionU8({ is_some: true, value: uint8(i) });
-            nodeOperators.slots[i] = initialOperators[i];
-        }
-
-        nodeOperators.bitmask = Bitmask.fill(uint8(initialOperators.length));
-        keyspaces[0].operatorsBitmask = nodeOperators.bitmask;
-    }
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "not the owner");
-        _;
-    }
-
-    modifier hasMigration() {
-        require(isMigrationInProgress(), "no migration");
-        _;
-    }
-
-    modifier noMigration() {
-        require(!isMigrationInProgress(), "migration in progress");
-        _;
-    }
-
-    modifier hasMaintenance() {
-        require(isMaintenanceInProgress(), "no maintenance");
-        _;
-    }
-
-    modifier noMaintenance() {
-        require(!isMaintenanceInProgress(), "maintenance in progress");
-        _;
-    }
-
-    function startMigration(Keyspace calldata newKeyspace) external onlyOwner noMigration noMaintenance {
-        require(newKeyspace.operatorsBitmask.isSubsetOf(nodeOperators.bitmask), "invalid bitmask");
-
-        Keyspace memory oldKeyspace = keyspaces[keyspaceVersion % 2];
-        require(
-            oldKeyspace.operatorsBitmask != newKeyspace.operatorsBitmask
-            || oldKeyspace.replicationStrategy != newKeyspace.replicationStrategy,
-            "same keyspace"
-        );
-    
-        migration.id++;
-
-        keyspaceVersion++;
-        keyspaces[keyspaceVersion % 2] = newKeyspace;
-
-        migration.pullingOperatorsBitmask = newKeyspace.operatorsBitmask;
-
-        version++;
-        emit MigrationStarted(migration.id, newKeyspace, keyspaceVersion, version);
-    }
-
-    function completeMigration(uint64 id) external hasMigration {
-        require(id == migration.id, "wrong migration id");
-
-        OptionU8 memory operatorIdx = nodeOperators.indexes[msg.sender];
-        require(operatorIdx.is_some, "unknown operator");
-        require(migration.pullingOperatorsBitmask.is1(operatorIdx.value), "not pulling");
-
-        migration.pullingOperatorsBitmask = migration.pullingOperatorsBitmask.set0(operatorIdx.value);
-    
-        version++;
-        if (migration.pullingOperatorsBitmask == 0) {
-            emit MigrationCompleted(migration.id, msg.sender, version);
-        } else {
-            emit MigrationDataPullCompleted(migration.id, msg.sender, version);
-        }
-    }
-
-    function abortMigration(uint64 id) external onlyOwner hasMigration {
-        require(id == migration.id, "wrong migration id");
-
-        keyspaceVersion--;
-        migration.pullingOperatorsBitmask = 0;
-
-        version++;
-        emit MigrationAborted(migration.id, version);
-    }
-
-    function startMaintenance() external noMigration noMaintenance {
-        require(nodeOperators.indexes[msg.sender].is_some || msg.sender == owner, "unauthorized");
-        
-        maintenance.slot = msg.sender;
-
-        version++;
-        emit MaintenanceStarted(msg.sender, version);
-    }
-
-    function finishMaintenance() external hasMaintenance {
-        require(maintenance.slot == msg.sender || msg.sender == owner, "unauthorized");
-
-        maintenance.slot = address(0);
-
-        version++;
-        emit MaintenanceFinished(version);
-    }
-
-    function addNodeOperator(uint8 idx, NodeOperator calldata operator) external onlyOwner {
-        validateOperatorDataSize(operator.data.length);
-        require(!nodeOperators.indexes[operator.addr].is_some, "already exists");
-        require(nodeOperators.slots[idx].data.length == 0, "slot occupied");
-        
-        nodeOperators.indexes[operator.addr] = OptionU8({ is_some: true, value: idx });
-        nodeOperators.slots[idx] = operator;
-        nodeOperators.bitmask = nodeOperators.bitmask.set1(idx);
-
-        version++;
-        emit NodeOperatorAdded(idx, operator, version);
-    }
-
-    function updateNodeOperator(NodeOperator calldata operator) external {
-        validateOperatorDataSize(operator.data.length);
-        require(msg.sender == operator.addr || msg.sender == owner, "unauthorized");
-
-        OptionU8 storage idx = nodeOperators.indexes[operator.addr];
-        require(idx.is_some, "unknown operator");
-        
-        nodeOperators.slots[idx.value] = operator;
-        version++;
-        emit NodeOperatorUpdated(operator, version);
-    }
-
-    function removeNodeOperator(address operatorAddress) external onlyOwner {
-        OptionU8 storage idx_opt = nodeOperators.indexes[operatorAddress];
-        require(idx_opt.is_some, "unknown operator");
-        uint8 idx = idx_opt.value;
-
-        if (isMigrationInProgress()) {            
-            require(keyspaces[0].operatorsBitmask.is0(idx) && keyspaces[1].operatorsBitmask.is0(idx), "in keyspace");
-        } else {
-            require(keyspaces[keyspaceVersion % 2].operatorsBitmask.is0(idx), "in keyspace");
-        }
-        
-        delete(nodeOperators.indexes[operatorAddress]);
-        delete(nodeOperators.slots[idx]);
-        nodeOperators.bitmask = nodeOperators.bitmask.set0(idx);
-
-        version++;
-        emit NodeOperatorRemoved(operatorAddress, version);
-    }
-
-    function updateSettings(Settings calldata newSettings) external onlyOwner {
-        settings = newSettings;
-        version++;
-        emit SettingsUpdated(newSettings, version);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        owner = newOwner;
-        version++;
-        emit OwnershipTransferred(newOwner, version);
-    }
-
-    function getView() public view returns (ClusterView memory) {
-        uint256 highestSlotIdx = nodeOperators.bitmask.highest1();
-    
-        ClusterView memory clusterView = ClusterView({
-            owner: owner,
-            nodeOperatorSlots: new NodeOperator[](highestSlotIdx + 1),
-            keyspaces: keyspaces,
-            keyspaceVersion: keyspaceVersion,
-            settings: settings,
-            migration: migration,
-            maintenance: maintenance,
-            version: version
-        });
-
-        uint256 nodeOperatorsBitmask = nodeOperators.bitmask;
-
-        for (uint256 i = 0; i <= highestSlotIdx; i++) {
-            if (nodeOperatorsBitmask.is0(uint8(i))) {
-                continue;
-            }
-
-            clusterView.nodeOperatorSlots[i] = nodeOperators.slots[i];
-        }
-    
-        return clusterView;
-    }
-
-    function validateOperatorDataSize(uint256 value) view internal {
-        require(value > 0, "empty operator data");
-        require(value <= settings.maxOperatorDataBytes, "operator data too large");
-    }
-
-    function isMigrationInProgress() view internal returns (bool) {
-        return migration.pullingOperatorsBitmask != 0;
-    }
-
-    function isMaintenanceInProgress() view internal returns (bool) {
-        return maintenance.slot != address(0);
-    }
-}
-
-struct OptionU8 {
-    bool is_some;
-    uint8 value;
-}
-
 struct NodeOperator {
     address addr;
     bytes data;
-}
-
-struct NodeOperators {
-    mapping(address => OptionU8) indexes;
-    NodeOperator[256] slots;
-    uint256 bitmask;
+    bool maintenance;
 }
 
 struct Keyspace {
-    uint256 operatorsBitmask;
+    address[] members;
     uint8 replicationStrategy;
 }
 
-struct Migration {
-    uint64 id;
-    uint256 pullingOperatorsBitmask;
-}
+contract Cluster is Ownable2Step {
+    using EnumerableSet for EnumerableSet.AddressSet;
+    using LibSort for *;
 
-struct Maintenance {
-    address slot;
-}
+    /*//////////////////////////////////////////////////////////////////////////
+                            CONSTANTS & ERRORS
+    //////////////////////////////////////////////////////////////////////////*/
 
-struct ClusterView {
-    address owner;
+    // Maximum number of operators per cluster
+    uint256 constant MAX_OPERATORS = 256;
+    // Maximum number of operators per migration (uint8 limit for pullingCount)
+    uint256 constant MAX_MIGRATION_OPERATORS = 255;
 
-    NodeOperator[] nodeOperatorSlots;
+    error Unauthorized();
+    error MigrationInProgress();
+    error NoMigrationInProgress();
+    error InvalidOperator();
+    error OperatorNotFound();
+    error OperatorNotPulling();
+    error CallerNotOperator();
+    error OperatorExists();
+    error OperatorInKeyspace();
+    error SameKeyspace();
+    error WrongMigrationId();
+    error InvalidOperatorData();
+    error TooManyOperators();
+    error NotInitialized();
 
-    Keyspace[2] keyspaces;
-    uint64 keyspaceVersion;
+    /*//////////////////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////////////////*/
 
-    Settings settings;
-    Migration migration;
-    Maintenance maintenance;
+    event ClusterInitialized(uint256 operatorCount);
+    event MigrationStarted(uint64 indexed id, address[] operators, uint8 replicationStrategy, uint64 keyspaceVersion, uint128 version);
+    event MigrationDataPullCompleted(uint64 indexed id, address indexed operator, uint128 version);
+    event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
+    event MigrationAborted(uint64 indexed id, uint128 version);
 
-    uint128 version;
-}
+    event NodeOperatorAdded(address indexed operator, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, uint128 version);
+    event NodeOperatorRemoved(address indexed operator, uint128 version);
 
-library Bitmask {
-    function fill(uint8 n) internal pure returns (uint256) {
-         return (1 << uint256(n)) - 1;
+    event MaintenanceToggled(address indexed operator, bool active, uint128 version);
+    event SettingsUpdated(Settings newSettings, address indexed updatedBy, uint128 version);
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            STORAGE
+    //////////////////////////////////////////////////////////////////////////*/
+
+    Settings public settings;
+    uint128 public version;
+    
+    // Operators
+    EnumerableSet.AddressSet private _operators;
+    mapping(address => NodeOperator) public info;
+    
+    // Keyspaces
+    Keyspace[2] public keyspaces;
+    uint64 public keyspaceVersion;
+    
+    // Migration
+    uint64 public migrationId;
+    mapping(address => bool) public isPulling;
+    uint8 public pullingCount;
+
+    // Storage gap for future variables (reserves space for rewards layer)
+    uint256[45] private __gap;
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            CONSTRUCTOR
+    //////////////////////////////////////////////////////////////////////////*/
+
+    constructor(Settings memory initialSettings, NodeOperator[] memory initialOperators) Ownable(msg.sender) {
+        if (initialOperators.length > MAX_OPERATORS) revert TooManyOperators();
+        
+        settings = initialSettings;
+        
+        for (uint256 i = 0; i < initialOperators.length;) {
+            NodeOperator memory op = initialOperators[i];
+            _validateOperatorData(op.data);
+            
+            if (!_operators.add(op.addr)) revert OperatorExists();
+            info[op.addr] = op;
+            
+            unchecked { ++i; }
+        }
+        
+        // Initialize first keyspace with all operators (sorted for efficiency)
+        address[] memory sortedOperators = _operators.values();
+        sortedOperators.sort();
+        keyspaces[0].members = sortedOperators;
+
+        emit ClusterInitialized(initialOperators.length);
     }
 
-    function set1(uint256 bitmask, uint8 n) internal pure returns (uint256) {
-         return bitmask | 1 << uint256(n);
+    /*//////////////////////////////////////////////////////////////////////////
+                            MODIFIERS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    modifier onlyOperatorOrOwner(address operatorAddr) {
+        if (msg.sender != operatorAddr && msg.sender != owner()) revert Unauthorized();
+        _;
     }
 
-    function set0(uint256 bitmask, uint8 n) internal pure returns (uint256) {
-         return bitmask & ~(1 << uint256(n));
+    modifier onlyInitialized() {
+        if (_operators.length() == 0) revert NotInitialized();
+        _;
     }
 
-    function is1(uint256 bitmask, uint8 n) internal pure returns (bool) {
-         return (bitmask & (1 << uint256(n))) != 0;
+    /*//////////////////////////////////////////////////////////////////////////
+                            MIGRATION FUNCTIONS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function startMigration(address[] calldata newOperators, uint8 replicationStrategy) external onlyOwner onlyInitialized {
+        if (pullingCount > 0) revert MigrationInProgress();
+        if (newOperators.length > MAX_MIGRATION_OPERATORS) revert TooManyOperators();
+        
+        // Validate operators are sorted, unique, and exist (single loop for gas optimization)
+        if (newOperators.length > 1 && !newOperators.isSortedAndUniquified()) revert InvalidOperator();
+        for (uint256 i = 0; i < newOperators.length;) {
+            address op = newOperators[i];
+            if (!_operators.contains(op)) revert OperatorNotFound();
+            isPulling[op] = true; // Set pulling in same loop
+            unchecked { ++i; }
+        }
+        pullingCount = uint8(newOperators.length);
+        
+        // Check if different from current keyspace
+        Keyspace memory current = keyspaces[keyspaceVersion % 2];
+        if (current.replicationStrategy == replicationStrategy && 
+            current.members.length == newOperators.length) {
+            // Both sorted, compare directly
+            bool same = true;
+            for (uint256 i = 0; i < current.members.length;) {
+                if (current.members[i] != newOperators[i]) {
+                    same = false;
+                    break;
+                }
+                unchecked { ++i; }
+            }
+            if (same) revert SameKeyspace();
+        }
+        
+        migrationId++;
+        keyspaceVersion++;
+        
+        // Set new keyspace
+        Keyspace storage newKeyspace = keyspaces[keyspaceVersion % 2];
+        newKeyspace.members = newOperators;
+        newKeyspace.replicationStrategy = replicationStrategy;
+        
+        emit MigrationStarted(migrationId, newOperators, replicationStrategy, keyspaceVersion, ++version);
     }
 
-    function is0(uint256 bitmask, uint8 n) internal pure returns (bool) {
-         return (bitmask & (1 << uint256(n))) == 0;
-    }
-
-    function count1(uint256 bitmask) internal pure returns (uint256 count) {
-        while (bitmask != 0) {
-            bitmask &= (bitmask - 1);
-            count++;
+    function completeMigration(uint64 id) external onlyInitialized {
+        if (pullingCount == 0) revert NoMigrationInProgress();
+        if (id != migrationId) revert WrongMigrationId();
+        if (!_operators.contains(msg.sender)) revert CallerNotOperator();
+        if (!isPulling[msg.sender]) revert OperatorNotPulling();
+        
+        isPulling[msg.sender] = false;
+        unchecked { --pullingCount; }
+        
+        if (pullingCount == 0) {
+            emit MigrationCompleted(migrationId, msg.sender, ++version);
+        } else {
+            emit MigrationDataPullCompleted(migrationId, msg.sender, ++version);
         }
     }
 
-    function highest1(uint256 bitmask) internal pure returns (uint256) {
-        return Math.log2(bitmask);    
+    function abortMigration(uint64 id) external onlyOwner {
+        if (pullingCount == 0) revert NoMigrationInProgress();
+        if (id != migrationId) revert WrongMigrationId();
+        
+        // Clear pulling state efficiently
+        address[] memory currentOperators = keyspaces[keyspaceVersion % 2].members;
+        for (uint256 i = 0; i < currentOperators.length;) {
+            isPulling[currentOperators[i]] = false;
+            unchecked { ++i; }
+        }
+        pullingCount = 0;
+        
+        // Revert keyspace
+        keyspaceVersion--;
+        
+        emit MigrationAborted(migrationId, ++version);
     }
 
-    function isSubsetOf(uint256 self, uint256 other) internal pure returns (bool) {
-        return self & ~other == 0;
+    /*//////////////////////////////////////////////////////////////////////////
+                            OPERATOR MANAGEMENT
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function addNodeOperator(NodeOperator calldata operator) external onlyOwner {
+        _validateOperatorData(operator.data);
+        if (!_operators.add(operator.addr)) revert OperatorExists();
+        
+        info[operator.addr] = operator;
+        emit NodeOperatorAdded(operator.addr, ++version);
+    }
+
+    function updateNodeOperator(NodeOperator calldata operator) external onlyOperatorOrOwner(operator.addr) onlyInitialized {
+        _validateOperatorData(operator.data);
+        if (!_operators.contains(operator.addr)) revert OperatorNotFound();
+        
+        info[operator.addr] = operator;
+        emit NodeOperatorUpdated(operator.addr, ++version);
+    }
+
+    function removeNodeOperator(address operatorAddr) external onlyOwner {
+        if (!_operators.remove(operatorAddr)) revert OperatorNotFound();
+        
+        // Check not in active keyspaces (keyspaces are sorted, use binary search)
+        if (pullingCount > 0) {
+            // During migration, check both keyspaces
+            (bool found0,) = keyspaces[0].members.searchSorted(operatorAddr);
+            (bool found1,) = keyspaces[1].members.searchSorted(operatorAddr);
+            if (found0 || found1) revert OperatorInKeyspace();
+        } else {
+            // No migration, check current keyspace
+            (bool found,) = keyspaces[keyspaceVersion % 2].members.searchSorted(operatorAddr);
+            if (found) revert OperatorInKeyspace();
+        }
+        
+        delete info[operatorAddr];
+        emit NodeOperatorRemoved(operatorAddr, ++version);
+    }
+
+    function setMaintenance(bool active) external onlyInitialized {
+        // Owner can set maintenance but shouldn't write to info mapping
+        if (msg.sender == owner()) {
+            emit MaintenanceToggled(msg.sender, active, ++version);
+            return;
+        }
+        
+        if (!_operators.contains(msg.sender)) revert Unauthorized();
+        info[msg.sender].maintenance = active;
+        emit MaintenanceToggled(msg.sender, active, ++version);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            SETTINGS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function updateSettings(Settings calldata newSettings) external onlyOwner {
+        settings = newSettings;
+        emit SettingsUpdated(newSettings, msg.sender, ++version);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function isInitialized() public view returns (bool) {
+        return _operators.length() > 0;
+    }
+
+    function getOperatorCount() external view returns (uint256) {
+        return _operators.length();
+    }
+
+    function getOperatorAt(uint256 index) external view returns (address) {
+        return _operators.at(index);
+    }
+
+    function isOperator(address addr) external view returns (bool) {
+        return _operators.contains(addr);
+    }
+
+    function getAllOperators() external view returns (address[] memory) {
+        address[] memory operators = _operators.values();
+        operators.sort();
+        return operators;
+    }
+
+    function getCurrentKeyspace() external view returns (address[] memory, uint8) {
+        Keyspace memory current = keyspaces[keyspaceVersion % 2];
+        return (current.members, current.replicationStrategy);
+    }
+
+    function getMigrationStatus() external view returns (uint64 id, uint8 remaining, bool inProgress) {
+        return (migrationId, pullingCount, pullingCount > 0);
+    }
+
+    function getPullingOperators() external view returns (address[] memory) {
+        if (pullingCount == 0) return new address[](0);
+        
+        address[] memory pulling = new address[](pullingCount);
+        address[] memory currentOperators = keyspaces[keyspaceVersion % 2].members;
+        uint256 count = 0;
+        
+        for (uint256 i = 0; i < currentOperators.length;) {
+            if (isPulling[currentOperators[i]]) {
+                pulling[count++] = currentOperators[i];
+            }
+            unchecked { ++i; }
+        }
+        
+        assembly {
+            mstore(pulling, count)
+        }
+        
+        return pulling;
+    }
+
+    function getMaintenanceOperators() external view returns (address[] memory) {
+        address[] memory allOperators = _operators.values();
+        allOperators.sort();
+        address[] memory maintenance = new address[](allOperators.length);
+        uint256 count = 0;
+        
+        for (uint256 i = 0; i < allOperators.length;) {
+            if (info[allOperators[i]].maintenance) {
+                maintenance[count] = allOperators[i];
+                unchecked { ++count; }
+            }
+            unchecked { ++i; }
+        }
+        
+        assembly {
+            mstore(maintenance, count)
+        }
+        
+        return maintenance;
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            INTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function _validateOperatorData(bytes memory data) internal view {
+        if (data.length == 0) revert InvalidOperatorData();
+        if (data.length > settings.maxOperatorDataBytes) revert InvalidOperatorData();
     }
 }

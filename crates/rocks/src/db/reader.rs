@@ -14,7 +14,7 @@ use {
     tokio::sync::oneshot,
 };
 
-const CHANNEL_CAPACITY: usize = 8192;
+const CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid number of reader threads")]

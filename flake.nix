@@ -85,9 +85,9 @@
             jq
             jsonnet
             jsonnet-language-server
-            # setting LIBCLANG_PATH manually breaks globally installed `ssh` binary and transitively breaks git
-            # so we use a local version of `ssh` in this dev env (maybe there is a better way to fix it)
-            # openssh
+
+            solc
+            foundry
           ];
 
           shellHook = ''

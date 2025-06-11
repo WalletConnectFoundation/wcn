@@ -1,5 +1,5 @@
 await-holding-invalid-types = [
-  "tracing::trace::Entered",
-  "tracing::trace::EnteredSpan",
+  "tracing::span::Entered",
+  "tracing::span::EnteredSpan",
 ]
 absolute-paths-max-segments = 4

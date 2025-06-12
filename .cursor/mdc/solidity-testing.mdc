@@ -1,0 +1,357 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Solidity Testing Guidelines
+
+This document outlines the recommended practices for testing Solidity smart contracts within this project, combining insights from our system architecture documentation and established industry best practices like the Coinbase Solidity Style Guide.
+
+## 1. Framework and Tooling
+
+- **Forge:** We use @Forge for testing and dependency management.
+
+## 2. Testing Strategy
+
+Our testing approach employs a comprehensive strategy that includes unit testing, integration testing, fuzz testing, and invariant testing. We use the Branching Tree Technique (BTT) to structure our concrete tests and ensure thorough coverage.
+
+### 2.1 Directory Structure
+
+Tests should be organized logically within the `test/` directory:
+
+```
+test/
+├─ unit/
+│  ├─ concrete/       ← deterministic, BTT-scaffolded tests
+│  │   └─ <CuT>.t.sol           (one file per Contract-Under-Test)
+│  └─ fuzz/
+│      └─ <CuT>Fuzz.t.sol
+├─ integration/
+│  ├─ concrete/
+│  │   └─ <CuT>Integration.t.sol
+│  └─ fuzz/
+│      └─ <CuT>IntegrationFuzz.t.sol
+├─ invariant/
+│  └─ <Scope>Invariants.t.sol
+└─ utils/, mocks/, fork/, …
+```
+
+One test file per contract per category, not per function.
+Example: OwnableValidator.t.sol holds all concrete unit tests for every function in OwnableValidator.
+
+BTT .tree files live alongside their target contract in the same folder (test/unit/concrete/OwnableValidator.tree, …Integration/…) and may describe multiple functions.
+
+Fuzz and invariant suites follow the same single-file rule, suffixed with Fuzz or Invariants.
+
+### 2.2 File and Contract Naming
+
+- **Test Files:** Follow Solidity style guide conventions and end with `.t.sol`. (e.g., `MyContract.t.sol`, `MyContract.deposits.t.sol`).
+- **Test Contracts:** Include the name of the contract or function being tested, followed by "Test". (e.g., `MyContractTest`, `TransferTest`).
+
+### 2.3 Test Function Naming
+
+| Scope           | File name (ends with .t.sol)                 | Top-level contract                | Example test function                              |
+| :-------------- | :------------------------------------------- | :-------------------------------- | :------------------------------------------------- |
+| Unit • Concrete | `OwnableValidator.t.sol`                     | `OwnableValidatorTest`            | `test_OnInstall_Reverts_WhenModuleIsInitialised()` |
+| Unit • Fuzz     | `OwnableValidatorFuzz.t.sol`                 | `OwnableValidatorFuzzTest`        | `testFuzz_SetThreshold(uint256 newT)`              |
+| Integration     | `OwnableValidatorIntegration.t.sol`          | `OwnableValidatorIntegrationTest` | `test_AddOwner_UpdatesState()`                     |
+| Invariant       | `AccountInvariants.t.sol` (or broader scope) | `AccountInvariantTest`            | `invariant_TotalSupplyMatchesSumOfBalances()`      |
+
+For very large contracts, multiple contract …Test blocks may live inside the same file to keep compile units small.
+
+- _File & contract names_: keep one file per contract-under-test (CuT) and per category (concrete, fuzz, integration, invariants).
+
+- _Function names_: use the pattern `test[_Fuzz|_Fork|_Revert[If|When]_Condition]_<function>_<expectedOutcome>[_context]` – combine prefixes alphabetically (`testForkFuzz_…`).
+
+```solidity
+// good
+function test_transfer_updatesSenderBalance() { … }
+function testFuzz_deposit_handlesDifferentAmounts(uint256 amount) { … }
+function test_RevertWhen_transferAmountExceedsBalance() { … }
+function testFork_interaction_correctlyCalculatesReward() { … }
+```
+
+### 2.4 Test Organization
+
+- _One file per CuT per category_ – concrete, fuzz, integration, invariants.Split only when the contract exceeds ~2 000 LOC and compile time becomes painful.
+
+- _Follow contract order_: arrange test functions in the same order the target contract declares them.
+
+- _Single-focus tests_: each test should assert one behaviour; multiple related assertions are fine, but avoid bundling unrelated checks.
+
+```solidity
+// YES – each asserts a single outcome
+function test_transfer_updatesSenderBalance() { … }
+function test_transfer_updatesReceiverBalance() { … }
+function test_transfer_emitsTransferEvent()     { … }
+
+// NO – three unrelated checks in one function
+function test_transfer() {
+    // sender balance
+    // receiver balance
+    // event emission
+}
+```
+
+### 2.5 Variables and Assertions
+
+- **Use Variables:** Use named variables for important constants or inputs in tests instead of magic numbers.
+- **Assertion Messages:** Use the optional string parameter in assertions (`assertEq`, `assertTrue`, etc.) to provide context for failures (e.g., `assertEq(balance, expectedBalance, "Balance mismatch after transfer");`).
+- **Event Testing:** Prefer `vm.expectEmit(true, true, true, true)` (or the shorthand `vm.expectEmit()`) to ensure all event parameters (indexed and non-indexed) are checked.
+
+### 2.6 Base Contracts and Utilities
+
+To promote code reuse and maintain consistency across tests, the project utilizes a set of base abstract contracts and utility files located primarily in `test/`:
+
+- **`Base.t.sol` (`Base_Test`)**: The core base contract.
+  - Inherits from `forge-std/Test` and essential utilities (`Events`, `Constants`, `Utils`).
+  - Provides a common `setUp` function for initializing standard test users (`admin`, `pauser`, `treasury`, etc.) and shared configuration (`Defaults`).
+  - Contains the crucial `deployCoreConditionally` function responsible for deploying and configuring the main WalletConnect system contracts (e.g., `WCT`, `L2WCT`, `WalletConnectConfig`, `Staking`, `RewardManager`) and associated mocks (like `MockBridge`) needed for many test scenarios.
+  - Includes helper functions like `createUser`.
+- **`Integration.t.sol` (`Integration_Test`)**: Inherits from `Base_Test`. Its `setUp` specifically calls `deployCoreConditionally` to ensure the full system is deployed for integration tests.
+- **`Invariant.t.sol` (`Invariant_Test`)**: Inherits from `forge-std/StdInvariant` and `Base_Test`. Its `setUp` also calls `deployCoreConditionally` to prepare the environment for invariant testing.
+- **`test/utils/Events.sol`**: An abstract contract declaring all system event signatures. Inheriting this allows tests to easily reference expected events.
+- **`test/utils/Constants.sol`**: An abstract contract defining global constants (e.g., `MAX_UINT256`, `BRIDGE_ADDRESS`) to avoid magic values.
+- **`test/utils/Utils.sol`**: An abstract contract containing shared utility functions (e.g., `resetPrank`, `_timestampToFloorWeek`).
+
+This hierarchical structure (`Base_Test` -> `Integration_Test`/`Invariant_Test`) centralizes setup logic and makes common definitions readily available, allowing individual test files to focus more on specific test logic rather than boilerplate setup.
+
+## 3. Test Types
+
+### 3.1 Unit Testing
+
+- Verify individual function behaviors in isolation.
+- Located in `test/unit/`.
+- Use concrete tests (structured with BTT `.tree` files in `test/unit/concrete/`) and fuzz tests (`test/unit/fuzz/`).
+
+### 3.2 Integration Testing
+
+- Verify interactions between different contracts or components.
+- Located in `test/integration/`.
+- Use concrete tests (structured with BTT `.tree` files in `test/integration/concrete/`) and fuzz tests (`test/integration/fuzz/`).
+
+### 3.3 Fuzz Testing
+
+- **Preference:** Prefer fuzz tests over concrete tests where applicable to discover edge cases.
+- Provide random inputs to functions.
+- Use clear test naming (`testFuzz_...`).
+
+### 3.4 Invariant Testing
+
+- Ensure core system properties hold true under various conditions and sequences of operations.
+- Located in `test/invariant/`.
+- Use handlers and stateful fuzzing.
+- Write descriptive assertion messages for invariants (e.g., `assertEq(totalDeposits, contractBalance, "Invariant: Sum of deposits must equal contract balance");`).
+
+## 4. Branching Tree Technique (BTT) Specification
+
+The Branching Tree Technique (BTT) uses `.tree` specification files to describe test scenarios. These specifications can be used to scaffold Solidity test files.
+
+**🎯 Core Principle:** BTT should focus on **business logic and behavior**, not implementation details. Write trees that would be readable and approachable to any code auditor.
+
+### 4.1 BTT Best Practices
+
+#### ✅ DO: Focus on Business Logic
+
+```
+Contract::function
+├── when caller is not authorized
+│   └── it should revert
+├── when input validation fails
+│   └── it should revert
+└── when conditions are met
+    └── it should perform the action
+```
+
+#### ❌ DON'T: Test Implementation Details
+
+```
+Contract::function
+└── when inputs are valid
+    ├── it should set mapping field correctly
+    ├── it should increment counter by 1
+    ├── it should emit event with correct parameters
+    ├── it should not affect other state variables
+    └── it should update storage slot correctly
+```
+
+#### ✅ DO: Keep Trees Manageable (4-6 branches max)
+
+- Each function should have a clear, readable decision tree
+- Focus on key constraints and decision points
+- Consolidate similar error conditions where appropriate
+
+#### ❌ DON'T: Create Overwhelming Trees
+
+- Avoid exhaustive lists of state changes
+- Don't test every possible edge case in BTT (use fuzz tests instead)
+- Don't duplicate validation logic across multiple functions
+
+#### ✅ DO: Use Harnesses for Shared Logic
+
+For functions that call shared internal functions (like `_validateOperatorData`), create test harnesses:
+
+```
+ContractHarness::exposed_validateOperatorData
+├── when data is empty
+│   └── it should revert
+├── when data exceeds maximum size
+│   └── it should revert
+└── when data is valid
+    └── it should not revert
+```
+
+Then in your main function tests, simply test:
+
+```
+Contract::addOperator
+├── when operator data is invalid
+│   └── it should revert
+└── when inputs are valid
+    └── it should add the operator
+```
+
+### 4.2 BTT Writing Guidelines
+
+1. **Single Responsibility:** Each `it` branch should test one clear outcome
+2. **Business Focus:** Test "what" the function should do, not "how" it does it
+3. **Readable Hierarchy:** Use clear, descriptive condition names
+4. **Manageable Scope:** Aim for 4-6 top-level branches maximum per function
+5. **Consistent Pattern:** Follow the same structure across all functions:
+   ```
+   Function::name
+   ├── when [constraint fails]
+   │   └── it should revert
+   ├── when [validation fails]
+   │   └── it should revert
+   └── when [conditions met]
+       └── it should [perform action]
+   ```
+
+### 4.3 Terminology
+
+- **Condition:** `when`/`given` branches of a tree.
+- **Action:** `it` branches of a tree.
+- **Action Description:** Children of an action.
+
+### 4.4 Specification Rules
+
+Each `.tree` file should describe at least one function under test. Trees follow these rules:
+
+- The first line is the root tree identifier, composed of the contract and function names which should be delimited by a double colon (e.g., `ContractName::functionName`).
+- The `.tree` format uses `├` and `└` characters to denote branches.
+- If a branch starts with either `when` or `given`, it is a **Condition**. Use `given` for contract states prepared in advance (preconditions) and `when` for modes of execution or user-controlled function parameters.
+- If a branch starts with `it`, it is an **Action**.
+- Any child branch an action has is called an **Action Description**.
+- Keywords (`when`, `given`, `it`) are case-insensitive.
+- Anything starting with a `//` is a comment and will be ignored during processing.
+- Multiple trees can be defined in the same file to describe different functions by following the same rules, separating them with two newlines.
+
+### 4.5 Good BTT Example
+
+Take the following Solidity function:
+
+```solidity
+function hashPair(bytes32 a, bytes32 b) private pure returns (bytes32) {
+    return a < b ? hash(a, b) : hash(b, a);
+}
+```
+
+A good `.tree` specification:
+
+```
+HashPairTest::hashPair
+├── when first arg is smaller than second arg
+│   └── it should return hash(a, b)
+└── when first arg is larger than second arg
+    └── it should return hash(b, a)
+```
+
+### 4.6 Complex Function Example
+
+For a more complex function with multiple validation steps:
+
+```
+OwnableValidator::onInstall
+├── when module is initialized
+│   └── it should revert
+└── when module is not initialized
+    ├── when threshold is 0
+    │   └── it should revert
+    └── when threshold is not 0
+        ├── when owners length is less than threshold
+        │   └── it should revert
+        └── when owners length is not less than threshold
+            ├── when owners length is more than max
+            │   └── it should revert
+            └── when owners length is not more than max
+                ├── when owners include 0 address
+                │   └── it should revert
+                ├── when owners include duplicates
+                │   └── it should revert
+                └── when owners include no duplicates
+                    └── it should set all owners
+```
+
+### 4.7 Generated Output Considerations
+
+When scaffolding tests from `.tree` specifications, keep in mind:
+
+- **Filename:** The generated Solidity test contract filename typically corresponds to the `.tree` filename but with a `.t.sol` extension (e.g., `utils.tree` scaffolds to `utils.t.sol`).
+- **Order:** Tests are generally emitted in the order their corresponding actions appear in the `.tree` file.
+- **Modifiers:** One modifier may be generated per unique condition branch path, often excluding leaf condition nodes.
+- **Naming Convention:** Generated test function names should follow the project's naming conventions (as described in @Test Function Naming).
+- Running bulloak check in CI will fail if any .tree branch lacks a corresponding test.
+
+### 4.8 Practical Constraints
+
+One .tree ⇒ one test file.
+Place all function trees for a contract in the same spec file to avoid file explosion.
+
+To scaffold without generating extra files, run:
+
+```bash
+bulloak scaffold \
+  --tree test/unit/concrete/OwnableValidator.tree \
+  --outfile test/unit/concrete/OwnableValidator.t.sol
+```
+
+Bulloak will append or update stubs inside that single file rather than creating a new one per function.
+
+Use the --merge or --update flag (Bulloak ≥ v0.4) in CI so the tree stays the source-of-truth and test files never diverge.
+
+## 5. Fork Testing
+
+- **Usage:** Use liberally to test interactions with existing deployed contracts instead of relying solely on mocks.
+- **Configuration:**
+  - Define RPC endpoints in `foundry.toml` under `[rpc_endpoints]`.
+  - Use Forge's cheatcodes (`vm.createSelectFork`) in tests.
+  - Access RPC URLs via `stdChains` (e.g., `vm.createSelectFork(stdChains.mainnet.rpcUrl)`).
+  - **Always pin to a specific block number** (`vm.createSelectFork(rpcUrl, blockNumber)`) for determinism and RPC caching. Avoid the `--fork-url` CLI flag.
+- **Caching:** Forge caches RPC calls when a block number is pinned, making subsequent runs much faster.
+- **Fuzzing on Forks:** Be mindful of RPC rate limits when fuzzing on forks if inputs affect RPC calls. Consider using seeds (`--fuzz-seed`), multicall, or structuring tests to minimize RPC calls based on fuzzed inputs.
+
+## 6. Test Harnesses
+
+- **Internal Functions:** To test internal functions, create a harness contract that inherits from the contract-under-test (CuT) and exposes the internal function via a public/external wrapper function named `exposed_<internalFunctionName>`.
+- **Private Functions:** Private functions are difficult to test directly. Consider making them internal if feasible or accept the limitation.
+- **Workaround Functions:** Harnesses can also add "workaround" functions (e.g., `workaround_getQueueLength()`) to expose state or data useful for testing (like array lengths or internal counters) that isn't available via the public interface. These can also be used for "ghost variables" in invariant testing.
+- **Shared Logic Testing:** Use harnesses to test shared internal functions (like validation logic) once, rather than duplicating tests across multiple public functions that call them.
+- Handlers used in invariants are harnesses; place them next to the invariant file to avoid polluting unit folders.
+
+## 7. Key Principles Summary
+
+### 7.1 BTT Principles
+
+- **Business Logic First:** Test behavior and constraints, not implementation
+- **Readable & Manageable:** Keep trees simple enough for any auditor to understand
+- **Single Responsibility:** One clear outcome per test branch
+- **DRY with Harnesses:** Test shared logic once, reference it everywhere else
+
+### 7.2 Implementation Details Go in Tests
+
+The detailed verification (specific state changes, event parameters, mapping updates) should be in the **test implementation**, not the BTT specification. The BTT focuses on the decision tree and expected outcomes.
+
+### 7.3 Auditor-Friendly
+
+Your BTT should be something a code auditor can quickly read and understand the key business logic and constraints of your contract, without being overwhelmed by implementation details.

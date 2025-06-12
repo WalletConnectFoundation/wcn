@@ -435,7 +435,7 @@ contract ClusterIntegrationFuzzTest is Test {
     
     function _verifyClusterConsistency() internal view {
         // Basic consistency checks
-        uint8 count = cluster.getOperatorCount();
+        uint16 count = cluster.getOperatorCount();
         address[] memory allOps = cluster.getAllOperators();
         
         // Operator count should match

@@ -82,8 +82,8 @@ contract ClusterTest is Test {
     }
     function test_InitializeWhenInitialOperatorsLengthExceedsMAX_OPERATORS() external {
         // It should revert with TooManyOperators.
-        NodeOperator[] memory tooManyOperators = new NodeOperator[](256);
-        for (uint256 i = 0; i < 256; i++) {
+        NodeOperator[] memory tooManyOperators = new NodeOperator[](cluster.MAX_OPERATORS() + 1);
+        for (uint256 i = 0; i < cluster.MAX_OPERATORS() + 1; i++) {
             tooManyOperators[i] = NodeOperator({
                 addr: address(uint160(0x2000 + i)),
                 data: abi.encodePacked("op", i),
@@ -193,8 +193,8 @@ contract ClusterTest is Test {
     function test_AddNodeOperatorWhenOperatorCountAlreadyAtMAX_OPERATORS() external {
         // It should revert with TooManyOperators.
         // Create a cluster at max capacity first
-        NodeOperator[] memory maxOperators = new NodeOperator[](255);
-        for (uint256 i = 0; i < 255; i++) {
+        NodeOperator[] memory maxOperators = new NodeOperator[](cluster.MAX_OPERATORS());
+        for (uint256 i = 0; i < cluster.MAX_OPERATORS(); i++) {
             maxOperators[i] = NodeOperator({
                 addr: address(uint160(0x3000 + i)),
                 data: abi.encodePacked("max_op", i),
@@ -208,6 +208,8 @@ contract ClusterTest is Test {
         vm.prank(OWNER);
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         ClusterHarness maxCluster = ClusterHarness(address(proxy));
+
+        assertEq(maxCluster.getOperatorCount(), maxCluster.MAX_OPERATORS(), "Operator count should be at max capacity");
         
         NodeOperator memory extraOp = NodeOperator({
             addr: address(0x9999),
@@ -265,7 +267,7 @@ contract ClusterTest is Test {
         // It should emit NodeOperatorAdded.
         // It should increment version.
         // It should not affect keyspaceVersion.
-        uint8 initialCount = cluster.getOperatorCount();
+        uint16 initialCount = cluster.getOperatorCount();
         uint128 initialVersion = cluster.version();
         uint64 initialKeyspaceVersion = cluster.keyspaceVersion();
         
@@ -348,7 +350,7 @@ contract ClusterTest is Test {
         });
         
         uint128 versionBefore = cluster.version();
-        uint8 operatorCountBefore = cluster.getOperatorCount();
+        uint16 operatorCountBefore = cluster.getOperatorCount();
         
         vm.expectEmit(true, true, true, true);
         emit NodeOperatorUpdated(updatedOperator.addr, 0, NodeOperatorData({data: updatedOperator.data, maintenance: updatedOperator.maintenance}), versionBefore + 1);
@@ -435,7 +437,7 @@ contract ClusterTest is Test {
         vm.prank(OWNER);
         cluster.addNodeOperator(newOp);
         
-        uint8 operatorCountBefore = cluster.getOperatorCount();
+        uint16 operatorCountBefore = cluster.getOperatorCount();
         uint128 versionBefore = cluster.version();
         
         vm.expectEmit(true, true, true, true);
@@ -574,10 +576,12 @@ contract ClusterTest is Test {
 
     function test_StartMigrationWhenNewOperatorSlotsExceedsMAX_OPERATORS() external {
         // It should revert with TooManyOperators.
-        uint8[] memory tooManySlots = new uint8[](256); // Exceeds MAX_OPERATORS (255)
-        for (uint256 i = 0; i < 256; i++) {
+        uint8[] memory tooManySlots = new uint8[](cluster.MAX_OPERATORS() + 1); // Exceeds MAX_OPERATORS
+        for (uint256 i = 0; i < cluster.MAX_OPERATORS() + 1; i++) {
             tooManySlots[i] = uint8(i);
         }
+
+        assertEq(tooManySlots.length, cluster.MAX_OPERATORS() + 1, "Too many slots should be equal to MAX_OPERATORS + 1");
         
         vm.expectRevert(Cluster.TooManyOperators.selector);
         vm.prank(OWNER);
@@ -942,8 +946,8 @@ contract ClusterTest is Test {
     function test_Exposed_findAvailableSlotWhenAllSlotsAreOccupied() external {
         // It should revert with TooManyOperators.
         // Create a cluster at max capacity
-        NodeOperator[] memory maxOperators = new NodeOperator[](255);
-        for (uint256 i = 0; i < 255; i++) {
+        NodeOperator[] memory maxOperators = new NodeOperator[](cluster.MAX_OPERATORS());
+        for (uint256 i = 0; i < cluster.MAX_OPERATORS(); i++) {
             maxOperators[i] = NodeOperator({
                 addr: address(uint160(0x4000 + i)),
                 data: abi.encodePacked("slot_op", i),

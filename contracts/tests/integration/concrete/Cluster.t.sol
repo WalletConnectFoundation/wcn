@@ -89,7 +89,7 @@ contract ClusterIntegrationTest is Test {
         vm.prank(owner);
         cluster.addNodeOperator(newOp);
         
-        uint8 countBefore = cluster.getOperatorCount();
+        uint16 countBefore = cluster.getOperatorCount();
         uint128 versionBefore = cluster.version();
         
         // Upgrade

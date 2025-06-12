@@ -39,7 +39,7 @@ struct ClusterView {
     Settings settings;
     uint128 version;
     uint64 keyspaceVersion;
-    uint8 operatorCount;
+    uint16 operatorCount;
     address[] operators;
     NodeOperatorData[] operatorData;
     Keyspace currentKeyspace;
@@ -56,7 +56,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////////////////*/
 
     // Maximum number of operators per cluster
-    uint8 constant MAX_OPERATORS = 255;
+    uint16 public constant MAX_OPERATORS = 256;
 
     error Unauthorized();
     error MigrationInProgress();
@@ -104,7 +104,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     mapping(uint8 => bool) public slotOccupied; // which slots are occupied
     mapping(address => uint8) public operatorToSlot; // operator address => slot
     mapping(address => NodeOperatorData) public operatorInfo; // operator data
-    uint8 public operatorCount;
+    uint16 public operatorCount;
     
     // Keyspaces
     Keyspace[2] public keyspaces;
@@ -156,7 +156,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
             
             unchecked { ++i; }
         }
-        operatorCount = uint8(initialOperators.length);
+        operatorCount = uint16(initialOperators.length);
         
         // Initialize next free slot
         nextFreeSlot = uint8(initialOperators.length);
@@ -377,7 +377,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         return operatorCount > 0;
     }
 
-    function getOperatorCount() external view returns (uint8) {
+    function getOperatorCount() external view returns (uint16) {
         return operatorCount;
     }
 
@@ -479,12 +479,12 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
 
     function _findAvailableSlot() internal view returns (uint8) {
         // Use cached next free slot for O(1) lookup
-        if (nextFreeSlot < MAX_OPERATORS && !slotOccupied[nextFreeSlot]) {
-            return nextFreeSlot;
+        if (nextFreeSlot < MAX_OPERATORS && !slotOccupied[uint8(nextFreeSlot)]) {
+            return uint8(nextFreeSlot);
         }
         
         // Fallback to linear scan if cache is stale
-        for (uint8 i = nextFreeSlot; i < MAX_OPERATORS;) {
+        for (uint8 i = nextFreeSlot; i < 255;) {
             if (!slotOccupied[i]) {
                 return i;
             }
@@ -504,7 +504,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
 
     function _updateNextFreeSlot() internal {
         // Find next available slot starting from current nextFreeSlot + 1
-        for (uint8 i = nextFreeSlot + 1; i < MAX_OPERATORS;) {
+        for (uint8 i = nextFreeSlot + 1; i < 255;) {
             if (!slotOccupied[i]) {
                 nextFreeSlot = i;
                 return;
@@ -521,8 +521,8 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
             unchecked { ++i; }
         }
         
-        // All slots occupied
-        nextFreeSlot = MAX_OPERATORS;
+        // All slots occupied - this should never happen due to operatorCount check
+        nextFreeSlot = 255;
     }
 
     function _isSlotInKeyspace(uint8 slot, uint8 keyspaceIndex) internal view returns (bool) {

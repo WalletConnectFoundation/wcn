@@ -9,9 +9,6 @@ import {Cluster, Settings, NodeOperator} from "src/Cluster.sol";
 contract ClusterFuzzTest is Test {
     ClusterHarness public cluster;
     
-    // Constants from Cluster contract
-    uint8 constant MAX_OPERATORS = 255;
-
     function _defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             maxOperatorDataBytes: 4096,
@@ -27,10 +24,12 @@ contract ClusterFuzzTest is Test {
     
     /// @dev Helper that returns a cluster with N operators
     function _freshCluster(uint256 n) internal returns (ClusterHarness) {
+        // Instantiate just to get the MAX_OPERATORS
+        uint16 maxOperators = new ClusterHarness().MAX_OPERATORS();
         // Bound n to valid limits for most use cases
         // Allow MAX_OPERATORS for testing the limit
-        if (n > MAX_OPERATORS) {
-            n = bound(n, 1, MAX_OPERATORS);
+        if (n > maxOperators) {
+            n = bound(n, 1, maxOperators);
         }
         
         NodeOperator[] memory operators = new NodeOperator[](n);
@@ -116,7 +115,7 @@ contract ClusterFuzzTest is Test {
     
     /// @dev Fuzz test for _findAvailableSlot correctness
     function testFuzz_FindAvailableSlot_Correctness(uint8 operatorCount) public {
-        operatorCount = uint8(bound(operatorCount, 1, MAX_OPERATORS - 1)); // Leave room for one more
+        operatorCount = uint8(bound(operatorCount, 1, cluster.MAX_OPERATORS() - 1)); // Leave room for one more
         
         ClusterHarness testCluster = _freshCluster(operatorCount);
         
@@ -126,7 +125,7 @@ contract ClusterFuzzTest is Test {
         assertFalse(testCluster.slotOccupied(availableSlot));
         
         // Should be less than MAX_OPERATORS
-        assertLt(availableSlot, MAX_OPERATORS);
+        assertLt(availableSlot, cluster.MAX_OPERATORS());
     }
     
     /// @dev Fuzz test for _findAvailableSlot with gaps in slot allocation
@@ -153,13 +152,13 @@ contract ClusterFuzzTest is Test {
         
         // The returned slot should not be occupied
         assertFalse(testCluster.slotOccupied(availableSlot));
-        assertLt(availableSlot, MAX_OPERATORS);
+        assertLt(availableSlot, cluster.MAX_OPERATORS());
     }
     
     /// @dev Fuzz test that _findAvailableSlot reverts when full
     function testFuzz_FindAvailableSlot_RevertWhenFull() public {
         // Create a cluster at max capacity
-        ClusterHarness maxCluster = _freshCluster(MAX_OPERATORS);
+        ClusterHarness maxCluster = _freshCluster(cluster.MAX_OPERATORS());
         
         vm.expectRevert(Cluster.TooManyOperators.selector);
         maxCluster.exposed_findAvailableSlot();
@@ -170,20 +169,39 @@ contract ClusterFuzzTest is Test {
     //////////////////////////////////////////////////////////////////////////*/
     
     /// @dev Fuzz test that keyspace members are always sorted
+    /// 
+    /// WHAT THIS TEST VALIDATES:
+    /// 1. Slot-based operator indexing works correctly with arbitrary slot combinations
+    /// 2. Migration process maintains keyspace sorting invariant (critical for consensus)
+    /// 3. Contract handles edge cases like slot 255 without overflow
+    /// 4. Keyspace state transitions preserve data integrity
     function testFuzz_KeyspaceSorting_AlwaysSorted(uint8[] calldata operatorSlots) public {
-        // Filter out invalid slots and ensure uniqueness
+        // STEP 1: Process fuzzer input into valid slot configuration
+        // The fuzzer provides random uint8 values, we need to:
+        // - Remove duplicates (same operator can't occupy multiple slots)
+        // - Filter out slots beyond MAX_OPERATORS (256) 
+        // - Sort them (required by startMigration validation)
         uint8[] memory validSlots = _filterAndSortSlots(operatorSlots);
         vm.assume(validSlots.length > 0);
         vm.assume(validSlots.length <= 10); // Keep test reasonable
         
-        // Create cluster with enough operators to cover the slots
-        uint8 maxSlot = 0;
+        // STEP 2: Create cluster with sufficient operator capacity
+        // We need to ensure every slot index in validSlots has a corresponding operator
+        // If highest slot is 200, we need 201 operators (slots 0-200)
+        uint8 highestSlotIndex = 0;
         for (uint256 i = 0; i < validSlots.length; i++) {
-            if (validSlots[i] > maxSlot) maxSlot = validSlots[i];
+            if (validSlots[i] > highestSlotIndex) highestSlotIndex = validSlots[i];
         }
-        ClusterHarness testCluster = _freshCluster(maxSlot + 1);
         
-        // Get current keyspace to avoid SameKeyspace error
+        // Need (highestSlotIndex + 1) operators to accommodate slot indices 0 through highestSlotIndex
+        // Use uint256 to prevent overflow when highestSlotIndex is 255
+        // CRITICAL: This prevents uint8(255 + 1) = 0 overflow
+        uint256 requiredOperators = uint256(highestSlotIndex) + 1;
+        
+        ClusterHarness testCluster = _freshCluster(requiredOperators);
+        
+        // STEP 3: Avoid migration to identical keyspace (would revert with SameKeyspace)
+        // Contract prevents no-op migrations to maintain state consistency
         (uint8[] memory currentMembers, uint8 currentStrategy) = testCluster.getCurrentKeyspace();
         
         // Skip if trying to migrate to the same keyspace
@@ -198,11 +216,16 @@ contract ClusterFuzzTest is Test {
         }
         vm.assume(!isSameKeyspace);
         
-        // Start migration with the slots
+        // STEP 4: Execute migration to test internal slot handling
+        // This tests the critical state transition:
+        // - Validates slots exist and are sorted (startMigration requirement)
+        // - Updates keyspace storage with new slot configuration
+        // - Increments keyspaceVersion for proper keyspace indexing
+        // - Sets up migration tracking state
         vm.prank(OWNER);
         testCluster.startMigration(validSlots, 0);
         
-        // Verify the keyspace is sorted
+        // STEP 5: Verify internal sorting invariant is maintained
         (uint8[] memory keyspaceMembers,) = testCluster.getCurrentKeyspace();
         _assertArrayIsSorted(keyspaceMembers);
     }
@@ -244,12 +267,12 @@ contract ClusterFuzzTest is Test {
     /// @dev Fuzz test that operatorCount never exceeds MAX_OPERATORS  
     function testFuzz_OperatorCount_NeverExceedsMax() public {
         // Test exactly MAX_OPERATORS + 1 to ensure it fails
-        uint256 attemptedOperators = uint256(MAX_OPERATORS) + 1; // 256 operators
+        uint256 attemptedOperators = uint256(cluster.MAX_OPERATORS()) + 1; // 257 operators
         
         NodeOperator[] memory operators = new NodeOperator[](attemptedOperators);
         
         // Verify array length is what we expect
-        assertEq(operators.length, 256);
+        assertEq(operators.length, 257);
         
         // Fill array with valid operators
         for (uint256 i = 0; i < attemptedOperators; i++) {
@@ -273,10 +296,10 @@ contract ClusterFuzzTest is Test {
     /// @dev Fuzz test that MAX_OPERATORS is the actual limit
     function testFuzz_OperatorCount_MaxOperatorsIsLimit() public {
         // Test exactly MAX_OPERATORS to ensure it succeeds
-        ClusterHarness maxCluster = _freshCluster(MAX_OPERATORS);
+        ClusterHarness maxCluster = _freshCluster(cluster.MAX_OPERATORS());
         
-        assertEq(maxCluster.getOperatorCount(), MAX_OPERATORS);
-        assertEq(maxCluster.getAllOperators().length, MAX_OPERATORS);
+        assertEq(maxCluster.getOperatorCount(), cluster.MAX_OPERATORS());
+        assertEq(maxCluster.getAllOperators().length, cluster.MAX_OPERATORS());
     }
     
     /// @dev Fuzz test that operator count matches getAllOperators length
@@ -288,7 +311,7 @@ contract ClusterFuzzTest is Test {
         assertEq(testCluster.getOperatorCount(), testCluster.getAllOperators().length);
         
         // Add an operator and verify invariant holds
-        if (operatorCount < MAX_OPERATORS) {
+        if (operatorCount < cluster.MAX_OPERATORS()) {
             NodeOperator memory newOp = NodeOperator({
                 addr: address(uint160(0x9000 + operatorCount)),
                 data: "new operator",
@@ -376,7 +399,7 @@ contract ClusterFuzzTest is Test {
     
     /// @dev Helper to create cluster with custom settings
     function _freshClusterWithSettings(uint256 n, Settings memory settings) internal returns (ClusterHarness) {
-        n = bound(n, settings.minOperators, MAX_OPERATORS);
+        n = bound(n, settings.minOperators, cluster.MAX_OPERATORS());
         
         NodeOperator[] memory operators = new NodeOperator[](n);
         for (uint256 i = 0; i < n; i++) {
@@ -403,7 +426,7 @@ contract ClusterFuzzTest is Test {
     }
     
     /// @dev Helper to filter and sort slots, removing duplicates and invalid entries
-    function _filterAndSortSlots(uint8[] calldata slots) internal pure returns (uint8[] memory) {
+    function _filterAndSortSlots(uint8[] calldata slots) internal view returns (uint8[] memory) {
         if (slots.length == 0) return new uint8[](0);
         
         // Create array to track seen slots
@@ -413,7 +436,7 @@ contract ClusterFuzzTest is Test {
         
         // Filter out duplicates and invalid slots
         for (uint256 i = 0; i < slots.length; i++) {
-            if (slots[i] < MAX_OPERATORS && !seen[slots[i]]) {
+            if (slots[i] < cluster.MAX_OPERATORS() && !seen[slots[i]]) {
                 seen[slots[i]] = true;
                 temp[count] = slots[i];
                 count++;

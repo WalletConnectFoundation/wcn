@@ -23,9 +23,7 @@ contract ClusterInvariants is StdInvariant, Test {
     MigrationHandler public migrationHandler;
     MaintenanceHandler public maintenanceHandler;
     address public owner;
-    
-    // Constants
-    uint8 constant MAX_OPERATORS = 255;
+
     
     /*//////////////////////////////////////////////////////////////////////////
                                       SETUP
@@ -68,7 +66,7 @@ contract ClusterInvariants is StdInvariant, Test {
         );
         assertLe(
             clusterView.operatorCount,
-            MAX_OPERATORS,
+            cluster.MAX_OPERATORS(),
             "Operator count must not exceed maximum"
         );
     }

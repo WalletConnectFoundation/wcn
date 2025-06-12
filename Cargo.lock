@@ -8004,7 +8004,7 @@ dependencies = [
  "futures",
  "smallvec",
  "tap",
- "thiserror",
+ "thiserror 1.0.64",
  "tokio",
  "tracing",
  "wc",
@@ -8067,10 +8067,12 @@ dependencies = [
 name = "wcn_storage_api2"
 version = "0.1.0"
 dependencies = [
- "arc-swap",
+ "const-hex",
+ "derive_more 1.0.0",
  "futures",
  "serde",
- "thiserror",
+ "strum",
+ "thiserror 1.0.64",
  "time",
  "tracing",
  "wc",

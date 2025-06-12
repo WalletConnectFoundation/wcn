@@ -74,7 +74,8 @@ contract ClusterInvariants is StdInvariant, Test {
     /// @dev Keyspace members must exist and be sorted
     function invariant_KeyspaceIntegrity() public view {
         ClusterView memory clusterView = cluster.getView();
-        uint8[] memory members = clusterView.currentKeyspace.members;
+        Keyspace memory currentKeyspace = clusterView.keyspaces[clusterView.keyspaceVersion % 2];
+        uint8[] memory members = currentKeyspace.members;
         
         // All keyspace members must correspond to actual operators
         for (uint256 i = 0; i < members.length; i++) {
@@ -144,16 +145,18 @@ contract ClusterInvariants is StdInvariant, Test {
     /// @dev ③ keyspaceVersion % 2 matches active keyspace array
     function invariant_KeyspaceVersionMapsToActiveArray() public view {
         ClusterView memory clusterView = cluster.getView();
-        
+        (,, bool migrationInProgress) = cluster.getMigrationStatus();
+        Keyspace memory currentKeyspace = clusterView.keyspaces[clusterView.keyspaceVersion % 2];
+
         // The keyspace version should determine which internal keyspace array is active
         // Since we can only see the current keyspace in the view, we verify it's consistent
         assertTrue(clusterView.keyspaceVersion >= 0, "Keyspace version should be valid");
         
-        // Current keyspace should have valid data when operators exist
-        if (clusterView.operatorCount > 0) {
+        // Current keyspace should have valid data when operators exist, unless a migration is in progress
+        if (clusterView.operatorCount > 0 && !migrationInProgress) {
             assertTrue(
-                clusterView.currentKeyspace.members.length > 0,
-                "Current keyspace should have members when operators exist"
+                currentKeyspace.members.length > 0,
+                "Current keyspace should have members when operators exist and no migration is in progress"
             );
         }
     }
@@ -223,8 +226,7 @@ contract ClusterInvariants is StdInvariant, Test {
         for (uint256 i = 0; i < n; i++) {
             operators[i] = NodeOperator({
                 addr: address(uint160(0x1000 + i)),
-                data: abi.encodePacked("operator", i),
-                maintenance: false
+                data: abi.encodePacked("operator", i)
             });
         }
 

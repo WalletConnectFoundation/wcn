@@ -36,8 +36,7 @@ contract ClusterFuzzTest is Test {
         for (uint256 i = 0; i < n; i++) {
             operators[i] = NodeOperator({
                 addr: address(uint160(0x1000 + i)),
-                data: abi.encodePacked("operator", i),
-                maintenance: false
+                data: abi.encodePacked("operator", i)
             });
         }
 
@@ -278,8 +277,7 @@ contract ClusterFuzzTest is Test {
         for (uint256 i = 0; i < attemptedOperators; i++) {
             operators[i] = NodeOperator({
                 addr: address(uint160(0x1000 + i)),
-                data: abi.encodePacked("operator", i),
-                maintenance: false
+                data: abi.encodePacked("operator", i)
             });
         }
 
@@ -314,8 +312,7 @@ contract ClusterFuzzTest is Test {
         if (operatorCount < cluster.MAX_OPERATORS()) {
             NodeOperator memory newOp = NodeOperator({
                 addr: address(uint160(0x9000 + operatorCount)),
-                data: "new operator",
-                maintenance: false
+                data: "new operator"
             });
             
             vm.prank(OWNER);
@@ -411,8 +408,7 @@ contract ClusterFuzzTest is Test {
             
             operators[i] = NodeOperator({
                 addr: address(uint160(0x2000 + i)),
-                data: data,
-                maintenance: false
+                data: data
             });
         }
 

@@ -27,11 +27,7 @@ contract ClusterIntegrationFuzzTest is Test {
         
         for (uint256 i = 0; i < 10; i++) {
             operators[i] = address(uint160(0x100 + i));
-            initialOperators[i] = NodeOperator({
-                addr: operators[i],
-                data: abi.encodePacked("operator", i),
-                maintenance: false
-            });
+            initialOperators[i] = NodeOperator({addr: operators[i], data: abi.encodePacked("operator", i)});
         }
         
         vm.startPrank(owner);
@@ -412,8 +408,7 @@ contract ClusterIntegrationFuzzTest is Test {
             // Add operator (owner only)
             NodeOperator memory newOp = NodeOperator({
                 addr: address(uint160(0x999)),
-                data: "new_operator",
-                maintenance: false
+                data: "new_operator"
             });
             vm.prank(owner);
             cluster.addNodeOperator(newOp);

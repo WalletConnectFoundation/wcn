@@ -5,15 +5,15 @@ import {Test} from "forge-std/Test.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
-import {Cluster, Settings, NodeOperator, NodeOperatorData, ClusterView} from "src/Cluster.sol";
+import {Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "src/Cluster.sol";
 
 contract ClusterTest is Test {
     ClusterHarness public cluster;
     
     // Events from Cluster contract
     event ClusterInitialized(NodeOperator[] operators, Settings settings, uint128 version);
-    event NodeOperatorAdded(address indexed operator, uint8 indexed slot, NodeOperatorData operatorData, uint128 version);
-    event NodeOperatorUpdated(address indexed operator, uint8 indexed slot, NodeOperatorData operatorData, uint128 version);
+    event NodeOperatorAdded(address indexed operator, uint8 indexed slot, bytes operatorData, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, uint8 indexed slot, bytes operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint8 indexed slot, uint128 version);
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
     event MigrationStarted(uint64 indexed id, uint8[] operators, uint8 replicationStrategy, uint64 keyspaceVersion, uint128 version);
@@ -32,8 +32,7 @@ contract ClusterTest is Test {
     function _operator(uint256 index) internal pure returns (NodeOperator memory) {
         return NodeOperator({
             addr: address(uint160(0x1000 + index)),
-            data: abi.encodePacked("operator", index),
-            maintenance: false
+            data: abi.encodePacked("operator", index)
         });
     }
     
@@ -66,8 +65,7 @@ contract ClusterTest is Test {
         for (uint256 i = 0; i < count; i++) {
             operators[i] = NodeOperator({
                 addr: address(uint160(0x1000 + i)),
-                data: abi.encodePacked("operator", i),
-                maintenance: false
+                data: abi.encodePacked("operator", i)
             });
         }
         return operators;
@@ -84,11 +82,7 @@ contract ClusterTest is Test {
         // It should revert with TooManyOperators.
         NodeOperator[] memory tooManyOperators = new NodeOperator[](cluster.MAX_OPERATORS() + 1);
         for (uint256 i = 0; i < cluster.MAX_OPERATORS() + 1; i++) {
-            tooManyOperators[i] = NodeOperator({
-                addr: address(uint160(0x2000 + i)),
-                data: abi.encodePacked("op", i),
-                maintenance: false
-            });
+            tooManyOperators[i] = NodeOperator({addr: address(uint160(0x2000 + i)), data: abi.encodePacked("op", i)});
         }
         
         ClusterHarness implementation = new ClusterHarness();
@@ -120,8 +114,7 @@ contract ClusterTest is Test {
         NodeOperator[] memory operators = new NodeOperator[](1);
         operators[0] = NodeOperator({
             addr: OPERATOR1,
-            data: "",  // Empty data
-            maintenance: false
+            data: ""  // Empty data
         });
         
         ClusterHarness implementation = new ClusterHarness();
@@ -141,8 +134,7 @@ contract ClusterTest is Test {
         NodeOperator[] memory operators = new NodeOperator[](1);
         operators[0] = NodeOperator({
             addr: OPERATOR1,
-            data: "this data is way too long for the limit",  // Exceeds 10 bytes
-            maintenance: false
+            data: "this data is way too long for the limit"  // Exceeds 10 bytes
         });
         
         ClusterHarness implementation = new ClusterHarness();
@@ -174,15 +166,13 @@ contract ClusterTest is Test {
         assertEq(freshCluster.version(), 1);
         (uint8[] memory keyspaceMembers,) = freshCluster.getCurrentKeyspace();
         assertEq(keyspaceMembers.length, 3);
-        assertTrue(freshCluster.isInitialized());
     }
 
     function test_AddNodeOperatorWhenCallerIsNotOwner() external {
         // It should revert with OwnableUnauthorizedAccount.
         NodeOperator memory newOp = NodeOperator({
             addr: address(0x999),
-            data: "new operator",
-            maintenance: false
+            data: "new operator"
         });
         
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, NON_OWNER));
@@ -197,8 +187,7 @@ contract ClusterTest is Test {
         for (uint256 i = 0; i < cluster.MAX_OPERATORS(); i++) {
             maxOperators[i] = NodeOperator({
                 addr: address(uint160(0x3000 + i)),
-                data: abi.encodePacked("max_op", i),
-                maintenance: false
+                data: abi.encodePacked("max_op", i)
             });
         }
         
@@ -213,8 +202,7 @@ contract ClusterTest is Test {
         
         NodeOperator memory extraOp = NodeOperator({
             addr: address(0x9999),
-            data: "extra operator",
-            maintenance: false
+            data: "extra operator"
         });
         
         vm.expectRevert(Cluster.TooManyOperators.selector);
@@ -226,8 +214,7 @@ contract ClusterTest is Test {
         // It should revert with InvalidOperator.
         NodeOperator memory zeroAddressOp = NodeOperator({
             addr: address(0), // Zero address
-            data: "zero address operator",
-            maintenance: false
+            data: "zero address operator"
         });
         
         vm.expectRevert(Cluster.InvalidOperator.selector);
@@ -239,8 +226,7 @@ contract ClusterTest is Test {
         // It should revert with OperatorExists.
         NodeOperator memory existingOp = NodeOperator({
             addr: address(uint160(0x1001)), // Same as first operator in setup (i+1 from _operator)
-            data: "duplicate operator",
-            maintenance: false
+            data: "duplicate operator"
         });
         
         vm.expectRevert(Cluster.OperatorExists.selector);
@@ -252,8 +238,7 @@ contract ClusterTest is Test {
         // It should revert with InvalidOperatorData.
         NodeOperator memory invalidOp = NodeOperator({
             addr: address(0x999),
-            data: "", // Empty data is invalid
-            maintenance: false
+            data: "" // Empty data is invalid
         });
         
         vm.expectRevert(Cluster.InvalidOperatorData.selector);
@@ -273,12 +258,11 @@ contract ClusterTest is Test {
         
         NodeOperator memory newOp = NodeOperator({
             addr: address(0x999),
-            data: "new valid operator",
-            maintenance: false
+            data: "new valid operator"
         });
         
         vm.expectEmit(true, true, true, true);
-        emit NodeOperatorAdded(newOp.addr, 2, NodeOperatorData({data: newOp.data, maintenance: newOp.maintenance}), initialVersion + 1);
+        emit NodeOperatorAdded(newOp.addr, 2, newOp.data, initialVersion + 1);
         
         vm.prank(OWNER);
         cluster.addNodeOperator(newOp);
@@ -289,53 +273,41 @@ contract ClusterTest is Test {
         assertEq(cluster.keyspaceVersion(), initialKeyspaceVersion);
     }
 
-    function test_UpdateNodeOperatorWhenClusterIsNotInitialized() external {
-        // It should revert with NotInitialized.
-        ClusterHarness uninitializedCluster = new ClusterHarness();
-        NodeOperator memory operator = _operator(1);
-        
-        vm.expectRevert(Cluster.NotInitialized.selector);
-        vm.prank(OWNER);
-        uninitializedCluster.updateNodeOperator(operator);
-    }
 
     function test_UpdateNodeOperatorWhenCallerIsNeitherOperatorNorOwner() external {
         // It should revert with Unauthorized.
         NodeOperator memory operator = NodeOperator({
             addr: address(uint160(0x1001)), // Existing operator
-            data: "updated data",
-            maintenance: false
+            data: "updated data"
         });
         
         vm.expectRevert(Cluster.Unauthorized.selector);
         vm.prank(NON_OWNER); // Neither operator nor owner
-        cluster.updateNodeOperator(operator);
+        cluster.updateNodeOperatorData(operator.addr, operator.data);
     }
 
     function test_UpdateNodeOperatorWhenOperatorDoesNotExist() external {
         // It should revert with OperatorNotFound.
         NodeOperator memory nonExistentOperator = NodeOperator({
             addr: address(0x9999), // Non-existent operator
-            data: "some data",
-            maintenance: false
+            data: "some data"
         });
         
         vm.expectRevert(Cluster.OperatorNotFound.selector);
         vm.prank(OWNER);
-        cluster.updateNodeOperator(nonExistentOperator);
+        cluster.updateNodeOperatorData(nonExistentOperator.addr, nonExistentOperator.data);
     }
 
     function test_UpdateNodeOperatorWhenOperatorDataIsInvalid() external {
         // It should revert with InvalidOperatorData.
         NodeOperator memory invalidOperator = NodeOperator({
             addr: address(uint160(0x1001)), // Existing operator
-            data: "", // Invalid empty data
-            maintenance: false
+            data: "" // Invalid empty data
         });
         
         vm.expectRevert(Cluster.InvalidOperatorData.selector);
         vm.prank(OWNER);
-        cluster.updateNodeOperator(invalidOperator);
+        cluster.updateNodeOperatorData(invalidOperator.addr, invalidOperator.data);
     }
 
     function test_UpdateNodeOperatorWhenInputsAreValid() external {
@@ -345,18 +317,17 @@ contract ClusterTest is Test {
         // It should not affect operatorCount.
         NodeOperator memory updatedOperator = NodeOperator({
             addr: address(uint160(0x1001)), // Existing operator
-            data: "updated operator data",
-            maintenance: true
+            data: "updated operator data"
         });
         
         uint128 versionBefore = cluster.version();
         uint16 operatorCountBefore = cluster.getOperatorCount();
         
         vm.expectEmit(true, true, true, true);
-        emit NodeOperatorUpdated(updatedOperator.addr, 0, NodeOperatorData({data: updatedOperator.data, maintenance: updatedOperator.maintenance}), versionBefore + 1);
+        emit NodeOperatorUpdated(updatedOperator.addr, 0, updatedOperator.data, versionBefore + 1);
         
         vm.prank(OWNER);
-        cluster.updateNodeOperator(updatedOperator);
+        cluster.updateNodeOperatorData(updatedOperator.addr, updatedOperator.data);
         
         assertEq(cluster.version(), versionBefore + 1);
         assertEq(cluster.getOperatorCount(), operatorCountBefore); // Should not change
@@ -366,8 +337,7 @@ contract ClusterTest is Test {
         bool found = false;
         for (uint256 i = 0; i < clusterView.operators.length; i++) {
             if (clusterView.operators[i] == updatedOperator.addr) {
-                assertEq(clusterView.operatorData[i].data, updatedOperator.data);
-                assertEq(clusterView.operatorData[i].maintenance, updatedOperator.maintenance);
+                assertEq(clusterView.operatorData[i], updatedOperator.data);
                 found = true;
                 break;
             }
@@ -430,8 +400,7 @@ contract ClusterTest is Test {
         // First add a third operator that's not in the keyspace
         NodeOperator memory newOp = NodeOperator({
             addr: address(0x999),
-            data: "removable operator",
-            maintenance: false
+            data: "removable operator"
         });
         
         vm.prank(OWNER);
@@ -451,14 +420,6 @@ contract ClusterTest is Test {
         assertFalse(cluster.isOperator(newOp.addr));
     }
 
-    function test_SetMaintenanceWhenClusterIsNotInitialized() external {
-        // It should revert with NotInitialized.
-        ClusterHarness uninitializedCluster = new ClusterHarness();
-        
-        vm.expectRevert(Cluster.NotInitialized.selector);
-        vm.prank(OWNER);
-        uninitializedCluster.setMaintenance(true);
-    }
 
     function test_SetMaintenanceWhenStartingMaintenanceAndAnotherMaintenanceIsActive() external {
         // It should revert with MaintenanceInProgress.
@@ -519,36 +480,6 @@ contract ClusterTest is Test {
         cluster.startMigration(operatorSlots, 0);
     }
 
-    function test_StartMigrationWhenClusterIsNotInitialized() external {
-        // It should revert with NotInitialized.
-        // Create a cluster with minOperators = 0, then remove all operators to make it uninitialized
-        ClusterHarness tempCluster = _deployFreshCluster(1);
-        
-        // Update settings to allow 0 operators 
-        Settings memory allowEmptySettings = Settings({
-            maxOperatorDataBytes: 4096,
-            minOperators: 0
-        });
-        
-        vm.prank(OWNER);
-        tempCluster.updateSettings(allowEmptySettings);
-        
-        // Start empty migration to remove operator from keyspace
-        uint8[] memory emptySlots = new uint8[](0);
-        vm.prank(OWNER);
-        tempCluster.startMigration(emptySlots, 0);
-        
-        // Remove the only operator to make cluster uninitialized
-        vm.prank(OWNER);
-        tempCluster.removeNodeOperator(address(uint160(0x1001)));
-        
-        uint8[] memory operatorSlots = new uint8[](1);
-        operatorSlots[0] = 0;
-        
-        vm.expectRevert(Cluster.NotInitialized.selector);
-        vm.prank(OWNER);
-        tempCluster.startMigration(operatorSlots, 0);
-    }
 
     function test_StartMigrationWhenMaintenanceIsInProgress() external {
         // It should revert with MaintenanceInProgress.
@@ -647,14 +578,6 @@ contract ClusterTest is Test {
         assertEq(pullingOps[0], 0);
     }
 
-    function test_CompleteMigrationWhenClusterIsNotInitialized() external {
-        // It should revert with NotInitialized.
-        ClusterHarness uninitializedCluster = new ClusterHarness();
-        
-        vm.expectRevert(Cluster.NotInitialized.selector);
-        vm.prank(OWNER);
-        uninitializedCluster.completeMigration(1);
-    }
 
     function test_CompleteMigrationWhenNoMigrationIsInProgress() external {
         // It should revert with NoMigrationInProgress.
@@ -906,6 +829,7 @@ contract ClusterTest is Test {
     function test_GetViewShouldReturnCompleteClusterState() external view {
         // It should return complete cluster state.
         ClusterView memory clusterView = cluster.getView();
+        Keyspace memory currentKeyspace = clusterView.keyspaces[clusterView.keyspaceVersion % 2];
         
         assertEq(clusterView.operatorCount, 2);
         assertEq(clusterView.version, 1);
@@ -913,8 +837,8 @@ contract ClusterTest is Test {
         assertEq(clusterView.migrationId, 0);
         assertEq(clusterView.operators.length, 2);
         assertEq(clusterView.operatorData.length, 2);
-        assertEq(clusterView.currentKeyspace.members.length, 2);
-        assertEq(clusterView.currentKeyspace.replicationStrategy, 0);
+        assertEq(currentKeyspace.members.length, 2);
+        assertEq(currentKeyspace.replicationStrategy, 0);
         assertEq(clusterView.pullingOperators.length, 0);
         assertEq(clusterView.maintenance.slot, address(0));
         assertFalse(clusterView.maintenance.isOwnerMaintenance);
@@ -950,8 +874,7 @@ contract ClusterTest is Test {
         for (uint256 i = 0; i < cluster.MAX_OPERATORS(); i++) {
             maxOperators[i] = NodeOperator({
                 addr: address(uint160(0x4000 + i)),
-                data: abi.encodePacked("slot_op", i),
-                maintenance: false
+                data: abi.encodePacked("slot_op", i)
             });
         }
         

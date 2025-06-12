@@ -34,8 +34,6 @@ ClusterTest::addNodeOperator
 
 
 ClusterTest::updateNodeOperator
-├── When cluster is not initialized
-│   └── It should revert with NotInitialized.
 ├── When caller is neither operator nor owner
 │   └── It should revert with Unauthorized.
 ├── When operator does not exist
@@ -66,8 +64,6 @@ ClusterTest::removeNodeOperator
 
 
 ClusterTest::setMaintenance
-├── When cluster is not initialized
-│   └── It should revert with NotInitialized.
 ├── When starting maintenance and another maintenance is active
 │   └── It should revert with MaintenanceInProgress.
 ├── When ending maintenance and caller is not the one who started
@@ -84,8 +80,6 @@ ClusterTest::setMaintenance
 ClusterTest::startMigration
 ├── When caller is not owner
 │   └── It should revert with OwnableUnauthorizedAccount.
-├── When cluster is not initialized
-│   └── It should revert with NotInitialized.
 ├── When maintenance is in progress
 │   └── It should revert with MaintenanceInProgress.
 ├── When migration is already in progress
@@ -107,8 +101,6 @@ ClusterTest::startMigration
 
 
 ClusterTest::completeMigration
-├── When cluster is not initialized
-│   └── It should revert with NotInitialized.
 ├── When no migration is in progress
 │   └── It should revert with NoMigrationInProgress.
 ├── When migration id is wrong

@@ -44,8 +44,7 @@ contract ClusterIntegrationTest is Test {
         NodeOperator[] memory initialOperators = new NodeOperator[](1);
         initialOperators[0] = NodeOperator({
             addr: address(0x100),
-            data: "operator1",
-            maintenance: false
+            data: "operator1"
         });
         
         vm.startPrank(owner);
@@ -82,8 +81,7 @@ contract ClusterIntegrationTest is Test {
         // Add some state to the contract
         NodeOperator memory newOp = NodeOperator({
             addr: address(0x200),
-            data: "operator2", 
-            maintenance: false
+            data: "operator2"
         });
         
         vm.prank(owner);
@@ -167,8 +165,7 @@ contract ClusterIntegrationTest is Test {
         // New owner should be able to perform owner functions
         NodeOperator memory newOp = NodeOperator({
             addr: address(0x300),
-            data: "operator3",
-            maintenance: false
+            data: "operator3"
         });
         
         vm.prank(newOwner);
@@ -188,8 +185,7 @@ contract ClusterIntegrationTest is Test {
         // Old owner should not be able to perform owner functions
         NodeOperator memory newOp = NodeOperator({
             addr: address(0x400),
-            data: "operator4",
-            maintenance: false
+            data: "operator4"
         });
         
         vm.prank(owner);

@@ -13,12 +13,6 @@ struct Settings {
 struct NodeOperator {
     address addr;
     bytes data;
-    bool maintenance;
-}
-
-struct NodeOperatorData {
-    bytes data;
-    bool maintenance;
 }
 
 struct Keyspace {
@@ -36,13 +30,14 @@ struct MaintenanceState {
 }
 
 struct ClusterView {
+    address owner;
     Settings settings;
     uint128 version;
     uint64 keyspaceVersion;
     uint16 operatorCount;
     address[] operators;
-    NodeOperatorData[] operatorData;
-    Keyspace currentKeyspace;
+    bytes[] operatorData;
+    Keyspace[2] keyspaces;
     uint64 migrationId;
     uint8[] pullingOperators;
     MaintenanceState maintenance;
@@ -71,7 +66,6 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     error WrongMigrationId();
     error InvalidOperatorData();
     error TooManyOperators();
-    error NotInitialized();
     error InsufficientOperators();
     error MaintenanceInProgress();
 
@@ -85,8 +79,8 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
 
-    event NodeOperatorAdded(address indexed operator, uint8 indexed slot, NodeOperatorData operatorData, uint128 version);
-    event NodeOperatorUpdated(address indexed operator, uint8 indexed slot, NodeOperatorData operatorData, uint128 version);
+    event NodeOperatorAdded(address indexed operator, uint8 indexed slot, bytes operatorData, uint128 version);
+    event NodeOperatorUpdated(address indexed operator, uint8 indexed slot, bytes operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint8 indexed slot, uint128 version);
 
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
@@ -103,7 +97,8 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     mapping(uint8 => address) public operatorSlots; // slot => operator address
     mapping(uint8 => bool) public slotOccupied; // which slots are occupied
     mapping(address => uint8) public operatorToSlot; // operator address => slot
-    mapping(address => NodeOperatorData) public operatorInfo; // operator data
+    mapping(address => bytes) public operatorData; // operator data
+
     uint16 public operatorCount;
     
     // Keyspaces
@@ -152,7 +147,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
             operatorSlots[slot] = op.addr;
             slotOccupied[slot] = true;
             operatorToSlot[op.addr] = slot;
-            operatorInfo[op.addr] = NodeOperatorData({data: op.data, maintenance: op.maintenance});
+            operatorData[op.addr] = op.data;
             
             unchecked { ++i; }
         }
@@ -177,17 +172,11 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////////////////*/
 
 
-    modifier onlyInitialized() {
-        if (operatorCount == 0) revert NotInitialized();
-        _;
-    }
-
-
     /*//////////////////////////////////////////////////////////////////////////
                             MIGRATION FUNCTIONS
     //////////////////////////////////////////////////////////////////////////*/
 
-    function startMigration(uint8[] calldata newOperatorSlots, uint8 replicationStrategy) external onlyOwner onlyInitialized {
+    function startMigration(uint8[] calldata newOperatorSlots, uint8 replicationStrategy) external onlyOwner {
         if (maintenance.slot != address(0)) revert MaintenanceInProgress();
         if (pullingCount > 0) revert MigrationInProgress();
         if (newOperatorSlots.length > MAX_OPERATORS) revert TooManyOperators();
@@ -209,7 +198,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         pullingCount = uint16(newOperatorSlots.length);
         
         // Check if different from current keyspace
-        Keyspace memory current = keyspaces[keyspaceVersion % 2];
+        Keyspace storage current = keyspaces[keyspaceVersion % 2];
         if (current.replicationStrategy == replicationStrategy && 
             current.members.length == newOperatorSlots.length) {
             bool same = true;
@@ -234,7 +223,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         emit MigrationStarted(migrationId, newOperatorSlots, replicationStrategy, keyspaceVersion, ++version);
     }
 
-    function completeMigration(uint64 id) external onlyInitialized {
+    function completeMigration(uint64 id) external {
         if (pullingCount == 0) revert NoMigrationInProgress();
         if (id != migrationId) revert WrongMigrationId();
         
@@ -287,25 +276,24 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         operatorSlots[slot] = operator.addr;
         slotOccupied[slot] = true;
         operatorToSlot[operator.addr] = slot;
-        operatorInfo[operator.addr] = NodeOperatorData({data: operator.data, maintenance: operator.maintenance});
+        operatorData[operator.addr] = operator.data;
         operatorCount++;
         
         // Update next free slot cache
         _updateNextFreeSlot();
         
-        emit NodeOperatorAdded(operator.addr, slot, NodeOperatorData({data: operator.data, maintenance: operator.maintenance}), ++version);
+        emit NodeOperatorAdded(operator.addr, slot, operator.data, ++version);
     }
 
-    function updateNodeOperator(NodeOperator calldata operator) external onlyInitialized {
-        address operatorAddr = operator.addr;
-        if (msg.sender != operatorAddr && msg.sender != owner()) revert Unauthorized();
+    function updateNodeOperatorData(address operatorAddress, bytes calldata newData) external {
+        if (msg.sender != operatorAddress && msg.sender != owner()) revert Unauthorized();
 
-        _validateOperatorData(operator.data);
-        uint8 slot = operatorToSlot[operatorAddr];
-        if (operatorSlots[slot] != operatorAddr) revert OperatorNotFound();
+        _validateOperatorData(newData);
+        uint8 slot = operatorToSlot[operatorAddress];
+        if (operatorSlots[slot] != operatorAddress) revert OperatorNotFound();
         
-        operatorInfo[operatorAddr] = NodeOperatorData({data: operator.data, maintenance: operator.maintenance});
-        emit NodeOperatorUpdated(operator.addr, slot, NodeOperatorData({data: operator.data, maintenance: operator.maintenance}), ++version);
+        operatorData[operatorAddress] = newData;
+        emit NodeOperatorUpdated(operatorAddress, slot, newData, ++version);
     }
 
     function removeNodeOperator(address operatorAddr) external onlyOwner {
@@ -325,7 +313,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         operatorSlots[slot] = address(0);
         slotOccupied[slot] = false;
         delete operatorToSlot[operatorAddr];
-        delete operatorInfo[operatorAddr];
+        delete operatorData[operatorAddr];
         operatorCount--;
         
         // Update next free slot cache if this slot is lower
@@ -336,7 +324,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         emit NodeOperatorRemoved(operatorAddr, slot, ++version);
     }
 
-    function setMaintenance(bool active) external onlyInitialized {
+    function setMaintenance(bool active) external {
         if (active) {
             // Starting maintenance - check mutex
             if (maintenance.slot != address(0)) revert MaintenanceInProgress();
@@ -353,7 +341,6 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         if (msg.sender != owner()) {
             uint8 slot = operatorToSlot[msg.sender];
             if (operatorSlots[slot] != msg.sender) revert Unauthorized();
-            operatorInfo[msg.sender].maintenance = active;
         }
         
         emit MaintenanceToggled(msg.sender, active, ++version);
@@ -372,10 +359,6 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     /*//////////////////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////////////////*/
-
-    function isInitialized() external view returns (bool) {
-        return operatorCount > 0;
-    }
 
     function getOperatorCount() external view returns (uint16) {
         return operatorCount;
@@ -408,7 +391,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     }
 
     function getCurrentKeyspace() external view returns (uint8[] memory, uint8) {
-        Keyspace memory current = keyspaces[keyspaceVersion % 2];
+        Keyspace storage current = keyspaces[keyspaceVersion % 2];
         return (current.members, current.replicationStrategy);
     }
 
@@ -440,24 +423,25 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
 
     function getView() external view returns (ClusterView memory) {
         address[] memory operators = this.getAllOperators();
-        NodeOperatorData[] memory operatorData = new NodeOperatorData[](operators.length);
+        bytes[] memory opData = new bytes[](operators.length);
         
         for (uint256 i = 0; i < operators.length;) {
-            operatorData[i] = operatorInfo[operators[i]];
+            address op = operators[i];
+            opData[i] = operatorData[op];
             unchecked { ++i; }
         }
         
-        Keyspace memory currentKeyspace = keyspaces[keyspaceVersion % 2];
         uint8[] memory pullingOps = this.getPullingOperators();
         
         return ClusterView({
+            owner: owner(),
             settings: settings,
             version: version,
             keyspaceVersion: keyspaceVersion,
             operatorCount: operatorCount,
             operators: operators,
-            operatorData: operatorData,
-            currentKeyspace: currentKeyspace,
+            operatorData: opData,
+            keyspaces: keyspaces,
             migrationId: migrationId,
             pullingOperators: pullingOps,
             maintenance: maintenance

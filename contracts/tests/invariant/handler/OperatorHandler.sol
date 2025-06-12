@@ -70,7 +70,7 @@ contract OperatorHandler is BaseHandler {
         newOperatorData.addr = getCurrentCaller();
         
         // Update the operator - fail_on_revert will catch bugs
-        cluster.updateNodeOperator(newOperatorData);
+        cluster.updateNodeOperatorData(newOperatorData.addr, newOperatorData.data);
     }
     
     /// @dev Remove an operator (owner only)

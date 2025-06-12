@@ -5,112 +5,383 @@ pub use {
     wcn_rpc::{identity, Multiaddr, PeerAddr, PeerId},
 };
 use {
-    serde::{Deserialize, Serialize},
-    std::{io, time::Duration},
+    derive_more::AsRef,
+    futures::{FutureExt as _, TryFutureExt as _},
+    std::{future::Future, marker::PhantomData, str::FromStr, time::Duration},
     time::OffsetDateTime as DateTime,
-    wcn_rpc::{self as rpc, transport},
 };
 
-#[cfg(feature = "client")]
-pub mod client;
-#[cfg(feature = "client")]
-pub use client::Client;
-#[cfg(feature = "server")]
-pub mod server;
-#[cfg(feature = "server")]
-pub use server::Server;
+pub mod operation;
+pub use operation::Operation;
 
-const RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("storage_api");
+#[cfg(any(feature = "rpc_client", feature = "rpc_server"))]
+pub mod rpc;
 
-/// RPC error codes produced by this module.
-mod error_code {
-    /// Client is not authorized to perform the operation.
-    pub const UNAUTHORIZED: &str = "unauthorized";
+/// Namespace within WCN network.
+///
+/// Namespaces are isolated and every [`StorageApi`] [`Operation`] gets executed
+/// on a specific [`Namespace`].
+#[derive(Clone, Copy, Debug)]
+pub struct Namespace {
+    /// ID of the node operator to which this namespace belongs.
+    ///
+    /// Currentry an Ethereum address.
+    node_operator_id: [u8; 20],
 
-    /// Keyspace versions of the client and the server don't match.
-    pub const KEYSPACE_VERSION_MISMATCH: &str = "keyspace_version_mismatch";
-
-    /// Provided key was invalid.
-    pub const INVALID_KEY: &str = "invalid_key";
+    /// ID of this [`Namespace`] within the node operator scope.
+    id: u8,
 }
+
+/// WCN Storage API.
+///
+/// Lingua franka of the WCN network:
+/// - Clients use it to execute storage operations on the network via sending
+///   them to Replication Coordinators (WCN nodes hosting coordinator RPC
+///   servers).
+/// - Replication Coordinators use it to replicate storage operations across the
+///   network via sending them to Replicas (WCN nodes hosting replica RPC
+///   servers).
+/// - Replicas use it to finally execute the operations on their local WCN
+///   Database instances.
+pub trait StorageApi {
+    type Error: From<operation::WrongOutput>;
+
+    /// Executes the provided [`operation::Get`].
+    fn get(
+        &self,
+        get: operation::Get,
+    ) -> impl Future<Output = Result<Option<Record>, Self::Error>> + Send {
+        self.execute(get).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::Set`].
+    fn set(&self, set: operation::Set) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.execute(set).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::Del`].
+    fn del(&self, del: operation::Del) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.execute(del).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::GetExp`].
+    fn get_exp(
+        &self,
+        get_exp: operation::GetExp,
+    ) -> impl Future<Output = Result<Option<EntryExpiration>, Self::Error>> + Send {
+        self.execute(get_exp)
+            .map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::SetExp`].
+    fn set_exp(
+        &self,
+        set_exp: operation::SetExp,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.execute(set_exp)
+            .map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HGet`].
+    fn hget(
+        &self,
+        hget: operation::HGet,
+    ) -> impl Future<Output = Result<Option<Record>, Self::Error>> + Send {
+        self.execute(hget).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HSet`].
+    fn hset(&self, hset: operation::HSet) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.execute(hset).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HDel`].
+    fn hdel(&self, hdel: operation::HDel) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.execute(hdel).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HGetExp`].
+    fn hget_exp(
+        &self,
+        hget_exp: operation::HGetExp,
+    ) -> impl Future<Output = Result<Option<EntryExpiration>, Self::Error>> + Send {
+        self.execute(hget_exp)
+            .map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HSetExp`].
+    fn hset_exp(
+        &self,
+        hset_exp: operation::HSetExp,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.execute(hset_exp)
+            .map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HCard`].
+    fn hcard(
+        &self,
+        hcard: operation::HCard,
+    ) -> impl Future<Output = Result<u64, Self::Error>> + Send {
+        self.execute(hcard).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`operation::HScan`].
+    fn hscan(
+        &self,
+        hscan: operation::HScan,
+    ) -> impl Future<Output = Result<MapPage, Self::Error>> + Send {
+        self.execute(hscan).map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`StorageApi`] [`Operation`].
+    fn execute(
+        &self,
+        operation: impl Into<Operation> + Send,
+    ) -> impl Future<Output = Result<operation::Output, Self::Error>> + Send;
+
+    /// Makes this [`StorageApi`] [`Namespaced`].
+    fn namespaced(self, namespace: impl Into<Namespace>) -> Namespaced<Self>
+    where
+        Self: Sized,
+    {
+        Namespaced {
+            namespace: namespace.into(),
+            storage_api: self,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Makes this [`StorageApi`] [`Namespaced`] using references instead of
+    /// owned values.
+    fn namespaced_ref<N: AsRef<Namespace>>(&self, namespace: N) -> Namespaced<Self, N, &Self>
+    where
+        Self: Sized,
+    {
+        Namespaced {
+            namespace,
+            storage_api: self,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// A convienience wrapper around a [`StorageApi`] for client usage.
+///
+/// Each function on this wrapper has the same arguments as the respective
+/// [`Operation`] constructor with [`Namespace`] being automatically specified.
+#[derive(Clone, Debug)]
+pub struct Namespaced<S, N = Namespace, T = Owned<S>> {
+    namespace: N,
+    storage_api: T,
+    _marker: PhantomData<S>,
+}
+
+/// Owned [`StorageApi`].
+///
+/// Required to make [`Namespaced`] generic over ownership.
+pub struct Owned<S>(S);
+
+impl<S, N, T> Namespaced<S, N, T>
+where
+    N: AsRef<Namespace>,
+    T: AsRef<S>,
+    S: StorageApi,
+{
+    /// Returns reference to the underlying [`Namespace`].
+    pub fn namespace(&self) -> &Namespace {
+        self.namespace.as_ref()
+    }
+
+    /// Returns reference to the underlying [`StorageApi`].
+    pub fn storage_api(&self) -> &S {
+        self.storage_api.as_ref()
+    }
+
+    /// Gets a [`Record`] by the provided [`Key`].
+    pub async fn get(&self, key: Key<impl Into<Bytes>>) -> Result<Option<Record>, S::Error> {
+        self.storage_api()
+            .get(operation::Get::new(*self.namespace(), key))
+            .await
+    }
+
+    /// Sets a new [`Entry`].
+    async fn set(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        value: Value<impl Into<Bytes>>,
+        expiration: impl Into<EntryExpiration>,
+    ) -> Result<(), S::Error> {
+        let namespace = *self.namespace();
+        self.storage_api()
+            .set(operation::Set::new(namespace, key, value, expiration))
+            .await
+    }
+
+    /// Deletes an [`Entry`] by the provided [`Key`].
+    async fn del(&self, key: Key<impl Into<Bytes>>) -> Result<(), S::Error> {
+        self.storage_api()
+            .del(operation::Del::new(*self.namespace(), key))
+            .await
+    }
+
+    /// Gets an [`EntryExpiration`] by the provided [`Key`].
+    async fn get_exp(
+        &self,
+        key: Key<impl Into<Bytes>>,
+    ) -> Result<Option<EntryExpiration>, S::Error> {
+        self.storage_api()
+            .get_exp(operation::GetExp::new(*self.namespace(), key))
+            .await
+    }
+
+    /// Sets [`EntryExpiration`] on the [`Entry`] with the provided [`Key`].
+    async fn set_exp(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        expiration: impl Into<EntryExpiration>,
+    ) -> Result<(), S::Error> {
+        self.storage_api()
+            .set_exp(operation::SetExp::new(*self.namespace(), key, expiration))
+            .await
+    }
+
+    /// Gets a map [`Record`] by the provided [`Key`] and [`Field`].
+    async fn hget(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        field: Field<impl Into<Bytes>>,
+    ) -> Result<Option<Record>, S::Error> {
+        self.storage_api()
+            .hget(operation::HGet::new(*self.namespace(), key, field))
+            .await
+    }
+
+    /// Sets a new [`MapEntry`].
+    async fn hset(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        field: Field<impl Into<Bytes>>,
+        value: Value<impl Into<Bytes>>,
+        expiration: impl Into<EntryExpiration>,
+    ) -> Result<(), S::Error> {
+        let namespace = *self.namespace();
+        self.storage_api()
+            .hset(operation::HSet::new(
+                namespace, key, value, field, expiration,
+            ))
+            .await
+    }
+
+    /// Deletes a [`MapEntry`] by the provided [`Key`] and [`Field`].
+    async fn hdel(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        field: Field<impl Into<Bytes>>,
+    ) -> Result<(), S::Error> {
+        self.storage_api()
+            .hdel(operation::HDel::new(*self.namespace(), key, field))
+            .await
+    }
+
+    /// Gets a [`EntryExpiration`] by the provided [`Key`] and [`Field`].
+    async fn hget_exp(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        field: Field<impl Into<Bytes>>,
+    ) -> Result<Option<EntryExpiration>, S::Error> {
+        self.storage_api()
+            .hget_exp(operation::HGetExp::new(*self.namespace(), key, field))
+            .await
+    }
+
+    /// Sets [`Expiration`] on the [`MapEntry`] with the provided [`Key`] and
+    /// [`Field`].
+    async fn hset_exp(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        field: Field<impl Into<Bytes>>,
+        expiration: impl Into<EntryExpiration>,
+    ) -> Result<(), S::Error> {
+        let namespace = *self.namespace();
+        self.storage_api()
+            .hset_exp(operation::HSetExp::new(namespace, key, field, expiration))
+            .await
+    }
+
+    /// Returns cardinality of the map with the provided [`Key`].
+    async fn hcard(&self, key: Key<impl Into<Bytes>>) -> Result<u64, S::Error> {
+        self.storage_api()
+            .hcard(operation::HCard::new(*self.namespace(), key))
+            .await
+    }
+
+    /// Returns a [`MapPage`] by iterating over the [`Field`]s  of the map with
+    /// the provided [`Key`].
+    async fn hscan(
+        &self,
+        key: Key<impl Into<Bytes>>,
+        count: impl Into<u32>,
+        cursor: Option<Field<impl Into<Bytes>>>,
+    ) -> Result<MapPage, S::Error> {
+        self.storage_api()
+            .hscan(operation::HScan::new(*self.namespace(), key, count, cursor))
+            .await
+    }
+
+    /// Returns [`Value`]s of the map with the provided [`Key`].
+    async fn hvals(&self, key: Key<impl Into<Bytes>>) -> Result<Vec<Value>, S::Error> {
+        // `1000` is generous, relay has ~100 limit for these small maps
+        self.hscan(key, 1000u32, None::<Field>)
+            .map_ok(|page| page.records.into_iter().map(|rec| rec.value).collect())
+            .await
+    }
+}
+
+/// Raw bytes.
+pub type Bytes = Vec<u8>;
 
 /// Key in a KV storage.
 #[derive(Clone, Debug)]
-pub struct Key(Vec<u8>);
+pub struct Key<T = Bytes>(pub T);
 
-impl Key {
-    /// Length of a [`Key`] namespace (prefix).
-    pub const NAMESPACE_LEN: usize = auth::PUBLIC_KEY_LEN;
-
-    const KIND_SHARED: u8 = 0;
-    const KIND_PRIVATE: u8 = 1;
-
-    /// Creates a new shared [`Key`] using the global namespace.
-    pub fn shared(bytes: impl AsRef<[u8]>) -> Self {
-        Self::new(bytes, None)
-    }
-
-    /// Creates a new private [`Key`] using the provided `namespace`.
-    pub fn private(namespace: &auth::PublicKey, bytes: impl AsRef<[u8]>) -> Self {
-        Self::new(bytes, Some(namespace))
-    }
-
-    /// Returns namespace of this [`Key`].
-    pub fn namespace(&self) -> Option<&[u8; Self::NAMESPACE_LEN]> {
-        match *self.0.first()? {
-            Self::KIND_PRIVATE => Some(self.0[1..][..Self::NAMESPACE_LEN].try_into().ok()?),
-            _ => None,
-        }
-    }
-
-    /// Returns the full byte representation of this [`Key`] (including
-    /// namespace).
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Converts this [`Key`] into bytes.
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.0
-    }
-
-    #[cfg(feature = "server")]
-    fn from_raw_bytes(bytes: Vec<u8>) -> Option<Self> {
-        match *bytes.first()? {
-            Self::KIND_SHARED => Some(Self(bytes)),
-            Self::KIND_PRIVATE if bytes.len() > Self::NAMESPACE_LEN + 1 => Some(Self(bytes)),
-            _ => None,
-        }
-    }
-
-    fn new(bytes: impl AsRef<[u8]>, namespace: Option<&auth::PublicKey>) -> Self {
-        let bytes = bytes.as_ref();
-
-        let prefix_len = if namespace.is_some() {
-            Self::NAMESPACE_LEN
-        } else {
-            0
-        };
-
-        let mut data = Vec::with_capacity(1 + prefix_len + bytes.len());
-
-        if let Some(namespace) = namespace {
-            data.push(Self::KIND_PRIVATE);
-            data.extend_from_slice(namespace.as_ref());
-        } else {
-            data.push(Self::KIND_SHARED);
-        };
-
-        data.extend_from_slice(bytes);
-        Self(data)
+impl<T> Key<T> {
+    /// Converts `Self` into `Key<U>`.
+    pub fn into<U>(self) -> Key<U>
+    where
+        T: Into<U>,
+    {
+        Self(self.into())
     }
 }
 
 /// Value in a KV storage.
-pub type Value = Vec<u8>;
+#[derive(Clone, Debug)]
+pub struct Value<T = Bytes>(pub T);
+
+impl<T> Value<T> {
+    /// Converts `Self` into `Value<U>`.
+    pub fn into<U>(self) -> Value<U>
+    where
+        T: Into<U>,
+    {
+        Self(self.into())
+    }
+}
 
 /// Subkey of a [`MapEntry`].
-pub type Field = Vec<u8>;
+#[derive(Clone, Debug)]
+pub struct Field<T = Bytes>(pub T);
+
+impl<T> Field<T> {
+    /// Converts `Self` into `Field<U>`.
+    pub fn into<U>(self) -> Value<U>
+    where
+        T: Into<U>,
+    {
+        Self(self.into())
+    }
+}
 
 /// Basic KV storage entry.
 #[derive(Clone, Debug)]
@@ -131,8 +402,8 @@ pub struct Entry {
 impl Entry {
     /// Creates a new [`Entry`].
     pub fn new(
-        key: impl Into<Key>,
-        value: impl Into<Value>,
+        key: Key<impl Into<Bytes>>,
+        value: Value<impl Into<Bytes>>,
         expiration: impl Into<EntryExpiration>,
     ) -> Self {
         Self {
@@ -167,9 +438,9 @@ pub struct MapEntry {
 impl MapEntry {
     /// Creates a new [`MapEntry`].
     pub fn new(
-        key: impl Into<Key>,
-        field: impl Into<Field>,
-        value: impl Into<Value>,
+        key: Key<impl Into<Bytes>>,
+        field: Field<impl Into<Bytes>>,
+        value: Value<impl Into<Bytes>>,
         expiration: impl Into<EntryExpiration>,
     ) -> Self {
         Self {
@@ -195,6 +466,21 @@ pub struct Record {
     pub version: EntryVersion,
 }
 
+impl Record {
+    /// Creates a new [`Record`].
+    pub fn new(
+        value: impl Into<Value>,
+        expiration: impl Into<EntryExpiration>,
+        version: impl Into<EntryVersion>,
+    ) -> Self {
+        Self {
+            value: value.into(),
+            expiration: expiration.into(),
+            version: version.into(),
+        }
+    }
+}
+
 /// [`MapEntry`] without the associated [`Key`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MapRecord {
@@ -215,14 +501,6 @@ pub struct MapRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct EntryExpiration {
     unix_timestamp_secs: u64,
-}
-
-impl From<UnixTimestampSecs> for EntryExpiration {
-    fn from(timestamp: UnixTimestampSecs) -> Self {
-        Self {
-            unix_timestamp_secs: timestamp.0,
-        }
-    }
 }
 
 impl From<Duration> for EntryExpiration {
@@ -260,24 +538,12 @@ impl EntryExpiration {
             .try_into()
             .unwrap_or_default()
     }
-
-    fn timestamp(&self) -> UnixTimestampSecs {
-        UnixTimestampSecs(self.unix_timestamp_secs)
-    }
 }
 
 /// [`Entry`]/[`MapEntry`] version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct EntryVersion {
     unix_timestamp_micros: u64,
-}
-
-impl From<UnixTimestampMicros> for EntryVersion {
-    fn from(timestamp: UnixTimestampMicros) -> Self {
-        Self {
-            unix_timestamp_micros: timestamp.0,
-        }
-    }
 }
 
 impl EntryVersion {
@@ -300,10 +566,6 @@ impl EntryVersion {
     pub fn unix_timestamp_micros(&self) -> u64 {
         self.unix_timestamp_micros
     }
-
-    fn timestamp(&self) -> UnixTimestampMicros {
-        UnixTimestampMicros(self.unix_timestamp_micros)
-    }
 }
 
 /// Page of [`MapRecord`]s.
@@ -325,206 +587,30 @@ impl MapPage {
     }
 }
 
-#[cfg(feature = "client")]
-impl Record {
-    fn new(value: Value, expiration: UnixTimestampSecs, version: UnixTimestampMicros) -> Self {
-        Self {
-            value,
-            expiration: expiration.into(),
-            version: version.into(),
-        }
+impl<S> AsRef<S> for Owned<S> {
+    fn as_ref(&self) -> &S {
+        &self.0
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-struct UnixTimestampSecs(u64);
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-struct UnixTimestampMicros(u64);
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ExtendedKey {
-    inner: Vec<u8>,
-    keyspace_version: Option<u64>,
-}
-
-type Get = rpc::Unary<{ rpc::id(b"get") }, GetRequest, Option<GetResponse>>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct GetRequest {
-    key: ExtendedKey,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct GetResponse {
-    value: Value,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-type Set = rpc::Unary<{ rpc::id(b"set") }, SetRequest, ()>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SetRequest {
-    key: ExtendedKey,
-    value: Value,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-type Del = rpc::Unary<{ rpc::id(b"del") }, DelRequest, ()>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct DelRequest {
-    key: ExtendedKey,
-    version: UnixTimestampMicros,
-}
-
-type GetExp = rpc::Unary<{ rpc::id(b"get_exp") }, GetExpRequest, Option<GetExpResponse>>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct GetExpRequest {
-    key: ExtendedKey,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct GetExpResponse {
-    expiration: UnixTimestampSecs,
-}
-
-type SetExp = rpc::Unary<{ rpc::id(b"set_exp") }, SetExpRequest, ()>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct SetExpRequest {
-    key: ExtendedKey,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-type HGet = rpc::Unary<{ rpc::id(b"hget") }, HGetRequest, Option<HGetResponse>>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HGetRequest {
-    key: ExtendedKey,
-    field: Field,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HGetResponse {
-    value: Value,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-type HSet = rpc::Unary<{ rpc::id(b"hset") }, HSetRequest, ()>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HSetRequest {
-    key: ExtendedKey,
-    field: Field,
-    value: Value,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-type HDel = rpc::Unary<{ rpc::id(b"hdel") }, HDelRequest, ()>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HDelRequest {
-    key: ExtendedKey,
-    field: Field,
-    version: UnixTimestampMicros,
-}
-
-type HGetExp = rpc::Unary<{ rpc::id(b"hget_exp") }, HGetExpRequest, Option<HGetExpResponse>>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HGetExpRequest {
-    key: ExtendedKey,
-    field: Field,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HGetExpResponse {
-    expiration: UnixTimestampSecs,
-}
-
-type HSetExp = rpc::Unary<{ rpc::id(b"hset_exp") }, HSetExpRequest, ()>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HSetExpRequest {
-    key: ExtendedKey,
-    field: Field,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-type HCard = rpc::Unary<{ rpc::id(b"hcard") }, HCardRequest, HCardResponse>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HCardRequest {
-    key: ExtendedKey,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HCardResponse {
-    cardinality: u64,
-}
-
-type HScan = rpc::Unary<{ rpc::id(b"hscan") }, HScanRequest, HScanResponse>;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HScanRequest {
-    key: ExtendedKey,
-    count: u32,
-    cursor: Option<Field>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HScanResponse {
-    records: Vec<HScanResponseRecord>,
-    has_more: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct HScanResponseRecord {
-    field: Field,
-    value: Value,
-    expiration: UnixTimestampSecs,
-    version: UnixTimestampMicros,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct HandshakeRequest {
-    access_token: auth::Token,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum HandshakeErrorResponse {
-    InvalidToken(String),
-}
-
-type HandshakeResponse = Result<(), HandshakeErrorResponse>;
-
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum HandshakeError {
-    #[error(transparent)]
-    Transport(#[from] transport::Error),
-
-    #[error("Invalid token: {_0}")]
-    InvalidToken(String),
-}
-
-impl From<HandshakeErrorResponse> for HandshakeError {
-    fn from(err: HandshakeErrorResponse) -> Self {
-        match err {
-            HandshakeErrorResponse::InvalidToken(err) => Self::InvalidToken(err),
-        }
+impl AsRef<Namespace> for Namespace {
+    fn as_ref(&self) -> &Namespace {
+        self
     }
 }
 
-impl From<io::Error> for HandshakeError {
-    fn from(err: io::Error) -> Self {
-        Self::Transport(err.into())
+impl FromStr for Namespace {
+    type Err = InvalidNamespaceError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split('/');
+        let addr = parts.next()?;
+
+        // const_hex::decode_to_array(input)
+        todo!()
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid namespace: {_0}")]
+pub struct InvalidNamespaceError(String);

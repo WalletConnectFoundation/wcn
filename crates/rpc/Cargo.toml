@@ -35,7 +35,7 @@ thiserror = "1.0"
 wc = { workspace = true, features = ["collections", "future", "metrics"] }
 metrics = { workspace = true }
 
-quinn = "0.11"
+quinn = "0.11.8"
 quinn-proto = "0.11"
 libp2p-tls = "0.5"
 backoff = { version = "0.4", features = ["tokio"] }

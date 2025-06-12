@@ -1,6 +1,5 @@
 use {
     super::*,
-    arc_swap::ArcSwap,
     futures::SinkExt,
     std::{
         collections::HashSet,
@@ -21,22 +20,18 @@ use {
         },
         identity::Keypair,
         middleware::Metered,
-        transport::{self, PendingConnection},
+        transport::{self, NoHandshake, PendingConnection},
         PeerAddr,
     },
 };
 
-/// Storage API client.
+/// Storage API RPC client.
 #[derive(Clone)]
 pub struct Client {
-    rpc: RpcClient,
+    inner: Inner,
 }
 
-type RpcClient =
-    WithRetries<Metered<WithTimeouts<wcn_rpc::quic::Client<Handshake>>>, RetryStrategy>;
-
-/// Storage API access token.
-pub type AccessToken = Arc<ArcSwap<auth::token::Token>>;
+type Inner = Metered<WithTimeouts<wcn_rpc::quic::Client>>;
 
 /// [`Client`] config.
 #[derive(Clone, Debug)]
@@ -47,27 +42,19 @@ pub struct Config {
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
 
-    /// Timeout of a [`Client`] operation.
-    pub operation_timeout: Duration,
-
-    /// Storage API access token.
-    pub access_token: AccessToken,
-
-    /// Maximum number of attempts to try before failing an operation.
-    pub max_attempts: usize,
+    /// Timeout of a [`Client`] RPC call.
+    pub rpc_timeout: Duration,
 
     /// Additional label to be used for all metrics of the [`Server`].
     pub metrics_tag: &'static str,
 }
 
 impl Config {
-    pub fn new(access_token: AccessToken) -> Self {
+    pub fn new() -> Self {
         Self {
             keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(5),
-            operation_timeout: Duration::from_secs(10),
-            access_token,
-            max_attempts: 3,
+            rpc_timeout: Duration::from_secs(10),
             metrics_tag: "default",
         }
     }
@@ -86,7 +73,7 @@ impl Config {
 
     /// Overwrites [`Config::operation_timeout`].
     pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
-        self.operation_timeout = timeout;
+        self.rpc_timeout = timeout;
         self
     }
 
@@ -105,28 +92,23 @@ impl Config {
 impl Client {
     /// Creates a new [`Client`].
     pub fn new(config: Config) -> StdResult<Self, CreationError> {
-        let handshake = Handshake {
-            access_token: config.access_token,
-        };
-
         let rpc_client_config = wcn_rpc::client::Config {
             keypair: config.keypair,
             known_peers: HashSet::new(),
-            handshake,
+            handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
-            server_name: crate::RPC_SERVER_NAME,
+            server_name: super::COORDINATOR_SERVER_NAME,
             priority: transport::Priority::High,
         };
 
-        let timeouts = Timeouts::new().with_default(config.operation_timeout);
+        let timeouts = Timeouts::new().with_default(config.rpc_timeout);
 
         let rpc_client = wcn_rpc::quic::Client::new(rpc_client_config)
             .map_err(|err| CreationError(err.to_string()))?
             .with_timeouts(timeouts)
-            .metered_with_tag(config.metrics_tag)
-            .with_retries(RetryStrategy::new(config.max_attempts));
+            .metered_with_tag(config.metrics_tag);
 
-        Ok(Self { rpc: rpc_client })
+        Ok(Self { inner: rpc_client })
     }
 
     pub fn remote_storage<'a>(&'a self, server_addr: &'a PeerAddr) -> RemoteStorage<'a> {
@@ -135,50 +117,6 @@ impl Client {
             server_addr,
             expected_keyspace_version: None,
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct RetryStrategy {
-    max_attempts: usize,
-}
-
-impl RetryStrategy {
-    fn new(max_attempts: usize) -> Self {
-        Self { max_attempts }
-    }
-}
-
-impl middleware::RetryStrategy for RetryStrategy {
-    fn requires_retry(
-        &self,
-        _rpc_id: wcn_rpc::Id,
-        error: &wcn_rpc::client::Error,
-        attempt: usize,
-    ) -> Option<Duration> {
-        use crate::error_code;
-
-        if attempt >= self.max_attempts {
-            return None;
-        }
-
-        let rpc_error = match error {
-            wcn_rpc::client::Error::Transport(_) => return Some(Duration::from_millis(50)),
-            wcn_rpc::client::Error::Rpc { error, .. } => error,
-        };
-
-        Some(match rpc_error.code.as_ref() {
-            // These errors are non-retryable
-            wcn_rpc::error_code::THROTTLED
-            | error_code::INVALID_KEY
-            | error_code::KEYSPACE_VERSION_MISMATCH
-            | error_code::UNAUTHORIZED => return None,
-
-            // On the first attempt retry immediately.
-            _ if attempt == 1 => Duration::ZERO,
-
-            _ => Duration::from_millis(100),
-        })
     }
 }
 
@@ -198,8 +136,8 @@ impl RemoteStorage<'_> {
         }
     }
 
-    fn rpc_client(&self) -> &RpcClient {
-        &self.client.rpc
+    fn rpc_client(&self) -> &Inner {
+        &self.client.inner
     }
 
     /// Specifies the expected version of the keyspace of the [`RemoteStorage`].

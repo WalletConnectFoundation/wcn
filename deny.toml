@@ -12,7 +12,8 @@ allow = [
     "ISC",
     "BSL-1.0",
     "MPL-2.0",
-    "Zlib"
+    "Zlib",
+    "CDLA-Permissive-2.0"
 ]
 
 exceptions = [{ name = "unicode-ident", allow = ["Unicode-DFS-2016"] }]

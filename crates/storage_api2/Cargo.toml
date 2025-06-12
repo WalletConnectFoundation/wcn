@@ -8,12 +8,15 @@ publish = false
 workspace = true
 
 [features]
-client = ["wcn_rpc/client", "arc-swap"]
-server = ["wcn_rpc/server"]
+default = ["rpc_client", "rpc_server"]
+rpc_client = ["wcn_rpc/client"]
+rpc_server = ["wcn_rpc/server"]
 
 [dependencies]
-wc = { workspace = true, features = ["future"] }
+wc = { workspace = true, features = ["future", "metrics"] }
 auth = { workspace = true }
+derive_more = { workspace = true, features = ["from", "try_into"] }
+strum = { workspace = true , features = ["derive"] }
 
 wcn_rpc = { workspace = true }
 serde = "1"
@@ -21,6 +24,4 @@ thiserror = "1"
 tracing = "0.1"
 futures = "0.3"
 time = "0.3"
-
-# client
-arc-swap = { version = "1.7", optional = true }
+const-hex = "1.14"

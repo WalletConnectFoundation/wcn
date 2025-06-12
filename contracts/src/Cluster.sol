@@ -437,25 +437,6 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         return pulling;
     }
 
-    function getMaintenanceOperators() external view returns (address[] memory) {
-        address[] memory allOperators = this.getAllOperators();
-        address[] memory maintenanceOps = new address[](allOperators.length);
-        uint256 count = 0;
-        
-        for (uint256 i = 0; i < allOperators.length;) {
-            if (operatorInfo[allOperators[i]].maintenance) {
-                maintenanceOps[count] = allOperators[i];
-                unchecked { ++count; }
-            }
-            unchecked { ++i; }
-        }
-        
-        assembly {
-            mstore(maintenanceOps, count)
-        }
-        
-        return maintenanceOps;
-    }
 
     function getView() external view returns (ClusterView memory) {
         address[] memory operators = this.getAllOperators();

@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import {Cluster, NodeOperator, Settings} from "../../../src/Cluster.sol";
+import {Cluster, NodeOperator, Settings} from "src/Cluster.sol";
 
 contract MockClusterV2 is Cluster {
     uint256 public newVariable;

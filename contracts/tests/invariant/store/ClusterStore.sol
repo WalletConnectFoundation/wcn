@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ClusterView} from "../../../src/Cluster.sol";
+import {ClusterView} from "src/Cluster.sol";
 
 /// @dev Storage variables needed by all cluster handlers
 /// Follows the Lockup store pattern - simple storage, no events, no complex logic

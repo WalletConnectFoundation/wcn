@@ -5,12 +5,12 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {ClusterHarness} from "../unit/ClusterHarness.sol";
-import {ClusterStore} from "./store/ClusterStore.sol";
-import {OperatorHandler} from "./handler/OperatorHandler.sol";
-import {MigrationHandler} from "./handler/MigrationHandler.sol";
-import {MaintenanceHandler} from "./handler/MaintenanceHandler.sol";
-import {Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "../../src/Cluster.sol";
+import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
+import {ClusterStore} from "tests/invariant/store/ClusterStore.sol";
+import {OperatorHandler} from "tests/invariant/handler/OperatorHandler.sol";
+import {MigrationHandler} from "tests/invariant/handler/MigrationHandler.sol";
+import {MaintenanceHandler} from "tests/invariant/handler/MaintenanceHandler.sol";
+import {Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "src/Cluster.sol";
 
 contract ClusterInvariants is StdInvariant, Test {
     /*//////////////////////////////////////////////////////////////////////////

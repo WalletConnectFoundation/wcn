@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {ClusterHarness} from "../../unit/ClusterHarness.sol";
-import {ClusterStore} from "../store/ClusterStore.sol";
-import {ClusterView} from "../../../src/Cluster.sol";
+import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
+import {ClusterStore} from "tests/invariant/store/ClusterStore.sol";
+import {ClusterView} from "src/Cluster.sol";
 
 /// @dev Base contract with common logic needed by all cluster handlers
 /// Follows the Lockup pattern for instrumentation and actor management

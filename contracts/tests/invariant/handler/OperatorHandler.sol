@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {BaseHandler} from "./BaseHandler.sol";
-import {ClusterHarness} from "../../unit/ClusterHarness.sol";
-import {ClusterStore} from "../store/ClusterStore.sol";
-import {Cluster, NodeOperator} from "../../../src/Cluster.sol";
+import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
+import {ClusterStore} from "tests/invariant/store/ClusterStore.sol";
+import {Cluster, NodeOperator} from "src/Cluster.sol";
 
 /// @dev Handler for operator-related actions following the Lockup pattern
 contract OperatorHandler is BaseHandler {

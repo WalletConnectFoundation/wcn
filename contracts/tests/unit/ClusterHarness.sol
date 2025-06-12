@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Cluster} from "../../src/Cluster.sol";
+import {Cluster} from "src/Cluster.sol";
 
 /// @notice Test harness to expose internal functions for testing
 contract ClusterHarness is Cluster {

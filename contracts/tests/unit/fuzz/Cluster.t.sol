@@ -3,8 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {ClusterHarness} from "../ClusterHarness.sol";
-import {Cluster, Settings, NodeOperator} from "../../../src/Cluster.sol";
+import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
+import {Cluster, Settings, NodeOperator} from "src/Cluster.sol";
 
 contract ClusterFuzzTest is Test {
     ClusterHarness public cluster;

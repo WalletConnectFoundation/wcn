@@ -72,6 +72,8 @@
               text = ''cargo "$@"'';
             })
 
+            python313Packages.diagrams
+
             # TODO: seems to be broken currently, restore later
             # fenixPackages.rust-analyzer 
             rust-analyzer

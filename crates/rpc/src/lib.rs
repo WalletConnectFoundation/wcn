@@ -5,17 +5,22 @@ pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
+    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr, sync::Arc},
+    tokio::sync::OwnedSemaphorePermit,
     transport::Codec,
 };
 
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
+pub mod client2;
+#[cfg(feature = "client")]
 pub use client::Client;
 
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(feature = "server")]
+pub mod server2;
 #[cfg(feature = "server")]
 pub use server::{IntoServer, Server};
 
@@ -49,6 +54,40 @@ pub trait Rpc {
 
     /// [`Rpc`] [`kind`].
     type Kind;
+
+    /// Request type of this [`Rpc`].
+    type Request: Message;
+
+    /// Response type of this [`Rpc`].
+    type Response: Message;
+
+    /// Serialization codec of this [`Rpc`].
+    type Codec: Codec;
+}
+
+pub struct StreamingV2<const ID: u8, API, Rx, Tx, Codec>
+where
+    Rx: Message,
+    Tx: Message,
+    Codec: transport::Codec,
+{
+    recv: transport::RecvStream<Rx, Codec>,
+    send: transport::SendStream<Tx, Codec>,
+    _marker: PhantomData<API>,
+}
+
+pub struct UnaryV2<const ID: u8, API, Request, Response, Codec>
+where
+    Request: Message,
+    Response: Message,
+    Codec: transport::Codec,
+{
+    streaming: StreamingV2<ID, API, Request, Response, Codec>,
+}
+
+pub trait RpcV2 {
+    /// ID of this [`Rpc`].
+    const ID: u8;
 
     /// Request type of this [`Rpc`].
     type Request: Message;
@@ -118,6 +157,13 @@ impl Name {
         }
     }
 }
+
+pub trait Api: Send + Sync + 'static {
+    const NAME: ApiName;
+    type RpcId;
+}
+
+pub type ApiName = ServerName;
 
 /// RPC server name.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -224,10 +270,24 @@ impl Error {
             description: None,
         }
     }
+
+    // pub fn with_description(mut self, description: impl Display) -> Self {
+    //     self.description = Some(description.to_string().into());
+    //     self
+    // }
 }
 
 /// RPC result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// RPC error.
+pub struct Error2 {
+    /// Error code.
+    pub code: u8,
+
+    /// Error description.
+    pub description: Option<String>,
+}
 
 // Workaround for this compliler bug: https://github.com/rust-lang/rust/issues/100013
 // https://github.com/rust-lang/rust/issues/100013#issuecomment-2210995259

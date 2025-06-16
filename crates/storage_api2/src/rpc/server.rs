@@ -1,7 +1,8 @@
 use {
     super::*,
+    crate::{operation, StorageApi},
     futures::SinkExt as _,
-    std::{collections::HashSet, future::Future, sync::Arc},
+    std::{collections::HashSet, future::Future, sync::Arc, time::Duration},
     wcn_rpc::{
         middleware::Timeouts,
         server::{
@@ -9,7 +10,7 @@ use {
             ClientConnectionInfo,
             ConnectionInfo,
         },
-        transport::{self, BiDirectionalStream, PendingConnection, PostcardCodec},
+        transport::{self, BiDirectionalStream, NoHandshake, PendingConnection, PostcardCodec},
     },
 };
 
@@ -17,28 +18,26 @@ use {
 pub type Namespace = Vec<u8>;
 
 /// Storage API [`Server`] config.
-pub struct Config<A> {
+pub struct Config {
+    /// Name of the [`Server`].
+    pub name: rpc::ServerName,
+
     /// Timeout of a [`Server`] operation.
     pub operation_timeout: Duration,
-
-    /// Inbound connection [`Authenticator`].
-    pub authenticator: A,
 }
 
 /// Storage API server.
 pub trait Server: StorageApi<Error = Error> + Clone + Send + Sync + 'static {
-    /// Returns the current keyspace version of this [`Server`].
-    fn keyspace_version(&self) -> u64;
+    /// Checks whether the provided keyspace version matches the one of the [`Server`].
+    fn validate_keyspace_version(&self, version: u64) -> bool;
 
     /// Converts this Storage API [`Server`] into an [`rpc::Server`].
-    fn into_rpc_server(self, cfg: Config<impl Authenticator>) -> impl rpc::Server {
+    fn into_rpc_server(self, cfg: Config) -> impl rpc::Server {
         let timeouts = Timeouts::new().with_default(cfg.operation_timeout);
 
         let rpc_server_config = wcn_rpc::server::Config {
-            name: crate::RPC_SERVER_NAME,
-            handshake: Handshake {
-                authenticator: cfg.authenticator,
-            },
+            name: cfg.name,
+            handshake: NoHandshake,
         };
 
         RpcServer {
@@ -52,38 +51,16 @@ pub trait Server: StorageApi<Error = Error> + Clone + Send + Sync + 'static {
 
 struct RpcHandler<'a, S> {
     api_server: &'a S,
-    conn_info: &'a ConnectionInfo<HandshakeData, ()>,
+    conn_info: &'a ConnectionInfo<(), ()>,
 }
 
 impl<S: Server> RpcHandler<'_, S> {
-    fn prepare_key(&self, key: ExtendedKey) -> wcn_rpc::Result<Key> {
-        if let Some(keyspace_version) = key.keyspace_version {
-            if keyspace_version != self.api_server.keyspace_version() {
-                return Err(wcn_rpc::Error::new(error_code::KEYSPACE_VERSION_MISMATCH));
-            }
-        }
-
-        let key = Key::from_raw_bytes(key.inner)
-            .ok_or_else(|| wcn_rpc::Error::new(error_code::INVALID_KEY))?;
-
-        if let Some(namespace) = key.namespace() {
-            if !self
-                .conn_info
-                .handshake_data
-                .namespaces
-                .contains(namespace.as_slice())
-            {
-                return Err(wcn_rpc::Error::new(error_code::UNAUTHORIZED));
-            }
-        }
-
-        Ok(key)
-    }
 
     async fn get(&self, req: GetRequest) -> wcn_rpc::Result<Option<GetResponse>> {
         let record = self
             .api_server
-            .execute_get(operation::Get {
+            .get(operation::Get {
+                namespace: 
                 key: self.prepare_key(req.key)?,
             })
             .await
@@ -112,7 +89,7 @@ impl<S: Server> RpcHandler<'_, S> {
 
     async fn del(&self, req: DelRequest) -> wcn_rpc::Result<()> {
         self.api_server
-            .execute_del(operation::Del {
+            .del(operation::Del {
                 key: self.prepare_key(req.key)?,
                 version: EntryVersion::from(req.version),
             })
@@ -253,17 +230,16 @@ impl<S: Server> RpcHandler<'_, S> {
 }
 
 #[derive(Clone, Debug)]
-struct RpcServer<S, V> {
+struct RpcServer<S> {
     api_server: S,
-    config: rpc::server::Config<Handshake<V>>,
+    config: rpc::server::Config,
 }
 
-impl<S, V> rpc::Server for RpcServer<S, V>
+impl<S> rpc::Server for RpcServer<S>
 where
     S: Server,
-    V: Authenticator,
 {
-    type Handshake = Handshake<V>;
+    type Handshake = NoHandshake;
     type ConnectionData = ();
     type Codec = PostcardCodec;
 
@@ -326,98 +302,6 @@ impl Error {
 
 /// [`Server`] operation [`Result`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Server part of the [`network::Handshake`].
-#[derive(Clone, Debug)]
-pub struct Handshake<V> {
-    authenticator: V,
-}
-
-#[derive(Clone, Debug)]
-pub struct HandshakeData {
-    pub namespaces: Arc<HashSet<Namespace>>,
-}
-
-impl<A: Authenticator> transport::Handshake for Handshake<A> {
-    type Ok = HandshakeData;
-    type Err = HandshakeError;
-
-    fn handle(
-        &self,
-        peer_id: PeerId,
-        conn: PendingConnection,
-    ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
-        async move {
-            let (mut rx, mut tx) = conn
-                .accept_handshake::<HandshakeRequest, HandshakeResponse>()
-                .await?;
-
-            let req = rx.recv_message().await?;
-
-            let err_resp = match self
-                .authenticator
-                .validate_access_token(&req.access_token, peer_id)
-            {
-                Ok(data) => {
-                    tx.send(Ok(())).await?;
-                    return Ok(HandshakeData {
-                        namespaces: Arc::new(
-                            data.namespaces()
-                                .into_iter()
-                                .map(|ns| ns.as_bytes().to_vec())
-                                .collect(),
-                        ),
-                    });
-                }
-                Err(err) => HandshakeErrorResponse::InvalidToken(err),
-            };
-
-            tx.send(Err(err_resp.clone())).await?;
-            Err(err_resp.into())
-        }
-    }
-}
-
-/// Inbound connection authenticator.
-pub trait Authenticator: Clone + Send + Sync + 'static {
-    /// Indicates whether the specified peer is an authorized access token
-    /// issuer.
-    fn is_authorized_token_issuer(&self, peer_id: PeerId) -> bool;
-
-    /// Network id of the local Storage API server.
-    fn network_id(&self) -> &str;
-
-    /// Validates the provided access token.
-    fn validate_access_token(
-        &self,
-        token: &auth::Token,
-        client_peer_id: PeerId,
-    ) -> Result<auth::token::Claims, String> {
-        let claims = token.decode().map_err(|err| err.to_string())?;
-
-        if claims.is_expired() {
-            return Err("Token expired".to_string());
-        }
-
-        match claims.purpose() {
-            auth::token::Purpose::Storage => {}
-        };
-
-        if self.network_id() != claims.network_id() {
-            return Err("Wrong network".to_string());
-        }
-
-        if !self.is_authorized_token_issuer(claims.issuer_peer_id()) {
-            return Err("Unauthorized token issuer".to_string());
-        }
-
-        if claims.client_peer_id() != client_peer_id {
-            return Err("Wrong PeerId".to_string());
-        }
-
-        Ok(claims)
-    }
-}
 
 impl From<operation::WrongOutput> for Error {
     fn from(err: operation::WrongOutput) -> Self {

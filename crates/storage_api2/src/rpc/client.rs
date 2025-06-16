@@ -1,26 +1,13 @@
 use {
     super::*,
+    crate::{operation, MapPage, MapRecord, Operation, Record, StorageApi},
     futures::SinkExt,
-    std::{
-        collections::HashSet,
-        future::Future,
-        result::Result as StdResult,
-        sync::Arc,
-        time::Duration,
-    },
+    std::{collections::HashSet, result::Result as StdResult, time::Duration},
     wcn_rpc::{
-        client::middleware::{
-            self,
-            MeteredExt,
-            Timeouts,
-            WithRetries,
-            WithRetriesExt,
-            WithTimeouts,
-            WithTimeoutsExt as _,
-        },
+        client::middleware::{MeteredExt, Timeouts, WithTimeouts, WithTimeoutsExt as _},
         identity::Keypair,
         middleware::Metered,
-        transport::{self, NoHandshake, PendingConnection},
+        transport::{self, NoHandshake},
         PeerAddr,
     },
 };
@@ -39,6 +26,9 @@ pub struct Config {
     /// [`Keypair`] of the [`Client`].
     pub keypair: Keypair,
 
+    /// Name of the RPC server the [`Client`] is supposed to connect to.
+    pub server_name: rpc::ServerName,
+
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
 
@@ -50,13 +40,20 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new() -> Self {
+    pub fn new(server_name: rpc::ServerName) -> Self {
         Self {
             keypair: Keypair::generate_ed25519(),
+            server_name,
             connection_timeout: Duration::from_secs(5),
             rpc_timeout: Duration::from_secs(10),
             metrics_tag: "default",
         }
+    }
+
+    /// Overwrites [`Config::keypair`].
+    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
+        self.keypair = keypair;
+        self
     }
 
     /// Overwrites [`Config::keypair`].
@@ -97,7 +94,7 @@ impl Client {
             known_peers: HashSet::new(),
             handshake: NoHandshake,
             connection_timeout: config.connection_timeout,
-            server_name: super::COORDINATOR_SERVER_NAME,
+            server_name: config.server_name,
             priority: transport::Priority::High,
         };
 
@@ -129,15 +126,16 @@ pub struct RemoteStorage<'a> {
 }
 
 impl RemoteStorage<'_> {
-    fn extended_key(&self, key: Key) -> ExtendedKey {
-        ExtendedKey {
-            inner: key.0,
-            keyspace_version: self.expected_keyspace_version,
-        }
-    }
-
     fn rpc_client(&self) -> &Inner {
         &self.client.inner
+    }
+
+    fn context(&self, namespace: &Namespace) -> Context {
+        Context {
+            namespace_node_operator_id: namespace.node_operator_id,
+            namespace_id: namespace.id,
+            keyspace_version: self.expected_keyspace_version,
+        }
     }
 
     /// Specifies the expected version of the keyspace of the [`RemoteStorage`].
@@ -145,153 +143,152 @@ impl RemoteStorage<'_> {
         self.expected_keyspace_version = Some(version);
         self
     }
+}
 
-    /// Gets a [`Record`] by the provided [`Key`].
-    pub async fn get(self, key: Key) -> Result<Option<Record>> {
+impl<'a> StorageApi for RemoteStorage<'a> {
+    type Error = Error;
+
+    async fn get(&self, get: operation::Get) -> Result<Option<Record>> {
         Get::send(self.rpc_client(), self.server_addr, &GetRequest {
-            key: self.extended_key(key),
+            context: self.context(&get.namespace),
+            key: get.key.into(),
         })
         .await
-        .map(|opt| opt.map(|resp| Record::new(resp.value, resp.expiration, resp.version)))
+        .map(|opt| {
+            opt.map(|resp| Record {
+                value: resp.value.into(),
+                expiration: resp.expiration.into(),
+                version: resp.version.into(),
+            })
+        })
         .map_err(Into::into)
     }
 
-    /// Sets the provided [`Entry`] only if the version of the existing
-    /// [`Entry`] is < than the new one.
-    pub async fn set(self, entry: Entry) -> Result<()> {
+    async fn set(&self, set: operation::Set) -> Result<()> {
         Set::send(self.rpc_client(), self.server_addr, &SetRequest {
-            key: self.extended_key(entry.key),
-            value: entry.value,
-            expiration: entry.expiration.timestamp(),
-            version: entry.version.timestamp(),
+            context: self.context(&set.namespace),
+            key: set.entry.key.into(),
+            value: set.entry.value.into(),
+            expiration: set.entry.expiration.into(),
+            version: set.entry.version.into(),
         })
         .await
         .map_err(Into::into)
     }
 
-    /// Deletes an [`Entry`] by the provided [`Key`] only if the version of the
-    /// [`Entry`] is < than the provided `version`.
-    pub async fn del(self, key: Key, version: EntryVersion) -> Result<()> {
-        Del::send(self.rpc_client(), self.server_addr, &DelRequest {
-            key: self.extended_key(key),
-            version: version.timestamp(),
-        })
-        .await
-        .map_err(Into::into)
-    }
-
-    /// Gets an [`EntryExpiration`] by the provided [`Key`].
-    pub async fn get_exp(self, key: Key) -> Result<Option<EntryExpiration>> {
-        GetExp::send(self.rpc_client(), self.server_addr, &GetExpRequest {
-            key: self.extended_key(key),
-        })
-        .await
-        .map(|opt| opt.map(|resp| EntryExpiration::from(resp.expiration)))
-        .map_err(Into::into)
-    }
-
-    /// Sets [`Expiration`] on the [`Entry`] with the provided [`Key`] only if
-    /// the version of the [`Entry`] is < than the provided `version`.
-    pub async fn set_exp(
-        self,
-        key: Key,
-        expiration: impl Into<EntryExpiration>,
-        version: EntryVersion,
-    ) -> Result<()> {
+    async fn set_exp(&self, set_exp: operation::SetExp) -> Result<()> {
         SetExp::send(self.rpc_client(), self.server_addr, &SetExpRequest {
-            key: self.extended_key(key),
-            expiration: expiration.into().timestamp(),
-            version: version.timestamp(),
+            context: self.context(&set_exp.namespace),
+            key: set_exp.key.into(),
+            expiration: set_exp.expiration.into(),
+            version: set_exp.version.into(),
         })
         .await
         .map_err(Into::into)
     }
 
-    /// Gets a map [`Record`] by the provided [`Key`] and [`Field`].
-    pub async fn hget(self, key: Key, field: Field) -> Result<Option<Record>> {
-        HGet::send(self.rpc_client(), self.server_addr, &HGetRequest {
-            key: self.extended_key(key),
-            field,
-        })
-        .await
-        .map(|opt| opt.map(|resp| Record::new(resp.value, resp.expiration, resp.version)))
-        .map_err(Into::into)
-    }
-
-    /// Sets the provided [`MapEntry`] only if the version of the existing
-    /// [`MapEntry`] is < than the new one.
-    pub async fn hset(self, entry: MapEntry) -> Result<()> {
-        HSet::send(self.rpc_client(), self.server_addr, &HSetRequest {
-            key: self.extended_key(entry.key),
-            field: entry.field,
-            value: entry.value,
-            expiration: entry.expiration.timestamp(),
-            version: entry.version.timestamp(),
+    async fn del(&self, del: operation::Del) -> Result<()> {
+        Del::send(self.rpc_client(), self.server_addr, &DelRequest {
+            context: self.context(&del.namespace),
+            key: del.key.into(),
+            version: del.version.into(),
         })
         .await
         .map_err(Into::into)
     }
 
-    /// Deletes a [`MapEntry`] by the provided [`Key`] only if the version of
-    /// the [`MapEntry`] is < than the provided `version`.
-    pub async fn hdel(self, key: Key, field: Field, version: EntryVersion) -> Result<()> {
-        HDel::send(self.rpc_client(), self.server_addr, &HDelRequest {
-            key: self.extended_key(key),
-            field,
-            version: version.timestamp(),
-        })
-        .await
-        .map_err(Into::into)
-    }
-
-    /// Gets an [`EntryExpiration`] by the provided [`Key`] and [`Field`].
-    pub async fn hget_exp(self, key: Key, field: Field) -> Result<Option<EntryExpiration>> {
-        HGetExp::send(self.rpc_client(), self.server_addr, &HGetExpRequest {
-            key: self.extended_key(key),
-            field,
+    async fn get_exp(&self, get_exp: operation::GetExp) -> Result<Option<EntryExpiration>> {
+        GetExp::send(self.rpc_client(), self.server_addr, &GetExpRequest {
+            context: self.context(&get_exp.namespace),
+            key: get_exp.key.into(),
         })
         .await
         .map(|opt| opt.map(|resp| EntryExpiration::from(resp.expiration)))
         .map_err(Into::into)
     }
 
-    /// Sets [`Expiration`] on the [`MapEntry`] with the provided [`Key`] and
-    /// [`Field`] only if the version of the [`MapEntry`] is < than the
-    /// provided `version`.
-    pub async fn hset_exp(
-        self,
-        key: Key,
-        field: Field,
-        expiration: impl Into<EntryExpiration>,
-        version: EntryVersion,
-    ) -> Result<()> {
-        HSetExp::send(self.rpc_client(), self.server_addr, &HSetExpRequest {
-            key: self.extended_key(key),
-            field,
-            expiration: expiration.into().timestamp(),
-            version: version.timestamp(),
+    async fn hget(&self, hget: operation::HGet) -> Result<Option<Record>> {
+        HGet::send(self.rpc_client(), self.server_addr, &HGetRequest {
+            context: self.context(&hget.namespace),
+            key: hget.key.into(),
+            field: hget.field.into(),
+        })
+        .await
+        .map(|opt| {
+            opt.map(|resp| Record {
+                value: resp.value.into(),
+                expiration: resp.expiration.into(),
+                version: resp.version.into(),
+            })
+        })
+        .map_err(Into::into)
+    }
+
+    async fn hset(&self, hset: operation::HSet) -> Result<()> {
+        HSet::send(self.rpc_client(), self.server_addr, &HSetRequest {
+            context: self.context(&hset.namespace),
+            key: hset.entry.key.into(),
+            field: hset.entry.field.into(),
+            value: hset.entry.value.into(),
+            expiration: hset.entry.expiration.into(),
+            version: hset.entry.version.into(),
         })
         .await
         .map_err(Into::into)
     }
 
-    /// Returns cardinality of the map with the provided [`Key`].
-    pub async fn hcard(self, key: Key) -> Result<u64> {
+    async fn hdel(&self, hdel: operation::HDel) -> Result<()> {
+        HDel::send(self.rpc_client(), self.server_addr, &HDelRequest {
+            context: self.context(&hdel.namespace),
+            key: hdel.key.into(),
+            field: hdel.field.into(),
+            version: hdel.version.into(),
+        })
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn hget_exp(&self, hget_exp: operation::HGetExp) -> Result<Option<EntryExpiration>> {
+        HGetExp::send(self.rpc_client(), self.server_addr, &HGetExpRequest {
+            context: self.context(&hget_exp.namespace),
+            key: hget_exp.key.into(),
+            field: hget_exp.field.into(),
+        })
+        .await
+        .map(|opt| opt.map(|resp| EntryExpiration::from(resp.expiration)))
+        .map_err(Into::into)
+    }
+
+    async fn hset_exp(&self, hset_exp: operation::HSetExp) -> Result<()> {
+        HSetExp::send(self.rpc_client(), self.server_addr, &HSetExpRequest {
+            context: self.context(&hset_exp.namespace),
+            key: hset_exp.key.into(),
+            field: hset_exp.field.into(),
+            expiration: hset_exp.expiration.into(),
+            version: hset_exp.version.into(),
+        })
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn hcard(&self, hcard: operation::HCard) -> Result<u64> {
         HCard::send(self.rpc_client(), self.server_addr, &HCardRequest {
-            key: self.extended_key(key),
+            context: self.context(&hcard.namespace),
+            key: hcard.key.into(),
         })
         .await
         .map(|resp| resp.cardinality)
         .map_err(Into::into)
     }
 
-    /// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
-    /// the provided [`Key`].
-    pub async fn hscan(self, key: Key, count: u32, cursor: Option<Field>) -> Result<MapPage> {
+    async fn hscan(&self, hscan: operation::HScan) -> Result<MapPage> {
+        let count = hscan.count;
+
         let resp = HScan::send(self.rpc_client(), self.server_addr, &HScanRequest {
-            key: self.extended_key(key),
-            count,
-            cursor,
+            context: self.context(&hscan.namespace),
+            key: hscan.key.into(),
+            count: hscan.count,
+            cursor: hscan.cursor.map(Into::into),
         })
         .await
         .map_err(Error::from)?;
@@ -302,13 +299,33 @@ impl RemoteStorage<'_> {
                 .records
                 .into_iter()
                 .map(|record| MapRecord {
-                    field: record.field,
-                    value: record.value,
+                    field: record.field.into(),
+                    value: record.value.into(),
                     expiration: EntryExpiration::from(record.expiration),
                     version: EntryVersion::from(record.version),
                 })
                 .collect(),
         })
+    }
+
+    async fn execute(
+        &self,
+        operation: impl Into<crate::Operation> + Send,
+    ) -> Result<operation::Output> {
+        match operation.into() {
+            Operation::Get(get) => self.get(get).await.map(Into::into),
+            Operation::Set(set) => self.set(set).await.map(Into::into),
+            Operation::Del(del) => self.del(del).await.map(Into::into),
+            Operation::GetExp(get_exp) => self.get_exp(get_exp).await.map(Into::into),
+            Operation::SetExp(set_exp) => self.set_exp(set_exp).await.map(Into::into),
+            Operation::HGet(hget) => self.hget(hget).await.map(Into::into),
+            Operation::HSet(hset) => self.hset(hset).await.map(Into::into),
+            Operation::HDel(hdel) => self.hdel(hdel).await.map(Into::into),
+            Operation::HGetExp(hget_exp) => self.hget_exp(hget_exp).await.map(Into::into),
+            Operation::HSetExp(hset_exp) => self.hset_exp(hset_exp).await.map(Into::into),
+            Operation::HCard(hcard) => self.hcard(hcard).await.map(Into::into),
+            Operation::HScan(hscan) => self.hscan(hscan).await.map(Into::into),
+        }
     }
 }
 
@@ -354,8 +371,8 @@ impl From<wcn_rpc::client::Error> for Error {
 
         match rpc_err.code.as_ref() {
             wcn_rpc::error_code::TIMEOUT => Self::Timeout,
-            crate::error_code::KEYSPACE_VERSION_MISMATCH => Self::KeyspaceVersionMismatch,
-            crate::error_code::UNAUTHORIZED => Self::Unauthorized,
+            error_code::KEYSPACE_VERSION_MISMATCH => Self::KeyspaceVersionMismatch,
+            error_code::UNAUTHORIZED => Self::Unauthorized,
             _ => Self::Other(format!("{rpc_err:?}")),
         }
     }
@@ -364,33 +381,8 @@ impl From<wcn_rpc::client::Error> for Error {
 /// [`Client`] operation [`Result`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Client part of the [`network::Handshake`].
-#[derive(Clone)]
-struct Handshake {
-    access_token: AccessToken,
-}
-
-impl transport::Handshake for Handshake {
-    type Ok = ();
-    type Err = HandshakeError;
-
-    fn handle(
-        &self,
-        _peer_id: PeerId,
-        conn: PendingConnection,
-    ) -> impl Future<Output = Result<Self::Ok, Self::Err>> + Send {
-        async move {
-            let (mut rx, mut tx) = conn
-                .initiate_handshake::<HandshakeRequest, HandshakeResponse>()
-                .await?;
-
-            let req = HandshakeRequest {
-                access_token: self.access_token.load().as_ref().to_owned(),
-            };
-
-            tx.send(req).await.map_err(HandshakeError::Transport)?;
-
-            rx.recv_message().await?.map_err(Into::into)
-        }
+impl From<operation::WrongOutput> for Error {
+    fn from(err: operation::WrongOutput) -> Self {
+        Self::Other(err.to_string())
     }
 }

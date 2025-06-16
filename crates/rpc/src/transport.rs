@@ -56,8 +56,8 @@ impl Codec for JsonCodec {
 
 /// Untyped bi-directional stream.
 pub struct BiDirectionalStream {
-    rx: RawRecvStream,
-    tx: RawSendStream,
+    pub(crate) rx: RawRecvStream,
+    pub(crate) tx: RawSendStream,
 }
 
 type RawSendStream = FramedWrite<quinn::SendStream, LengthDelimitedCodec>;
@@ -82,6 +82,12 @@ impl BiDirectionalStream {
                 codec: C::Serializer::default(),
             },
         )
+    }
+
+    pub(crate) fn upgrate_ref<I: Message, O: Message, C: Codec>(
+        &mut self,
+    ) -> (impl Stream<Item = I>, impl Sink<O>) {
+        ()
     }
 }
 

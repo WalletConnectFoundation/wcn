@@ -24,7 +24,7 @@ use {
     },
 };
 
-mod filter;
+pub(crate) mod filter;
 
 /// QUIC RPC server config.
 pub struct Config {
@@ -66,7 +66,11 @@ where
     S: Send + Sync + 'static,
     Server<S>: Multiplexer,
 {
-    let filter = Filter::new(&cfg)?;
+    let filter = Filter::new(&filter::Config {
+        max_connections: cfg.max_connections,
+        max_connections_per_ip: cfg.max_connections_per_ip,
+        max_connection_rate_per_ip: cfg.max_connection_rate_per_ip,
+    })?;
     let server = Server::new(rpc_servers, cfg)?;
     Ok(server.serve(filter))
 }
@@ -263,7 +267,7 @@ where
     }
 }
 
-async fn read_connection_header(
+pub(crate) async fn read_connection_header(
     conn: &quinn::Connection,
 ) -> Result<ConnectionHeader, ConnectionError> {
     let mut rx = conn.accept_uni().await?;
@@ -271,11 +275,10 @@ async fn read_connection_header(
     let protocol_version = rx.read_u32().await?;
 
     let server_name = match protocol_version {
-        0 => None,
         super::PROTOCOL_VERSION => {
             let mut buf = [0; 16];
             rx.read_exact(&mut buf).await?;
-            Some(ServerName(buf))
+            ServerName(buf)
         }
         ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
     };

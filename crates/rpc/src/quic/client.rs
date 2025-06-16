@@ -1,6 +1,7 @@
 use {
     super::{ConnectionHeader, ExtractPeerIdError, InvalidMultiaddrError, PROTOCOL_VERSION},
     crate::{
+        self as rpc,
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
         Id as RpcId,
@@ -141,7 +142,7 @@ impl<H: Handshake> Client<H> {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ConnectionHandler<H> {
+pub(crate) struct ConnectionHandler<H = NoHandshake> {
     inner: Arc<std::sync::RwLock<ConnectionHandlerInner>>,
     handshake: H,
 }
@@ -234,7 +235,7 @@ fn new_connection<H: Handshake>(
 }
 
 impl<H: Handshake> ConnectionHandler<H> {
-    pub(super) fn new(
+    pub(crate) fn new(
         peer_id: PeerId,
         addr: SocketAddr,
         server_name: ServerName,
@@ -264,22 +265,28 @@ impl<H: Handshake> ConnectionHandler<H> {
         }
     }
 
-    async fn establish_stream(
+    pub(crate) async fn open_bi(
         &self,
-        rpc_id: RpcId,
-    ) -> Result<BiDirectionalStream, EstablishStreamError> {
+    ) -> Result<(quinn::SendStream, quinn::RecvStream), EstablishStreamError> {
         let fut = self.inner.write()?.connection.clone();
         let conn = fut.await;
 
-        let (mut tx, rx) = match conn.open_bi().await {
-            Ok(bi) => bi,
+        match conn.open_bi().await {
+            Ok(bi) => Ok(bi),
             Err(_) => self
                 .reconnect(conn.stable_id())?
                 .await
                 .open_bi()
                 .await
-                .map_err(|err| EstablishStreamError::Connection(err.into()))?,
-        };
+                .map_err(|err| EstablishStreamError::Connection(err.into())),
+        }
+    }
+
+    pub(crate) async fn establish_stream(
+        &self,
+        rpc_id: RpcId,
+    ) -> Result<BiDirectionalStream, EstablishStreamError> {
+        let (mut tx, rx) = self.open_bi().await?;
 
         tx.write_u128(rpc_id)
             .await
@@ -381,6 +388,12 @@ impl ConnectionError {
     }
 }
 
+impl From<ConnectionError> for rpc::Error {
+    fn from(err: ConnectionError) -> Self {
+        err.as_metrics_label().into()
+    }
+}
+
 #[derive(Debug, From, thiserror::Error)]
 pub enum EstablishStreamError {
     #[error("Invalid Multiaddr")]
@@ -400,6 +413,20 @@ pub enum EstablishStreamError {
 
     #[error("Poisoned lock")]
     Lock,
+}
+
+impl From<EstablishStreamError> for rpc::Error {
+    fn from(err: EstablishStreamError) -> Self {
+        match err {
+            EstablishStreamError::InvalidMultiaddr(_) => "quic_client_invalid_multiaddr",
+            EstablishStreamError::NoAvailablePeers => "quic_client_no_available_peers",
+            EstablishStreamError::Connection(err) => return err.into(),
+            EstablishStreamError::Timeout => "quic_client_establish_stream_timeout",
+            EstablishStreamError::Rng => todo!(),
+            EstablishStreamError::Lock => todo!(),
+        }
+        .into()
+    }
 }
 
 impl<G> From<PoisonError<G>> for EstablishStreamError {

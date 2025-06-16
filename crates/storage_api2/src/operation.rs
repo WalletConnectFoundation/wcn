@@ -1,3 +1,5 @@
+//! Storage API operations.
+
 use {
     crate::{
         Bytes,
@@ -19,6 +21,7 @@ use {
     wc::metrics::{self, enum_ordinalize::Ordinalize},
 };
 
+/// Sum type of all Storage API operations.
 #[derive(Clone, Debug, From, EnumDiscriminants)]
 #[strum_discriminants(name(Name))]
 #[strum_discriminants(derive(Ordinalize))]
@@ -200,7 +203,7 @@ impl HGet {
         Self {
             namespace: namespace.into(),
             key: key.into(),
-            field: field.into(),
+            field: field.convert(),
         }
     }
 }
@@ -247,7 +250,7 @@ impl HDel {
         Self {
             namespace: namespace.into(),
             key: key.into(),
-            field: field.into(),
+            field: field.convert(),
             version: EntryVersion::new(),
         }
     }
@@ -271,7 +274,7 @@ impl HGetExp {
         Self {
             namespace: namespace.into(),
             key: key.into(),
-            field: field.into(),
+            field: field.convert(),
         }
     }
 }
@@ -298,7 +301,7 @@ impl HSetExp {
         Self {
             namespace: namespace.into(),
             key: key.into(),
-            field: field.into(),
+            field: field.convert(),
             expiration: expiration.into(),
             version: EntryVersion::new(),
         }
@@ -344,7 +347,7 @@ impl HScan {
             namespace: namespace.into(),
             key: key.into(),
             count: count.into(),
-            cursor: cursor.map(Field::into),
+            cursor: cursor.map(Field::convert),
         }
     }
 }
@@ -369,6 +372,8 @@ impl From<()> for Output {
 }
 
 impl Output {
+    /// Tries to downcast an [`Output`] within a [`Result`] into a concrete
+    /// output type.
     pub fn downcast_result<T, E>(operation_result: Result<Self, E>) -> Result<T, E>
     where
         Self: TryInto<T, Error = derive_more::TryIntoError<Self>>,

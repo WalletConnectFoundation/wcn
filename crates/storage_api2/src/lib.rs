@@ -347,7 +347,7 @@ pub struct Key<T = Bytes>(pub T);
 
 impl<T> Key<T> {
     /// Converts `Self` into `Key<U>`.
-    pub fn into<U>(self) -> Key<U>
+    pub fn convert<U>(self) -> Key<U>
     where
         T: Into<U>,
     {
@@ -361,7 +361,7 @@ pub struct Value<T = Bytes>(pub T);
 
 impl<T> Value<T> {
     /// Converts `Self` into `Value<U>`.
-    pub fn into<U>(self) -> Value<U>
+    pub fn convert<U>(self) -> Value<U>
     where
         T: Into<U>,
     {
@@ -375,7 +375,7 @@ pub struct Field<T = Bytes>(pub T);
 
 impl<T> Field<T> {
     /// Converts `Self` into `Field<U>`.
-    pub fn into<U>(self) -> Value<U>
+    pub fn convert<U>(self) -> Value<U>
     where
         T: Into<U>,
     {
@@ -407,8 +407,8 @@ impl Entry {
         expiration: impl Into<EntryExpiration>,
     ) -> Self {
         Self {
-            key: key.into(),
-            value: value.into(),
+            key: key.convert(),
+            value: value.convert(),
             expiration: expiration.into(),
             version: EntryVersion::new(),
         }
@@ -444,9 +444,9 @@ impl MapEntry {
         expiration: impl Into<EntryExpiration>,
     ) -> Self {
         Self {
-            key: key.into(),
-            field: field.into(),
-            value: value.into(),
+            key: key.convert(),
+            field: field.convert(),
+            value: value.convert(),
             expiration: expiration.into(),
             version: EntryVersion::new(),
         }
@@ -464,21 +464,6 @@ pub struct Record {
 
     /// Version of the associated [`Entry`]/[`MapEntry`].
     pub version: EntryVersion,
-}
-
-impl Record {
-    /// Creates a new [`Record`].
-    pub fn new(
-        value: impl Into<Value>,
-        expiration: impl Into<EntryExpiration>,
-        version: impl Into<EntryVersion>,
-    ) -> Self {
-        Self {
-            value: value.into(),
-            expiration: expiration.into(),
-            version: version.into(),
-        }
-    }
 }
 
 /// [`MapEntry`] without the associated [`Key`].

@@ -72,8 +72,6 @@
               text = ''cargo "$@"'';
             })
 
-            python313Packages.diagrams
-
             # TODO: seems to be broken currently, restore later
             # fenixPackages.rust-analyzer 
             rust-analyzer
@@ -101,6 +99,13 @@
             alias lsa="ls -lah"
           '';
 
+        };
+
+        devShells.diagram-tools = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            python313Packages.diagrams
+            resvg
+          ];
         };
       }
     );

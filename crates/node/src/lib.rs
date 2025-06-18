@@ -44,7 +44,7 @@ pub enum Error {
     InvalidMetricsAddress(#[from] std::net::AddrParseError),
 
     #[error("Metrics server error: {0}")]
-    MetricsServer(#[from] hyper::Error),
+    MetricsServer(io::Error),
 
     #[error("Failed to start Client API server: {0:?}")]
     ClientApiServer(#[from] client_api::server::ServeError),

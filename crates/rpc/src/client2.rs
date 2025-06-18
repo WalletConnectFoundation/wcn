@@ -3,31 +3,38 @@ use {
         self as rpc,
         quic,
         transport::{self, BiDirectionalStream, NoHandshake, RecvStream, SendStream},
+        ConnectionHandler,
         Message,
+        RpcV2,
         ServerName,
     },
-    futures::{Sink, SinkExt, Stream, TryStreamExt as _},
+    arc_swap::ArcSwap,
+    futures::{future::Shared, Sink, SinkExt, Stream, TryStreamExt as _},
     libp2p::{identity, PeerId},
     std::{
         future::Future,
         io,
         marker::PhantomData,
         net::{SocketAddr, SocketAddrV4},
+        pin::Pin,
         sync::Arc,
         time::Duration,
     },
     tokio::io::AsyncWriteExt,
 };
 
-pub trait RpcSender<RPC, Args>: Send + Sync + 'static {
-    type Output;
+pub trait Api: super::Api {
+    type OutboundConnectionHandler: OutboundConnectionHandler;
+    type OutboundRpcHandler;
+}
 
-    fn send<'a>(
-        &'a self,
-        args: Args,
-    ) -> impl Future<Output = RpcSenderResult<Self::Output>> + Send + 'a
-    where
-        Args: 'a;
+pub trait OutboundConnectionHandler: Clone + Send + Sync + 'static {
+    type Api;
+
+    fn handle(
+        &self,
+        conn: &mut OutboundConnection<Self::Api>,
+    ) -> impl Future<Output = InboundConnectionHandlerResult> + Send;
 }
 
 pub struct Config {
@@ -41,13 +48,19 @@ pub struct Config {
     pub priority: transport::Priority,
 }
 
-pub struct Client {
+pub struct Client<API: Api> {
     config: Arc<Config>,
     quic: quinn::Endpoint,
+    connection_handler: API::OutboundConnectionHandler,
+    rpc_handler: API::OutboundRpcHandler,
 }
 
-impl Client {
-    pub fn new(cfg: Config) -> Result<Self, Error> {
+impl<API: Api> Client<API> {
+    pub fn new(
+        connection_handler: API::OutboundConnectionHandler,
+        rpc_handler: API::OutboundRpcHandler,
+        cfg: Config,
+    ) -> Result<Self, Error> {
         let transport_config = quic::new_quinn_transport_config(64u32 * 1024);
         let socket_addr = SocketAddr::new(std::net::Ipv4Addr::new(0, 0, 0, 0).into(), 0);
         let endpoint = quic::new_quinn_endpoint(
@@ -62,49 +75,64 @@ impl Client {
         Ok(Client {
             config: Arc::new(cfg),
             quic: endpoint,
+            connection_handler,
+            rpc_handler,
         })
     }
 
-    pub fn connect<API: rpc::Api>(
-        &self,
-        addr: SocketAddrV4,
-        peer_id: PeerId,
-    ) -> OutboundConnection<API> {
-        OutboundConnection {
-            quic: quic::client::ConnectionHandler::new(
-                peer_id,
-                addr.into(),
-                API::NAME,
-                self.quic.clone(),
-                NoHandshake,
-                self.config.connection_timeout,
-            ),
-            _marker: PhantomData,
-        }
+    pub fn connect(&self, addr: SocketAddrV4, peer_id: PeerId) -> OutboundConnection<API> {
+        todo!()
     }
 }
 
-pub struct OutboundConnection<API> {
-    quic: quic::client::ConnectionHandler,
-    _marker: PhantomData<API>,
+pub struct Outbound<RPC: RpcV2> {
+    send: transport::SendStream<RPC::Request, RPC::Codec>,
+    recv: transport::RecvStream<RPC::Response, RPC::Codec>,
 }
 
-impl<const ID: u8, API, Request, Response, Codec, F, Fut, T>
-    RpcSender<rpc::StreamingV2<ID, API, Request, Response, Codec>, F> for OutboundConnection<API>
+pub struct OutboundConnection<API: Api> {
+    inner: Arc<OutboundConnectionInner<API>>,
+}
+
+struct OutboundConnectionInner<API:Api> {
+    quic: Arc<ArcSwap<Option<quinn::Connection>>>,
+
+    mutex: Arc<tokio::sync::Mutex<()>>,
+    connect_fut: tokio::task::JoinHandle<()>,
+    
+    rpc_handler: API::OutboundRpcHandler,
+}
+
+impl<API: Api> OutboundConnection<API> {
+    fn new(addr: SocketAddrV4, peer_id: PeerId) -> Self {
+        let quic = Arc::new(ArcSwap::new(Arc::new(None)));
+        let mutex = Arc::new(tokio::sync::Mutex::new(()));
+
+        let quic_clone = quic.clone();
+        let mutex_guard = mutex.lock_owned();
+        let connect_fut = tokio::spawn(async move {
+            let _mutex_guard = mutex_guard;
+            
+        });
+    }
+    
+    pub fn send<RPC: RpcV2>(&self) -> Outbound<RPC> {
+        ArcSwap::
+    }
+}
+
+impl<const ID: u8, API, Request, Response, Codec, H>
+    RpcSender<rpc::StreamingV2<ID, API, Request, Response, Codec>, H> for OutboundConnection<API>
 where
     API: rpc::Api,
     Request: Message,
     Response: Message,
     Codec: transport::Codec,
-    F: FnOnce(&mut SendStream<Request, Codec>, &mut RecvStream<Response, Codec>) -> Fut + Send,
-    Fut: Future<Output = Result<T, transport::Error>> + Send,
+    H: RpcHandler<Request, Response>,
 {
-    type Output = T;
+    type Output = H::Output;
 
-    fn send<'a>(&'a self, f: F) -> impl Future<Output = RpcSenderResult<T>> + Send + 'a
-    where
-        F: 'a,
-    {
+    fn send(&self, handler: H) -> impl Future<Output = RpcSenderResult<Self::Output>> + Send + '_ {
         async move {
             let (mut tx, rx) = self
                 .quic
@@ -119,7 +147,11 @@ where
             let (mut rx, mut tx) =
                 BiDirectionalStream::new(tx, rx).upgrade::<Response, Request, Codec>();
 
-            f(&mut tx, &mut rx)
+            // we use &mut here instead of passing owned values to force the implementor not
+            // to move the values outside of the `RpcSender`, otherwise some
+            // middleware implementations may work incorrectly.
+            handler
+                .handle(&mut tx, &mut rx)
                 .await
                 .map_err(|err| RpcSenderError::Transport(err.to_string()))
         }
@@ -168,8 +200,10 @@ where
     }
 }
 
-pub struct OutboundRpc {
-    stream: BiDirectionalStream,
+#[derive(Debug, thiserror::Error)]
+pub enum OutboundConnectionError {
+    #[error("Transport: {_0}")]
+    Transport(String),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -44,6 +44,7 @@ socket2 = "0.5.5"
 nix = { version = "0.28", default-features = false, features = ["socket", "net"] }
 governor = { version = "0.8", default-features = false, features = ["std"] }
 mini-moka = { version = "0.10", default-features = false, features = ["sync"] }
+arc-swap = "1.7"
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

@@ -5,7 +5,15 @@ pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr, sync::Arc},
+    std::{
+        borrow::Cow,
+        fmt::Debug,
+        future::Future,
+        marker::PhantomData,
+        net::SocketAddr,
+        str::FromStr,
+        sync::Arc,
+    },
     tokio::sync::OwnedSemaphorePermit,
     transport::Codec,
 };
@@ -31,6 +39,17 @@ pub mod transport;
 
 #[cfg(test)]
 mod test;
+
+pub trait Api: Send + Sync + 'static {
+    const NAME: ApiName;
+    type RpcId;
+}
+
+pub trait Handler<RPC> {
+    type Result;
+
+    fn handle_rpc(&self, rpc: &mut RPC) -> impl Future<Output = Self::Result> + Send;
+}
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -156,11 +175,6 @@ impl Name {
             Err(_) => "invalid",
         }
     }
-}
-
-pub trait Api: Send + Sync + 'static {
-    const NAME: ApiName;
-    type RpcId;
 }
 
 pub type ApiName = ServerName;

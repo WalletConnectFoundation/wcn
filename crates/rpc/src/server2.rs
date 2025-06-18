@@ -11,6 +11,7 @@ use {
         transport::{self, BiDirectionalStream},
         ApiName,
     },
+    ::metrics::CounterFn,
     futures::{Sink, Stream, TryFutureExt as _},
     libp2p::{identity::Keypair, PeerId},
     quinn::crypto::rustls::QuicServerConfig,
@@ -23,29 +24,18 @@ use {
     },
 };
 
-// pub trait InboundRpc: RpcV2 + Stream<Item = Self::Request> +
-// Sink<Self::Response> {}
-
-pub trait ApiHandler: Clone + Send + Sync + 'static {
-    type Api: rpc::Api;
-
-    fn handle_connection(
-        &self,
-        connection: &mut InboundConnection<Self::Api>,
-    ) -> impl Future<Output = ApiHandlerResult> + Send;
-
-    // /// Converts this [`ConnectionHandler`] into [`ApiConnectionHandler`].
-    // fn into_api(self, name: ApiName) -> ApiConnectionHandler<Self>;
+/// Server-specific part of an RPC [`Api`](super::Api).
+pub trait Api: super::Api {
+    type InboundConnectionHandler: InboundConnectionHandler<Api = Self>;
 }
 
-// /// [`ConnectionHandler`] of a specific RPC API.
-// pub struct ApiConnectionHandler<H> {
-//     api_name: ApiName,
-//     connection_handler: H,
-// }
+pub trait InboundConnectionHandler: Clone + Send + Sync + 'static {
+    type Api;
 
-pub trait RpcHandler<RPC> {
-    fn handle(&self, rpc: &mut RPC) -> impl Future<Output = RpcHandlerResult> + Send;
+    fn handle(
+        &self,
+        conn: &mut InboundConnection<Self::Api>,
+    ) -> impl Future<Output = InboundConnectionHandlerResult> + Send;
 }
 
 pub struct Config {
@@ -77,8 +67,7 @@ pub struct Config {
 /// Serves a single RPC API on the specified.
 pub fn serve(
     cfg: Config,
-    api_name: ApiName,
-    connection_handler: impl ApiHandler,
+    connection_handler: impl InboundConnectionHandler,
 ) -> Result<impl Future<Output = ()>, Error> {
     multiplex(cfg, (connection_handler,))
 }
@@ -185,12 +174,12 @@ fn accept_connection<R: ConnectionRouter>(
         let conn = connecting
             .with_timeout(Duration::from_millis(1000))
             .await
-            .map_err(|_| ApiHandlerError::ConnectionTimeout)??;
+            .map_err(|_| InboundConnectionHandlerError::ConnectionTimeout)??;
 
         let header = read_connection_header(&conn)
             .with_timeout(Duration::from_millis(500))
             .await
-            .map_err(|_| ApiHandlerError::ReadConnectionHeaderTimeout)??;
+            .map_err(|_| InboundConnectionHandlerError::ReadConnectionHeaderTimeout)??;
 
         let conn = InboundConnection {
             server_name,
@@ -238,7 +227,7 @@ impl<API: rpc::Api> InboundConnection<API> {
     pub async fn handle<F: Future<Output = RpcHandlerResult>>(
         &self,
         rpc_handler: impl Fn(InboundRpc<API::RpcId>) -> F,
-    ) -> ApiHandlerResult {
+    ) -> InboundConnectionHandlerResult {
         loop {
             match self.handle_rpc(rpc_handler).await {
                 Ok(fut) => tokio::spawn(fut),
@@ -251,7 +240,7 @@ impl<API: rpc::Api> InboundConnection<API> {
     pub async fn handle_rpc<F: Future<Output = RpcHandlerResult>>(
         &self,
         rpc_handler: impl Fn(InboundRpc<API::RpcId>) -> F,
-    ) -> ApiHandlerResult<impl Future<Output = RpcHandlerResult>> {
+    ) -> InboundConnectionHandlerResult<impl Future<Output = RpcHandlerResult>> {
         let (tx, mut rx) = self.inner.accept_bi().await?;
 
         let Some(permit) = self.acquire_stream_permit() else {
@@ -326,23 +315,23 @@ mod sealed {
             &self,
             api_name: ApiName,
             connection: InboundConnection,
-        ) -> impl Future<Output = Result<(), ApiHandlerError>>;
+        ) -> impl Future<Output = Result<(), InboundConnectionHandlerError>>;
     }
 }
 
 impl<A> ConnectionRouter for (A,)
 where
-    A: ApiHandler,
+    A: InboundConnectionHandler,
 {
     async fn route_connection(
         &self,
         api_name: ApiName,
         conn: InboundConnection,
-    ) -> Result<(), ApiHandlerError> {
+    ) -> Result<(), InboundConnectionHandlerError> {
         async move {
             match &api_name {
                 A::Api::NAME => self.0.handle_connection(&mut conn.set_api()),
-                _ => Err(ApiHandlerError::UnknownApi(api_name)),
+                _ => Err(InboundConnectionHandlerError::UnknownApi(api_name)),
             }
         }
     }
@@ -350,19 +339,19 @@ where
 
 impl<A, B> ConnectionRouter for (A, B)
 where
-    A: ApiHandler,
-    B: ApiHandler,
+    A: InboundConnectionHandler,
+    B: InboundConnectionHandler,
 {
     async fn route_connection(
         &self,
         api_name: ApiName,
         conn: InboundConnection,
-    ) -> Result<(), ApiHandlerError> {
+    ) -> Result<(), InboundConnectionHandlerError> {
         async move {
             match &api_name {
                 A::Api::NAME => self.0.handle_connection(&mut conn.set_api()),
                 B::Api::NAME => self.1.handle_connection(&mut conn.set_api()),
-                _ => Err(ApiHandlerError::UnknownApi(api_name)),
+                _ => Err(InboundConnectionHandlerError::UnknownApi(api_name)),
             }
         }
     }
@@ -370,21 +359,21 @@ where
 
 impl<A, B, C> ConnectionRouter for (A, B, C)
 where
-    A: ApiHandler,
-    B: ApiHandler,
-    C: ApiHandler,
+    A: InboundConnectionHandler,
+    B: InboundConnectionHandler,
+    C: InboundConnectionHandler,
 {
     async fn route_connection(
         &self,
         api_name: ApiName,
         conn: InboundConnection,
-    ) -> Result<(), ApiHandlerError> {
+    ) -> Result<(), InboundConnectionHandlerError> {
         async move {
             match &api_name {
                 A::Api::NAME => self.0.handle_connection(&mut conn.set_api()),
                 B::Api::NAME => self.1.handle_connection(&mut conn.set_api()),
                 C::Api::NAME => self.1.handle_connection(&mut conn.set_api()),
-                _ => Err(ApiHandlerError::UnknownApi(api_name)),
+                _ => Err(InboundConnectionHandlerError::UnknownApi(api_name)),
             }
         }
     }
@@ -403,7 +392,7 @@ pub enum Error {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ApiHandlerError {
+pub enum InboundConnectionHandlerError {
     #[error("Transport: {0}")]
     Transport(String),
 
@@ -417,7 +406,7 @@ pub enum ApiHandlerError {
     UnknownApi(rpc::ApiName),
 }
 
-pub type ApiHandlerResult<T = ()> = Result<T, ApiHandlerError>;
+pub type InboundConnectionHandlerResult<T = ()> = Result<T, InboundConnectionHandlerError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcHandlerError {

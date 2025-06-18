@@ -423,13 +423,36 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
 
 
     function getView() external view returns (ClusterView memory) {
-        address[] memory operators = this.getAllOperators();
-        bytes[] memory opData = new bytes[](operators.length);
-        
-        for (uint256 i = 0; i < operators.length;) {
-            address op = operators[i];
-            opData[i] = operatorData[op];
-            unchecked { ++i; }
+        address[] memory operators;
+        bytes[] memory opData;
+
+        if (operatorCount == 0) {
+            operators = new address[](0);
+            opData = new bytes[](0);
+        } else {
+            uint8 highestOccupiedSlot = 0;
+            // Find the highest occupied slot to truncate trailing empty slots
+            // Looping from MAX_OPERATORS - 1 down to 0
+            for (uint256 i = MAX_OPERATORS - 1; i < MAX_OPERATORS; --i) {
+                if (slotOccupied[uint8(i)]) {
+                    highestOccupiedSlot = uint8(i);
+                    break;
+                }
+            }
+            
+            uint256 bufferSize = highestOccupiedSlot + 1;
+            operators = new address[](bufferSize);
+            opData = new bytes[](bufferSize);
+
+            for (uint256 i = 0; i < bufferSize; ++i) {
+                uint8 slot = uint8(i);
+                if (slotOccupied[slot]) {
+                    address op = operatorSlots[slot];
+                    operators[i] = op;
+                    opData[i] = operatorData[op];
+                }
+                // Unoccupied slots will have address(0) and empty bytes by default.
+            }
         }
         
         uint8[] memory pullingOps = this.getPullingOperators();

@@ -59,10 +59,18 @@ contract ClusterInvariants is StdInvariant, Test {
     /// @dev Operator count consistency
     function invariant_OperatorCountConsistency() public view {
         ClusterView memory clusterView = cluster.getView();
+        
+        uint16 activeOperators = 0;
+        for (uint256 i = 0; i < clusterView.operators.length; i++) {
+            if (clusterView.operators[i] != address(0)) {
+                activeOperators++;
+            }
+        }
+        
         assertEq(
             clusterView.operatorCount,
-            clusterView.operators.length,
-            "Operator count must match operators array length"
+            activeOperators,
+            "Operator count must match number of active operators in view"
         );
         assertLe(
             clusterView.operatorCount,

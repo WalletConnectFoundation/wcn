@@ -86,6 +86,8 @@ ClusterTest::startMigration
 │   └── It should revert with MigrationInProgress.
 ├── When new operator slots exceeds MAX_OPERATORS
 │   └── It should revert with TooManyOperators.
+├── When new operator slots is less than minOperators
+│   └── It should revert with InsufficientOperators.
 ├── When new operator slots are not sorted
 │   └── It should revert with InvalidOperator.
 ├── When slot does not exist

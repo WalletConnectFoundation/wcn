@@ -180,6 +180,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         if (maintenance.slot != address(0)) revert MaintenanceInProgress();
         if (pullingCount > 0) revert MigrationInProgress();
         if (newOperatorSlots.length > MAX_OPERATORS) revert TooManyOperators();
+        if (newOperatorSlots.length < settings.minOperators) revert InsufficientOperators();
         
         // Validate operator slots are sorted, unique, and exist
         if (newOperatorSlots.length > 1) {

@@ -519,6 +519,22 @@ contract ClusterTest is Test {
         cluster.startMigration(tooManySlots, 0);
     }
 
+    function test_StartMigrationWhenNewOperatorSlotsIsLessThanMinOperators() external {
+        // It should revert with InsufficientOperators.
+        Settings memory newSettings = _defaultSettings();
+        newSettings.minOperators = 2;
+
+        vm.prank(OWNER);
+        cluster.updateSettings(newSettings);
+
+        uint8[] memory newOperatorSlots = new uint8[](1);
+        newOperatorSlots[0] = 0;
+        
+        vm.expectRevert(Cluster.InsufficientOperators.selector);
+        vm.prank(OWNER);
+        cluster.startMigration(newOperatorSlots, 0);
+    }
+
     function test_StartMigrationWhenNewOperatorSlotsAreNotSorted() external {
         // It should revert with InvalidOperator.
         uint8[] memory unsortedSlots = new uint8[](2);
@@ -846,6 +862,45 @@ contract ClusterTest is Test {
         // Verify settings
         assertEq(clusterView.settings.maxOperatorDataBytes, _defaultSettings().maxOperatorDataBytes);
         assertEq(clusterView.settings.minOperators, _defaultSettings().minOperators);
+    }
+
+    function test_GetViewWithEmptySlots() external {
+        // It should return operator list with holes for empty slots.
+        // 1. Setup with 3 operators. They are in slots 0, 1, 2.
+        cluster = _deployFreshCluster(3); // creates operators with addr 0x1001, 0x1002, 0x1003
+        
+        // 2. Migrate to a keyspace with only operator in slot 0.
+        uint8[] memory newKeyspace = new uint8[](1);
+        newKeyspace[0] = 0;
+        vm.prank(OWNER);
+        cluster.startMigration(newKeyspace, 0);
+        
+        // 3. Complete migration for operator in slot 0 (addr 0x1001).
+        vm.prank(address(uint160(0x1001)));
+        cluster.completeMigration(1);
+        (,,bool inProgress) = cluster.getMigrationStatus();
+        assertFalse(inProgress, "Migration should be complete");
+
+        // 4. Now we can remove operator in slot 1 (addr 0x1002).
+        vm.prank(OWNER);
+        cluster.removeNodeOperator(address(uint160(0x1002)));
+        assertEq(cluster.getOperatorCount(), 2, "Operator count should be 2");
+
+        // 5. Get view and verify.
+        // We have operators in slot 0 and 2. The highest slot is 2.
+        // The returned `operators` array should have length 3.
+        ClusterView memory clusterView = cluster.getView();
+        assertEq(clusterView.operators.length, 3, "operators array length should be 3 (for slots 0,1,2)");
+        assertEq(clusterView.operatorData.length, 3, "operatorData array length should be 3");
+
+        assertEq(clusterView.operators[0], address(uint160(0x1001)), "Slot 0 should have operator");
+        assertEq(clusterView.operatorData[0].length > 0, true, "Slot 0 should have data");
+
+        assertEq(clusterView.operators[1], address(0), "Slot 1 should be empty");
+        assertEq(clusterView.operatorData[1].length, 0, "Slot 1 should have no data");
+
+        assertEq(clusterView.operators[2], address(uint160(0x1003)), "Slot 2 should have operator");
+        assertEq(clusterView.operatorData[2].length > 0, true, "Slot 2 should have data");
     }
 
     function test_Exposed_validateOperatorDataWhenDataIsEmpty() external {

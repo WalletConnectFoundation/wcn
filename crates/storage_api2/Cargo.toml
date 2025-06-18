@@ -1,0 +1,26 @@
+[package]
+name = "wcn_storage_api2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+client = ["wcn_rpc/client", "arc-swap"]
+server = ["wcn_rpc/server"]
+
+[dependencies]
+wc = { workspace = true, features = ["future"] }
+auth = { workspace = true }
+
+wcn_rpc = { workspace = true }
+serde = "1"
+thiserror = "1"
+tracing = "0.1"
+futures = "0.3"
+time = "0.3"
+
+# client
+arc-swap = { version = "1.7", optional = true }

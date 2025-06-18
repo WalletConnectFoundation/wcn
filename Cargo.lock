@@ -5931,6 +5931,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_replication2"
+version = "0.1.0"
+dependencies = [
+ "derive_more 1.0.0",
+ "futures",
+ "smallvec",
+ "tap",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wc",
+ "wcn_client_api",
+ "wcn_core",
+ "wcn_domain",
+ "wcn_storage_api",
+]
+
+[[package]]
 name = "wcn_rpc"
 version = "0.1.0"
 dependencies = [
@@ -5972,6 +5990,21 @@ dependencies = [
  "futures",
  "serde",
  "thiserror 1.0.64",
+ "time",
+ "tracing",
+ "wc",
+ "wcn_auth",
+ "wcn_rpc",
+]
+
+[[package]]
+name = "wcn_storage_api2"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "futures",
+ "serde",
+ "thiserror",
  "time",
  "tracing",
  "wc",

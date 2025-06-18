@@ -14,7 +14,7 @@ pub mod transport;
 
 // Note: Requires a stream that would immediately yield the initial cluster
 // state.
-pub async fn run<C>(mut cluster_stream: C)
+pub async fn run<C>(cluster_stream: C)
 where
     C: Stream<Item = Arc<domain::Cluster>>,
 {

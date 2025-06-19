@@ -194,6 +194,8 @@ impl<SC, Shards> Cluster<SC, Shards> {
     /// Caller is expected to use [`Cluster::using_view`] or [`Cluster::view`]
     /// to see the updated state.
     pub fn updates(&self) -> impl Stream<Item = ()> + Send + 'static {
+        // TODO: periodically check with the SC to prevent drift
+
         tokio_stream::wrappers::WatchStream::new(self.inner.watch.clone())
     }
 

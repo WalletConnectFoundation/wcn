@@ -19,6 +19,18 @@ use {
     std::{future::Future, str::FromStr},
 };
 
+#[allow(unused_imports)] // for doc comments
+use crate::{
+    keyspace,
+    maintenance,
+    settings,
+    Cluster,
+    Maintenance,
+    Migration,
+    NodeOperator,
+    MAX_OPERATORS,
+};
+
 /// Deployer of WCN Cluster [`SmartContract`]s.
 pub trait Deployer<SC> {
     /// Deploys a new [`SmartContract`].
@@ -42,7 +54,6 @@ pub trait SmartContract: Read + Write {}
 ///
 /// Logic invariants documented on the methods of this trait MUST be
 /// implemented inside the on-chain implementation of the smart-contract itself.
-// TODO: docs are outdated, revisit
 pub trait Write {
     /// Returns the [`Signer`] being used to sign transactions.
     fn signer(&self) -> &Signer;
@@ -53,6 +64,10 @@ pub trait Write {
     /// The implementation MUST validate the following invariants:
     /// - there's no ongoing data migration
     /// - there's no ongoing maintenance
+    /// - all of the [`NodeOperator`]s within the provided [`Keyspace`] exist
+    /// - the provided [`Keyspace`] has enough [`NodeOperator`]s (at least
+    ///   [`keyspace::REPLICATION_FACTOR`])
+    /// - the provided [`Keyspace`] differs from the current one
     /// - [`signer`](SmartContract::signer) is the owner of the
     ///   [`SmartContract`]
     ///
@@ -65,17 +80,14 @@ pub trait Write {
     /// The implementation MUST validate the following invariants:
     /// - there's an ongoing data migration
     /// - the provided [`migration::Id`] matches the ID of the migration
-    /// - [`signer`](Smart::signer) is a [`node::Operator`] under the provided
-    ///   [`node::OperatorIdx`]
+    /// - [`signer`](Smart::signer) is a [`NodeOperator`] and is still pulling
+    ///   the data
     ///
-    /// If this [`node::Operator`] is the last remaining one left to complete
+    /// If this [`NodeOperator`] is the last remaining one left to complete
     /// the data pull then the migration MUST be completed and
     /// [`migration::Completed`] event MUST be emitted.
     /// Otherwise the data pull MUST be marked as completed for the
     /// [`node::Operator`] and [`migration::DataPullCompleted`] MUST be emitted.
-    ///
-    /// The implementation MAY be idempotent. In case of an idempotent
-    /// execution the event MUST not be emitted.
     fn complete_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
 
     /// Aborts the ongoing data [`migration`] process restoring the WCN cluster
@@ -89,14 +101,13 @@ pub trait Write {
     /// The implementation MUST emit [`migration::Aborted`] event on success.
     fn abort_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
 
-    /// Starts a [`maintenance`] process for the [`node::Operator`] being the
-    /// current [`signer`](Manager::signer).
+    /// Starts a [`Maintenance`] process with the WCN Cluster.
     ///
     /// The implementation MUST validate the following invariants:
     /// - there's no ongoing data migration
     /// - there's no ongoing maintenance
-    /// - [`signer`](SmartContract::signer) is a [`node::Operator`] under the
-    ///   provided [`node::OperatorIdx`]
+    /// - [`signer`](SmartContract::signer) is either a [`NodeOperator`] under
+    ///   the owner of the [`SmartContract`]
     ///
     /// The implementation MUST emit [`maintenance::Started`] event on success.
     fn start_maintenance(&self) -> impl Future<Output = WriteResult<()>>;
@@ -105,13 +116,24 @@ pub trait Write {
     ///
     /// The implementation MUST validate the following invariants:
     /// - there's an ongoing maintenance
-    /// - [`signer`](SmartContract::signer) is the one who
-    ///   [started](Manager::start_maintenance) the maintenance
+    /// - [`signer`](SmartContract::signer) is either the [`NodeOperator`] that
+    ///   [started](Manager::start_maintenance) the maintenance or the owner of
+    ///   the [`SmartContract`]
     ///
-    /// The implementation MUST emit [`maintenance::Completed`] event on
+    /// The implementation MUST emit [`maintenance::Finished`] event on
     /// success.
     fn finish_maintenance(&self) -> impl Future<Output = WriteResult<()>>;
 
+    /// Adds a new [`NodeOperator`] to the WCN [`Cluster`].
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - [`NodeOperator`] is not yet a member of the [`Cluster`]
+    /// - [`MAX_OPERATORS`] limit is not reached
+    /// - [`signer`](SmartContract::signer) is the owner of the
+    ///   [`SmartContract`]
+    ///
+    /// The implementation MUST emit [`node_operator::Added`] event on
+    /// success.
     fn add_node_operator(
         &self,
         operator: node_operator::Serialized,
@@ -120,17 +142,38 @@ pub trait Write {
     /// Updates on-chain data of a [`node::Operator`].
     ///
     /// The implementation MUST validate the following invariants:
-    /// - [`signer`](SmartContract::signer) is a [`node::Operator`] under the
-    ///   provided [`node::OperatorIdx`]
+    /// - [`NodeOperator`] is a member of the [`Cluster`]
+    /// - [`signer`](SmartContract::signer) is either the [`NodeOperator`] being
+    ///   updated or the owner of the [`SmartContract`]
     ///
-    /// The implementation MUST emit [`node::OperatorUpdated`] event on success.
+    /// The implementation MUST emit [`node_operator::Updated`] event on
+    /// success.
     fn update_node_operator(
         &self,
         operator: node_operator::Serialized,
     ) -> impl Future<Output = WriteResult<()>>;
 
+    /// Removes a [`NodeOperator`] from the [`Cluster`].
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - [`NodeOperator`] is a member of the [`Cluster`]
+    /// - [`NodeOperator`] is not a member of either primary or [`Migration`]
+    ///   [`Keyspace`]
+    /// - [`signer`](SmartContract::signer) is the owner of the
+    ///   [`SmartContract`]
+    ///
+    /// The implementation MUST emit [`node_operator::Removed`] event on
+    /// success.
     fn remove_node_operator(&self, id: node_operator::Id) -> impl Future<Output = WriteResult<()>>;
 
+    /// Updates [`Settings`] of the [`Cluster`].
+    ///
+    /// The implementation MUST validate the following invariants:
+    /// - [`signer`](SmartContract::signer) is the owner of the
+    ///   [`SmartContract`]
+    ///
+    /// The implementation MUST emit [`settings::Updated`] event on
+    /// success.
     fn update_settings(&self, new_settings: Settings) -> impl Future<Output = WriteResult<()>>;
 }
 

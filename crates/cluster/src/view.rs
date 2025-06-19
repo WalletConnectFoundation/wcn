@@ -234,7 +234,7 @@ impl maintenance::Started {
         view.require_no_migration()?;
         view.require_no_maintenance()?;
 
-        view.maintenance = Some(Maintenance::new(self.operator_id));
+        view.maintenance = Some(Maintenance::new(self.by));
 
         Ok(())
     }

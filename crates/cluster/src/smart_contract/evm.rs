@@ -349,7 +349,7 @@ impl<D> From<bindings::Cluster::MaintenanceToggled> for Event<D> {
     fn from(evt: bindings::Cluster::MaintenanceToggled) -> Self {
         if evt.active {
             Self::MaintenanceStarted(maintenance::Started {
-                operator_id: evt.operator.into(),
+                by: evt.operator.into(),
                 cluster_version: evt.version,
             })
         } else {

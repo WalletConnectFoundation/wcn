@@ -485,10 +485,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
     type Error = ReadError;
 
     fn try_from(view: bindings::Cluster::ClusterView) -> Result<Self, Self::Error> {
-        let operators = view
-            .operators
-            .into_iter()
-            .zip(view.operatorData.into_iter());
+        let operators = view.operators.into_iter().zip(view.operatorData);
 
         let node_operators = NodeOperators::new(operators.map(|(addr, data)| {
             if addr.is_zero() {
@@ -522,7 +519,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
             let migration = Migration::new(
                 view.migrationId,
                 try_keyspace(view.keyspaceVersion)?,
-                view.pullingOperators.into_iter(),
+                view.pullingOperators,
             );
 
             (keyspace, Some(migration))
@@ -554,17 +551,10 @@ impl<E: fmt::Debug> From<alloy::transports::RpcError<E>> for ReadError {
 
 impl From<alloy::providers::PendingTransactionError> for WriteError {
     fn from(err: alloy::providers::PendingTransactionError) -> Self {
-        match &err {
-            alloy::providers::PendingTransactionError::TransportError(err) => {
-                if let Some(err) = try_decode_error(err) {
-                    return WriteError::Revert(format!("{err:?}"));
-                }
-
-                if let Some(err) = try_decode_error2(err) {
-                    return WriteError::Revert(format!("{err:?}"));
-                }
+        if let alloy::providers::PendingTransactionError::TransportError(err) = &err {
+            if let Some(err) = try_decode_error(err) {
+                return WriteError::Revert(format!("{err:?}"));
             }
-            _ => {}
         }
 
         Self::Other(format!("{err:?}"))
@@ -576,8 +566,6 @@ impl From<alloy::contract::Error> for WriteError {
         match err {
             alloy::contract::Error::TransportError(err) => {
                 if let Some(err) = try_decode_error(&err) {
-                    Self::Revert(format!("{err:?}"))
-                } else if let Some(err) = try_decode_error2(&err) {
                     Self::Revert(format!("{err:?}"))
                 } else {
                     Self::Transport(format!("{err:?}"))
@@ -601,21 +589,6 @@ fn try_decode_error(
     let bytes = hex::decode(data).ok()?;
 
     bindings::Cluster::ClusterErrors::abi_decode_validate(&bytes).ok()
-}
-
-fn try_decode_error2(
-    err: &alloy::transports::TransportError,
-) -> Option<bindings::ERC1967Proxy::ERC1967ProxyErrors> {
-    let data = match err {
-        alloy::transports::RpcError::ErrorResp(resp) => resp.data.as_ref()?,
-        _ => return None,
-    };
-
-    let data: String = serde_json::from_str(data.get()).ok()?;
-    let data = data.strip_prefix("0x")?;
-    let bytes = hex::decode(data).ok()?;
-
-    bindings::ERC1967Proxy::ERC1967ProxyErrors::abi_decode_validate(&bytes).ok()
 }
 
 impl From<alloy::contract::Error> for ReadError {

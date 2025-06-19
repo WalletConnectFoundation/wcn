@@ -5,16 +5,7 @@ pub use libp2p::{identity, Multiaddr, PeerId};
 use {
     derive_more::Display,
     serde::{Deserialize, Serialize},
-    std::{
-        borrow::Cow,
-        fmt::Debug,
-        future::Future,
-        marker::PhantomData,
-        net::SocketAddr,
-        str::FromStr,
-        sync::Arc,
-    },
-    tokio::sync::OwnedSemaphorePermit,
+    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
 };
 
@@ -40,16 +31,105 @@ pub mod transport;
 #[cfg(test)]
 mod test;
 
-pub trait Api: Send + Sync + 'static {
+const PROTOCOL_VERSION: u32 = 0;
+
+/// RPC API specification.
+///
+/// Expected to be implemented on unit types and should not contain data.
+///
+/// # Example
+///
+/// ```
+/// use wcn_rpc::ApiName;
+///
+/// struct MyApi;
+///
+/// enum RpcId {
+///     CreateUser = 0,
+///     UpdateUser = 1,
+///     DeleteUser = 2,
+/// }
+///
+/// impl wcn_rpc::Api for MyApi {
+///     const NAME: ApiName = ApiName::new("myApi");
+///     type RpcId = RpcId;
+/// }
+/// ```
+pub trait Api: Clone + Send + Sync + 'static {
+    /// [`ApiName`] of this [`Api`].
+    ///
+    /// [`ApiName`] used
     const NAME: ApiName;
+
+    /// `enum` representation of all RPC IDs of this [`Api`].
+    ///
+    /// Should be convertible from/into `u8`.
     type RpcId;
 }
 
-pub trait Handler<RPC> {
-    type Result;
+/// [`Api`] name.
+pub type ApiName = ServerName;
 
-    fn handle_rpc(&self, rpc: &mut RPC) -> impl Future<Output = Self::Result> + Send;
+/// Specification of a remote procedure call.
+///
+/// Expected to be implemented on unit types and should not contain any data.
+///
+/// See [`StreamingV2`] RPC and [`UnaryV2`] RPC.
+pub trait RpcV2 {
+    /// ID of this [`Rpc`].
+    const ID: u8;
+
+    /// [`Api`] this [`Rpc`] belongs to.
+    type Api: Api;
+
+    /// Request type of this [`Rpc`].
+    type Request: Message;
+
+    /// Response type of this [`Rpc`].
+    type Response: Message;
+
+    /// Serialization codec of this [`Rpc`].
+    type Codec: Codec;
 }
+
+/// Generic [`RpcV2`] implementation.
+///
+/// Not intended to be used directly by the users of this crate.
+///
+/// Use [`StreamingV2`] or [`UnaryV2`] instead.
+pub struct RpcImpl<const ID: u8, K, API, Req, Resp, C> {
+    _marker: PhantomData<(K, API, Req, Resp, C)>,
+}
+
+impl<const ID: u8, K, API, Req, Resp, C> RpcV2 for RpcImpl<ID, K, API, Req, Resp, C>
+where
+    API: Api,
+    Req: Message,
+    Resp: Message,
+    C: Codec,
+{
+    const ID: u8 = ID;
+    type Api = API;
+    type Request = Req;
+    type Response = Resp;
+    type Codec = C;
+}
+
+/// Bi-directional streaming [`RpcV2`].
+///
+/// Client sends a stream of requests and server responds with a stream of
+/// responses.
+///
+/// Use type aliases to conviniently define RPCs of this kind.
+pub type StreamingV2<const ID: u8, API, Req, Resp, C> =
+    RpcImpl<ID, kind::Streaming, API, Req, Resp, C>;
+
+/// Unary (request-response) [`RpcV2`].
+///
+/// Client sends a single request and server responds with a single response.
+///
+/// Use type aliases to conviniently define RPCs of this kind.
+pub type UnaryV2<const ID: u8, API, Req, Resp, C> = RpcImpl<ID, kind::Unary, API, Req, Resp, C>;
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -73,40 +153,6 @@ pub trait Rpc {
 
     /// [`Rpc`] [`kind`].
     type Kind;
-
-    /// Request type of this [`Rpc`].
-    type Request: Message;
-
-    /// Response type of this [`Rpc`].
-    type Response: Message;
-
-    /// Serialization codec of this [`Rpc`].
-    type Codec: Codec;
-}
-
-pub struct StreamingV2<const ID: u8, API, Rx, Tx, Codec>
-where
-    Rx: Message,
-    Tx: Message,
-    Codec: transport::Codec,
-{
-    recv: transport::RecvStream<Rx, Codec>,
-    send: transport::SendStream<Tx, Codec>,
-    _marker: PhantomData<API>,
-}
-
-pub struct UnaryV2<const ID: u8, API, Request, Response, Codec>
-where
-    Request: Message,
-    Response: Message,
-    Codec: transport::Codec,
-{
-    streaming: StreamingV2<ID, API, Request, Response, Codec>,
-}
-
-pub trait RpcV2 {
-    /// ID of this [`Rpc`].
-    const ID: u8;
 
     /// Request type of this [`Rpc`].
     type Request: Message;
@@ -176,8 +222,6 @@ impl Name {
         }
     }
 }
-
-pub type ApiName = ServerName;
 
 /// RPC server name.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -284,11 +328,6 @@ impl Error {
             description: None,
         }
     }
-
-    // pub fn with_description(mut self, description: impl Display) -> Self {
-    //     self.description = Some(description.to_string().into());
-    //     self
-    // }
 }
 
 /// RPC result.

@@ -38,6 +38,12 @@ pub trait InboundConnectionHandler: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = InboundConnectionHandlerResult> + Send;
 }
 
+pub trait InboundRpcHandler<RPC> {
+    type Result;
+
+    fn handle_rpc(&self, rpc: &mut RPC) -> impl Future<Output = Self::Result> + Send;
+}
+
 pub struct Config {
     /// Name of the server. For metrics purposes only.
     pub name: &'static str,

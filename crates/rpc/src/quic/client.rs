@@ -201,10 +201,7 @@ fn new_connection<H: Handshake>(
                 )));
             }
 
-            write_connection_header(&conn, ConnectionHeader {
-                server_name: Some(server_name),
-            })
-            .await?;
+            write_connection_header(&conn, ConnectionHeader { server_name }).await?;
 
             handshake
                 .handle(peer_id, PendingConnection(conn.clone()))
@@ -514,7 +511,7 @@ impl<H: Handshake> Client<H> {
     }
 }
 
-async fn write_connection_header(
+pub(crate) async fn write_connection_header(
     conn: &quinn::Connection,
     header: ConnectionHeader,
 ) -> Result<(), ConnectionError> {

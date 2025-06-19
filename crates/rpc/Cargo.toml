@@ -13,6 +13,7 @@ server = []
 
 [dependencies]
 derive_more = { workspace = true }
+derive-where = { workspace = true }
 derivative = "2.2"
 futures = "0.3"
 indexmap = "2"

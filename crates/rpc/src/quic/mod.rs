@@ -180,7 +180,7 @@ pub enum Error {
     InvalidConnectionRate,
 }
 
-fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdError> {
+pub(crate) fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdError> {
     use ExtractPeerIdError as Error;
 
     let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;

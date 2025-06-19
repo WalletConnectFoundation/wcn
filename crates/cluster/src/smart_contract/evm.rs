@@ -164,7 +164,7 @@ impl<S: Clone> Connector<SmartContract<S>> for RpcProvider<S> {
             return Err(ConnectionError::UnknownContract);
         }
 
-        // TODO: false positive
+        // TODO: figure out how to check this with Proxy contract
         // if code != bindings::Cluster::BYTECODE {
         //     return Err(ConnectionError::WrongContract);
         // }

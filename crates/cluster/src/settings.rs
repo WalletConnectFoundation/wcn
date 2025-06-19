@@ -1,10 +1,14 @@
 //! WCN cluster settings.
-use crate::Version as ClusterVersion;
 
-/// WCN cluster settings.
+use crate::Version as ClusterVersion;
+#[allow(unused_imports)] // for doc comments
+use crate::{Cluster, NodeOperator};
+
+/// WCN [`Cluster`] settings.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Settings {
-    /// Maximum number of on-chain bytes stored for a single [`NodeOperator`].
+    /// Maximum number of on-chain bytes stored for a single
+    /// [`NodeOperator`].
     pub max_node_operator_data_bytes: u16,
 }
 

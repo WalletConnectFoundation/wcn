@@ -12,7 +12,7 @@ use {
 pub type Id = u64;
 
 /// Data migration process within a WCN cluster.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Migration<Shards = ()> {
     id: Id,
     keyspace: Arc<Keyspace<Shards>>,

@@ -122,6 +122,14 @@ impl<Data> NodeOperators<Data> {
         Ok(self)
     }
 
+    pub(super) fn require_not_full(&self) -> Result<&Self, NoAvailableSlotsError> {
+        if self.slots.len() < cluster::MAX_OPERATORS || self.slots.iter().any(Option::is_none) {
+            return Ok(self);
+        }
+
+        Err(NoAvailableSlotsError)
+    }
+
     pub(super) fn require_free_slot(
         &self,
         idx: node_operator::Idx,
@@ -164,3 +172,7 @@ pub enum CreationError {
 #[derive(Debug, thiserror::Error)]
 #[error("Slot {_0} in NodeOperators slot map is already occupied")]
 pub struct SlotOccupiedError(pub node_operator::Idx);
+
+#[derive(Debug, thiserror::Error)]
+#[error("No available slots in NodeOperators slot")]
+pub struct NoAvailableSlotsError;

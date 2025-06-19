@@ -59,9 +59,9 @@ async fn test_suite() {
         .await
         .unwrap();
 
-    for idx in 5..=7 {
+    for id in 6..=8 {
         cluster
-            .add_node_operator(idx, new_node_operator(idx + 1))
+            .add_node_operator(new_node_operator(id))
             .await
             .unwrap();
     }
@@ -111,11 +111,6 @@ async fn test_suite() {
         .update_settings(Settings {
             max_node_operator_data_bytes: 10000,
         })
-        .await
-        .unwrap();
-
-    cluster
-        .transfer_ownership(*new_signer(9).address())
         .await
         .unwrap();
 }

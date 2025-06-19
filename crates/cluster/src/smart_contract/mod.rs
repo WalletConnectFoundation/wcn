@@ -114,7 +114,6 @@ pub trait Write {
 
     fn add_node_operator(
         &self,
-        idx: node_operator::Idx,
         operator: node_operator::Serialized,
     ) -> impl Future<Output = WriteResult<()>>;
 
@@ -133,11 +132,6 @@ pub trait Write {
     fn remove_node_operator(&self, id: node_operator::Id) -> impl Future<Output = WriteResult<()>>;
 
     fn update_settings(&self, new_settings: Settings) -> impl Future<Output = WriteResult<()>>;
-
-    fn transfer_ownership(
-        &self,
-        new_owner: AccountAddress,
-    ) -> impl Future<Output = WriteResult<()>>;
 }
 
 /// Read [`SmartContract`] calls.

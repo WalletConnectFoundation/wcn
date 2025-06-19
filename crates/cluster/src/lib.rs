@@ -48,8 +48,8 @@ use task::Task;
 /// Maximum number of [`NodeOperator`]s within a WCN [`Cluster`].
 pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;
 
-/// Minimum number fo [`NodeOperator`]s within a WCN [`Cluster`].
-pub const MIN_OPERATORS: usize = keyspace::REPLICATION_FACTOR;
+/// Minimum number of [`NodeOperator`]s within a WCN [`Cluster`].
+pub const MIN_OPERATORS: u8 = keyspace::REPLICATION_FACTOR;
 
 /// WCN cluster.
 ///
@@ -108,9 +108,6 @@ pub enum Event<D = node_operator::Data> {
 
     /// [`Settings`] have been updated.
     SettingsUpdated(settings::Updated),
-
-    /// [`Ownership`] has been transferred.
-    OwnershipTransferred(ownership::Transferred),
 }
 
 /// [`Event`] with [`node_operator::SerializedData`].
@@ -339,13 +336,12 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
     /// Calls [`SmartContract::add_node_operator`].
     pub async fn add_node_operator(
         &self,
-        idx: node_operator::Idx,
         operator: NodeOperator,
     ) -> Result<(), AddNodeOperatorError> {
         let operator = self.using_view(|view| {
             view.ownership().require_owner(&self.inner.smart_contract)?;
             view.node_operators().require_not_exists(&operator.id)?;
-            view.node_operators().require_free_slot(idx)?;
+            view.node_operators().require_not_full()?;
 
             let operator = operator.serialize()?;
             operator.data.validate(view.settings())?;
@@ -355,7 +351,7 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
 
         self.inner
             .smart_contract
-            .add_node_operator(idx, operator)
+            .add_node_operator(operator)
             .await?;
 
         Ok(())
@@ -422,21 +418,6 @@ impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
         self.inner
             .smart_contract
             .update_settings(new_settings)
-            .await?;
-
-        Ok(())
-    }
-
-    /// Calls [`SmartContract::transfer_ownership`].
-    pub async fn transfer_ownership(
-        &self,
-        new_owner: smart_contract::AccountAddress,
-    ) -> Result<(), TransferOwnershipError> {
-        self.using_view(move |view| view.ownership().require_owner(&self.inner.smart_contract))?;
-
-        self.inner
-            .smart_contract
-            .transfer_ownership(new_owner)
             .await?;
 
         Ok(())
@@ -580,7 +561,7 @@ pub enum AddNodeOperatorError {
     AlreadyExists(#[from] node_operator::AlreadyExistsError),
 
     #[error(transparent)]
-    SlotOccupied(#[from] node_operators::SlotOccupiedError),
+    NoAvailableSlots(#[from] node_operators::NoAvailableSlotsError),
 
     #[error(transparent)]
     DataSerialization(#[from] node_operator::DataSerializationError),
@@ -660,7 +641,6 @@ impl Event {
             Event::NodeOperatorUpdated(evt) => evt.cluster_version,
             Event::NodeOperatorRemoved(evt) => evt.cluster_version,
             Event::SettingsUpdated(evt) => evt.cluster_version,
-            Event::OwnershipTransferred(evt) => evt.cluster_version,
         }
     }
 }
@@ -678,7 +658,6 @@ impl SerializedEvent {
             Event::NodeOperatorUpdated(evt) => Event::NodeOperatorUpdated(evt.deserialize()?),
             Event::NodeOperatorRemoved(evt) => Event::NodeOperatorRemoved(evt),
             Event::SettingsUpdated(evt) => Event::SettingsUpdated(evt),
-            Event::OwnershipTransferred(evt) => Event::OwnershipTransferred(evt),
         })
     }
 }

@@ -11,7 +11,7 @@ use {
 pub const MAX_OPERATORS: usize = 256;
 
 /// Number of [`node_operator`]s within a [`ReplicaSet`].
-pub const REPLICATION_FACTOR: usize = 5;
+pub const REPLICATION_FACTOR: u8 = 5;
 
 /// Continuous space of `u64` keys.
 ///
@@ -31,12 +31,12 @@ pub struct Keyspace<S = ()> {
 }
 
 /// All [`Shard`]s within a [`Keyspace`].
-pub struct Shards(sharding::Keyspace<node_operator::Idx, REPLICATION_FACTOR>);
+pub struct Shards(sharding::Keyspace<node_operator::Idx, { REPLICATION_FACTOR as usize }>);
 
 /// A single [`Shard`] within a [`Keyspace`].
 #[derive(Clone, Copy, Debug)]
 pub struct Shard {
-    replica_set: [node_operator::Idx; REPLICATION_FACTOR],
+    replica_set: [node_operator::Idx; REPLICATION_FACTOR as usize],
 }
 
 /// Strategy of distributing [`Shard`]s to [`node_operator`]s.
@@ -50,7 +50,7 @@ pub enum ReplicationStrategy {
 }
 
 /// Set of [`node_operator`]s assigned to a [`Shard`].
-pub type ReplicaSet<T = node_operator::Idx> = [T; REPLICATION_FACTOR];
+pub type ReplicaSet<T = node_operator::Idx> = [T; REPLICATION_FACTOR as usize];
 
 /// [`Keyspace`] version.
 pub type Version = u64;
@@ -62,7 +62,7 @@ impl Keyspace {
         replication_strategy: ReplicationStrategy,
         version: u64,
     ) -> Result<Keyspace, CreationError> {
-        if operators.len() < REPLICATION_FACTOR {
+        if operators.len() < REPLICATION_FACTOR as usize {
             return Err(CreationError::TooFewOperators(operators.len()));
         }
 

@@ -126,11 +126,6 @@ impl Deployer<SmartContract<Signer>> for RpcProvider<Signer> {
 
         let contract = bindings::Cluster::deploy(self.alloy.clone()).await?;
 
-        // let args = <(
-        //     bindings::Cluster::Settings,
-        //     Array<bindings::Cluster::NodeOperator>,
-        // )>::abi_encode(&(settings, operators));
-
         let init_call = bindings::Cluster::initializeCall::new((settings, operators)).abi_encode();
 
         let proxy = bindings::ERC1967Proxy::deploy(

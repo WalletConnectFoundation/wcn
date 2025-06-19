@@ -11,7 +11,6 @@ use {
 pub struct NodeOperators<D = node_operator::Data> {
     id_to_idx: HashMap<node_operator::Id, node_operator::Idx>,
 
-    // TODO: assert length
     slots: Vec<Option<NodeOperator<D>>>,
 }
 

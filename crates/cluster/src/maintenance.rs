@@ -14,7 +14,7 @@ pub struct Maintenance {
 }
 
 impl Maintenance {
-    /// Creates a new [`Maintenance`] with the slot being occupied be the
+    /// Creates a new [`Maintenance`] with the slot being occupied by the
     /// provided [`smart_contract::AccountAddress`].
     pub fn new(slot: smart_contract::AccountAddress) -> Self {
         Self { slot }

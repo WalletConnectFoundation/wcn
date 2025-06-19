@@ -71,7 +71,7 @@ struct Inner<SC, Shards> {
 /// Version of a WCN [`Cluster`].
 ///
 /// Should only monotonically increase. If you observe a jump backwards it means
-/// that a chain reorg has occured on the underlying [`SmartContract`] chain.
+/// that a chain reorg has occurred on the underlying [`SmartContract`] chain.
 ///
 /// For each version bump a corresponding [`Event`] should be emitted.
 pub type Version = u128;

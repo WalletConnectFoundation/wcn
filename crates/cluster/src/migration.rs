@@ -55,11 +55,6 @@ impl<Shards> Migration<Shards> {
         &self.keyspace
     }
 
-    // /// Mutable version of [`Migration::keyspace`].
-    // pub fn keyspace_mut(&mut self) -> &mut Keyspace {
-    //     &mut self.keyspace
-    // }
-
     pub(super) fn into_keyspace(self) -> Arc<Keyspace<Shards>> {
         self.keyspace
     }

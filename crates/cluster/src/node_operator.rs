@@ -185,8 +185,9 @@ impl NodeOperator<SerializedData> {
     }
 }
 
-// NOTE: The on-chain serialization is non self-describing! Every change to
-// the schema should be handled by creating a new version.
+// NOTE: The on-chain serialization is non self-describing!
+// This `struct` can not be changed, a `struct` with a new schema version should
+// be created instead.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct DataV0 {
     name: Name,

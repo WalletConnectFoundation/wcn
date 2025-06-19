@@ -172,7 +172,7 @@ impl sealed::Calculate<Shards> for Keyspace {
             })
         })
         .await
-        .unwrap(); // we don't expect the task to panic
+        .expect("`calculate_shards` task panicked"); // we don't expect the task to panic
 
         match res {
             Ok(sharding) => Keyspace {

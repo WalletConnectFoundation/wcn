@@ -9,7 +9,7 @@ use {
     },
     derive_more::derive::Deref,
     filter::{Filter, Permit, RejectionReason},
-    futures::{FutureExt, SinkExt as _, TryFutureExt as _},
+    futures::TryFutureExt as _,
     libp2p::{identity::Keypair, Multiaddr},
     quinn::crypto::rustls::QuicServerConfig,
     std::{future::Future, io, net::SocketAddr, sync::Arc, time::Duration},
@@ -218,14 +218,6 @@ where
             let (tx, mut rx) = conn.accept_bi().await?;
 
             let Some(stream_permit) = self.acquire_stream_permit() else {
-                static THROTTLED_RESULT: &crate::Result<()> = &Err(crate::Error::THROTTLED);
-
-                let (_, mut tx) =
-                    BiDirectionalStream::new(tx, rx).upgrade::<(), crate::Result<()>, R::Codec>();
-
-                // The send buffer is large enough to write the whole response.
-                tx.send(THROTTLED_RESULT).now_or_never();
-
                 continue;
             };
 

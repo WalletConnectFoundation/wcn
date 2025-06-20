@@ -5,7 +5,7 @@ use crate::{smart_contract, SmartContract};
 /// Ownership of a WCN cluster.
 ///
 /// Cluster has a single owner, and some [`smart_contract`] methods are
-/// resticted to be executed only by the owner.
+/// restricted to be executed only by the owner.
 #[derive(Clone)]
 pub struct Ownership {
     owner: smart_contract::AccountAddress,

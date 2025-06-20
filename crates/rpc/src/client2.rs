@@ -2,14 +2,22 @@ use {
     crate::{
         self as rpc,
         quic::{self},
-        transport::{self, BiDirectionalStream, Codec},
+        transport::{self, BiDirectionalStream, Codec, RecvStream, SendStream},
         Message,
         RpcImpl,
         RpcV2,
     },
-    arc_swap::ArcSwap,
     derive_where::derive_where,
-    futures::{FutureExt, Sink, SinkExt, Stream, StreamExt as _},
+    futures::{
+        sink::SinkMapErr,
+        stream::MapErr,
+        FutureExt,
+        Sink,
+        SinkExt,
+        Stream,
+        StreamExt as _,
+        TryStreamExt,
+    },
     libp2p::{identity, PeerId},
     std::{
         future::Future,
@@ -19,7 +27,11 @@ use {
         sync::Arc,
         time::Duration,
     },
-    tokio::io::AsyncWriteExt,
+    tap::TapFallible,
+    tokio::{
+        io::AsyncWriteExt,
+        sync::{watch, Mutex},
+    },
     wc::future::FutureExt as _,
 };
 
@@ -111,7 +123,7 @@ impl<API: Api> Client<API> {
             None,
             cfg.priority,
         )
-        .map_err(|err| Error::Transport(err.to_string()))?;
+        .map_err(Error::new)?;
 
         Ok(Client {
             config: Arc::new(cfg),
@@ -123,13 +135,15 @@ impl<API: Api> Client<API> {
 
     /// Establishes a new [`OutboundConnection`].
     pub fn connect(&self, addr: SocketAddrV4, peer_id: PeerId) -> OutboundConnection<API> {
+        let (tx, rx) = watch::channel(None);
+
         let conn = OutboundConnection {
             inner: Arc::new(OutboundConnectionInner {
                 client: self.clone(),
                 remote_addr: addr,
                 remote_peer_id: peer_id,
-                quinn: Arc::new(ArcSwap::new(Arc::new(None))),
-                mutex: Arc::new(tokio::sync::Mutex::new(())),
+                watch_rx: rx,
+                watch_tx: Arc::new(tokio::sync::Mutex::new(tx)),
             }),
         };
 
@@ -138,27 +152,20 @@ impl<API: Api> Client<API> {
     }
 }
 
-/// Error of [`Client::new`].
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Transport: {_0}")]
-    Transport(String),
-}
-
 /// Outboud RPC of a specific type.
 pub struct Outbound<RPC: RpcV2> {
-    send: transport::SendStream<RPC::Request, RPC::Codec>,
-    recv: transport::RecvStream<RPC::Response, RPC::Codec>,
+    send: SinkMapErr<SendStream<RPC::Request, RPC::Codec>, fn(transport::Error) -> Error>,
+    recv: MapErr<RecvStream<RPC::Response, RPC::Codec>, fn(transport::Error) -> Error>,
 }
 
 impl<RPC: RpcV2> Outbound<RPC> {
     /// Returns [`Sink`] of outbound requests.
-    pub fn sink(&mut self) -> &mut impl Sink<RPC::Request, Error = transport::Error> {
+    pub fn sink(&mut self) -> &mut impl Sink<RPC::Request, Error = Error> {
         &mut self.send
     }
 
     /// Returns [`Stream`] of inbound responses.
-    pub fn stream(&mut self) -> &mut impl Stream<Item = transport::Result<RPC::Response>> {
+    pub fn stream(&mut self) -> &mut impl Stream<Item = Result<RPC::Response>> {
         &mut self.recv
     }
 }
@@ -180,9 +187,8 @@ struct OutboundConnectionInner<API: Api> {
     remote_addr: SocketAddrV4,
     remote_peer_id: PeerId,
 
-    quinn: Arc<ArcSwap<Option<quinn::Connection>>>,
-
-    mutex: Arc<tokio::sync::Mutex<()>>,
+    watch_rx: watch::Receiver<Option<quinn::Connection>>,
+    watch_tx: Arc<Mutex<watch::Sender<Option<quinn::Connection>>>>,
 }
 
 impl<API: Api> OutboundConnection<API> {
@@ -198,66 +204,84 @@ impl<API: Api> OutboundConnection<API> {
 
     /// Indicates whether this [`OutboundConnection`] is currently open.
     pub fn is_open(&self) -> bool {
-        (**self.inner.quinn.load())
+        self.inner
+            .watch_rx
+            .borrow()
             .as_ref()
             .map(|conn| conn.close_reason().is_some())
             .unwrap_or_default()
     }
 
+    /// Waits for this [`OutboundConnection`] to become open.
+    ///
+    /// IMPORTANT: This future may never resolve! Make sure that you use a
+    /// timeout.
+    pub async fn wait_open(&self) {
+        let mut watch_rx = self.inner.watch_rx.clone();
+        match watch_rx.borrow_and_update().as_ref() {
+            Some(conn) if conn.close_reason().is_none() => return,
+            _ => {}
+        }
+
+        drop(watch_rx.changed().await)
+    }
+
     /// Sends a new [`Outbound`] RPC over this [`OutboundConnection`].
-    pub fn send<RPC: RpcV2>(&self) -> SendRpcResult<Outbound<RPC>> {
-        let inner = self.inner.quinn.load();
-        let Some(conn) = inner.as_ref() else {
-            return Err(SendRpcError::ConnectionClosed);
-        };
+    pub fn send<RPC: RpcV2>(&self) -> Result<Outbound<RPC>> {
+        (|| {
+            let opt = self.inner.watch_rx.borrow();
+            let Some(conn) = opt.as_ref() else {
+                return Err(ErrorInner::NotConnected);
+            };
 
-        // `open_bi` only blocks if there are too many outbound streams.
-        let (mut tx, rx) = match conn.open_bi().now_or_never() {
-            Some(Ok(stream)) => stream,
-            Some(Err(_)) => return Err(SendRpcError::ConnectionClosed),
-            None => return Err(SendRpcError::TooManyConcurrentRpcs),
-        };
+            // `open_bi` only blocks if there are too many outbound streams.
+            let (mut tx, rx) = match conn.open_bi().now_or_never() {
+                Some(Ok(stream)) => stream,
+                Some(Err(err)) => return Err(err.into()),
+                None => return Err(ErrorInner::TooManyConcurrentRpcs),
+            };
 
-        // Stream buffer is large enough to fit `u8` without blocking.
-        tx.write_u8(RPC::ID)
-            .now_or_never()
-            .unwrap()
-            .map_err(|_| SendRpcError::ConnectionClosed)?;
+            // This can only block if send buffer is full.
+            tx.write_u8(RPC::ID)
+                .now_or_never()
+                .ok_or_else(|| ErrorInner::SendBufferFull)?;
 
-        let (recv, send) =
-            BiDirectionalStream::new(tx, rx).upgrade::<RPC::Response, RPC::Request, RPC::Codec>();
+            let (recv, send) = BiDirectionalStream::new(tx, rx)
+                .upgrade::<RPC::Response, RPC::Request, RPC::Codec>();
 
-        Ok(Outbound { send, recv })
+            Ok(Outbound {
+                send: SinkExt::<&RPC::Request>::sink_map_err(send, |err: transport::Error| {
+                    Error::new(err)
+                }),
+                recv: recv.map_err(Error::new),
+            })
+        })()
+        .map_err(Error::new)
+        .tap_err(|err| {
+            if err.is_connection_error() {
+                self.reconnect();
+            }
+        })
     }
 
     fn reconnect(&self) {
         // If we can't acquire the lock then reconnection is already in progress.
-        let Ok(mutex_guard) = self.inner.mutex.clone().try_lock_owned() else {
+        let Ok(watch_tx) = self.inner.watch_tx.clone().try_lock_owned() else {
             return;
         };
 
         let this = self.inner.clone();
 
         tokio::spawn(async move {
-            let _mutex_guard = mutex_guard;
-
             let mut interval = tokio::time::interval(this.client.config.reconnect_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 interval.tick().await;
 
-                match this.clone().new_quic_connection().await {
-                    Ok(conn) => {
-                        this.quinn.store(Arc::new(Some(conn)));
-                        return;
-                    }
-                    Err(err @ ConnectionError::WrongPeerId(_)) => {
-                        tracing::warn!("outbound connection failed: {err}")
-                    }
-                    Err(err) => {
-                        tracing::debug!("outbound connection failed: {err}")
-                    }
+                if let Ok(conn) = this.clone().new_quic_connection().await {
+                    watch_tx.send(Some(conn));
+                    return;
                 }
             }
         });
@@ -265,7 +289,7 @@ impl<API: Api> OutboundConnection<API> {
 }
 
 impl<API: Api> OutboundConnectionInner<API> {
-    async fn new_quic_connection(self: Arc<Self>) -> Result<quinn::Connection, ConnectionError> {
+    async fn new_quic_connection(self: Arc<Self>) -> Result<quinn::Connection> {
         let timeout = self.client.config.connection_timeout;
 
         async move {
@@ -277,10 +301,17 @@ impl<API: Api> OutboundConnectionInner<API> {
                 .await?;
 
             let peer_id = quic::connection_peer_id(&conn)
-                .map_err(|err| ConnectionError::ExtractPeerId(err.to_string()))?;
+                .map_err(|err| ErrorInner::ExtractPeerId(err.to_string()))?;
 
             if peer_id != self.remote_peer_id {
-                return Err(ConnectionError::WrongPeerId(peer_id));
+                tracing::warn!(
+                    expected = ?self.remote_peer_id,
+                    got = ?peer_id,
+                    addr = ?self.remote_addr,
+                    "Wrong PeerId"
+                );
+
+                return Err(ErrorInner::WrongPeerId(peer_id));
             }
 
             // write connection header
@@ -292,45 +323,9 @@ impl<API: Api> OutboundConnectionInner<API> {
         }
         .with_timeout(timeout)
         .await
-        .map_err(|_| ConnectionError::Timeout)?
+        .map_err(|_| ErrorInner::Timeout)?
+        .map_err(Error::new)
     }
-}
-
-/// Error of sending an [`Outbound`] RPC.
-#[derive(Debug, thiserror::Error)]
-pub enum SendRpcError {
-    #[error("Connection closed")]
-    ConnectionClosed,
-
-    #[error("Too many concurrent RPCs")]
-    TooManyConcurrentRpcs,
-}
-
-/// Result of sending an [`Outbound`] RPC.
-pub type SendRpcResult<T> = Result<T, SendRpcError>;
-
-#[derive(Debug, thiserror::Error)]
-enum ConnectionError {
-    #[error("Failed to extract PeerId")]
-    ExtractPeerId(String),
-
-    #[error("Wrong PeerId: {0}")]
-    WrongPeerId(PeerId),
-
-    #[error("Connect: {0:?}")]
-    Connect(#[from] quinn::ConnectError),
-
-    #[error("Connection: {0:?}")]
-    Connection(#[from] quinn::ConnectionError),
-
-    #[error("IO: {0:?}")]
-    Io(#[from] io::Error),
-
-    #[error("Write: {0:?}")]
-    Write(#[from] quinn::WriteError),
-
-    #[error("Timeout")]
-    Timeout,
 }
 
 impl<const ID: u8, K, API, Req, Resp, C> RpcImpl<ID, K, API, Req, Resp, C>
@@ -345,7 +340,7 @@ where
     pub fn send<Args, Res>(
         conn: &OutboundConnection<API>,
         args: Args,
-    ) -> SendRpcResult<impl Future<Output = Res> + '_>
+    ) -> Result<impl Future<Output = Res> + '_>
     where
         API::OutboundRpcHandler: OutboundRpcHandler<Self, Args, Result = Res>,
         Args: 'static,
@@ -364,12 +359,12 @@ where
     C: Codec,
 {
     /// Handles this [`Outbound`] [`rpc::UnaryV2`].
-    pub async fn handle(&mut self, req: Req) -> transport::Result<Resp> {
+    pub async fn handle(&mut self, req: Req) -> Result<Resp> {
         self.sink().send(req).await?;
         self.stream()
             .next()
             .await
-            .ok_or_else(|| transport::Error::StreamFinished)?
+            .ok_or_else(|| Error::new(transport::Error::StreamFinished))?
     }
 }
 
@@ -400,7 +395,7 @@ where
     C: Codec,
     Err: Send + Sync + 'static,
     S: Clone + Send + Sync + 'static,
-    transport::Error: Into<Err>,
+    Error: Into<Err>,
 {
     type Result = Result<Resp, Err>;
 
@@ -411,4 +406,86 @@ where
     ) -> Self::Result {
         rpc.handle(req).await.map_err(Into::into)
     }
+}
+
+/// RPC [`Client`] error.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct Error(ErrorInner);
+
+/// RPC [`Client`] result.
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl Error {
+    fn new(err: impl Into<ErrorInner>) -> Self {
+        Self(err.into())
+    }
+
+    /// Indicates whether this [`Error`] is caused by the
+    /// [`OutboundConnection`] being closed / broken.
+    ///
+    /// Such errors may be fixed by a reconnect. Consider
+    /// (waiting)[OutboundConnection::wait_open] for the [`OutboundConnection`]
+    /// to become open again.
+    pub fn is_connection_error(&self) -> bool {
+        match &self.0 {
+            ErrorInner::NotConnected
+            | ErrorInner::Quic(_)
+            | ErrorInner::ExtractPeerId(_)
+            | ErrorInner::WrongPeerId(_)
+            | ErrorInner::Connect(_)
+            | ErrorInner::Connection(_)
+            | ErrorInner::Io(_)
+            | ErrorInner::Write(_)
+            | ErrorInner::Timeout
+            | ErrorInner::Transport(_) => true,
+
+            ErrorInner::TooManyConcurrentRpcs | ErrorInner::SendBufferFull => false,
+        }
+    }
+}
+
+impl From<ErrorInner> for Error {
+    fn from(err: ErrorInner) -> Self {
+        Self::new(err)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ErrorInner {
+    #[error("Not connected")]
+    NotConnected,
+
+    #[error("QUIC: {0}")]
+    Quic(#[from] quic::Error),
+
+    #[error("Failed to extract PeerId")]
+    ExtractPeerId(String),
+
+    #[error("Wrong PeerId: {0}")]
+    WrongPeerId(PeerId),
+
+    #[error("Connect: {0:?}")]
+    Connect(#[from] quinn::ConnectError),
+
+    #[error("Connection: {0:?}")]
+    Connection(#[from] quinn::ConnectionError),
+
+    #[error("IO: {0:?}")]
+    Io(#[from] io::Error),
+
+    #[error("Write: {0:?}")]
+    Write(#[from] quinn::WriteError),
+
+    #[error("Too many concurrent RPCs")]
+    TooManyConcurrentRpcs,
+
+    #[error("Send buffer is full")]
+    SendBufferFull,
+
+    #[error("Timeout")]
+    Timeout,
+
+    #[error("Transport: {0}")]
+    Transport(#[from] transport::Error),
 }

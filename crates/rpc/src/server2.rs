@@ -8,11 +8,12 @@ use {
                 read_connection_header,
             },
         },
-        transport::{self, BiDirectionalStream},
+        transport::{self, BiDirectionalStream, RecvStream, SendStream},
         ApiName,
+        RpcV2,
     },
     ::metrics::CounterFn,
-    futures::{Sink, Stream, TryFutureExt as _},
+    futures::{future::MapErr, sink::SinkMapErr, Sink, Stream, TryFutureExt as _},
     libp2p::{identity::Keypair, PeerId},
     quinn::crypto::rustls::QuicServerConfig,
     sealed::ConnectionRouter,
@@ -213,6 +214,24 @@ pub struct InboundConnection<API = ()> {
     _marker: PhantomData<API>,
 }
 
+/// Inbound RPC of a specific type.
+pub struct Inbound<RPC: RpcV2> {
+    recv: MapErr<RecvStream<RPC::Request, RPC::Codec>, fn(transport::Error) -> Error>,
+    send: SinkMapErr<SendStream<RPC::Response, RPC::Codec>, fn(transport::Error) -> Error>,
+}
+
+impl<RPC: RpcV2> Inbound<RPC> {
+    /// Returns [`Stream`] of inbound requests.
+    pub fn stream(&mut self) -> &mut impl Stream<Item = Result<RPC::Request>> {
+        &mut self.recv
+    }
+
+    /// Returns [`Sink`] of outbound responses.
+    pub fn sink(&mut self) -> &mut impl Sink<RPC::Response, Error = Error> {
+        &mut self.send
+    }
+}
+
 impl InboundConnection {
     fn set_api<API>(self) -> InboundConnection<API> {
         InboundConnection {
@@ -285,23 +304,6 @@ impl<API: rpc::Api> InboundConnection<API> {
             })
     }
 }
-
-pub struct InboundRpc<ID> {
-    id: ID,
-    stream: BiDirectionalStream,
-}
-
-impl<ID> InboundRpc<ID> {
-    pub fn id(&self) -> ID {
-        self.id
-    }
-}
-
-// impl InboundRpc {
-//     fn upgrade<I, O, Codec>(&mut self) -> (impl Stream<Item = I>, impl
-// Sink<O>) {         self.stream.upgrade()
-//     }
-// }
 
 async fn read_rpc_id(stream: &mut BiDirectionalStream) -> Result<u8, ReadRpcIdError> {
     stream

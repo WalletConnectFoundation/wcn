@@ -83,12 +83,6 @@ impl BiDirectionalStream {
             },
         )
     }
-
-    pub(crate) fn upgrate_ref<I: Message, O: Message, C: Codec>(
-        &mut self,
-    ) -> (impl Stream<Item = I>, impl Sink<O>) {
-        ()
-    }
 }
 
 /// [`Stream`] of outbound [`Message`]s.

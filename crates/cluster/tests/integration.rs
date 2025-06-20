@@ -1,5 +1,8 @@
 use {
-    alloy::{node_bindings::Anvil, signers::local::PrivateKeySigner},
+    alloy::{
+        node_bindings::{Anvil, AnvilInstance},
+        signers::local::PrivateKeySigner,
+    },
     libp2p::PeerId,
     std::{collections::HashSet, net::SocketAddrV4, time::Duration},
     tracing_subscriber::EnvFilter,
@@ -114,7 +117,7 @@ async fn test_suite() {
         .unwrap();
 }
 
-fn new_node_operator(n: u8, anvil: &alloy::node_bindings::AnvilInstance) -> NodeOperator {
+fn new_node_operator(n: u8, anvil: &AnvilInstance) -> NodeOperator {
     let data = node_operator::Data {
         name: node_operator::Name::new(format!("Operator{n}")).unwrap(),
         nodes: vec![Node {
@@ -130,20 +133,17 @@ fn new_node_operator(n: u8, anvil: &alloy::node_bindings::AnvilInstance) -> Node
     }
 }
 
-fn operator_id(n: u8, anvil: &alloy::node_bindings::AnvilInstance) -> node_operator::Id {
+fn operator_id(n: u8, anvil: &AnvilInstance) -> node_operator::Id {
     *new_signer(n, anvil).address()
 }
 
-fn new_signer(n: u8, anvil: &alloy::node_bindings::AnvilInstance) -> Signer {
+fn new_signer(n: u8, anvil: &AnvilInstance) -> Signer {
     let private_key_signer: PrivateKeySigner = anvil.keys()[n as usize].clone().into();
     let private_key = &format!("{:#x}", private_key_signer.to_bytes());
     Signer::try_from_private_key(private_key).unwrap()
 }
 
-async fn provider(
-    signer: Signer,
-    anvil: &alloy::node_bindings::AnvilInstance,
-) -> RpcProvider<Signer> {
+async fn provider(signer: Signer, anvil: &AnvilInstance) -> RpcProvider<Signer> {
     let ws_url = anvil.endpoint_url().to_string().replace("http://", "ws://");
     RpcProvider::new(ws_url.parse().unwrap(), signer)
         .await
@@ -153,7 +153,7 @@ async fn provider(
 async fn connect(
     operator: u8,
     address: smart_contract::Address,
-    anvil: &alloy::node_bindings::AnvilInstance,
+    anvil: &AnvilInstance,
 ) -> Cluster<evm::SmartContract<Signer>> {
     let provider = provider(new_signer(operator, anvil), anvil).await;
     Cluster::<evm::SmartContract<Signer>>::connect(&provider, address)

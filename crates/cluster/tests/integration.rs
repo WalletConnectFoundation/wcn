@@ -67,7 +67,7 @@ async fn test_suite() {
     }
 
     cluster
-        .start_migration(cluster::migration::Plan {
+        .start_migration(wcn_cluster::migration::Plan {
             remove: [operator_id(1)].into_iter().collect(),
             add: [operator_id(6), operator_id(7), operator_id(8)]
                 .into_iter()
@@ -88,7 +88,7 @@ async fn test_suite() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     cluster
-        .start_migration(cluster::migration::Plan {
+        .start_migration(wcn_cluster::migration::Plan {
             remove: HashSet::default(),
             add: [operator_id(1)].into_iter().collect(),
             replication_strategy: ReplicationStrategy::UniformDistribution,

@@ -37,37 +37,37 @@ use {
 
 /// Client-specific part of an RPC [`Api`](super::Api).
 pub trait Api: super::Api {
-    /// [`OutboundConnectionHandler`] of this [`Api`].
-    type OutboundConnectionHandler: OutboundConnectionHandler;
+    /// [`ConnectionHandler`] of this [`Api`].
+    type ConnectionHandler: ConnectionHandler;
 
-    /// [`OutboundRpcHandler`] of this [`Api`].
-    type OutboundRpcHandler: Clone + Send + Sync + 'static;
+    /// [`RpcHandler`] of this [`Api`].
+    type RpcHandler: Clone + Send + Sync + 'static;
 }
 
-/// Handler of newly established [`OutboundConnection`]s.
+/// Handler of newly established outbound [`Connection`]s.
 ///
-/// Every time a new [`OutboundConnection`] gets established it's being passed
-/// into an [`OutboundConnectionHandler`].
-pub trait OutboundConnectionHandler: Clone + Send + Sync + 'static {
-    /// [`Api`] that uses this [`OutboundConnectionHandler`].
+/// Every time a new outbound [`Connection`] gets established it's being
+/// passed into a [`ConnectionHandler`].
+pub trait ConnectionHandler: Clone + Send + Sync + 'static {
+    /// [`Api`] that uses this [`ConnectionHandler`].
     type Api: Api;
 
-    /// Error of this [`OutboundConnectionHandler`].
+    /// Error of this [`ConnectionHandler`].
     type Error;
 
-    /// Handles the provided [`OutboundConnection`].
+    /// Handles the provided outbound [`Connection`].
     fn handle_connection(
         &self,
-        conn: &mut OutboundConnection<Self::Api>,
+        conn: &mut Connection<Self::Api>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Handler of a specific type of [`Outbound`] RPCs.
-pub trait OutboundRpcHandler<RPC, Args>: Clone + Send + Sync + 'static
+pub trait RpcHandler<RPC, Args>: Clone + Send + Sync + 'static
 where
     RPC: RpcV2,
 {
-    /// [`Result`] of this [`OutboundRpcHandler`].
+    /// [`Result`] of this [`RpcHandler`].
     type Result;
 
     /// Handles the provided [`Outbound`] RPC.
@@ -97,21 +97,21 @@ pub struct Config {
     pub priority: transport::Priority,
 }
 
-/// RPC client responsible for establishing [`OutboundConnection`]s to remote
+/// RPC client responsible for establishing outbound [`Connection`]s to remote
 /// peers.
 #[derive(Clone)]
 pub struct Client<API: Api> {
     config: Arc<Config>,
     endpoint: quinn::Endpoint,
-    connection_handler: API::OutboundConnectionHandler,
-    rpc_handler: API::OutboundRpcHandler,
+    connection_handler: API::ConnectionHandler,
+    rpc_handler: API::RpcHandler,
 }
 
 impl<API: Api> Client<API> {
     /// Creates a new RPC [`Client`].
     pub fn new(
-        connection_handler: API::OutboundConnectionHandler,
-        rpc_handler: API::OutboundRpcHandler,
+        connection_handler: API::ConnectionHandler,
+        rpc_handler: API::RpcHandler,
         cfg: Config,
     ) -> Result<Self, Error> {
         let transport_config = quic::new_quinn_transport_config(cfg.max_concurrent_rpcs);
@@ -133,12 +133,12 @@ impl<API: Api> Client<API> {
         })
     }
 
-    /// Establishes a new [`OutboundConnection`].
-    pub fn connect(&self, addr: SocketAddrV4, peer_id: PeerId) -> OutboundConnection<API> {
+    /// Establishes a new outbound [`Connection`].
+    pub fn connect(&self, addr: SocketAddrV4, peer_id: PeerId) -> Connection<API> {
         let (tx, rx) = watch::channel(None);
 
-        let conn = OutboundConnection {
-            inner: Arc::new(OutboundConnectionInner {
+        let conn = Connection {
+            inner: Arc::new(ConnectionInner {
                 client: self.clone(),
                 remote_addr: addr,
                 remote_peer_id: peer_id,
@@ -177,11 +177,11 @@ impl<RPC: RpcV2> Outbound<RPC> {
 ///
 /// Reconnects are being handled automatically in the background.
 #[derive(Clone)]
-pub struct OutboundConnection<API: Api> {
-    inner: Arc<OutboundConnectionInner<API>>,
+pub struct Connection<API: Api> {
+    inner: Arc<ConnectionInner<API>>,
 }
 
-struct OutboundConnectionInner<API: Api> {
+struct ConnectionInner<API: Api> {
     client: Client<API>,
 
     remote_addr: SocketAddrV4,
@@ -191,7 +191,7 @@ struct OutboundConnectionInner<API: Api> {
     watch_tx: Arc<Mutex<watch::Sender<Option<quinn::Connection>>>>,
 }
 
-impl<API: Api> OutboundConnection<API> {
+impl<API: Api> Connection<API> {
     /// Returns [`SocketAddrV4`] of the remote peer.
     pub fn peer_addr(&self) -> &SocketAddrV4 {
         &self.inner.remote_addr
@@ -202,7 +202,7 @@ impl<API: Api> OutboundConnection<API> {
         &self.inner.remote_peer_id
     }
 
-    /// Indicates whether this [`OutboundConnection`] is currently open.
+    /// Indicates whether this [`Connection`] is currently open.
     pub fn is_open(&self) -> bool {
         self.inner
             .watch_rx
@@ -212,7 +212,7 @@ impl<API: Api> OutboundConnection<API> {
             .unwrap_or_default()
     }
 
-    /// Waits for this [`OutboundConnection`] to become open.
+    /// Waits for this [`Connection`] to become open.
     ///
     /// IMPORTANT: This future may never resolve! Make sure that you use a
     /// timeout.
@@ -226,7 +226,7 @@ impl<API: Api> OutboundConnection<API> {
         drop(watch_rx.changed().await)
     }
 
-    /// Sends a new [`Outbound`] RPC over this [`OutboundConnection`].
+    /// Sends a new [`Outbound`] RPC over this [`Connection`].
     pub fn send<RPC: RpcV2>(&self) -> Result<Outbound<RPC>> {
         (|| {
             let opt = self.inner.watch_rx.borrow();
@@ -288,7 +288,7 @@ impl<API: Api> OutboundConnection<API> {
     }
 }
 
-impl<API: Api> OutboundConnectionInner<API> {
+impl<API: Api> ConnectionInner<API> {
     async fn new_quic_connection(self: Arc<Self>) -> Result<quinn::Connection> {
         let timeout = self.client.config.connection_timeout;
 
@@ -336,13 +336,13 @@ where
     Resp: Message,
     C: Codec,
 {
-    /// Sends this RPC over the provided [`OutboundConnection`].
+    /// Sends this RPC over the provided [`Connection`].
     pub fn send<Args, Res>(
-        conn: &OutboundConnection<API>,
+        conn: &Connection<API>,
         args: Args,
     ) -> Result<impl Future<Output = Res> + '_>
     where
-        API::OutboundRpcHandler: OutboundRpcHandler<Self, Args, Result = Res>,
+        API::RpcHandler: RpcHandler<Self, Args, Result = Res>,
         Args: 'static,
     {
         let mut rpc = conn.send::<Self>()?;
@@ -368,15 +368,15 @@ where
     }
 }
 
-/// Default implementation of [`OutboundRpcHandler`].
+/// Default implementation of [`RpcHandler`].
 #[derive_where(Clone, Debug, Default; S)]
-pub struct DefaultOutboundRpcHandler<Err, S = ()> {
+pub struct DefaultRpcHandler<Err, S = ()> {
     state: S,
     _marker: PhantomData<Err>,
 }
 
-impl<Err, S> DefaultOutboundRpcHandler<Err, S> {
-    /// Creates a new [`DefaultOutboundRpcHandler`].
+impl<Err, S> DefaultRpcHandler<Err, S> {
+    /// Creates a new [`DefaultRpcHandler`].
     pub fn new(state: S) -> Self {
         Self {
             state,
@@ -385,9 +385,8 @@ impl<Err, S> DefaultOutboundRpcHandler<Err, S> {
     }
 }
 
-impl<const ID: u8, API, Req, Resp, C, Err, S>
-    OutboundRpcHandler<rpc::UnaryV2<ID, API, Req, Resp, C>, Req>
-    for DefaultOutboundRpcHandler<Err, S>
+impl<const ID: u8, API, Req, Resp, C, Err, S> RpcHandler<rpc::UnaryV2<ID, API, Req, Resp, C>, Req>
+    for DefaultRpcHandler<Err, S>
 where
     API: Api,
     Req: Message,

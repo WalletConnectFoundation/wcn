@@ -224,7 +224,8 @@ impl Name {
 }
 
 /// RPC server name.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Display, Clone, Copy, Hash, PartialEq, Eq)]
+#[display("{}", self.as_str())]
 pub struct ServerName([u8; 16]);
 
 impl ServerName {

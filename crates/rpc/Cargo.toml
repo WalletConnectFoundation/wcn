@@ -12,7 +12,7 @@ client = []
 server = []
 
 [dependencies]
-derive_more = { workspace = true }
+derive_more = { workspace = true, features = ["display"] }
 derive-where = { workspace = true }
 derivative = "2.2"
 futures = "0.3"

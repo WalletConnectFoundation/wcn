@@ -12,10 +12,9 @@ use {
         ApiName,
         RpcV2,
     },
-    ::metrics::CounterFn,
     futures::{future::MapErr, sink::SinkMapErr, Sink, Stream, TryFutureExt as _},
     libp2p::{identity::Keypair, PeerId},
-    quinn::crypto::rustls::QuicServerConfig,
+    quinn::crypto::rustls::{self, QuicServerConfig},
     sealed::ConnectionRouter,
     std::{future::Future, io, marker::PhantomData, sync::Arc, time::Duration},
     tokio::sync::{OwnedSemaphorePermit, Semaphore},
@@ -27,9 +26,14 @@ use {
 
 /// Server-specific part of an RPC [`Api`](super::Api).
 pub trait Api: super::Api {
+    /// [`InboundConnectionHandler`] of this [`Api`].
     type InboundConnectionHandler: InboundConnectionHandler<Api = Self>;
 }
 
+/// Handler of newly established [`InboundConnection`]s.
+///
+/// Every time a new [`InboundConnection`] gets established it's being passed
+/// into an [`InboundConnectionHandler`].
 pub trait InboundConnectionHandler: Clone + Send + Sync + 'static {
     type Api;
 
@@ -39,10 +43,13 @@ pub trait InboundConnectionHandler: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = InboundConnectionHandlerResult> + Send;
 }
 
-pub trait InboundRpcHandler<RPC> {
-    type Result;
-
-    fn handle_rpc(&self, rpc: &mut RPC) -> impl Future<Output = Self::Result> + Send;
+/// Handler of a specific type of [`Inbound`] RPCs.
+pub trait InboundRpcHandler<RPC>
+where
+    RPC: RpcV2,
+{
+    /// Handles the provided [`Outbound`] RPC.
+    fn handle_rpc(&self, rpc: &mut Inbound<RPC>) -> impl Future<Output = Result<()>> + Send;
 }
 
 pub struct Config {
@@ -71,26 +78,25 @@ pub struct Config {
     pub priority: transport::Priority,
 }
 
-/// Serves a single RPC API on the specified.
+/// Serves a single RPC API on the specified port.
 pub fn serve(
     cfg: Config,
     connection_handler: impl InboundConnectionHandler,
-) -> Result<impl Future<Output = ()>, Error> {
+) -> Result<impl Future<Output = ()>> {
     multiplex(cfg, (connection_handler,))
 }
 
 /// Serves multiple RPC APIs on the specified port.
 ///
-/// `connection_handlers` is expected to be a tuple of [`ConnectionHandler`]s.
-pub fn multiplex<H>(cfg: Config, connection_handlers: H) -> Result<impl Future<Output = ()>, Error>
+/// `connection_handlers` is expected to be a tuple of
+/// [`InboundConnectionHandler`]s.
+pub fn multiplex<H>(cfg: Config, connection_handlers: H) -> Result<impl Future<Output = ()>>
 where
     H: sealed::ConnectionRouter,
 {
     let transport_config = quic::new_quinn_transport_config(cfg.max_concurrent_rpcs);
-    let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair)
-        .map_err(|err| Error::Crypto(err.to_string()))?;
-    let server_tls_config = QuicServerConfig::try_from(server_tls_config)
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+    let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair).map_err(Error::new)?;
+    let server_tls_config = QuicServerConfig::try_from(server_tls_config).map_err(Error::new)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_tls_config));
     server_config.transport = transport_config.clone();
     server_config.migration(false);
@@ -102,14 +108,14 @@ where
         Some(server_config),
         cfg.priority,
     )
-    .map_err(|err| Error::Transport(err.to_string()))?;
+    .map_err(Error::new)?;
 
     let connection_filter = Filter::new(&filter::Config {
         max_connections: cfg.max_connections,
         max_connections_per_ip: cfg.max_connections_per_ip,
         max_connection_rate_per_ip: cfg.max_connection_rate_per_ip,
     })
-    .map_err(|err| Error::Config(err.to_string()))?;
+    .map_err(Error::new)?;
 
     let rpc_semaphore = Arc::new(Semaphore::new(cfg.max_concurrent_rpcs as usize));
 
@@ -120,6 +126,14 @@ where
         rpc_semaphore,
         connection_handlers,
     ))
+}
+
+struct Server {
+    config: Config,
+    endpoint: quinn::Endpoint,
+
+    connection_filter: Filter,
+    rpc_semaphore: Arc<Semaphore>,
 }
 
 async fn accept_connections<H: sealed::ConnectionRouter>(
@@ -181,12 +195,26 @@ fn accept_connection<R: ConnectionRouter>(
         let conn = connecting
             .with_timeout(Duration::from_millis(1000))
             .await
-            .map_err(|_| InboundConnectionHandlerError::ConnectionTimeout)??;
+            .map_err(|_| ErrorInner::ConnectionTimeout)?
+            .map_err(Error::new)?;
+
+        conn.accept_uni().await.map_err(Error::new)?;
+
+        let protocol_version = rx.read_u32().await?;
+
+        let server_name = match protocol_version {
+            super::PROTOCOL_VERSION => {
+                let mut buf = [0; 16];
+                rx.read_exact(&mut buf).await?;
+                ServerName(buf)
+            }
+            ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
+        };
 
         let header = read_connection_header(&conn)
             .with_timeout(Duration::from_millis(500))
             .await
-            .map_err(|_| InboundConnectionHandlerError::ReadConnectionHeaderTimeout)??;
+            .map_err(|_| ErrorInner::ReadConnectionHeaderTimeout)??;
 
         let conn = InboundConnection {
             server_name,
@@ -323,7 +351,7 @@ mod sealed {
             &self,
             api_name: ApiName,
             connection: InboundConnection,
-        ) -> impl Future<Output = Result<(), InboundConnectionHandlerError>>;
+        ) -> impl Future<Output = Result<()>>;
     }
 }
 
@@ -387,17 +415,17 @@ where
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Transport: {0}")]
-    Transport(String),
+// #[derive(Debug, thiserror::Error)]
+// pub enum Error {
+//     #[error("Transport: {0}")]
+//     Transport(String),
 
-    #[error("Crypto: {0}")]
-    Crypto(String),
+//     #[error("Crypto: {0}")]
+//     Crypto(String),
 
-    #[error("Config: {0}")]
-    Config(String),
-}
+//     #[error("Config: {0}")]
+//     Config(String),
+// }
 
 #[derive(Debug, thiserror::Error)]
 pub enum InboundConnectionHandlerError {
@@ -445,3 +473,50 @@ pub enum ReadRpcIdError {
 #[derive(Debug, thiserror::Error)]
 #[error("Unknown RPC (ID: {0})")]
 pub struct UnknownRpcError(pub u8);
+
+/// RPC [`Client`] error.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct Error(ErrorInner);
+
+/// RPC [`Client`] result.
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl Error {
+    fn new(err: impl Into<ErrorInner>) -> Self {
+        Self(err.into())
+    }
+}
+
+impl From<ErrorInner> for Error {
+    fn from(err: ErrorInner) -> Self {
+        Self::new(err)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ErrorInner {
+    #[error("Failed to generate TLS certificate: {0:?}")]
+    GenCertificate(#[from] libp2p_tls::certificate::GenError),
+
+    #[error("quinn::rustls: {0}")]
+    Rustls(#[from] rustls::NoInitialCipherSuite),
+
+    #[error("QUIC: {0}")]
+    Quic(#[from] quic::Error),
+
+    #[error("Connection: {0:?}")]
+    Connection(#[from] quinn::ConnectionError),
+
+    #[error("Timeout establishing inbound connection")]
+    ConnectionTimeout,
+
+    #[error("Timeout reading inbound connection header")]
+    ReadConnectionHeaderTimeout,
+
+    #[error("Unknown API: {0}")]
+    UnknownApi(rpc::ApiName),
+
+    #[error("Transport: {0}")]
+    Transport(#[from] transport::Error),
+}

@@ -1,5 +1,8 @@
 use {
-    cluster::{
+    libp2p::PeerId,
+    std::{collections::HashSet, net::SocketAddrV4, time::Duration},
+    tracing_subscriber::EnvFilter,
+    wcn_cluster::{
         keyspace::ReplicationStrategy,
         node_operator,
         smart_contract::{
@@ -13,9 +16,6 @@ use {
         NodeOperator,
         Settings,
     },
-    libp2p::PeerId,
-    std::{collections::HashSet, net::SocketAddrV4, time::Duration},
-    tracing_subscriber::EnvFilter,
 };
 
 // Anvil private keys with balances

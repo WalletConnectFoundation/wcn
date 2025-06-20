@@ -38,7 +38,7 @@ tokio = { version = "1", features = ["full"] }
 arc-swap = "1.7"
 
 [dev-dependencies]
-alloy = { version = "1.0", default-features = false, features = ["provider-anvil-node"] }
+alloy = { version = "1.0", default-features = false, features = ["provider-anvil-node", "node-bindings"] }
 tokio = { version = "1", default-features = false }
 
 tracing-subscriber = { version = "0.3", features = [

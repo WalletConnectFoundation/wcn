@@ -131,6 +131,10 @@ jobs:
         with:
           toolchain: ${{ env.RUST_STABLE }}
       - uses: Swatinem/rust-cache@v2
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+          cache: true
       - run: |
           TEST_KIND=${{ matrix.test }}
           if [[ $TEST_KIND == 'doc' ]] ; then

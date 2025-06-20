@@ -1729,35 +1729,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8191fa7302e03607ff0e237d4246cc043ff5b3cb9409d995172ba3bea16b807"
 
 [[package]]
-name = "cluster"
-version = "0.1.0"
-dependencies = [
- "aes",
- "alloy",
- "anyhow",
- "arc-swap",
- "backoff",
- "derivative",
- "derive_more 1.0.0",
- "fpe",
- "futures",
- "hex",
- "itertools 0.12.1",
- "libp2p",
- "postcard",
- "serde",
- "serde_json",
- "sharding",
- "tap",
- "thiserror 1.0.64",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "xxhash-rust",
-]
-
-[[package]]
 name = "cobs"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7837,6 +7808,35 @@ dependencies = [
  "wcn_auth",
  "wcn_domain",
  "wcn_rpc",
+]
+
+[[package]]
+name = "wcn_cluster"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "alloy",
+ "anyhow",
+ "arc-swap",
+ "backoff",
+ "derivative",
+ "derive_more 1.0.0",
+ "fpe",
+ "futures",
+ "hex",
+ "itertools 0.12.1",
+ "libp2p",
+ "postcard",
+ "serde",
+ "serde_json",
+ "sharding",
+ "tap",
+ "thiserror 1.0.64",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
+ "xxhash-rust",
 ]
 
 [[package]]

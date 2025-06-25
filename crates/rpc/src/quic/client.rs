@@ -1,7 +1,6 @@
 use {
     super::{ConnectionHeader, ExtractPeerIdError, InvalidMultiaddrError, PROTOCOL_VERSION},
     crate::{
-        self as rpc,
         client::{self, AnyPeer, Config, Result},
         transport::{self, BiDirectionalStream, Handshake, NoHandshake, PendingConnection},
         Id as RpcId,
@@ -201,7 +200,10 @@ fn new_connection<H: Handshake>(
                 )));
             }
 
-            write_connection_header(&conn, ConnectionHeader { server_name }).await?;
+            write_connection_header(&conn, ConnectionHeader {
+                server_name: Some(server_name),
+            })
+            .await?;
 
             handshake
                 .handle(peer_id, PendingConnection(conn.clone()))
@@ -385,12 +387,6 @@ impl ConnectionError {
     }
 }
 
-impl From<ConnectionError> for rpc::Error {
-    fn from(err: ConnectionError) -> Self {
-        err.as_metrics_label().into()
-    }
-}
-
 #[derive(Debug, From, thiserror::Error)]
 pub enum EstablishStreamError {
     #[error("Invalid Multiaddr")]
@@ -410,20 +406,6 @@ pub enum EstablishStreamError {
 
     #[error("Poisoned lock")]
     Lock,
-}
-
-impl From<EstablishStreamError> for rpc::Error {
-    fn from(err: EstablishStreamError) -> Self {
-        match err {
-            EstablishStreamError::InvalidMultiaddr(_) => "quic_client_invalid_multiaddr",
-            EstablishStreamError::NoAvailablePeers => "quic_client_no_available_peers",
-            EstablishStreamError::Connection(err) => return err.into(),
-            EstablishStreamError::Timeout => "quic_client_establish_stream_timeout",
-            EstablishStreamError::Rng => todo!(),
-            EstablishStreamError::Lock => todo!(),
-        }
-        .into()
-    }
 }
 
 impl<G> From<PoisonError<G>> for EstablishStreamError {

@@ -1,12 +1,16 @@
 #![allow(async_fn_in_trait)]
 #![allow(clippy::manual_async_fn)]
 
-pub use libp2p::{identity, Multiaddr, PeerId};
 use {
-    derive_more::Display,
+    derive_more::{derive::TryFrom, Display},
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
+    transport2::Codec as CodecV2,
+};
+pub use {
+    libp2p::{identity, Multiaddr, PeerId},
+    transport2::PostcardCodec,
 };
 
 #[cfg(feature = "client")]
@@ -20,6 +24,7 @@ pub use client::Client;
 pub mod server;
 #[cfg(feature = "server")]
 pub mod server2;
+use serde::de::DeserializeOwned;
 #[cfg(feature = "server")]
 pub use server::{IntoServer, Server};
 
@@ -27,6 +32,7 @@ pub mod middleware;
 
 pub mod quic;
 pub mod transport;
+mod transport2;
 
 #[cfg(test)]
 mod test;
@@ -57,14 +63,12 @@ const PROTOCOL_VERSION: u32 = 0;
 /// ```
 pub trait Api: Clone + Send + Sync + 'static {
     /// [`ApiName`] of this [`Api`].
-    ///
-    /// [`ApiName`] used
     const NAME: ApiName;
 
     /// `enum` representation of all RPC IDs of this [`Api`].
     ///
     /// Should be convertible from/into `u8`.
-    type RpcId;
+    type RpcId: Copy + Into<u8> + TryFrom<u8>;
 }
 
 /// [`Api`] name.
@@ -75,21 +79,29 @@ pub type ApiName = ServerName;
 /// Expected to be implemented on unit types and should not contain any data.
 ///
 /// See [`StreamingV2`] RPC and [`UnaryV2`] RPC.
-pub trait RpcV2 {
+pub trait RpcV2: Sized + 'static {
     /// ID of this [`Rpc`].
     const ID: u8;
 
-    /// [`Api`] this [`Rpc`] belongs to.
-    type Api: Api;
-
     /// Request type of this [`Rpc`].
     type Request: Message;
+
+    type RequestRef<'a>: Serialize + Unpin + Sync + Send + 'a;
 
     /// Response type of this [`Rpc`].
     type Response: Message;
 
     /// Serialization codec of this [`Rpc`].
-    type Codec: Codec;
+    type Codec: CodecV2<Self::Request> + CodecV2<Self::Response>;
+}
+
+pub(crate) mod sealed {
+    pub trait UnaryRpc: super::RpcV2 {}
+
+    impl<const ID: u8, Req, Resp, C> UnaryRpc for super::UnaryV2<ID, Req, Resp, C> where
+        Self: super::RpcV2
+    {
+    }
 }
 
 /// Generic [`RpcV2`] implementation.
@@ -97,20 +109,20 @@ pub trait RpcV2 {
 /// Not intended to be used directly by the users of this crate.
 ///
 /// Use [`StreamingV2`] or [`UnaryV2`] instead.
-pub struct RpcImpl<const ID: u8, K, API, Req, Resp, C> {
-    _marker: PhantomData<(K, API, Req, Resp, C)>,
+pub struct RpcImpl<const ID: u8, K, Req, Resp, C> {
+    _marker: PhantomData<(K, Req, Resp, C)>,
 }
 
-impl<const ID: u8, K, API, Req, Resp, C> RpcV2 for RpcImpl<ID, K, API, Req, Resp, C>
+impl<const ID: u8, K, Req, Resp, C> RpcV2 for RpcImpl<ID, K, Req, Resp, C>
 where
-    API: Api,
-    Req: Message,
-    Resp: Message,
-    C: Codec,
+    K: 'static,
+    Req: MessageV2,
+    Resp: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
 {
     const ID: u8 = ID;
-    type Api = API;
     type Request = Req;
+    type RequestRef<'a> = &'a Req;
     type Response = Resp;
     type Codec = C;
 }
@@ -121,15 +133,35 @@ where
 /// responses.
 ///
 /// Use type aliases to conviniently define RPCs of this kind.
-pub type StreamingV2<const ID: u8, API, Req, Resp, C> =
-    RpcImpl<ID, kind::Streaming, API, Req, Resp, C>;
+pub type StreamingV2<'a, const ID: u8, Req, Resp, C> = RpcImpl<ID, kind::Streaming, Req, Resp, C>;
 
 /// Unary (request-response) [`RpcV2`].
 ///
 /// Client sends a single request and server responds with a single response.
 ///
 /// Use type aliases to conviniently define RPCs of this kind.
-pub type UnaryV2<const ID: u8, API, Req, Resp, C> = RpcImpl<ID, kind::Unary, API, Req, Resp, C>;
+pub type UnaryV2<const ID: u8, Req, Resp, C> = RpcImpl<ID, kind::Streaming, Req, Resp, C>;
+
+pub trait MessageRef: Serialize + DeserializeOwned + Unpin + Sync + Send {}
+
+pub trait MessageV2: Serialize + DeserializeOwned + Unpin + Sync + Send + 'static {
+    type Borrowed<'a>: Serialize + Unpin + Sync + Send + 'a;
+}
+
+// type BorrowedRequest<'a, RPC> = <<RPC as RpcV2>::Request as
+// MessageV2>::Borrowed<'a>;
+
+pub trait StaticMessage:
+    Serialize + for<'de> Deserialize<'de> + Unpin + Sync + Send + 'static
+{
+}
+
+impl<Msg> MessageV2 for Msg
+where
+    Msg: StaticMessage,
+{
+    type Borrowed<'a> = Self;
+}
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -409,4 +441,34 @@ impl Debug for PeerAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.to_string(), f)
     }
+}
+
+#[derive(Clone, Copy, Debug, TryFrom)]
+#[try_from(repr)]
+#[repr(i32)]
+enum ConnectionStatusCode {
+    Ok = 0,
+
+    UnsupportedProtocol = -1,
+    UnknownApi = -2,
+    Unauthorized = -3,
+}
+
+impl<T, E> MessageV2 for Result<T, E>
+where
+    T: MessageV2,
+    E: MessageV2,
+{
+    type Borrowed<'a> = Result<T::Borrowed<'a>, E::Borrowed<'a>>;
+}
+
+impl<T> MessageV2 for Option<T>
+where
+    T: MessageV2,
+{
+    type Borrowed<'a> = Option<T::Borrowed<'a>>;
+}
+
+impl MessageV2 for () {
+    type Borrowed<'a> = ();
 }

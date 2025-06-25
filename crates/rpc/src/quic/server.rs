@@ -267,7 +267,7 @@ where
     }
 }
 
-pub(crate) async fn read_connection_header(
+async fn read_connection_header(
     conn: &quinn::Connection,
 ) -> Result<ConnectionHeader, ConnectionError> {
     let mut rx = conn.accept_uni().await?;
@@ -275,10 +275,11 @@ pub(crate) async fn read_connection_header(
     let protocol_version = rx.read_u32().await?;
 
     let server_name = match protocol_version {
+        0 => None,
         super::PROTOCOL_VERSION => {
             let mut buf = [0; 16];
             rx.read_exact(&mut buf).await?;
-            ServerName(buf)
+            Some(ServerName(buf))
         }
         ver => return Err(ConnectionError::UnsupportedProtocolVersion(ver)),
     };

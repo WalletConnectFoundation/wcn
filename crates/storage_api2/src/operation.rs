@@ -2,18 +2,17 @@
 
 use {
     crate::{
-        Bytes,
         Entry,
         EntryExpiration,
         EntryVersion,
         Field,
         Key,
+        KeyspaceVersion,
         MapEntry,
         MapPage,
         MapRecord,
         Namespace,
         Record,
-        Value,
     },
     derive_more::derive::{From, TryInto},
     std::any::type_name,
@@ -25,20 +24,20 @@ use {
 #[derive(Clone, Debug, From, EnumDiscriminants)]
 #[strum_discriminants(name(Name))]
 #[strum_discriminants(derive(Ordinalize))]
-pub enum Operation {
-    Get(Get),
-    Set(Set),
-    Del(Del),
-    GetExp(GetExp),
-    SetExp(SetExp),
+pub enum Operation<'a> {
+    Get(Get<'a>),
+    Set(Set<'a>),
+    Del(Del<'a>),
+    GetExp(GetExp<'a>),
+    SetExp(SetExp<'a>),
 
-    HGet(HGet),
-    HSet(HSet),
-    HDel(HDel),
-    HGetExp(HGetExp),
-    HSetExp(HSetExp),
-    HCard(HCard),
-    HScan(HScan),
+    HGet(HGet<'a>),
+    HSet(HSet<'a>),
+    HDel(HDel<'a>),
+    HGetExp(HGetExp<'a>),
+    HSetExp(HSetExp<'a>),
+    HCard(HCard<'a>),
+    HScan(HScan<'a>),
 }
 
 impl metrics::Enum for Name {
@@ -60,14 +59,14 @@ impl metrics::Enum for Name {
     }
 }
 
-impl Operation {
+impl<'a> Operation<'a> {
     /// Returns [`Name`] of this [`Operation`].
     pub fn name(&self) -> Name {
         self.discriminant()
     }
 
-    /// Returns [`Key`] of this [`Operation`].
-    pub fn key(&self) -> &Key {
+    /// Returns key of this [`Operation`].
+    pub fn key(&self) -> &Key<'a> {
         match self {
             Self::Get(get) => &get.key,
             Self::Set(set) => &set.entry.key,
@@ -87,269 +86,112 @@ impl Operation {
 
 /// Gets a [`Record`] by the provided [`Key`].
 #[derive(Clone, Debug)]
-pub struct Get {
+pub struct Get<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-}
-
-impl Get {
-    /// Creates a new [`Get`] operation.
-    pub fn new(namespace: impl Into<Namespace>, key: Key<impl Into<Bytes>>) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-        }
-    }
+    pub key: Key<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Sets a new [`Entry`].
 #[derive(Clone, Debug)]
-pub struct Set {
+pub struct Set<'a> {
     pub namespace: Namespace,
-    pub entry: Entry,
-}
-
-impl Set {
-    /// Creates a new [`Set`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        value: Value<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            entry: Entry::new(key, value, expiration),
-        }
-    }
+    pub entry: Entry<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Deletes an [`Entry`] by the provided [`Key`].
 #[derive(Clone, Debug)]
-pub struct Del {
+pub struct Del<'a> {
     pub namespace: Namespace,
-    pub key: Key,
+    pub key: Key<'a>,
     pub version: EntryVersion,
-}
-
-impl Del {
-    /// Creates a new [`Del`] operation.
-    pub fn new(namespace: impl Into<Namespace>, key: Key<impl Into<Bytes>>) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            version: EntryVersion::new(),
-        }
-    }
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Gets an [`EntryExpiration`] by the provided [`Key`].
 #[derive(Clone, Debug)]
-pub struct GetExp {
+pub struct GetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-}
-
-impl GetExp {
-    /// Creates a new [`GetExp`] operation.
-    pub fn new(namespace: impl Into<Namespace>, key: Key<impl Into<Bytes>>) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-        }
-    }
+    pub key: Key<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Sets [`EntryExpiration`] on the [`Entry`] with the provided [`Key`].
 #[derive(Clone, Debug)]
-pub struct SetExp {
+pub struct SetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key,
+    pub key: Key<'a>,
     pub expiration: EntryExpiration,
     pub version: EntryVersion,
-}
-
-impl SetExp {
-    /// Creates a new [`SetExp`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            expiration: expiration.into(),
-            version: EntryVersion::new(),
-        }
-    }
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Gets a map [`Record`] by the provided [`Key`] and [`Field`].
 #[derive(Clone, Debug)]
-pub struct HGet {
+pub struct HGet<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-    pub field: Field,
-}
-
-impl HGet {
-    /// Creates a new [`HGet`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            field: field.convert(),
-        }
-    }
+    pub key: Key<'a>,
+    pub field: Field<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Sets a new [`MapEntry`].
 #[derive(Clone, Debug)]
-pub struct HSet {
+pub struct HSet<'a> {
     pub namespace: Namespace,
-    pub entry: MapEntry,
-}
-
-impl HSet {
-    /// Creates a new [`HSet`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        value: Value<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            entry: MapEntry::new(key, field, value, expiration),
-        }
-    }
+    pub entry: MapEntry<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Deletes a [`MapEntry`] by the provided [`Key`] and [`Field`].
 #[derive(Clone, Debug)]
-pub struct HDel {
+pub struct HDel<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-    pub field: Field,
+    pub key: Key<'a>,
+    pub field: Field<'a>,
     pub version: EntryVersion,
-}
-
-impl HDel {
-    /// Creates a new [`HDel`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            field: field.convert(),
-            version: EntryVersion::new(),
-        }
-    }
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Gets a [`EntryExpiration`] by the provided [`Key`] and [`Field`].
 #[derive(Clone, Debug)]
-pub struct HGetExp {
+pub struct HGetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-    pub field: Field,
-}
-
-impl HGetExp {
-    /// Creates a new [`HGetExp`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            field: field.convert(),
-        }
-    }
+    pub key: Key<'a>,
+    pub field: Field<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Sets [`Expiration`] on the [`MapEntry`] with the provided [`Key`] and
 /// [`Field`].
 #[derive(Clone, Debug)]
-pub struct HSetExp {
+pub struct HSetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-    pub field: Field,
+    pub key: Key<'a>,
+    pub field: Field<'a>,
     pub expiration: EntryExpiration,
     pub version: EntryVersion,
-}
-
-impl HSetExp {
-    /// Creates a new [`HSetExp`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            field: field.convert(),
-            expiration: expiration.into(),
-            version: EntryVersion::new(),
-        }
-    }
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Returns cardinality of the map with the provided [`Key`].
 #[derive(Clone, Debug)]
-pub struct HCard {
+pub struct HCard<'a> {
     pub namespace: Namespace,
-    pub key: Key,
-}
-
-impl HCard {
-    /// Creates a new [`HCard`] operation.
-    pub fn new(namespace: impl Into<Namespace>, key: Key<impl Into<Bytes>>) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-        }
-    }
+    pub key: Key<'a>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
 /// the provided [`Key`].
 #[derive(Clone, Debug)]
-pub struct HScan {
+pub struct HScan<'a> {
     pub namespace: Namespace,
-    pub key: Key,
+    pub key: Key<'a>,
     pub count: u32,
-    pub cursor: Option<Field>,
-}
-
-impl HScan {
-    /// Creates a new [`HCard`] operation.
-    pub fn new(
-        namespace: impl Into<Namespace>,
-        key: Key<impl Into<Bytes>>,
-        count: impl Into<u32>,
-        cursor: Option<Field<impl Into<Bytes>>>,
-    ) -> Self {
-        Self {
-            namespace: namespace.into(),
-            key: key.into(),
-            count: count.into(),
-            cursor: cursor.map(Field::convert),
-        }
-    }
+    pub cursor: Option<Field<'a>>,
+    pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// [`Operation`] output.
@@ -377,11 +219,11 @@ impl Output {
     pub fn downcast_result<T, E>(operation_result: Result<Self, E>) -> Result<T, E>
     where
         Self: TryInto<T, Error = derive_more::TryIntoError<Self>>,
-        WrongOutput: Into<E>,
+        WrongOutputError: Into<E>,
     {
         operation_result?
             .try_into()
-            .map_err(|err| WrongOutput {
+            .map_err(|err| WrongOutputError {
                 expected: type_name::<T>(),
                 got: err.input.discriminant(),
             })
@@ -391,7 +233,16 @@ impl Output {
 
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("Wrong operation output (expected: {expected}, got: {got})")]
-pub struct WrongOutput {
+pub struct WrongOutputError {
     expected: &'static str,
     got: OutputName,
+}
+
+impl From<WrongOutputError> for crate::Error {
+    fn from(err: WrongOutputError) -> Self {
+        Self::new(
+            crate::ErrorKind::WrongOperationOutput,
+            Some(format!("{err}")),
+        )
+    }
 }

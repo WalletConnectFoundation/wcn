@@ -1,100 +1,163 @@
 use {
-    crate::{EntryExpiration, EntryVersion, Namespace},
+    crate::{Bytes, EntryExpiration, EntryVersion, Field, Key, Value},
+    derive_more::derive::TryFrom,
     serde::{Deserialize, Serialize},
-    wcn_rpc::{self as rpc},
+    std::marker::PhantomData,
+    wcn_rpc::{self as rpc, Api, ApiName, MessageV2, PostcardCodec, StaticMessage},
 };
 
 #[cfg(feature = "rpc_client")]
-pub mod client;
-#[cfg(feature = "rpc_client")]
-pub use client::Client;
+mod client;
 #[cfg(feature = "rpc_server")]
-pub mod server;
-#[cfg(feature = "rpc_server")]
-pub use server::Server;
+mod server;
 
-/// Storage API RPC server hosted by a WCN Replication Coordinator.
-pub const COORDINATOR_RPC_SERVER_NAME: rpc::ServerName =
-    rpc::ServerName::new("StorageApiCoordinator");
+#[derive(Clone, Copy, Debug, TryFrom)]
+#[try_from(repr)]
+#[repr(u8)]
+pub enum Id {
+    Get = 0,
+    Set = 1,
+    Del = 2,
+    SetExp = 3,
+    GetExp = 4,
 
-/// Storage API RPC server hosted by a WCN Replica.
-pub const REPLICA_RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("StorageApiReplica");
+    HGet = 5,
+    HSet = 6,
+    HDel = 7,
+    HSetExp = 8,
+    HGetExp = 9,
+    HCard = 10,
+    HScan = 11,
+}
 
-/// Storage API RPC server hosted by a WCN Database.
-pub const DATABASE_RPC_SERVER_NAME: rpc::ServerName = rpc::ServerName::new("StorageApiDatabase");
+impl From<Id> for u8 {
+    fn from(id: Id) -> Self {
+        id as u8
+    }
+}
 
-/// RPC error codes produced by this module.
-mod error_code {
-    /// Client is not authorized to perform the operation.
-    pub const UNAUTHORIZED: &str = "unauthorized";
+#[derive(Clone, Copy, Debug)]
+pub struct StorageApi<Kind>(PhantomData<Kind>);
 
-    /// Keyspace versions of the client and the server don't match.
-    pub const KEYSPACE_VERSION_MISMATCH: &str = "keyspace_version_mismatch";
+pub mod api_kind {
+    #[derive(Clone, Copy, Debug)]
+    pub struct Coordinator;
 
-    /// Provided key was invalid.
-    pub const INVALID_KEY: &str = "invalid_key";
+    #[derive(Clone, Copy, Debug)]
+    pub struct Replica;
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct Database;
+}
+
+pub type StorageApiCoordinator = StorageApi<api_kind::Coordinator>;
+
+impl Api for StorageApiCoordinator {
+    const NAME: ApiName = ApiName::new("StorageApiCoordinator");
+    type RpcId = Id;
+}
+
+pub type StorageApiReplica = StorageApi<api_kind::Replica>;
+
+impl Api for StorageApiReplica {
+    const NAME: ApiName = ApiName::new("StorageApiReplica");
+    type RpcId = Id;
+}
+
+pub type StorageApiDatabase = StorageApi<api_kind::Database>;
+
+impl Api for StorageApiDatabase {
+    const NAME: ApiName = ApiName::new("StorageApiDatabase");
+    type RpcId = Id;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct Context {
-    namespace_node_operator_id: [u8; 20],
-    namespace_id: u8,
-    keyspace_version: Option<u64>,
+struct Namespace {
+    node_operator_id: [u8; 20],
+    id: u8,
 }
 
-impl 
+type UnaryRpc<const ID: u8, Req, Resp> = rpc::UnaryV2<ID, Req, Resp, PostcardCodec>;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Key(Vec<u8>);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Value(Vec<u8>);
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Field(Vec<u8>);
-
-type Get = rpc::Unary<{ rpc::id(b"Get") }, GetRequest, Option<GetResponse>>;
+type Get = UnaryRpc<{ Id::Get as u8 }, GetRequest, Result<Option<GetResponse>>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct GetRequest {
-    context: Context,
-    key: Key,
+    namespace: Namespace,
+    // key: Bytes<'static>,
+    keyspace_version: Option<u64>,
 }
+
+impl Rpc for Get {
+    const ID: u8 = { Id::Get as u8 };
+    type Request<'a> = GetRequest<'a>;
+    type Response<'a> = GetResponse<'a>;
+    type Codec = PostcardCodec;
+}
+
+impl StaticMessage for GetRequest {}
+
+// impl MessageV2 for GetRequest<'static> {
+//     type Borrowed<'a> = GetRequest<'a>;
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct GetResponse {
-    context: Context,
-    value: Value,
+    namespace: Namespace,
+    value: Bytes<'static>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type Set = rpc::Unary<{ rpc::id(b"Set") }, SetRequest, ()>;
+impl StaticMessage for GetResponse {}
+
+type Set = UnaryRpc<{ Id::Set as u8 }, SetRequest<'static>, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct SetRequest {
-    context: Context,
-    key: Key,
-    value: Value,
+struct SetRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+    value: Bytes<'a>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type Del = rpc::Unary<{ rpc::id(b"Del") }, DelRequest, ()>;
+impl MessageV2 for SetRequest<'static> {
+    type Borrowed<'a> = SetRequest<'a>;
+}
+
+type Del = UnaryRpc<{ Id::Del as u8 }, DelRequest<'static>, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct DelRequest {
-    context: Context,
-    key: Key,
+struct DelRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type GetExp = rpc::Unary<{ rpc::id(b"GetExp") }, GetExpRequest, Option<GetExpResponse>>;
+impl MessageV2 for DelRequest<'static> {
+    type Borrowed<'a> = DelRequest<'a>;
+}
+
+type GetExp =
+    UnaryRpc<{ Id::GetExp as u8 }, GetExpRequest<'static>, Result<Option<GetExpResponse>>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct GetExpRequest {
-    context: Context,
-    key: Key,
+struct GetExpRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+
+    keyspace_version: Option<u64>,
+}
+
+impl MessageV2 for GetExpRequest<'static> {
+    type Borrowed<'a> = GetExpRequest<'a>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,61 +165,96 @@ struct GetExpResponse {
     expiration: UnixTimestampSecs,
 }
 
-type SetExp = rpc::Unary<{ rpc::id(b"SetExp") }, SetExpRequest, ()>;
+impl StaticMessage for GetExpResponse {}
+
+type SetExp = UnaryRpc<{ Id::SetExp as u8 }, SetExpRequest<'static>, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct SetExpRequest {
-    context: Context,
-    key: Key,
+struct SetExpRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type HGet = rpc::Unary<{ rpc::id(b"HGet") }, HGetRequest, Option<HGetResponse>>;
+impl MessageV2 for SetExpRequest<'static> {
+    type Borrowed<'a> = DelRequest<'a>;
+}
+
+type HGet = UnaryRpc<{ Id::HGet as u8 }, HGetRequest<'static>, Result<Option<HGetResponse>>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HGetRequest {
-    context: Context,
-    key: Key,
-    field: Field,
+struct HGetRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+    field: Bytes<'a>,
+
+    keyspace_version: Option<u64>,
+}
+
+impl MessageV2 for HGetRequest<'static> {
+    type Borrowed<'a> = HGetRequest<'a>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct HGetResponse {
-    value: Value,
+    value: Bytes<'static>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
 }
 
-type HSet = rpc::Unary<{ rpc::id(b"HSet") }, HSetRequest, ()>;
+impl StaticMessage for HGetResponse {}
+
+type HSet = UnaryRpc<{ Id::HSet as u8 }, HSetRequest<'static>, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HSetRequest {
-    context: Context,
-    key: Key,
-    field: Field,
-    value: Value,
+struct HSetRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+    field: Bytes<'a>,
+    value: Bytes<'a>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type HDel = rpc::Unary<{ rpc::id(b"HDel") }, HDelRequest, ()>;
+impl MessageV2 for HSetRequest<'static> {
+    type Borrowed<'a> = HSetRequest<'a>;
+}
+
+type HDel = UnaryRpc<{ Id::HDel as u8 }, HDelRequest<'static>, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HDelRequest {
-    context: Context,
-    key: Key,
-    field: Field,
+struct HDelRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+    field: Bytes<'a>,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type HGetExp = rpc::Unary<{ rpc::id(b"HGetExp") }, HGetExpRequest, Option<HGetExpResponse>>;
+impl MessageV2 for HDelRequest<'static> {
+    type Borrowed<'a> = HDelRequest<'a>;
+}
+
+type HGetExp =
+    UnaryRpc<{ Id::HGetExp as u8 }, HGetExpRequest<'static>, Result<Option<HGetExpResponse>>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HGetExpRequest {
-    context: Context,
-    key: Key,
-    field: Field,
+struct HGetExpRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+    field: Bytes<'a>,
+
+    keyspace_version: Option<u64>,
+}
+
+impl MessageV2 for HGetExpRequest<'static> {
+    type Borrowed<'a> = HGetExpRequest<'a>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -164,23 +262,37 @@ struct HGetExpResponse {
     expiration: UnixTimestampSecs,
 }
 
-type HSetExp = rpc::Unary<{ rpc::id(b"HSetExp") }, HSetExpRequest, ()>;
+impl StaticMessage for HGetExpResponse {}
+
+type HSetExp = UnaryRpc<{ Id::HSetExp as u8 }, HSetExpRequest<'static>, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HSetExpRequest {
-    context: Context,
-    key: Key,
-    field: Field,
+struct HSetExpRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+    field: Bytes<'a>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
+
+    keyspace_version: Option<u64>,
 }
 
-type HCard = rpc::Unary<{ rpc::id(b"HCard") }, HCardRequest, HCardResponse>;
+impl MessageV2 for HSetExpRequest<'static> {
+    type Borrowed<'a> = HSetExpRequest<'a>;
+}
+
+type HCard = UnaryRpc<{ Id::HCard as u8 }, HCardRequest<'static>, Result<HCardResponse>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HCardRequest {
-    context: Context,
-    key: Key,
+struct HCardRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
+
+    keyspace_version: Option<u64>,
+}
+
+impl MessageV2 for HCardRequest<'static> {
+    type Borrowed<'a> = HCardRequest<'a>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -188,14 +300,22 @@ struct HCardResponse {
     cardinality: u64,
 }
 
-type HScan = rpc::Unary<{ rpc::id(b"HScan") }, HScanRequest, HScanResponse>;
+impl StaticMessage for HCardResponse {}
+
+type HScan = UnaryRpc<{ Id::HScan as u8 }, HScanRequest<'static>, Result<HScanResponse>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct HScanRequest {
-    context: Context,
-    key: Key,
+struct HScanRequest<'a> {
+    namespace: Namespace,
+    key: Bytes<'a>,
     count: u32,
-    cursor: Option<Field>,
+    cursor: Option<Bytes<'a>>,
+
+    keyspace_version: Option<u64>,
+}
+
+impl MessageV2 for HScanRequest<'static> {
+    type Borrowed<'a> = HScanRequest<'a>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -204,10 +324,12 @@ struct HScanResponse {
     has_more: bool,
 }
 
+impl StaticMessage for HScanResponse {}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct HScanResponseRecord {
-    field: Field,
-    value: Value,
+    field: Bytes<'static>,
+    value: Bytes<'static>,
     expiration: UnixTimestampSecs,
     version: UnixTimestampMicros,
 }
@@ -246,47 +368,96 @@ impl From<UnixTimestampMicros> for EntryVersion {
     }
 }
 
-impl From<Context> for Namespace {
-    fn from(ctx: Context) -> Self {
+impl From<crate::Namespace> for Namespace {
+    fn from(ns: crate::Namespace) -> Self {
         Self {
-            node_operator_id: ctx.namespace_node_operator_id,
-            id: ctx.namespace_id,
+            node_operator_id: ns.node_operator_id,
+            id: ns.id,
         }
     }
 }
 
-impl From<Key> for crate::Key {
-    fn from(key: Key) -> Self {
-        Self(key.0)
+impl From<Namespace> for crate::Namespace {
+    fn from(ns: Namespace) -> Self {
+        Self {
+            node_operator_id: ns.node_operator_id,
+            id: ns.id,
+        }
     }
 }
 
-impl From<crate::Key> for Key {
-    fn from(key: crate::Key) -> Self {
-        Self(key.0)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Error {
+    code: u8,
+    details: Option<String>,
+}
+
+impl Error {
+    fn new(code: ErrorCode, details: Option<String>) -> Self {
+        Self {
+            code: code as u8,
+            details,
+        }
     }
 }
 
-impl From<Value> for crate::Value {
-    fn from(value: Value) -> Self {
-        Self(value.0)
+impl From<ErrorCode> for Error {
+    fn from(code: ErrorCode) -> Self {
+        Self::new(code, None)
     }
 }
 
-impl From<crate::Value> for Value {
-    fn from(value: crate::Value) -> Self {
-        Self(value.0)
+#[derive(TryFrom)]
+#[try_from(repr)]
+#[repr(u8)]
+enum ErrorCode {
+    Internal = 0,
+    Unauthorized = 1,
+    KeyspaceVersionMismatch = 2,
+    Timeout = 3,
+}
+
+type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl From<Error> for crate::Error {
+    fn from(err: Error) -> Self {
+        use crate::ErrorKind;
+
+        let Ok(code) = ErrorCode::try_from(err.code) else {
+            return Self::new(
+                crate::ErrorKind::Unknown,
+                Some(format!("Unexpected error code: {}", err.code)),
+            );
+        };
+
+        let kind = match code {
+            ErrorCode::Unauthorized => ErrorKind::Unauthorized,
+            ErrorCode::KeyspaceVersionMismatch => ErrorKind::KeyspaceVersionMismatch,
+            ErrorCode::Timeout => ErrorKind::Timeout,
+            ErrorCode::Internal => ErrorKind::Internal,
+        };
+
+        Self::new(kind, err.details)
     }
 }
 
-impl From<Field> for crate::Field {
-    fn from(field: Field) -> Self {
-        Self(field.0)
+impl From<crate::Error> for Error {
+    fn from(err: crate::Error) -> Self {
+        use crate::ErrorKind;
+
+        let code = match err.kind {
+            ErrorKind::Unauthorized => ErrorCode::Unauthorized,
+            ErrorKind::KeyspaceVersionMismatch => ErrorCode::KeyspaceVersionMismatch,
+            ErrorKind::Timeout => ErrorCode::Timeout,
+
+            ErrorKind::Internal
+            | ErrorKind::Transport
+            | ErrorKind::WrongOperationOutput
+            | ErrorKind::Unknown => ErrorCode::Internal,
+        };
+
+        Error::new(code, err.details)
     }
 }
 
-impl From<crate::Field> for Field {
-    fn from(field: crate::Field) -> Self {
-        Self(field.0)
-    }
-}
+impl StaticMessage for Error {}

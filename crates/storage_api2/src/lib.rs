@@ -5,9 +5,8 @@ pub use {
     wcn_rpc::{identity, Multiaddr, PeerAddr, PeerId},
 };
 use {
-    derive_more::AsRef,
     futures::{FutureExt as _, TryFutureExt as _},
-    std::{future::Future, marker::PhantomData, str::FromStr, time::Duration},
+    std::{borrow::Cow, future::Future, str::FromStr, time::Duration},
     time::OffsetDateTime as DateTime,
 };
 
@@ -15,9 +14,9 @@ pub mod operation;
 pub use operation::Operation;
 
 #[cfg(any(feature = "rpc_client", feature = "rpc_server"))]
-pub mod rpc;
+mod rpc;
 
-/// Namespace within WCN network.
+/// Namespace within a WCN cluster.
 ///
 /// Namespaces are isolated and every [`StorageApi`] [`Operation`] gets executed
 /// on a specific [`Namespace`].
@@ -32,6 +31,18 @@ pub struct Namespace {
     id: u8,
 }
 
+/// Version of the keyspace of a WCN cluster.
+///
+/// Keyspace changes after data rebalancing within a WCN Cluster.
+/// For data consistency reasons WCN Coordinators and WCN Replicas need to
+/// operate using same [`KeyspaceVersion`]. So for Coordinator->Replica
+/// [`StorageApi`] calls [`Operation`]s need to include the expected
+/// [`KeyspaceVersion`].
+///
+/// For Client->Coordinator and Replica->Database calls the [`KeyspaceVersion`]
+/// validation is not required.
+pub type KeyspaceVersion = u64;
+
 /// WCN Storage API.
 ///
 /// Lingua franka of the WCN network:
@@ -43,421 +54,158 @@ pub struct Namespace {
 ///   servers).
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
-pub trait StorageApi {
-    type Error: From<operation::WrongOutput>;
-
+pub trait StorageApi: Clone + Send + Sync + 'static {
     /// Executes the provided [`operation::Get`].
-    fn get(
-        &self,
-        get: operation::Get,
-    ) -> impl Future<Output = Result<Option<Record>, Self::Error>> + Send {
+    fn get<'a>(
+        &'a self,
+        get: operation::Get<'a>,
+    ) -> impl Future<Output = Result<Option<Record>>> + Send + 'a {
         self.execute(get).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::Set`].
-    fn set(&self, set: operation::Set) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    fn set<'a>(&'a self, set: operation::Set<'a>) -> impl Future<Output = Result<()>> + Send {
         self.execute(set).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::Del`].
-    fn del(&self, del: operation::Del) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    fn del<'a>(&'a self, del: operation::Del<'a>) -> impl Future<Output = Result<()>> + Send {
         self.execute(del).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::GetExp`].
-    fn get_exp(
-        &self,
-        get_exp: operation::GetExp,
-    ) -> impl Future<Output = Result<Option<EntryExpiration>, Self::Error>> + Send {
+    fn get_exp<'a>(
+        &'a self,
+        get_exp: operation::GetExp<'a>,
+    ) -> impl Future<Output = Result<Option<EntryExpiration>>> + Send {
         self.execute(get_exp)
             .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::SetExp`].
-    fn set_exp(
-        &self,
-        set_exp: operation::SetExp,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    fn set_exp<'a>(
+        &'a self,
+        set_exp: operation::SetExp<'a>,
+    ) -> impl Future<Output = Result<()>> + Send {
         self.execute(set_exp)
             .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HGet`].
-    fn hget(
-        &self,
-        hget: operation::HGet,
-    ) -> impl Future<Output = Result<Option<Record>, Self::Error>> + Send {
+    fn hget<'a>(
+        &'a self,
+        hget: operation::HGet<'a>,
+    ) -> impl Future<Output = Result<Option<Record>>> + Send {
         self.execute(hget).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HSet`].
-    fn hset(&self, hset: operation::HSet) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    fn hset<'a>(&'a self, hset: operation::HSet<'a>) -> impl Future<Output = Result<()>> + Send {
         self.execute(hset).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HDel`].
-    fn hdel(&self, hdel: operation::HDel) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    fn hdel<'a>(&'a self, hdel: operation::HDel<'a>) -> impl Future<Output = Result<()>> + Send {
         self.execute(hdel).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HGetExp`].
-    fn hget_exp(
-        &self,
-        hget_exp: operation::HGetExp,
-    ) -> impl Future<Output = Result<Option<EntryExpiration>, Self::Error>> + Send {
+    fn hget_exp<'a>(
+        &'a self,
+        hget_exp: operation::HGetExp<'a>,
+    ) -> impl Future<Output = Result<Option<EntryExpiration>>> + Send {
         self.execute(hget_exp)
             .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HSetExp`].
-    fn hset_exp(
-        &self,
-        hset_exp: operation::HSetExp,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+    fn hset_exp<'a>(
+        &'a self,
+        hset_exp: operation::HSetExp<'a>,
+    ) -> impl Future<Output = Result<()>> + Send {
         self.execute(hset_exp)
             .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HCard`].
-    fn hcard(
-        &self,
-        hcard: operation::HCard,
-    ) -> impl Future<Output = Result<u64, Self::Error>> + Send {
+    fn hcard<'a>(
+        &'a self,
+        hcard: operation::HCard<'a>,
+    ) -> impl Future<Output = Result<u64>> + Send {
         self.execute(hcard).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HScan`].
-    fn hscan(
-        &self,
-        hscan: operation::HScan,
-    ) -> impl Future<Output = Result<MapPage, Self::Error>> + Send {
+    fn hscan<'a>(
+        &'a self,
+        hscan: operation::HScan<'a>,
+    ) -> impl Future<Output = Result<MapPage>> + Send {
         self.execute(hscan).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`].
-    fn execute(
-        &self,
-        operation: impl Into<Operation> + Send,
-    ) -> impl Future<Output = Result<operation::Output, Self::Error>> + Send;
-
-    /// Makes this [`StorageApi`] [`Namespaced`].
-    fn namespaced(self, namespace: impl Into<Namespace>) -> Namespaced<Self>
-    where
-        Self: Sized,
-    {
-        Namespaced {
-            namespace: namespace.into(),
-            storage_api: self,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Makes this [`StorageApi`] [`Namespaced`] using references instead of
-    /// owned values.
-    fn namespaced_ref<N: AsRef<Namespace>>(&self, namespace: N) -> Namespaced<Self, N, &Self>
-    where
-        Self: Sized,
-    {
-        Namespaced {
-            namespace,
-            storage_api: self,
-            _marker: PhantomData,
-        }
-    }
-}
-
-/// A convienience wrapper around a [`StorageApi`] for client usage.
-///
-/// Each function on this wrapper has the same arguments as the respective
-/// [`Operation`] constructor with [`Namespace`] being automatically specified.
-#[derive(Clone, Debug)]
-pub struct Namespaced<S, N = Namespace, T = Owned<S>> {
-    namespace: N,
-    storage_api: T,
-    _marker: PhantomData<S>,
-}
-
-/// Owned [`StorageApi`].
-///
-/// Required to make [`Namespaced`] generic over ownership.
-pub struct Owned<S>(S);
-
-impl<S, N, T> Namespaced<S, N, T>
-where
-    N: AsRef<Namespace>,
-    T: AsRef<S>,
-    S: StorageApi,
-{
-    /// Returns reference to the underlying [`Namespace`].
-    pub fn namespace(&self) -> &Namespace {
-        self.namespace.as_ref()
-    }
-
-    /// Returns reference to the underlying [`StorageApi`].
-    pub fn storage_api(&self) -> &S {
-        self.storage_api.as_ref()
-    }
-
-    /// Gets a [`Record`] by the provided [`Key`].
-    pub async fn get(&self, key: Key<impl Into<Bytes>>) -> Result<Option<Record>, S::Error> {
-        self.storage_api()
-            .get(operation::Get::new(*self.namespace(), key))
-            .await
-    }
-
-    /// Sets a new [`Entry`].
-    async fn set(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        value: Value<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Result<(), S::Error> {
-        let namespace = *self.namespace();
-        self.storage_api()
-            .set(operation::Set::new(namespace, key, value, expiration))
-            .await
-    }
-
-    /// Deletes an [`Entry`] by the provided [`Key`].
-    async fn del(&self, key: Key<impl Into<Bytes>>) -> Result<(), S::Error> {
-        self.storage_api()
-            .del(operation::Del::new(*self.namespace(), key))
-            .await
-    }
-
-    /// Gets an [`EntryExpiration`] by the provided [`Key`].
-    async fn get_exp(
-        &self,
-        key: Key<impl Into<Bytes>>,
-    ) -> Result<Option<EntryExpiration>, S::Error> {
-        self.storage_api()
-            .get_exp(operation::GetExp::new(*self.namespace(), key))
-            .await
-    }
-
-    /// Sets [`EntryExpiration`] on the [`Entry`] with the provided [`Key`].
-    async fn set_exp(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Result<(), S::Error> {
-        self.storage_api()
-            .set_exp(operation::SetExp::new(*self.namespace(), key, expiration))
-            .await
-    }
-
-    /// Gets a map [`Record`] by the provided [`Key`] and [`Field`].
-    async fn hget(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-    ) -> Result<Option<Record>, S::Error> {
-        self.storage_api()
-            .hget(operation::HGet::new(*self.namespace(), key, field))
-            .await
-    }
-
-    /// Sets a new [`MapEntry`].
-    async fn hset(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-        value: Value<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Result<(), S::Error> {
-        let namespace = *self.namespace();
-        self.storage_api()
-            .hset(operation::HSet::new(
-                namespace, key, value, field, expiration,
-            ))
-            .await
-    }
-
-    /// Deletes a [`MapEntry`] by the provided [`Key`] and [`Field`].
-    async fn hdel(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-    ) -> Result<(), S::Error> {
-        self.storage_api()
-            .hdel(operation::HDel::new(*self.namespace(), key, field))
-            .await
-    }
-
-    /// Gets a [`EntryExpiration`] by the provided [`Key`] and [`Field`].
-    async fn hget_exp(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-    ) -> Result<Option<EntryExpiration>, S::Error> {
-        self.storage_api()
-            .hget_exp(operation::HGetExp::new(*self.namespace(), key, field))
-            .await
-    }
-
-    /// Sets [`Expiration`] on the [`MapEntry`] with the provided [`Key`] and
-    /// [`Field`].
-    async fn hset_exp(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Result<(), S::Error> {
-        let namespace = *self.namespace();
-        self.storage_api()
-            .hset_exp(operation::HSetExp::new(namespace, key, field, expiration))
-            .await
-    }
-
-    /// Returns cardinality of the map with the provided [`Key`].
-    async fn hcard(&self, key: Key<impl Into<Bytes>>) -> Result<u64, S::Error> {
-        self.storage_api()
-            .hcard(operation::HCard::new(*self.namespace(), key))
-            .await
-    }
-
-    /// Returns a [`MapPage`] by iterating over the [`Field`]s  of the map with
-    /// the provided [`Key`].
-    async fn hscan(
-        &self,
-        key: Key<impl Into<Bytes>>,
-        count: impl Into<u32>,
-        cursor: Option<Field<impl Into<Bytes>>>,
-    ) -> Result<MapPage, S::Error> {
-        self.storage_api()
-            .hscan(operation::HScan::new(*self.namespace(), key, count, cursor))
-            .await
-    }
-
-    /// Returns [`Value`]s of the map with the provided [`Key`].
-    async fn hvals(&self, key: Key<impl Into<Bytes>>) -> Result<Vec<Value>, S::Error> {
-        // `1000` is generous, relay has ~100 limit for these small maps
-        self.hscan(key, 1000u32, None::<Field>)
-            .map_ok(|page| page.records.into_iter().map(|rec| rec.value).collect())
-            .await
-    }
+    fn execute<'a>(
+        &'a self,
+        operation: impl Into<Operation<'a>> + Send,
+    ) -> impl Future<Output = Result<operation::Output>> + Send;
 }
 
 /// Raw bytes.
-pub type Bytes = Vec<u8>;
+pub type Bytes<'a> = Cow<'a, [u8]>;
 
 /// Key in a KV storage.
 #[derive(Clone, Debug)]
-pub struct Key<T = Bytes>(pub T);
-
-impl<T> Key<T> {
-    /// Converts `Self` into `Key<U>`.
-    pub fn convert<U>(self) -> Key<U>
-    where
-        T: Into<U>,
-    {
-        Self(self.into())
-    }
-}
+pub struct Key<'a>(pub Bytes<'a>);
 
 /// Value in a KV storage.
-#[derive(Clone, Debug)]
-pub struct Value<T = Bytes>(pub T);
-
-impl<T> Value<T> {
-    /// Converts `Self` into `Value<U>`.
-    pub fn convert<U>(self) -> Value<U>
-    where
-        T: Into<U>,
-    {
-        Self(self.into())
-    }
-}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Value<'a>(pub Bytes<'a>);
 
 /// Subkey of a [`MapEntry`].
-#[derive(Clone, Debug)]
-pub struct Field<T = Bytes>(pub T);
-
-impl<T> Field<T> {
-    /// Converts `Self` into `Field<U>`.
-    pub fn convert<U>(self) -> Value<U>
-    where
-        T: Into<U>,
-    {
-        Self(self.into())
-    }
-}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Field<'a>(pub Bytes<'a>);
 
 /// Basic KV storage entry.
 #[derive(Clone, Debug)]
-pub struct Entry {
+pub struct Entry<'a> {
     /// [`Key`] of this [`Entry`].
-    pub key: Key,
+    pub key: Key<'a>,
 
     /// [`Value`] of this [`Entry`].
-    pub value: Value,
+    pub value: Value<'a>,
 
     /// Expiration time of this [`Entry`].
     pub expiration: EntryExpiration,
 
     /// Version of this [`Entry`].
     pub version: EntryVersion,
-}
-
-impl Entry {
-    /// Creates a new [`Entry`].
-    pub fn new(
-        key: Key<impl Into<Bytes>>,
-        value: Value<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Self {
-        Self {
-            key: key.convert(),
-            value: value.convert(),
-            expiration: expiration.into(),
-            version: EntryVersion::new(),
-        }
-    }
 }
 
 /// Map entry in which each [`Value`] is associated with both [`Key`] and subkey
 /// ([`Field`]).
 #[derive(Clone, Debug)]
-pub struct MapEntry {
+pub struct MapEntry<'a> {
     /// [`Key`] of this [`Entry`].
-    pub key: Key,
+    pub key: Key<'a>,
 
     /// [`Field`] of this [`Entry`].
-    pub field: Field,
+    pub field: Field<'a>,
 
     /// [`Value`] of this [`Entry`].
-    pub value: Value,
+    pub value: Value<'a>,
 
     /// Expiration time of this [`Entry`].
     pub expiration: EntryExpiration,
 
     /// Version of this [`Entry`].
     pub version: EntryVersion,
-}
-
-impl MapEntry {
-    /// Creates a new [`MapEntry`].
-    pub fn new(
-        key: Key<impl Into<Bytes>>,
-        field: Field<impl Into<Bytes>>,
-        value: Value<impl Into<Bytes>>,
-        expiration: impl Into<EntryExpiration>,
-    ) -> Self {
-        Self {
-            key: key.convert(),
-            field: field.convert(),
-            value: value.convert(),
-            expiration: expiration.into(),
-            version: EntryVersion::new(),
-        }
-    }
 }
 
 /// [`Entry`]/[`MapEntry`] without the associated [`Key`]/[`Field`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Record {
     /// Value of this [`Record`].
-    pub value: Value,
+    pub value: Value<'static>,
 
     /// Expiration time of the associated [`Entry`]/[`MapEntry`].
     pub expiration: EntryExpiration,
@@ -467,13 +215,13 @@ pub struct Record {
 }
 
 /// [`MapEntry`] without the associated [`Key`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapRecord {
     /// Field of this [`MapRecord`].
-    pub field: Field,
+    pub field: Field<'static>,
 
     /// Value of this [`MapRecord`].
-    pub value: Value,
+    pub value: Value<'static>,
 
     /// Expiration time of the associated [`MapEntry`].
     pub expiration: EntryExpiration,
@@ -572,30 +320,97 @@ impl MapPage {
     }
 }
 
-impl<S> AsRef<S> for Owned<S> {
-    fn as_ref(&self) -> &S {
-        &self.0
-    }
-}
-
-impl AsRef<Namespace> for Namespace {
-    fn as_ref(&self) -> &Namespace {
-        self
-    }
-}
-
 impl FromStr for Namespace {
     type Err = InvalidNamespaceError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.split('/');
-        let addr = parts.next()?;
+        use InvalidNamespaceError as Error;
 
-        // const_hex::decode_to_array(input)
-        todo!()
+        let mut parts = s.split('/');
+
+        let (operator_id, id) = (|| Some((parts.next()?, parts.next()?)))()
+            .ok_or(Error("Not enough components".into()))?;
+
+        if parts.next().is_some() {
+            return Err(Error("Too many components".into()));
+        }
+
+        Ok(Self {
+            node_operator_id: const_hex::decode_to_array(operator_id)
+                .map_err(|err| Error(format!("Invalid node operator id: {err}").into()))?,
+            id: id
+                .parse()
+                .map_err(|err| Error(format!("Invalid id: {err}").into()))?,
+        })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid namespace: {_0}")]
-pub struct InvalidNamespaceError(String);
+pub struct InvalidNamespaceError(Cow<'static, str>);
+
+/// Result of [`StorageApi`].
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Error of [`StorageApi`].
+#[derive(Debug, thiserror::Error)]
+#[error("{kind:?}({details:?})")]
+pub struct Error {
+    kind: ErrorKind,
+    details: Option<String>,
+}
+
+impl Error {
+    /// Returns [`ErrorKind`] of this [`Error`].
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+}
+
+/// [`Error`] kind.
+#[derive(Clone, Copy, Debug)]
+pub enum ErrorKind {
+    /// Client is not authorized to perfrom an [`Operation`].
+    Unauthorized,
+
+    /// [`KeyspaceVersion`] mismatch.
+    KeyspaceVersionMismatch,
+
+    /// [`Operation`] timeout.
+    Timeout,
+
+    /// Internal error.
+    Internal,
+
+    /// Transport error.
+    Transport,
+
+    // NOTE: This is effectively a bug, it's here just for completeness.
+    /// [`operation::WrongOutputError`].
+    WrongOperationOutput,
+
+    /// Unable to determine [`ErrorKind`] of an [`Error`].
+    Unknown,
+}
+
+impl Error {
+    /// Creates a new [`Error`].
+    fn new(kind: ErrorKind, details: Option<String>) -> Self {
+        Self { kind, details }
+    }
+}
+
+impl From<ErrorKind> for Error {
+    fn from(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            details: None,
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_namespace_from_str() {
+    todo!()
+}

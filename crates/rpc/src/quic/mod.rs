@@ -2,7 +2,6 @@
 use nix::sys::socket::{setsockopt, sockopt};
 use {
     crate::{
-        self as rpc,
         transport::{self, Priority},
         ServerName,
     },
@@ -30,9 +29,8 @@ mod metrics;
 
 const PROTOCOL_VERSION: u32 = 1;
 
-#[derive(Default)]
 pub(crate) struct ConnectionHeader {
-    pub server_name: ServerName,
+    pub server_name: Option<ServerName>,
 }
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
@@ -224,25 +222,4 @@ enum IpTosDscp {
 
     /// Lower-Effort, RFC8622
     Le = 0b0000_0100,
-}
-
-impl From<quinn::ConnectionError> for rpc::Error {
-    fn from(err: quinn::ConnectionError) -> Self {
-        use quinn::ConnectionError as Error;
-
-        match err {
-            Error::VersionMismatch => "quinn_quic_version_mismatch".into(),
-            Error::TransportError(err) => rpc::Error::new("quinn_transport").with_description(err),
-            Error::ConnectionClosed(err) => {
-                rpc::Error::new("quinn_connection_closed").with_description(err)
-            }
-            Error::ApplicationClosed(err) => {
-                rpc::Error::new("quinn_application_closed").with_description(err)
-            }
-            Error::Reset => "quinn_conection_reset".into(),
-            Error::TimedOut => "quinn_connection_timeout".into(),
-            Error::LocallyClosed => "quinn_connection_locally_closed".into(),
-            Error::CidsExhausted => "quinn_connectino_cids_exhausted".into(),
-        }
-    }
 }

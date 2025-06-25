@@ -12,8 +12,9 @@ client = []
 server = []
 
 [dependencies]
-derive_more = { workspace = true, features = ["display"] }
+derive_more = { workspace = true, features = ["display", "try_from"] }
 derive-where = { workspace = true }
+strum = { workspace = true , features = ["derive"] }
 derivative = "2.2"
 futures = "0.3"
 indexmap = "2"
@@ -27,6 +28,8 @@ tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["compat", "codec"] }
 tokio-serde = { workspace = true, features = ["json"] }
 tokio-serde-postcard = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+bytes = "1"
 serde_json = "1"
 rand = { version = "0.8", features = ["small_rng"] }
 libp2p = { workspace = true }

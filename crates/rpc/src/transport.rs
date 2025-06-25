@@ -56,8 +56,8 @@ impl Codec for JsonCodec {
 
 /// Untyped bi-directional stream.
 pub struct BiDirectionalStream {
-    pub(crate) rx: RawRecvStream,
-    pub(crate) tx: RawSendStream,
+    rx: RawRecvStream,
+    tx: RawSendStream,
 }
 
 type RawSendStream = FramedWrite<quinn::SendStream, LengthDelimitedCodec>;

@@ -3,7 +3,7 @@ use {
     crate::{operation, MapPage, Operation, Record, Result},
     futures::SinkExt,
     std::future::Future,
-    wcn_rpc::client2::{Connection, DefaultConnectionHandler, DefaultRpcHandler},
+    wcn_rpc::client2::{Connection, DefaultConnectionHandler, DefaultRpcHandler, HandleRpc},
 };
 
 impl<Kind> wcn_rpc::client2::Api for StorageApi<Kind>
@@ -12,7 +12,7 @@ where
 {
     type ConnectionParameters = ();
     type ConnectionHandler = DefaultConnectionHandler;
-    // type RpcHandler = DefaultRpcHandler;
+    type RpcHandler = DefaultRpcHandler;
 }
 
 async fn f<F: Future>(f: F) -> F::Output {
@@ -24,21 +24,28 @@ where
     StorageApi<Kind>: wcn_rpc::client2::Api<
         ConnectionParameters = (),
         ConnectionHandler = DefaultConnectionHandler,
-        // RpcHandler = DefaultRpcHandler,
+        RpcHandler = DefaultRpcHandler,
     >,
 {
     fn get<'a>(
         &'a self,
         get: operation::Get<'a>,
     ) -> impl Future<Output = Result<Option<Record>>> + Send {
-        let req = GetRequest {
-            namespace: get.namespace.into(),
-            // key: get.key.0.into_owned().into(),
-            keyspace_version: get.keyspace_version,
-        };
-
         async move {
-            let opt = Get::send(self, DefaultRpcHandler(&req))?.await??;
+            let req = GetRequest {
+                namespace: get.namespace.into(),
+                key: get.key.0,
+                keyspace_version: get.keyspace_version,
+            };
+
+            let rpc = Get {
+                request: &req,
+                _marker: PhantomData,
+            };
+
+            let opt = self.send(&rpc)?.await??;
+
+            // let opt = rpc.send(self)?.await??;
 
             Ok::<_, crate::Error>(opt.map(|resp| Record {
                 value: Value(resp.value),

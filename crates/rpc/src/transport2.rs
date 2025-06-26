@@ -1,48 +1,57 @@
 use {
-    crate::{Message, MessageV2},
+    crate::{Message, MessageOwned},
     bytes::{BufMut as _, Bytes, BytesMut},
     futures::{stream::MapErr, Sink, TryStreamExt},
     pin_project::pin_project,
     serde::{Deserialize, Serialize},
     std::{
+        borrow::Cow,
         io,
         pin::Pin,
         task::{self, ready},
     },
-    tokio_serde::{Deserializer, Framed, Serializer},
+    tokio_serde::Framed,
     tokio_stream::Stream,
     tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 
 /// Serialization codec.
-pub trait Codec<M: Message>:
-    Serializer<M, Error: Into<Error>>
-    + for<'a> Serializer<M, Error: Into<Error>>
-    + Deserializer<M, Error: Into<Error>>
-    + Unpin
-    + Default
-    + Send
-    + Sync
-    + 'static
+pub trait Codec<M: MessageOwned>:
+    for<'a> Serializer<M::Borrowed<'a>> + Serializer<M> + Deserializer<M>
 {
 }
 
-impl<M: Message, C> Codec<M> for C where
-    C: Serializer<M, Error: Into<Error>>
-        + for<'a> Serializer<M, Error: Into<Error>>
-        + Deserializer<M, Error: Into<Error>>
-        + Unpin
-        + Default
-        + Send
-        + Sync
-        + 'static
+impl<M, C> Codec<M> for C
+where
+    M: MessageOwned,
+    C: for<'a> Serializer<M::Borrowed<'a>> + Serializer<M> + Deserializer<M>,
+{
+}
+
+pub trait Serializer<T>:
+    tokio_serde::Serializer<T, Error: Into<Error>> + Unpin + Default + Send + Sync + 'static
+{
+}
+
+impl<T, S> Serializer<T> for S where
+    S: tokio_serde::Serializer<T, Error: Into<Error>> + Unpin + Default + Send + Sync + 'static
+{
+}
+
+pub trait Deserializer<T>:
+    tokio_serde::Deserializer<T, Error: Into<Error>> + Unpin + Default + Send + Sync + 'static
+{
+}
+
+impl<T, D> Deserializer<T> for D where
+    D: tokio_serde::Deserializer<T, Error: Into<Error>> + Unpin + Default + Send + Sync + 'static
 {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PostcardCodec;
 
-impl<T> Deserializer<T> for PostcardCodec
+impl<T> tokio_serde::Deserializer<T> for PostcardCodec
 where
     for<'a> T: Deserialize<'a>,
 {
@@ -53,7 +62,7 @@ where
     }
 }
 
-impl<T> Serializer<T> for PostcardCodec
+impl<T> tokio_serde::Serializer<T> for PostcardCodec
 where
     T: Serialize,
 {
@@ -84,7 +93,9 @@ impl BiDirectionalStream {
         }
     }
 
-    pub(crate) fn upgrade<I: Message, C: Codec<I>>(self) -> (RecvStream<I, C>, SendStream<C>) {
+    pub(crate) fn upgrade<I: MessageOwned, C: Deserializer<I>>(
+        self,
+    ) -> (RecvStream<I, C>, SendStream<C>) {
         (
             RecvStream(Framed::new(self.rx.map_err(Into::into), C::default())),
             SendStream {
@@ -144,13 +155,13 @@ where
 
 /// [`Stream`] of inbound [`Message`]s.
 #[pin_project]
-pub struct RecvStream<T: Message, C: Codec<T>>(
+pub struct RecvStream<T: MessageOwned, C: Deserializer<T>>(
     #[allow(clippy::type_complexity)]
     #[pin]
     Framed<MapErr<RawRecvStream, fn(io::Error) -> Error>, T, T, C>,
 );
 
-impl<T: Message, C: Codec<T>> Stream for RecvStream<T, C> {
+impl<T: MessageOwned, C: Deserializer<T>> Stream for RecvStream<T, C> {
     type Item = Result<T>;
 
     fn poll_next(

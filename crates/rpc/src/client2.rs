@@ -1,13 +1,13 @@
 use {
     crate::{
         quic::{self},
-        sealed,
         transport,
         transport2::{self, BiDirectionalStream, Codec, RecvStream, SendStream},
+        BorrowedRequest,
         ConnectionStatusCode,
-        MessageV2,
-        RpcImpl,
+        MessageOwned,
         RpcV2,
+        UnaryV2,
     },
     derive_where::derive_where,
     futures::{
@@ -22,8 +22,10 @@ use {
     },
     libp2p::{identity, PeerId},
     std::{
+        borrow::Borrow,
         future::Future,
         io,
+        marker::PhantomData,
         net::{SocketAddr, SocketAddrV4},
         sync::Arc,
         time::Duration,
@@ -41,6 +43,7 @@ use {
 };
 
 // TODO: metrics, timeouts
+
 /// Client-specific part of an RPC [Api][`super::Api`].
 pub trait Api: super::Api + Sized {
     /// Outbound [`Connection`] parameters.
@@ -50,7 +53,7 @@ pub trait Api: super::Api + Sized {
     type ConnectionHandler: HandleConnection<Self>;
 
     //// Implementor of [`HandleRpc`] for the RPCs of this RPC [`Api`].
-    // type RpcHandler<Args>: Send + Sync + 'static;
+    type RpcHandler: Send + Sync + 'static;
 }
 
 /// Handler of newly established outbound [`Connection`]s.
@@ -58,7 +61,7 @@ pub trait HandleConnection<API: Api>: Clone + Send + Sync + 'static {
     /// Creates a new instance of [`Api::RpcHandler`].
     ///
     /// Each outbound [`Connection`] gets a separate RPC handler.
-    // fn new_rpc_handler<Args>(&self, args: Args) -> API::RpcHandler<Args>;
+    fn new_rpc_handler(&self) -> API::RpcHandler;
 
     /// Handles the provided outbound [`Connection`].
     fn handle_connection(
@@ -69,10 +72,15 @@ pub trait HandleConnection<API: Api>: Clone + Send + Sync + 'static {
 }
 
 /// Handler of [`Outbound`] RPCs.
-pub trait HandleRpc<RPC: RpcV2>: Send + Sync {
+pub trait HandleRpc<'a, RPC: RpcV2>: Send + Sync {
     type Output;
 
-    fn handle_rpc(self, rpc: Outbound<RPC>) -> impl Future<Output = Result<Self::Output>> + Send;
+    fn handle_rpc(
+        &self,
+        rpc: Outbound<'_, RPC>,
+    ) -> impl Future<Output = Result<Self::Output>> + Send
+    where
+        RPC: 'a;
 }
 
 /// RPC [`Client`] config.
@@ -214,6 +222,7 @@ impl<API: Api> Client<API> {
                 remote_peer_id: *peer_id,
                 watch_rx: rx,
                 watch_tx: Arc::new(tokio::sync::Mutex::new((tx, params))),
+                rpc_handler: self.connection_handler.new_rpc_handler(),
             }),
         }
     }
@@ -227,11 +236,11 @@ pub struct DefaultConnectionHandler;
 
 impl<API> HandleConnection<API> for DefaultConnectionHandler
 where
-    API: Api<ConnectionParameters = (), ConnectionHandler = Self>,
+    API: Api<ConnectionParameters = (), ConnectionHandler = Self, RpcHandler = DefaultRpcHandler>,
 {
-    // fn new_rpc_handler(&self) -> <API as Api>::RpcHandler {
-    //     DefaultRpcHandler
-    // }
+    fn new_rpc_handler(&self) -> <API as Api>::RpcHandler {
+        DefaultRpcHandler
+    }
 
     async fn handle_connection(&self, _conn: &Connection<API>, _params: &()) -> Result<()> {
         Ok(())
@@ -239,32 +248,27 @@ where
 }
 
 /// Outbound RPC of a specific type.
-pub struct Outbound<RPC: RpcV2> {
+pub struct Outbound<'a, RPC: RpcV2> {
+    rpc: &'a RPC,
+    stream: OutboundStream<RPC>,
+}
+
+struct OutboundStream<RPC: RpcV2> {
     send: SinkMapErr<SendStream<RPC::Codec>, fn(transport2::Error) -> Error>,
     recv: MapErr<RecvStream<RPC::Response, RPC::Codec>, fn(transport2::Error) -> Error>,
 }
 
-impl<RPC: RpcV2> Outbound<RPC> {
-    /// Returns [`Sink`] of outbound requests.
-    pub fn sink(&mut self) -> &mut (impl for<'a> Sink<&'a RPC::Request, Error = Error> + 'static) {
-        &mut self.send
-    }
-
-    /// Returns [`Stream`] of inbound responses.
-    pub fn stream(&mut self) -> &mut impl Stream<Item = Result<RPC::Response>> {
-        &mut self.recv
-    }
-
-    /// Handles this [`Outbound`] unary RPC.
-    pub async fn handle_unary(&mut self, req: &RPC::Request) -> Result<RPC::Response>
-    where
-        RPC: sealed::UnaryRpc,
-    {
-        self.sink().send(req).await?;
-        self.stream()
-            .next()
-            .await
-            .ok_or_else(|| Error::new(transport2::Error::StreamFinished))?
+impl<'a, RPC: RpcV2> Outbound<'a, RPC> {
+    /// Returns the underlying RPC, [`Sink`] of requests and [`Stream`] of
+    /// responses.
+    pub fn unpack(
+        &mut self,
+    ) -> (
+        &RPC,
+        &mut (impl for<'r> Sink<&'r BorrowedRequest<'r, RPC>, Error = Error> + 'static),
+        &mut impl Stream<Item = Result<RPC::Response>>,
+    ) {
+        (&self.rpc, &mut self.stream.send, &mut self.stream.recv)
     }
 }
 
@@ -287,6 +291,8 @@ struct ConnectionInner<API: Api> {
 
     watch_rx: watch::Receiver<Option<quinn::Connection>>,
     watch_tx: Arc<ConnectionMutex<API::ConnectionParameters>>,
+
+    rpc_handler: API::RpcHandler,
 }
 
 impl<API: Api> Connection<API> {
@@ -326,33 +332,35 @@ impl<API: Api> Connection<API> {
         drop(watch_rx.changed().await)
     }
 
-    /// Sends an RPC over this [`Connection`].
-    pub fn send_rpc<'a, RPC, H>(
+    /// Sends the provided RPC over this [`Connection`].
+    pub fn send<'a: 'b, 'b, RPC, Output>(
         &'a self,
-        handler: H,
-    ) -> Result<impl Future<Output = Result<H::Output>> + 'a>
+        rpc: &'b RPC,
+    ) -> Result<impl Future<Output = Result<Output>> + 'b>
     where
-        RPC: RpcV2,
-        H: HandleRpc<RPC> + 'a,
+        RPC: RpcV2 + 'b,
+        API::RpcHandler: HandleRpc<'b, RPC, Output = Output>,
     {
-        let mut rpc = self.new_rpc::<RPC>().tap_err(|err| {
+        let stream = self.new_outbound_stream::<RPC>().tap_err(|err| {
             if err.requires_reconnect() {
                 self.reconnect();
             }
         })?;
 
         Ok(async move {
-            handler.handle_rpc(rpc).await.tap_err(|err| {
-                if err.0.requires_reconnect() {
-                    self.reconnect();
-                }
-            })
+            self.inner
+                .rpc_handler
+                .handle_rpc(Outbound { rpc, stream })
+                .await
+                .tap_err(|err| {
+                    if err.0.requires_reconnect() {
+                        self.reconnect();
+                    }
+                })
         })
-
-        // Ok({ async move { todo!() } })
     }
 
-    fn new_rpc<RPC: RpcV2>(&self) -> Result<Outbound<RPC>, ErrorInner> {
+    fn new_outbound_stream<RPC: RpcV2>(&self) -> Result<OutboundStream<RPC>, ErrorInner> {
         let quic = self.inner.watch_rx.borrow();
         let Some(conn) = quic.as_ref() else {
             return Err(ErrorInner::NotConnected.into());
@@ -372,7 +380,7 @@ impl<API: Api> Connection<API> {
 
         let (recv, send) = BiDirectionalStream::new(tx, rx).upgrade::<RPC::Response, RPC::Codec>();
 
-        Ok(Outbound {
+        Ok(OutboundStream {
             send: SinkExt::<&RPC::Request>::sink_map_err(send, |err: transport2::Error| {
                 Error::new(err)
             }),
@@ -431,35 +439,55 @@ impl<API: Api> Connection<API> {
 /// For your (streaming)[rpc::StreamingV2] RPCs you'll need to provide a manual
 /// implementation of [`RpcHandler`] for this type.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DefaultRpcHandler<Args>(pub Args);
+pub struct DefaultRpcHandler;
 
-impl<'a, RPC> HandleRpc<RPC> for DefaultRpcHandler<&'a RPC::Request>
+impl<'a, const ID: u8, Req, Resp, C> HandleRpc<'a, UnaryV2<'a, ID, Req, Resp, C>>
+    for DefaultRpcHandler
 where
-    RPC: sealed::UnaryRpc,
+    Req: MessageOwned,
+    Resp: MessageOwned,
+    C: Codec<Req> + Codec<Resp>,
 {
-    type Output = RPC::Response;
+    type Output = Resp;
 
-    fn handle_rpc(
-        self,
-        mut rpc: Outbound<RPC>,
-    ) -> impl Future<Output = Result<RPC::Response>> + Send {
-        async move { rpc.handle_unary(self.0).await }
+    async fn handle_rpc(
+        &self,
+        mut outbound: Outbound<'_, UnaryV2<'a, ID, Req, Resp, C>>,
+    ) -> Result<Resp> {
+        let (rpc, tx, rx) = outbound.unpack();
+
+        tx.send(rpc.request).await?;
+        rx.next()
+            .await
+            .ok_or_else(|| Error::new(transport2::Error::StreamFinished))?
     }
 }
 
-impl<const ID: u8, K, Req, Resp, C> RpcImpl<ID, K, Req, Resp, C>
+impl<'a, const ID: u8, Req, Resp, C> UnaryV2<'a, ID, Req, Resp, C>
 where
-    K: 'static,
-    Req: MessageV2,
-    Resp: MessageV2,
+    Req: MessageOwned,
+    Resp: MessageOwned,
     C: Codec<Req> + Codec<Resp>,
 {
-    /// Sends this RPC over the provided [`Connection`].
-    pub fn send<'a, API: Api, H: HandleRpc<Self> + 'a>(
+    pub fn new(request: &'a Req::Borrowed<'a>) -> Self {
+        Self {
+            request,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Sends this unary RPC over the provided connection.
+    pub fn send<API: Api, Output>(
         conn: &'a Connection<API>,
-        rpc_handler: H,
-    ) -> Result<impl Future<Output = Result<H::Output>> + 'a> {
-        conn.send_rpc(rpc_handler)
+        request: &'a Req::Borrowed<'a>,
+    ) -> Result<impl Future<Output = Result<Output>> + 'a>
+    where
+        API::RpcHandler: HandleRpc<'a, Self, Output = Output>,
+    {
+        conn.send(Self {
+            request,
+            _marker: PhantomData,
+        })
     }
 }
 

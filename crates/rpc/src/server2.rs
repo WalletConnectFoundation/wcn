@@ -9,6 +9,7 @@ use {
         transport2::{self, BiDirectionalStream, RecvStream, SendStream},
         Api,
         ApiName,
+        BorrowedResponse,
         ConnectionStatusCode,
         RpcV2,
         ServerName,
@@ -415,7 +416,7 @@ impl<RPC: RpcV2> Inbound<RPC> {
     }
 
     /// Returns [`Sink`] of outbound requests.
-    pub fn sink(&mut self) -> &mut impl Sink<&RPC::Response, Error = Error> {
+    pub fn sink(&mut self) -> &mut impl for<'a> Sink<&'a BorrowedResponse<'a, RPC>, Error = Error> {
         &mut self.send
     }
 }

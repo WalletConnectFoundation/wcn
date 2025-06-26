@@ -30,6 +30,7 @@
           pkg-config
           openssl
           clang
+          gcc13 # jemalloc fails to build on gcc14 (in debug builds)
         ];
         rustc = {
           stable = fenixPackages.stable.rustc;

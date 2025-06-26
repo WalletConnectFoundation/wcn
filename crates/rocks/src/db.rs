@@ -9,6 +9,8 @@ use {
             schema::GenericKey,
         },
         Error,
+        NativeDb,
+        NativeIterator,
     },
     cf::ColumnFamilyName,
     futures_util::{FutureExt, TryFutureExt},
@@ -41,7 +43,7 @@ pub mod types;
 const LOG_FILE_NAME: &str = "LOG";
 
 pub struct RocksBackendInner {
-    db: Arc<rocksdb::DB>,
+    db: Arc<NativeDb>,
     opts: rocksdb::Options,
     reader: reader::Reader,
 
@@ -132,7 +134,7 @@ impl RocksBackend {
         &self,
         left: Option<K>,
         right: Option<K>,
-    ) -> rocksdb::DBIterator
+    ) -> NativeIterator<'_>
     where
         C: cf::Column,
     {
@@ -156,14 +158,14 @@ impl RocksBackend {
     }
 
     /// Returns database iterator for a given prefix.
-    fn prefix_iterator<C, K: AsRef<[u8]>>(&self, prefix: K) -> rocksdb::DBIterator
+    fn prefix_iterator<C, K: AsRef<[u8]>>(&self, prefix: K) -> NativeIterator<'_>
     where
         C: cf::Column,
     {
         self.db.prefix_iterator_cf(&self.cf_handle(C::NAME), prefix)
     }
 
-    fn prefix_iterator_with_cursor<C, K: AsRef<[u8]>>(&self, cursor: K) -> rocksdb::DBIterator
+    fn prefix_iterator_with_cursor<C, K: AsRef<[u8]>>(&self, cursor: K) -> NativeIterator<'_>
     where
         C: cf::Column,
     {
@@ -192,7 +194,12 @@ impl RocksBackend {
 
     /// Returns the [`MemoryUsageStats`] of the RocksDB.
     pub fn memory_usage(&self) -> Result<MemoryUsageStats, Error> {
-        rocksdb::perf::get_memory_usage_stats(Some(&[&self.db]), None).map_err(Into::into)
+        // FIXME: Type incompatibility in rocksdb prevents collecting memory usage stats
+        // when using transaction DBs.
+
+        // rocksdb::perf::get_memory_usage_stats(Some(&[&self.db]),
+        // None).map_err(Into::into)
+        Err(Error::Other("Memory usage stats not available".to_owned()))
     }
 
     /// Returns the current [`Statistic`]s of the RocksDB.
@@ -341,11 +348,7 @@ impl RocksDatabaseBuilder {
         let _ = std::fs::remove_file(self.path.join(LOG_FILE_NAME));
 
         let opts = create_db_opts(&self.cfg);
-        let db = Arc::new(rocksdb::DB::open_cf_descriptors(
-            &opts,
-            &*self.path,
-            self.cfs,
-        )?);
+        let db = Arc::new(NativeDb::open_cf_descriptors(&opts, &*self.path, self.cfs)?);
 
         let log_consumer_handle = tokio::spawn(
             consume_logs(self.path)

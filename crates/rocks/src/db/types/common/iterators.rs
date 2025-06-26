@@ -4,6 +4,7 @@ use {
         util::serde::{deserialize, serialize},
         DataContext,
         Error,
+        NativeIterator,
         RocksBackend,
     },
     itertools::Itertools,
@@ -14,12 +15,12 @@ use {
 /// Wrapper around raw `RocksDB` iterator, typed by column family.
 pub struct DbIterator<'a> {
     cf: ColumnFamilyName,
-    iter: rocksdb::DBIterator<'a>,
+    iter: NativeIterator<'a>,
 }
 
 impl<'a> DbIterator<'a> {
     /// Creates a new iterator for the given column family.
-    pub fn new(cf: ColumnFamilyName, iter: rocksdb::DBIterator<'a>) -> Self {
+    pub fn new(cf: ColumnFamilyName, iter: NativeIterator<'a>) -> Self {
         Self { cf, iter }
     }
 }
@@ -84,7 +85,7 @@ pub type KVBytes = (Box<[u8]>, Box<[u8]>);
 /// This iterator accepts `DBIterator` and traverses it transforming the values
 /// (extracting, deserializing) as necessary.
 pub struct KeyValueIterator<'a, C: cf::Column> {
-    iter: rocksdb::DBIterator<'a>,
+    iter: NativeIterator<'a>,
     _column: PhantomData<C>,
 }
 
@@ -92,7 +93,7 @@ impl<'a, C> KeyValueIterator<'a, C>
 where
     C: cf::Column,
 {
-    pub(crate) fn new(iter: rocksdb::DBIterator<'a>) -> Self {
+    pub(crate) fn new(iter: NativeIterator<'a>) -> Self {
         Self {
             iter,
             _column: PhantomData,

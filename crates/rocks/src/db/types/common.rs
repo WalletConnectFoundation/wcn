@@ -2,6 +2,7 @@ use {
     crate::{
         db::{batch::WriteBatch, cf},
         Error,
+        NativeIterator,
         UnixTimestampSecs,
     },
     async_trait::async_trait,
@@ -30,7 +31,7 @@ pub trait CommonStorage<C: cf::Column>: 'static + Debug + Send + Sync {
         &self,
         left: Option<KeyPosition>,
         right: Option<KeyPosition>,
-    ) -> Result<rocksdb::DBIterator, Error>;
+    ) -> Result<NativeIterator<'_>, Error>;
 
     /// Returns the expiration of the key in unix timestamp in seconds format.
     fn expiration(
@@ -54,7 +55,7 @@ impl<C: cf::Column> CommonStorage<C> for cf::DbColumn<C> {
         &self,
         left: Option<KeyPosition>,
         right: Option<KeyPosition>,
-    ) -> Result<rocksdb::DBIterator, Error> {
+    ) -> Result<NativeIterator<'_>, Error> {
         let left = left.map(|pos| pos.to_be_bytes());
         let right = right.map(|pos| pos.to_be_bytes());
 

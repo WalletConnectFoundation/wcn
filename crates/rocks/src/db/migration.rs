@@ -68,8 +68,8 @@ impl RocksBackend {
                 }
                 ExportItem::Done(n) if n != total_items_processed => {
                     return Err(Error::Other(format!(
-                        "`Done({n})` frame indicates more items than were actually processed ({})",
-                        total_items_processed
+                        "`Done({n})` frame indicates more items than were actually processed \
+                         ({total_items_processed})"
                     )));
                 }
                 ExportItem::Done(_) => {

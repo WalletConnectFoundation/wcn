@@ -50,6 +50,9 @@ impl From<rocksdb::Error> for Error {
 
 pub type StorageResult<T> = Result<T, StorageError>;
 
+pub(crate) type NativeDb = rocksdb::OptimisticTransactionDB;
+pub(crate) type NativeIterator<'a> = rocksdb::DBIteratorWithThreadMode<'a, NativeDb>;
+
 // TODO: This needs to be consolidated with the above error.
 // Note: Any changes to this enum are considered breaking, since it's being
 // serialized and sent over the wire.

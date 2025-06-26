@@ -1,5 +1,5 @@
 use {
-    crate::{db::cf::ColumnFamilyName, util::serde::deserialize, Error},
+    crate::{db::cf::ColumnFamilyName, util::serde::deserialize, Error, NativeDb},
     itertools::Itertools,
     rocksdb::DBPinnableSlice,
     serde::de::DeserializeOwned,
@@ -21,7 +21,7 @@ const CHANNEL_CAPACITY: usize = 1024;
 struct InvalidThreadNumber;
 
 type ReadCallbackFn = Box<dyn FnOnce(Result<Option<DBPinnableSlice<'_>>, Error>) + Send + 'static>;
-type RawCallbackFn = Box<dyn FnOnce(&rocksdb::DB) + Send + 'static>;
+type RawCallbackFn = Box<dyn FnOnce(&NativeDb) + Send + 'static>;
 
 struct ReadRequest {
     cf_name: &'static str,
@@ -46,7 +46,7 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new(db: Arc<rocksdb::DB>, config: Config) -> Result<Self, Error> {
+    pub fn new(db: Arc<NativeDb>, config: Config) -> Result<Self, Error> {
         if config.num_batch_threads == 0 || config.num_callback_threads == 0 {
             return Err(Error::Other(InvalidThreadNumber.to_string()));
         }
@@ -110,7 +110,7 @@ impl Reader {
 
     pub async fn exec_raw<T, U>(&self, cb: T) -> Result<U, Error>
     where
-        T: FnOnce(&rocksdb::DB) -> U + Send + 'static,
+        T: FnOnce(&NativeDb) -> U + Send + 'static,
         U: Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
@@ -161,7 +161,7 @@ impl Drop for Reader {
     }
 }
 
-fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
+fn reader_thread(db: Arc<NativeDb>, rx: mpsc::Receiver<ReadRequest>) {
     let thread = thread::current();
     let thread_id = thread.id();
     let thread_name = thread.name();
@@ -183,7 +183,7 @@ fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
         for (cf_name, reqs) in groups {
             if let Some(cf_handle) = db.cf_handle(cf_name) {
                 let keys = reqs.iter().map(|req| &req.key);
-                let result = db.batched_multi_get_cf(cf_handle, keys, false).into_iter();
+                let result = db.batched_multi_get_cf(&cf_handle, keys, false).into_iter();
 
                 for (req, res) in reqs.into_iter().zip(result) {
                     (req.callback)(res.map_err(Into::into));
@@ -201,7 +201,7 @@ fn reader_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<ReadRequest>) {
     tracing::trace!(?thread_id, ?thread_name, "batch reader thread finished");
 }
 
-fn raw_cb_thread(db: Arc<rocksdb::DB>, rx: mpsc::Receiver<RawCallbackRequest>) {
+fn raw_cb_thread(db: Arc<NativeDb>, rx: mpsc::Receiver<RawCallbackRequest>) {
     let thread = thread::current();
     let thread_id = thread.id();
     let thread_name = thread.name();

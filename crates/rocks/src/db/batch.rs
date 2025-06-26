@@ -3,7 +3,7 @@
 use crate::{db::cf::ColumnFamilyName, RocksBackend};
 
 pub struct WriteBatch {
-    pub(crate) write_batch: rocksdb::WriteBatchWithTransaction<false>,
+    pub(crate) write_batch: rocksdb::WriteBatchWithTransaction<true>,
     backend: RocksBackend,
 }
 

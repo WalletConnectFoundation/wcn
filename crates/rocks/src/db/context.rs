@@ -196,7 +196,7 @@ impl<T> Merge<Self> for MergeOp<T> {
 /// To augment data with additional information (metadata), the incoming data is
 /// stored inside of a typed `DataContext<T>` wrapper. Payload is stored as is,
 /// and is serialized along with the wrapper, on persistence.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DataContext<T> {
     /// Wrapped data. It can be `None` if the context is initialized during
     /// merging without an existing value. Contexts without the payload should
@@ -209,6 +209,18 @@ pub struct DataContext<T> {
     updated: Option<UnixTimestampMicros>,
     /// Unix-timestamp (in microseconds) of entry creation time.
     created: UnixTimestampMicros,
+}
+
+// Manual impl to omit the `T: Default` bounds.
+impl<T> Default for DataContext<T> {
+    fn default() -> Self {
+        Self {
+            payload: Default::default(),
+            expires: Default::default(),
+            updated: Default::default(),
+            created: Default::default(),
+        }
+    }
 }
 
 impl<T> DataContext<T> {

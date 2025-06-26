@@ -4,13 +4,15 @@ use {
     crate::{
         db::{
             cf::{Column, DbColumn},
+            compaction::Merge,
             context::{self, UnixTimestampMicros},
             types::common::CommonStorage,
         },
-        util::serde::serialize,
+        util::serde::{deserialize, serialize},
         Error,
         UnixTimestampSecs,
     },
+    rocksdb::OptimisticTransactionOptions,
     std::future::Future,
 };
 
@@ -43,6 +45,21 @@ where
         expiration: UnixTimestampSecs,
         update_timestamp: UnixTimestampMicros,
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
+
+    /// Sets value and expiration for a provided key only if the key does not
+    /// exist.
+    ///
+    /// Returns `Ok(None)` in case the key was successfully set. Otherwise
+    /// returns `Ok(Some(Record))` with the previously set data.
+    ///
+    /// Time complexity: `O(1)`.
+    fn setnx(
+        &self,
+        key: &C::KeyType,
+        value: &C::ValueType,
+        expiration: UnixTimestampSecs,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<Option<Record<C::ValueType>>, Error>> + Send + Sync;
 
     /// Sets value for a provided key (only if the value already exists).
     ///
@@ -118,6 +135,61 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
 
             self.backend.merge(C::NAME, key, value).await
         }
+    }
+
+    fn setnx(
+        &self,
+        key: &C::KeyType,
+        value: &C::ValueType,
+        expiration: UnixTimestampSecs,
+        update_timestamp: UnixTimestampMicros,
+    ) -> impl Future<Output = Result<Option<Record<C::ValueType>>, Error>> + Send + Sync {
+        let data_ctx = context::DataContext::default().merge(context::MergeOp::set(
+            value,
+            expiration,
+            update_timestamp,
+        ));
+
+        let key = C::storage_key(key);
+        let value = serialize(&data_ctx);
+
+        self.backend.exec_blocking(|backend| {
+            let key = key?;
+            let value = value?;
+            let cf = backend.cf_handle(C::NAME);
+
+            // Setting snapshot is required to make sure that the keys read and updated in
+            // the transaction have not been updated outside of the transaction.
+            let mut otxn_opts = OptimisticTransactionOptions::new();
+            otxn_opts.set_snapshot(true);
+
+            let db = backend.db.as_ref();
+            let txn = db.transaction_opt(&Default::default(), &otxn_opts);
+
+            // It's unclear what `exclusive` lock here means, but by default the value is
+            // `true` in rocksdb, so that's what we're using.
+            if let Some(data) = txn.get_for_update_cf(cf, &key, true)? {
+                let data = deserialize::<context::DataContext<C::ValueType>>(&data)?;
+                let expiration = data.expiration_timestamp();
+                let version = data
+                    .modification_timestamp()
+                    .unwrap_or_else(|| data.creation_timestamp());
+
+                // This filters out expired or deleted data contexts to allow overwriting them.
+                if let Some(value) = data.into_payload() {
+                    return Ok(Some(Record {
+                        value,
+                        expiration,
+                        version,
+                    }));
+                }
+            }
+
+            txn.put_cf(cf, &key, value)?;
+            txn.commit()?;
+
+            Ok(None)
+        })
     }
 
     fn set_val(
@@ -202,9 +274,10 @@ mod tests {
 
         let db = &rocks_db.column::<StringColumn>().unwrap();
 
-        let key = &TestKey::new(42).into();
-        let val = &TestValue::new("value1").into();
         {
+            let key = &TestKey::new(42).into();
+            let val = &TestValue::new("value1").into();
+
             // Make sure that no data exists.
             assert_eq!(db.get(key).await.unwrap(), None);
 
@@ -239,9 +312,10 @@ mod tests {
         }
 
         // TTL support.
-        let key = &TestKey::new(43).into();
-        let val = &TestValue::new("value2").into();
         {
+            let key = &TestKey::new(43).into();
+            let val = &TestValue::new("value2").into();
+
             // Try to get TTL on non-existent key.
             let res = db.exp(key).await;
             assert!(matches!(res, Err(Error::EntryNotFound)));
@@ -259,6 +333,64 @@ mod tests {
                 .unwrap();
             let ttl = db.exp(key).await.unwrap();
             assert_eq!(ttl, expiration);
+        }
+
+        // SETNX method.
+        {
+            let key1 = &TestKey::new(44).into();
+            let val1 = &TestValue::new("value1").into();
+            let key2 = &TestKey::new(45).into();
+            let val2 = &TestValue::new("value2").into();
+            let timestamp = timestamp_micros();
+
+            // Make sure that no data exists.
+            assert_eq!(db.get(key1).await.unwrap(), None);
+            assert_eq!(db.get(key2).await.unwrap(), None);
+
+            // Write some data to `key1`.
+            db.set(key1, val1, expiration, timestamp).await.unwrap();
+            assert_eq!(
+                db.get(key1).await.unwrap(),
+                Some(Record {
+                    value: val1.clone(),
+                    expiration,
+                    version: timestamp,
+                })
+            );
+
+            // Confirm that the existing key was not overwritten.
+            let res = db
+                .setnx(key1, val2, expiration, timestamp_micros())
+                .await
+                .unwrap();
+            assert_eq!(
+                res,
+                Some(Record {
+                    value: val1.clone(),
+                    expiration,
+                    version: timestamp,
+                })
+            );
+            assert_eq!(
+                db.get(key1).await.unwrap(),
+                Some(Record {
+                    value: val1.clone(),
+                    expiration,
+                    version: timestamp,
+                })
+            );
+
+            // Confirm setting an empty key works.
+            let res = db.setnx(key2, val2, expiration, timestamp).await.unwrap();
+            assert!(res.is_none());
+            assert_eq!(
+                db.get(key2).await.unwrap(),
+                Some(Record {
+                    value: val2.clone(),
+                    expiration,
+                    version: timestamp,
+                })
+            );
         }
     }
 

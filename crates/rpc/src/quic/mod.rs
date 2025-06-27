@@ -29,16 +29,17 @@ mod metrics;
 
 const PROTOCOL_VERSION: u32 = 1;
 
-#[derive(Default)]
-struct ConnectionHeader {
-    server_name: Option<ServerName>,
+pub(crate) struct ConnectionHeader {
+    pub server_name: Option<ServerName>,
 }
 
 #[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
 #[error("{0}: invalid QUIC Multiaddr")]
 pub struct InvalidMultiaddrError(Multiaddr);
 
-fn new_quinn_transport_config(max_concurrent_streams: u32) -> Arc<quinn::TransportConfig> {
+pub(crate) fn new_quinn_transport_config(
+    max_concurrent_streams: u32,
+) -> Arc<quinn::TransportConfig> {
     const STREAM_WINDOW: u32 = 4 * 1024 * 1024; // 4 MiB
 
     // Our tests are too slow and connections get dropped because of missing keep
@@ -61,7 +62,7 @@ fn new_quinn_transport_config(max_concurrent_streams: u32) -> Arc<quinn::Transpo
     Arc::new(transport)
 }
 
-fn new_quinn_endpoint(
+pub(crate) fn new_quinn_endpoint(
     socket_addr: SocketAddr,
     keypair: &Keypair,
     transport_config: Arc<quinn::TransportConfig>,
@@ -177,7 +178,7 @@ pub enum Error {
     InvalidConnectionRate,
 }
 
-fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdError> {
+pub(crate) fn connection_peer_id(conn: &quinn::Connection) -> Result<PeerId, ExtractPeerIdError> {
     use ExtractPeerIdError as Error;
 
     let identity = conn.peer_identity().ok_or(Error::MissingPeerIdentity)?;

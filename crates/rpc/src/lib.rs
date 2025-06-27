@@ -1,21 +1,29 @@
 #![allow(async_fn_in_trait)]
 #![allow(clippy::manual_async_fn)]
 
-pub use libp2p::{identity, Multiaddr, PeerId};
 use {
-    derive_more::Display,
-    serde::{Deserialize, Serialize},
+    derive_more::{derive::TryFrom, Display},
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
+    transport2::Codec as CodecV2,
+};
+pub use {
+    libp2p::{identity, Multiaddr, PeerId},
+    transport2::PostcardCodec,
 };
 
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
+pub mod client2;
+#[cfg(feature = "client")]
 pub use client::Client;
 
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(feature = "server")]
+pub mod server2;
 #[cfg(feature = "server")]
 pub use server::{IntoServer, Server};
 
@@ -23,9 +31,89 @@ pub mod middleware;
 
 pub mod quic;
 pub mod transport;
+mod transport2;
 
 #[cfg(test)]
 mod test;
+
+const PROTOCOL_VERSION: u32 = 0;
+
+/// RPC API specification.
+pub trait Api: Clone + Send + Sync + 'static {
+    /// [`ApiName`] of this [`Api`].
+    const NAME: ApiName;
+
+    /// `enum` representation of all RPC IDs of this [`Api`].
+    type RpcId: Copy + Into<u8> + TryFrom<u8> + Send + Sync + 'static;
+}
+
+/// [`Api`] name.
+pub type ApiName = ServerName;
+
+/// Remote procedure call.
+pub trait RpcV2: Sized + Send + Sync + 'static {
+    /// ID of this [`Rpc`].
+    const ID: u8;
+
+    /// Request type of this [`Rpc`].
+    type Request: MessageV2;
+
+    /// Response type of this [`Rpc`].
+    type Response: MessageV2;
+
+    /// Serialization codec of this [`Rpc`].
+    type Codec: CodecV2<Self::Request> + CodecV2<Self::Response>;
+}
+
+/// [`RpcV2::Request`].
+pub type Request<RPC> = <RPC as RpcV2>::Request;
+
+/// [`RpcV2::Response`].
+pub type Response<RPC> = <RPC as RpcV2>::Response;
+
+/// [`MessageV2::Borrowed`] of [`RpcV2::Request`].
+pub type BorrowedRequest<'a, RPC> = <<RPC as RpcV2>::Request as MessageV2>::Borrowed<'a>;
+
+/// [`MessageV2::Borrowed`] of [`RpcV2::Response`].
+pub type BorrowedResponse<'a, RPC> = <<RPC as RpcV2>::Response as MessageV2>::Borrowed<'a>;
+
+/// Request-response RPC.
+pub trait UnaryRpc: RpcV2 {}
+
+/// Default implementation of [`UnaryRpc`].
+pub struct UnaryV2<const ID: u8, Req: MessageV2, Resp: MessageV2, C: CodecV2<Req> + CodecV2<Resp>> {
+    _marker: PhantomData<(Req, Resp, C)>,
+}
+
+impl<const ID: u8, Req, Resp, C> RpcV2 for UnaryV2<ID, Req, Resp, C>
+where
+    Req: MessageV2,
+    Resp: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+{
+    const ID: u8 = ID;
+    type Request = Req;
+    type Response = Resp;
+    type Codec = C;
+}
+
+impl<const ID: u8, Req, Resp, C> UnaryRpc for UnaryV2<ID, Req, Resp, C>
+where
+    Req: MessageV2,
+    Resp: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+{
+}
+
+/// RPC message.
+pub trait MessageV2: DeserializeOwned + Serialize + Unpin + Sync + Send + 'static {
+    type Borrowed<'a>: BorrowedMessage;
+}
+
+/// Borrowed [Message][`MessageV2`].
+pub trait BorrowedMessage: Serialize + Unpin + Sync + Send {}
+
+impl<T> BorrowedMessage for T where T: Serialize + Unpin + Sync + Send {}
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -120,7 +208,8 @@ impl Name {
 }
 
 /// RPC server name.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Display, Clone, Copy, Hash, PartialEq, Eq)]
+#[display("{}", self.as_str())]
 pub struct ServerName([u8; 16]);
 
 impl ServerName {
@@ -292,4 +381,38 @@ impl Debug for PeerAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.to_string(), f)
     }
+}
+
+#[derive(Clone, Copy, Debug, TryFrom)]
+#[try_from(repr)]
+#[repr(i32)]
+enum ConnectionStatusCode {
+    Ok = 0,
+
+    UnsupportedProtocol = -1,
+    UnknownApi = -2,
+    Unauthorized = -3,
+}
+
+impl<T, E> MessageV2 for Result<T, E>
+where
+    T: MessageV2,
+    E: MessageV2,
+{
+    type Borrowed<'a> = Result<T::Borrowed<'a>, E::Borrowed<'a>>;
+}
+
+impl<T> MessageV2 for Option<T>
+where
+    T: MessageV2,
+{
+    type Borrowed<'a> = Option<T::Borrowed<'a>>;
+}
+
+impl MessageV2 for () {
+    type Borrowed<'a> = ();
+}
+
+impl MessageV2 for u64 {
+    type Borrowed<'a> = Self;
 }

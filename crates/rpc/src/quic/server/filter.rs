@@ -21,8 +21,14 @@ pub struct Filter {
     max_connections_per_ip: u32,
 }
 
+pub(crate) struct Config {
+    pub max_connections: u32,
+    pub max_connections_per_ip: u32,
+    pub max_connection_rate_per_ip: u32,
+}
+
 impl Filter {
-    pub fn new(cfg: &super::Config) -> Result<Self, quic::Error> {
+    pub fn new(cfg: &Config) -> Result<Self, quic::Error> {
         let max_connection_rate: NonZeroU32 = cfg
             .max_connection_rate_per_ip
             .try_into()

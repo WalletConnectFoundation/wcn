@@ -24,7 +24,7 @@ use {
     },
 };
 
-mod filter;
+pub(crate) mod filter;
 
 /// QUIC RPC server config.
 pub struct Config {
@@ -66,7 +66,11 @@ where
     S: Send + Sync + 'static,
     Server<S>: Multiplexer,
 {
-    let filter = Filter::new(&cfg)?;
+    let filter = Filter::new(&filter::Config {
+        max_connections: cfg.max_connections,
+        max_connections_per_ip: cfg.max_connections_per_ip,
+        max_connection_rate_per_ip: cfg.max_connection_rate_per_ip,
+    })?;
     let server = Server::new(rpc_servers, cfg)?;
     Ok(server.serve(filter))
 }

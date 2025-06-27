@@ -1,5 +1,12 @@
 use {
-    cluster::{
+    alloy::{
+        node_bindings::{Anvil, AnvilInstance},
+        signers::local::PrivateKeySigner,
+    },
+    libp2p::PeerId,
+    std::{collections::HashSet, net::SocketAddrV4, time::Duration},
+    tracing_subscriber::EnvFilter,
+    wcn_cluster::{
         keyspace::ReplicationStrategy,
         node_operator,
         smart_contract::{
@@ -13,27 +20,8 @@ use {
         NodeOperator,
         Settings,
     },
-    libp2p::PeerId,
-    std::{collections::HashSet, net::SocketAddrV4, time::Duration},
-    tracing_subscriber::EnvFilter,
 };
 
-// Anvil private keys with balances
-const PRIVATE_KEYS: [&str; 10] = [
-    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-    "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
-    "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
-    "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
-    "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba",
-    "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e",
-    "0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356",
-    "0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97",
-    "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6",
-];
-
-// TODO: Setup Anvil on CI
-#[ignore]
 #[tokio::test]
 async fn test_suite() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
@@ -42,43 +30,54 @@ async fn test_suite() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
+    // Spin up a local Anvil instance automatically
+    let anvil = Anvil::new()
+        .block_time(1)
+        .chain_id(31337)
+        .try_spawn()
+        .unwrap();
+
     let settings = Settings {
         max_node_operator_data_bytes: 4096,
     };
 
-    let signer = Signer::try_from_private_key(
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    )
-    .unwrap();
+    // Use Anvil's first key for deployment - convert PrivateKeySigner to our Signer
+    let private_key_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let signer =
+        Signer::try_from_private_key(&format!("{:#x}", private_key_signer.to_bytes())).unwrap();
 
-    let provider = provider(signer).await;
+    let provider = provider(signer, &anvil).await;
 
-    let operators = (1..=5).map(new_node_operator).collect();
+    let operators = (1..=5).map(|n| new_node_operator(n, &anvil)).collect();
 
     let cluster = Cluster::<evm::SmartContract<Signer>>::deploy(&provider, settings, operators)
         .await
         .unwrap();
 
-    for idx in 5..=7 {
+    for id in 6..=8 {
         cluster
-            .add_node_operator(idx, new_node_operator(idx + 1))
+            .add_node_operator(new_node_operator(id, &anvil))
             .await
             .unwrap();
     }
 
     cluster
-        .start_migration(cluster::migration::Plan {
-            remove: [operator_id(1)].into_iter().collect(),
-            add: [operator_id(6), operator_id(7), operator_id(8)]
-                .into_iter()
-                .collect(),
+        .start_migration(wcn_cluster::migration::Plan {
+            remove: [operator_id(1, &anvil)].into_iter().collect(),
+            add: [
+                operator_id(6, &anvil),
+                operator_id(7, &anvil),
+                operator_id(8, &anvil),
+            ]
+            .into_iter()
+            .collect(),
             replication_strategy: ReplicationStrategy::UniformDistribution,
         })
         .await
         .unwrap();
 
     for idx in 1..=7 {
-        connect(idx + 1, cluster.smart_contract().address())
+        connect(idx + 1, cluster.smart_contract().address(), &anvil)
             .await
             .complete_migration(1)
             .await
@@ -88,9 +87,9 @@ async fn test_suite() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     cluster
-        .start_migration(cluster::migration::Plan {
+        .start_migration(wcn_cluster::migration::Plan {
             remove: HashSet::default(),
-            add: [operator_id(1)].into_iter().collect(),
+            add: [operator_id(1, &anvil)].into_iter().collect(),
             replication_strategy: ReplicationStrategy::UniformDistribution,
         })
         .await
@@ -101,9 +100,12 @@ async fn test_suite() {
     cluster.start_maintenance().await.unwrap();
     cluster.finish_maintenance().await.unwrap();
 
-    cluster.remove_node_operator(operator_id(1)).await.unwrap();
+    cluster
+        .remove_node_operator(operator_id(1, &anvil))
+        .await
+        .unwrap();
 
-    let mut operator2 = new_node_operator(2);
+    let mut operator2 = new_node_operator(2, &anvil);
     operator2.data.name = node_operator::Name::new("NewName").unwrap();
     cluster.update_node_operator(operator2).await.unwrap();
 
@@ -113,14 +115,9 @@ async fn test_suite() {
         })
         .await
         .unwrap();
-
-    cluster
-        .transfer_ownership(*new_signer(9).address())
-        .await
-        .unwrap();
 }
 
-fn new_node_operator(n: u8) -> NodeOperator {
+fn new_node_operator(n: u8, anvil: &AnvilInstance) -> NodeOperator {
     let data = node_operator::Data {
         name: node_operator::Name::new(format!("Operator{n}")).unwrap(),
         nodes: vec![Node {
@@ -131,21 +128,24 @@ fn new_node_operator(n: u8) -> NodeOperator {
     };
 
     NodeOperator {
-        id: operator_id(n),
+        id: operator_id(n, anvil),
         data,
     }
 }
 
-fn operator_id(n: u8) -> node_operator::Id {
-    *new_signer(n).address()
+fn operator_id(n: u8, anvil: &AnvilInstance) -> node_operator::Id {
+    *new_signer(n, anvil).address()
 }
 
-fn new_signer(n: u8) -> Signer {
-    Signer::try_from_private_key(PRIVATE_KEYS[n as usize]).unwrap()
+fn new_signer(n: u8, anvil: &AnvilInstance) -> Signer {
+    let private_key_signer: PrivateKeySigner = anvil.keys()[n as usize].clone().into();
+    let private_key = &format!("{:#x}", private_key_signer.to_bytes());
+    Signer::try_from_private_key(private_key).unwrap()
 }
 
-async fn provider(signer: Signer) -> RpcProvider<Signer> {
-    RpcProvider::new("ws://127.0.0.1:8545".parse().unwrap(), signer)
+async fn provider(signer: Signer, anvil: &AnvilInstance) -> RpcProvider<Signer> {
+    let ws_url = anvil.endpoint_url().to_string().replace("http://", "ws://");
+    RpcProvider::new(ws_url.parse().unwrap(), signer)
         .await
         .unwrap()
 }
@@ -153,8 +153,9 @@ async fn provider(signer: Signer) -> RpcProvider<Signer> {
 async fn connect(
     operator: u8,
     address: smart_contract::Address,
+    anvil: &AnvilInstance,
 ) -> Cluster<evm::SmartContract<Signer>> {
-    let provider = provider(new_signer(operator)).await;
+    let provider = provider(new_signer(operator, anvil), anvil).await;
     Cluster::<evm::SmartContract<Signer>>::connect(&provider, address)
         .await
         .unwrap()

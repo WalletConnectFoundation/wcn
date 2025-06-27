@@ -1,0 +1,183 @@
+ClusterTest::initialize
+├── When initial operators length exceeds MAX_OPERATORS
+│   └── It should revert with TooManyOperators.
+├── When initial operators length is less than minOperators
+│   └── It should revert with InsufficientOperators.
+├── When operator data is empty
+│   └── It should revert with InvalidOperatorData.
+├── When operator data exceeds maxOperatorDataBytes
+│   └── It should revert with InvalidOperatorData.
+└── When inputs are valid
+    ├── It should set operatorCount correctly.
+    ├── It should initialize first keyspace with all operators.
+    ├── It should emit ClusterInitialized event.
+    └── It should set version to 1.
+
+
+ClusterTest::addNodeOperator
+├── When caller is not owner
+│   └── It should revert with OwnableUnauthorizedAccount.
+├── When operator count already at MAX_OPERATORS
+│   └── It should revert with TooManyOperators.
+├── When operator address is zero
+│   └── It should revert with InvalidOperator.
+├── When operator already exists
+│   └── It should revert with OperatorExists.
+├── When operator data is invalid
+│   └── It should revert with InvalidOperatorData.
+└── When inputs are valid
+    ├── It should increase operatorCount.
+    ├── It should assign next available slot.
+    ├── It should emit NodeOperatorAdded.
+    ├── It should increment version.
+    └── It should not affect keyspaceVersion.
+
+
+ClusterTest::updateNodeOperator
+├── When caller is neither operator nor owner
+│   └── It should revert with Unauthorized.
+├── When operator does not exist
+│   └── It should revert with OperatorNotFound.
+├── When operator data is invalid
+│   └── It should revert with InvalidOperatorData.
+└── When inputs are valid
+    ├── It should update operator data.
+    ├── It should emit NodeOperatorUpdated.
+    ├── It should increment version.
+    └── It should not affect operatorCount.
+
+
+ClusterTest::removeNodeOperator
+├── When caller is not owner
+│   └── It should revert with OwnableUnauthorizedAccount.
+├── When operator does not exist
+│   └── It should revert with OperatorNotFound.
+├── When removal would violate minOperators
+│   └── It should revert with InsufficientOperators.
+├── When operator is in current keyspace
+│   └── It should revert with OperatorInKeyspace.
+└── When inputs are valid
+    ├── It should decrease operatorCount.
+    ├── It should free the operator slot.
+    ├── It should emit NodeOperatorRemoved.
+    └── It should increment version.
+
+
+ClusterTest::setMaintenance
+├── When starting maintenance and another maintenance is active
+│   └── It should revert with MaintenanceInProgress.
+├── When ending maintenance and caller is not the one who started
+│   └── It should revert with Unauthorized.
+├── When caller is not an operator and not owner
+│   └── It should revert with Unauthorized.
+└── When inputs are valid
+    ├── It should update maintenance state.
+    ├── It should emit MaintenanceToggled.
+    ├── It should increment version.
+    └── It should not affect keyspaceVersion.
+
+
+ClusterTest::startMigration
+├── When caller is not owner
+│   └── It should revert with OwnableUnauthorizedAccount.
+├── When maintenance is in progress
+│   └── It should revert with MaintenanceInProgress.
+├── When migration is already in progress
+│   └── It should revert with MigrationInProgress.
+├── When new operator slots exceeds MAX_OPERATORS
+│   └── It should revert with TooManyOperators.
+├── When new operator slots is less than minOperators
+│   └── It should revert with InsufficientOperators.
+├── When new operator slots are not sorted
+│   └── It should revert with InvalidOperator.
+├── When slot does not exist
+│   └── It should revert with OperatorNotFound.
+├── When keyspace is identical to current
+│   └── It should revert with SameKeyspace.
+└── When inputs are valid
+    ├── It should increment migrationId.
+    ├── It should increment keyspaceVersion.
+    ├── It should set pulling flags.
+    ├── It should emit MigrationStarted.
+    └── It should increment version.
+
+
+ClusterTest::completeMigration
+├── When no migration is in progress
+│   └── It should revert with NoMigrationInProgress.
+├── When migration id is wrong
+│   └── It should revert with WrongMigrationId.
+├── When caller is not an operator
+│   └── It should revert with CallerNotOperator.
+├── When operator is not pulling
+│   └── It should revert with OperatorNotPulling.
+├── When inputs are valid
+│   ├── It should clear operator pulling state.
+│   └── It should decrement pullingCount.
+├── When last operator completes
+│   ├── It should emit MigrationCompleted.
+│   └── It should increment version.
+└── When not last operator
+    ├── It should emit MigrationDataPullCompleted.
+    └── It should increment version.
+
+
+ClusterTest::abortMigration
+├── When caller is not owner
+│   └── It should revert with OwnableUnauthorizedAccount.
+├── When no migration is in progress
+│   └── It should revert with NoMigrationInProgress.
+├── When migration id is wrong
+│   └── It should revert with WrongMigrationId.
+└── When inputs are valid
+    ├── It should clear all pulling states.
+    ├── It should reset pullingCount to 0.
+    ├── It should decrement keyspaceVersion.
+    ├── It should emit MigrationAborted.
+    └── It should increment version.
+
+
+ClusterTest::updateSettings
+├── When caller is not owner
+│   └── It should revert with OwnableUnauthorizedAccount.
+├── When minOperators exceeds current operator count
+│   └── It should revert with InsufficientOperators.
+└── When inputs are valid
+    ├── It should update settings.
+    ├── It should emit SettingsUpdated.
+    └── It should increment version.
+
+
+ClusterTest::getAllOperators
+└── It should return sorted operator addresses.
+
+
+ClusterTest::getCurrentKeyspace
+└── It should return current keyspace members and replication strategy.
+
+
+ClusterTest::getView
+└── It should return complete cluster state.
+
+
+ClusterTest::exposed_validateOperatorData
+├── When data is empty
+│   └── It should revert with InvalidOperatorData.
+├── When data exceeds maxOperatorDataBytes
+│   └── It should revert with InvalidOperatorData.
+└── When data is valid
+    └── It should not revert.
+
+
+ClusterTest::exposed_findAvailableSlot
+├── When all slots are occupied
+│   └── It should revert with TooManyOperators.
+└── When slots are available
+    └── It should return the first available slot.
+
+
+ClusterTest::exposed_isSlotInKeyspace
+├── When slot is in keyspace
+│   └── It should return true.
+└── When slot is not in keyspace
+    └── It should return false. 

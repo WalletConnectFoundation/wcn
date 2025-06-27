@@ -303,9 +303,6 @@ pub struct Error {
 }
 
 impl Error {
-    #[cfg(feature = "server")]
-    const THROTTLED: Self = Self::new(error_code::THROTTLED);
-
     /// Creates a new RPC error with the provided error code.
     pub const fn new(code: &'static str) -> Self {
         Self {

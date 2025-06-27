@@ -23,8 +23,9 @@ pub struct Node {
     pub addr: SocketAddrV4,
 }
 
-// NOTE: The on-chain serialization is non self-describing! Every change to
-// the schema should be handled by creating a new version.
+// NOTE: The on-chain serialization is non self-describing!
+// This `struct` can not be changed, a `struct` with a new schema version should
+// be created instead.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub(crate) struct V0 {
     /// [`PeerId`] of this [`Node`].

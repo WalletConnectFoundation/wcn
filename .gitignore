@@ -7,6 +7,7 @@ target/
 /contracts/dependencies/
 /contracts/out/*
 !/contracts/out/Cluster.sol
+!/contracts/out/ERC1967Proxy.sol
 /contracts/cache/
 .direnv
 .env

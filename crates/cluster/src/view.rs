@@ -8,7 +8,6 @@ use {
         migration,
         node_operator,
         node_operators,
-        ownership,
         settings,
         smart_contract,
         Event,
@@ -125,7 +124,6 @@ impl<Shards> View<Shards> {
             Event::NodeOperatorUpdated(evt) => evt.apply(&mut self),
             Event::NodeOperatorRemoved(evt) => evt.apply(&mut self),
             Event::SettingsUpdated(evt) => evt.apply(&mut self),
-            Event::OwnershipTransferred(evt) => evt.apply(&mut self),
         }?;
 
         self.cluster_version = new_version;
@@ -181,10 +179,12 @@ impl migration::Started {
         view.require_no_maintenance()?;
         view.keyspace().require_diff(&self.new_keyspace)?;
 
+        let pulling: Vec<_> = self.new_keyspace.operators().collect();
+
         view.migration = Some(Migration::new(
             self.migration_id,
             self.new_keyspace.calculate().await,
-            view.node_operators.occupied_indexes(),
+            pulling,
         ));
 
         Ok(())
@@ -234,7 +234,7 @@ impl maintenance::Started {
         view.require_no_migration()?;
         view.require_no_maintenance()?;
 
-        view.maintenance = Some(Maintenance::new(self.operator_id));
+        view.maintenance = Some(Maintenance::new(self.by));
 
         Ok(())
     }
@@ -282,14 +282,6 @@ impl node_operator::Removed {
 impl settings::Updated {
     pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
         view.settings = self.settings;
-
-        Ok(())
-    }
-}
-
-impl ownership::Transferred {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
-        view.ownership.transfer(self.new_owner);
 
         Ok(())
     }

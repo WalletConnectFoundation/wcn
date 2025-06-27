@@ -12,7 +12,7 @@ use {
 pub type Id = u64;
 
 /// Data migration process within a WCN cluster.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Migration<Shards = ()> {
     id: Id,
     keyspace: Arc<Keyspace<Shards>>,
@@ -54,11 +54,6 @@ impl<Shards> Migration<Shards> {
     pub fn keyspace(&self) -> &Keyspace<Shards> {
         &self.keyspace
     }
-
-    // /// Mutable version of [`Migration::keyspace`].
-    // pub fn keyspace_mut(&mut self) -> &mut Keyspace {
-    //     &mut self.keyspace
-    // }
 
     pub(super) fn into_keyspace(self) -> Arc<Keyspace<Shards>> {
         self.keyspace

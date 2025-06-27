@@ -397,5 +397,13 @@ impl From<ErrorKind> for Error {
 #[cfg(test)]
 #[test]
 fn test_namespace_from_str() {
-    todo!()
+    fn ns(s: &str) -> Result<Namespace, InvalidNamespaceError> {
+        s.parse()
+    }
+
+    assert!(ns("0x14Cb1e6fb683A83455cA283e10f4959740A49ed7/0").is_ok());
+    assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/0").is_ok());
+    assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/255").is_ok());
+    assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/256").is_err());
+    assert!(ns("4Cb1e6fb683A83455cA283e10f4959740A49ed7/1").is_err());
 }

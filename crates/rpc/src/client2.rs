@@ -251,18 +251,6 @@ pub struct Outbound<RPC: RpcV2> {
 }
 
 impl<RPC: RpcV2> Outbound<RPC> {
-    /// Returns [`Sink`] of outbound requests.
-    pub fn sink(&mut self) -> &mut impl for<'a> Sink<&'a BorrowedRequest<'a, RPC>, Error = Error> {
-        &mut self.send
-    }
-
-    /// Returns [`Stream`] of inbound responses.
-    pub fn stream(&mut self) -> &mut impl Stream<Item = Result<RPC::Response>> {
-        &mut self.recv
-    }
-}
-
-impl<RPC: RpcV2> Outbound<RPC> {
     /// Returns mutable references to the underlying request/response streams.
     pub fn streams_mut(
         &mut self,
@@ -277,7 +265,7 @@ impl<RPC: RpcV2> Outbound<RPC> {
 /// Outbound connection.
 ///
 /// Existence of an instance of this type doesn't guarantee that the actual
-/// network [`Connection`] is already established (or will ever be established).
+/// network connection is already established (or will ever be established).
 #[derive_where(Clone)]
 pub struct Connection<API: Api> {
     inner: Arc<ConnectionInner<API>>,
@@ -295,10 +283,6 @@ struct ConnectionInner<API: Api> {
     watch_tx: Arc<ConnectionMutex<API::ConnectionParameters>>,
 
     rpc_handler: API::RpcHandler,
-}
-
-pub fn assert_send_future<T>(s: impl Future<Output = T> + Send) -> impl Future<Output = T> + Send {
-    s
 }
 
 impl<API: Api> Connection<API> {
@@ -352,7 +336,7 @@ impl<API: Api> Connection<API> {
             }
         })?;
 
-        let fut = async move {
+        Ok(async move {
             self.inner
                 .rpc_handler
                 .handle_rpc(rpc, input)
@@ -362,16 +346,8 @@ impl<API: Api> Connection<API> {
                         self.reconnect();
                     }
                 })
-        };
-
-        // Ok(fut)
-
-        Ok(assert_send_future(fut))
+        })
     }
-
-    // pub fn rpc_handler(&self) -> &API::RpcHandler {
-    //     &self.inner.rpc_handler
-    // }
 
     fn new_outbound_rpc<RPC: RpcV2>(&self) -> Result<Outbound<RPC>, ErrorInner> {
         let quic = self.inner.watch_rx.borrow();

@@ -64,39 +64,14 @@ pub trait HandleRpc<RPC: RpcV2>: Send + Sync {
     ) -> impl Future<Output = Result<()>> + Send + 'a;
 }
 
-// /// [`HandleRpc`] specialization for [`UnaryRpc`]s.
-// pub trait HandleUnaryRpc<RPC: UnaryRpc>: Send + Sync {
-//     /// Handles the provided RPC request.
-//     fn handle_unary_rpc(
-//         &self,
-//         request: RPC::Request,
-//         responder: Responder<'_, RPC>,
-//     ) -> impl Future<Output = Result<()>> + Send;
-// }
-
 /// [`HandleRpc`] specialization for [`UnaryRpc`]s.
 pub trait HandleRequest<RPC: UnaryRpc>: Send + Sync {
+    /// Handles the provided RPC request.
     fn handle_request(
         &self,
         request: RPC::Request,
     ) -> impl Future<Output = RPC::Response> + Send + '_;
 }
-
-// /// [`UnaryRpc`] responder.
-// pub trait Responder<RPC: UnaryRpc>: Send {
-//     /// Sends an RPC response.
-//     fn respond(self, response: &BorrowedResponse<RPC>) -> impl Future<Output
-// = Result<()>> + Send; }
-
-// struct ResponderImpl<RPC: UnaryRpc> {
-//     sink: SinkMapErr<SendStream<RPC::Codec>, fn(transport2::Error) -> Error>,
-// }
-
-// impl<'a, RPC: UnaryRpc> Responder<RPC> for ResponderImpl<'a, RPC> {
-//     fn respond(self, response: &BorrowedResponse<RPC>) -> impl Future<Output
-// = Result<()>> + Send {         self.sink.send(response)
-//     }
-// }
 
 impl<RPC, H> HandleRpc<RPC> for H
 where
@@ -490,22 +465,6 @@ impl<RPC: RpcV2> Inbound<RPC> {
     }
 }
 
-pub struct Responder<'a, RPC: UnaryRpc> {
-    rpc: &'a mut Inbound<RPC>,
-}
-
-impl<'a, RPC: UnaryRpc> Responder<'a, RPC> {
-    pub fn respond<'r>(
-        self,
-        response: &'r BorrowedResponse<'r, RPC>,
-    ) -> impl Future<Output = Result<()>> + Send + 'r
-    where
-        'a: 'r,
-    {
-        self.rpc.send.send(response)
-    }
-}
-
 impl<API: Api> Connection<'_, API> {
     /// Returns [`PeerId`] of the remote peer.
     pub fn remote_peer_id(&self) -> &PeerId {
@@ -541,7 +500,7 @@ impl<API: Api> Connection<'_, API> {
     }
 
     /// Accepts the next [`InboundRpc`].
-    pub async fn accept_rpc(&self) -> Result<InboundRpc<API>> {
+    async fn accept_rpc(&self) -> Result<InboundRpc<API>> {
         loop {
             let (tx, mut rx) = self.inner.quic.accept_bi().await.map_err(Error::new)?;
 

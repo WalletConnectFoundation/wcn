@@ -315,15 +315,6 @@ impl Error {
 /// RPC result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// RPC error.
-pub struct Error2 {
-    /// Error code.
-    pub code: u8,
-
-    /// Error description.
-    pub description: Option<String>,
-}
-
 // Workaround for this compliler bug: https://github.com/rust-lang/rust/issues/100013
 // https://github.com/rust-lang/rust/issues/100013#issuecomment-2210995259
 // TODO: remove when fixed

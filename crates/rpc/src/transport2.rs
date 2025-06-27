@@ -105,7 +105,7 @@ impl BiDirectionalStream {
     }
 }
 
-/// [`Stream`] of outbound [`Message`]s.
+/// [`Stream`] of outbound [Message][`MessageV2`]s.
 #[pin_project(project = SendStreamProj)]
 pub struct SendStream<C> {
     #[pin]
@@ -152,7 +152,7 @@ where
     }
 }
 
-/// [`Stream`] of inbound [`Message`]s.
+/// [`Stream`] of inbound [Message][`MessageV2`]s.
 #[pin_project]
 pub struct RecvStream<T: MessageV2, C: Deserializer<T>>(
     #[allow(clippy::type_complexity)]

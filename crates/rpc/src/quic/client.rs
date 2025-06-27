@@ -141,7 +141,7 @@ impl<H: Handshake> Client<H> {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ConnectionHandler<H = NoHandshake> {
+pub(super) struct ConnectionHandler<H> {
     inner: Arc<std::sync::RwLock<ConnectionHandlerInner>>,
     handshake: H,
 }
@@ -234,7 +234,7 @@ fn new_connection<H: Handshake>(
 }
 
 impl<H: Handshake> ConnectionHandler<H> {
-    pub(crate) fn new(
+    pub(super) fn new(
         peer_id: PeerId,
         addr: SocketAddr,
         server_name: ServerName,
@@ -264,28 +264,22 @@ impl<H: Handshake> ConnectionHandler<H> {
         }
     }
 
-    pub(crate) async fn open_bi(
+    async fn establish_stream(
         &self,
-    ) -> Result<(quinn::SendStream, quinn::RecvStream), EstablishStreamError> {
+        rpc_id: RpcId,
+    ) -> Result<BiDirectionalStream, EstablishStreamError> {
         let fut = self.inner.write()?.connection.clone();
         let conn = fut.await;
 
-        match conn.open_bi().await {
-            Ok(bi) => Ok(bi),
+        let (mut tx, rx) = match conn.open_bi().await {
+            Ok(bi) => bi,
             Err(_) => self
                 .reconnect(conn.stable_id())?
                 .await
                 .open_bi()
                 .await
-                .map_err(|err| EstablishStreamError::Connection(err.into())),
-        }
-    }
-
-    pub(crate) async fn establish_stream(
-        &self,
-        rpc_id: RpcId,
-    ) -> Result<BiDirectionalStream, EstablishStreamError> {
-        let (mut tx, rx) = self.open_bi().await?;
+                .map_err(|err| EstablishStreamError::Connection(err.into()))?,
+        };
 
         tx.write_u128(rpc_id)
             .await
@@ -493,7 +487,7 @@ impl<H: Handshake> Client<H> {
     }
 }
 
-pub(crate) async fn write_connection_header(
+async fn write_connection_header(
     conn: &quinn::Connection,
     header: ConnectionHeader,
 ) -> Result<(), ConnectionError> {

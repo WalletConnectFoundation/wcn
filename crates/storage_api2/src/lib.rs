@@ -198,7 +198,7 @@ impl Record<'_> {
 
 /// Entry within a Map.
 ///
-/// Maps are a separate data type of WCN Datbase, similar to Redis Hashes.
+/// Maps are a separate data type of WCN Database, similar to Redis Hashes.
 /// They differ from regular KV pairs by having a subkey (AKA
 /// [field][MapEntry::field]).
 ///

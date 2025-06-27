@@ -102,12 +102,6 @@ pub struct Config {
     pub priority: transport::Priority,
 }
 
-impl AsRef<Config> for Config {
-    fn as_ref(&self) -> &Config {
-        self
-    }
-}
-
 /// RPC client responsible for establishing outbound [`Connection`]s to remote
 /// peers.
 #[derive_where(Clone)]
@@ -187,7 +181,7 @@ impl<API: Api> Client<API> {
 
             Ok(conn)
         }
-        .with_timeout((*self.config).as_ref().connection_timeout)
+        .with_timeout(self.config.connection_timeout)
         .await
         .map_err(|_| ErrorInner::Timeout)?
         .map_err(Error::new)
@@ -416,8 +410,7 @@ impl<API: Api> Connection<API> {
         let this = self.inner.clone();
 
         tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval((*this.client.config).as_ref().reconnect_interval);
+            let mut interval = tokio::time::interval(this.client.config.reconnect_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {

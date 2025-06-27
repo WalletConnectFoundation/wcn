@@ -8080,7 +8080,6 @@ dependencies = [
 name = "wcn_rpc"
 version = "0.1.0"
 dependencies = [
- "arc-swap",
  "backoff",
  "bytes",
  "derivative",

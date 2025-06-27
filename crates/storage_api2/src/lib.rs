@@ -185,7 +185,7 @@ pub struct Record<'a> {
     pub version: RecordVersion,
 }
 
-impl<'a> Record<'a> {
+impl Record<'_> {
     /// Converts `Self` into 'static.
     pub fn into_static(self) -> Record<'static> {
         Record {
@@ -213,7 +213,7 @@ pub struct MapEntry<'a> {
     pub record: Record<'a>,
 }
 
-impl<'a> MapEntry<'a> {
+impl MapEntry<'_> {
     /// Converts `Self` into 'static.
     pub fn into_static(self) -> MapEntry<'static> {
         MapEntry {

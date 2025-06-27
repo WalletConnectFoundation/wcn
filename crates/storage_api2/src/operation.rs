@@ -209,13 +209,13 @@ pub enum Output<'a> {
     None,
 }
 
-impl<'a> From<()> for Output<'a> {
+impl From<()> for Output<'_> {
     fn from(_: ()) -> Self {
         Self::None
     }
 }
 
-impl<'a> Output<'a> {
+impl Output<'_> {
     /// Tries to downcast an [`Output`] within a [`Result`] into a concrete
     /// output type.
     pub fn downcast_result<T>(operation_result: Result<Self>) -> Result<T>

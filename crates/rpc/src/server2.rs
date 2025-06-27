@@ -13,6 +13,7 @@ use {
         ConnectionStatusCode,
         RpcV2,
         ServerName,
+        UnaryRpc,
     },
     derive_where::derive_where,
     futures::{
@@ -22,6 +23,7 @@ use {
         Sink,
         SinkExt,
         Stream,
+        StreamExt,
         TryFutureExt as _,
         TryStreamExt as _,
     },
@@ -34,7 +36,7 @@ use {
         sync::{OwnedSemaphorePermit, Semaphore},
     },
     wc::{
-        future::FutureExt as _,
+        future::{FutureExt as _, StaticFutureExt},
         metrics::{self, future_metrics, Enum as _, EnumLabel, FutureExt as _, StringLabel},
     },
 };
@@ -54,40 +56,72 @@ pub trait HandleConnection: Clone + Send + Sync + 'static {
 }
 
 /// Handler of [`Inbound`] RPCs.
-pub trait HandleRpc<RPC: RpcV2> {
+pub trait HandleRpc<RPC: RpcV2>: Send + Sync {
     /// Handles the provided [`Inbound`] RPC.
-    fn handle_rpc(&self, rpc: &mut Inbound<RPC>) -> impl Future<Output = Result<()>> + Send;
+    fn handle_rpc<'a>(
+        &'a self,
+        rpc: &'a mut Inbound<RPC>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 }
 
-pub trait Rpc: RpcV2 {
-    /// Handle this RPC using the provided handler.
-    ///
-    /// Caller is expected to ensure that the [`InboundRpc::id()`] is correct.
-    fn handle<API: Api, H: HandleRpc<Self>>(
-        rpc: InboundRpc<API>,
-        handler: &impl HandleRpc<Self>,
-    ) -> impl Future<Output = Result<()>> {
-        if cfg!(debug_assertions) {
-            let id: u8 = rpc.id.into();
-            assert_eq!(id, Self::ID);
+// /// [`HandleRpc`] specialization for [`UnaryRpc`]s.
+// pub trait HandleUnaryRpc<RPC: UnaryRpc>: Send + Sync {
+//     /// Handles the provided RPC request.
+//     fn handle_unary_rpc(
+//         &self,
+//         request: RPC::Request,
+//         responder: Responder<'_, RPC>,
+//     ) -> impl Future<Output = Result<()>> + Send;
+// }
+
+/// [`HandleRpc`] specialization for [`UnaryRpc`]s.
+pub trait HandleRequest<RPC: UnaryRpc>: Send + Sync {
+    fn handle_request(
+        &self,
+        request: RPC::Request,
+    ) -> impl Future<Output = RPC::Response> + Send + '_;
+}
+
+// /// [`UnaryRpc`] responder.
+// pub trait Responder<RPC: UnaryRpc>: Send {
+//     /// Sends an RPC response.
+//     fn respond(self, response: &BorrowedResponse<RPC>) -> impl Future<Output
+// = Result<()>> + Send; }
+
+// struct ResponderImpl<RPC: UnaryRpc> {
+//     sink: SinkMapErr<SendStream<RPC::Codec>, fn(transport2::Error) -> Error>,
+// }
+
+// impl<'a, RPC: UnaryRpc> Responder<RPC> for ResponderImpl<'a, RPC> {
+//     fn respond(self, response: &BorrowedResponse<RPC>) -> impl Future<Output
+// = Result<()>> + Send {         self.sink.send(response)
+//     }
+// }
+
+impl<RPC, H> HandleRpc<RPC> for H
+where
+    RPC: UnaryRpc,
+    H: HandleRequest<RPC>,
+{
+    fn handle_rpc<'a>(
+        &'a self,
+        rpc: &'a mut Inbound<RPC>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        async {
+            let req = rpc
+                .recv
+                .next()
+                .await
+                .ok_or_else(|| Error::new(transport2::Error::StreamFinished))??;
+
+            let resp = self.handle_request(req).await;
+
+            rpc.send.send(&resp).await?;
+
+            Ok(())
         }
-
-        let (recv, send) = rpc.stream.upgrade();
-
-        let mut rpc = Inbound {
-            send: SinkExt::<&Self::Response>::sink_map_err(send, |err: transport2::Error| {
-                Error::new(err)
-            }),
-            recv: recv.map_err(Error::new),
-            _permit: rpc.permit,
-        };
-
-        async move { handler.handle_rpc(&mut rpc).await }
-            .with_metrics(future_metrics!("wcn_rpc_server_rpc"))
     }
 }
-
-impl<RPC> Rpc for RPC where RPC: RpcV2 {}
 
 /// RPC server config.
 pub struct Config {
@@ -395,6 +429,37 @@ pub struct InboundRpc<API: Api> {
     permit: OwnedSemaphorePermit,
 }
 
+impl<API: Api> InboundRpc<API> {
+    /// Handles this RPC using the provided handler.
+    pub fn handle<RPC: RpcV2>(
+        self,
+        handler: &impl HandleRpc<RPC>,
+    ) -> impl Future<Output = Result<()>> + Send + '_ {
+        async move { handler.handle_rpc(&mut self.upgrade()).await }
+            .with_metrics(future_metrics!("wcn_rpc_server_rpc"))
+    }
+
+    /// Upgrades this untyped [`InboundRpc`] into a typed one.
+    ///
+    /// Caller is expected to ensure that the [`InboundRpc::id()`] is correct.
+    fn upgrade<RPC: RpcV2>(self) -> Inbound<RPC> {
+        if cfg!(debug_assertions) {
+            let id: u8 = self.id.into();
+            assert_eq!(id, RPC::ID);
+        }
+
+        let (recv, send) = self.stream.upgrade();
+
+        Inbound {
+            send: SinkExt::<&RPC::Response>::sink_map_err(send, |err: transport2::Error| {
+                Error::new(err)
+            }),
+            recv: recv.map_err(Error::new),
+            _permit: self.permit,
+        }
+    }
+}
+
 impl<API: super::Api> InboundRpc<API> {
     /// Returns ID of this [`InboundRpc`].
     pub fn id(&self) -> API::RpcId {
@@ -404,20 +469,40 @@ impl<API: super::Api> InboundRpc<API> {
 
 /// Inbound RPC of a specific type.
 pub struct Inbound<RPC: RpcV2> {
+    #[allow(clippy::type_complexity)]
     recv: MapErr<RecvStream<RPC::Request, RPC::Codec>, fn(transport2::Error) -> Error>,
+
+    #[allow(clippy::type_complexity)]
     send: SinkMapErr<SendStream<RPC::Codec>, fn(transport2::Error) -> Error>,
+
     _permit: OwnedSemaphorePermit,
 }
 
 impl<RPC: RpcV2> Inbound<RPC> {
-    /// Returns [`Stream`] of inbound responses.
-    pub fn stream(&mut self) -> &mut impl Stream<Item = Result<RPC::Request>> {
-        &mut self.recv
+    /// Returns mutable references to the underlying request/response streams.
+    pub fn streams_mut(
+        &mut self,
+    ) -> (
+        &mut impl Stream<Item = Result<RPC::Request>>,
+        &mut (impl for<'a, 'b> Sink<&'a BorrowedResponse<'b, RPC>, Error = Error> + 'static),
+    ) {
+        (&mut self.recv, &mut self.send)
     }
+}
 
-    /// Returns [`Sink`] of outbound requests.
-    pub fn sink(&mut self) -> &mut impl for<'a> Sink<&'a BorrowedResponse<'a, RPC>, Error = Error> {
-        &mut self.send
+pub struct Responder<'a, RPC: UnaryRpc> {
+    rpc: &'a mut Inbound<RPC>,
+}
+
+impl<'a, RPC: UnaryRpc> Responder<'a, RPC> {
+    pub fn respond<'r>(
+        self,
+        response: &'r BorrowedResponse<'r, RPC>,
+    ) -> impl Future<Output = Result<()>> + Send + 'r
+    where
+        'a: 'r,
+    {
+        self.rpc.send.send(response)
     }
 }
 
@@ -425,6 +510,34 @@ impl<API: Api> Connection<'_, API> {
     /// Returns [`PeerId`] of the remote peer.
     pub fn remote_peer_id(&self) -> &PeerId {
         &self.inner.remote_peer_id
+    }
+
+    /// Handles this [`Connection`] by handling all [`InboundRpc`] using the
+    /// provided `handler_fn`.
+    pub async fn handle<H, Fut>(
+        &self,
+        rpc_handler: &H,
+        handler_fn: fn(InboundRpc<API>, H) -> Fut,
+    ) -> Result<()>
+    where
+        H: Clone + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        loop {
+            let rpc = self.accept_rpc().await?;
+            let handler = rpc_handler.clone();
+
+            async move { handler_fn(rpc, handler).await }.spawn();
+        }
+    }
+
+    /// Handles the next [`InboundRpc`] using the provided `handler_fn`.
+    pub async fn handle_rpc<F>(&self, f: impl FnOnce(InboundRpc<API>) -> F) -> Result<()>
+    where
+        F: Future<Output = Result<()>> + Send,
+    {
+        let rpc = self.accept_rpc().await?;
+        f(rpc).await
     }
 
     /// Accepts the next [`InboundRpc`].

@@ -1,11 +1,10 @@
 use {
-    crate::{Message, MessageOwned},
+    crate::MessageV2,
     bytes::{BufMut as _, Bytes, BytesMut},
     futures::{stream::MapErr, Sink, TryStreamExt},
     pin_project::pin_project,
     serde::{Deserialize, Serialize},
     std::{
-        borrow::Cow,
         io,
         pin::Pin,
         task::{self, ready},
@@ -16,14 +15,14 @@ use {
 };
 
 /// Serialization codec.
-pub trait Codec<M: MessageOwned>:
+pub trait Codec<M: MessageV2>:
     for<'a> Serializer<M::Borrowed<'a>> + Serializer<M> + Deserializer<M>
 {
 }
 
 impl<M, C> Codec<M> for C
 where
-    M: MessageOwned,
+    M: MessageV2,
     C: for<'a> Serializer<M::Borrowed<'a>> + Serializer<M> + Deserializer<M>,
 {
 }
@@ -58,7 +57,7 @@ where
     type Error = io::Error;
 
     fn deserialize(self: Pin<&mut Self>, src: &BytesMut) -> Result<T, Self::Error> {
-        postcard::from_bytes(&src).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+        postcard::from_bytes(src).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
     }
 }
 
@@ -93,7 +92,7 @@ impl BiDirectionalStream {
         }
     }
 
-    pub(crate) fn upgrade<I: MessageOwned, C: Deserializer<I>>(
+    pub(crate) fn upgrade<I: MessageV2, C: Deserializer<I>>(
         self,
     ) -> (RecvStream<I, C>, SendStream<C>) {
         (
@@ -155,13 +154,13 @@ where
 
 /// [`Stream`] of inbound [`Message`]s.
 #[pin_project]
-pub struct RecvStream<T: MessageOwned, C: Deserializer<T>>(
+pub struct RecvStream<T: MessageV2, C: Deserializer<T>>(
     #[allow(clippy::type_complexity)]
     #[pin]
     Framed<MapErr<RawRecvStream, fn(io::Error) -> Error>, T, T, C>,
 );
 
-impl<T: MessageOwned, C: Deserializer<T>> Stream for RecvStream<T, C> {
+impl<T: MessageV2, C: Deserializer<T>> Stream for RecvStream<T, C> {
     type Item = Result<T>;
 
     fn poll_next(

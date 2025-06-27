@@ -17,6 +17,7 @@ wc = { workspace = true, features = ["future", "metrics"] }
 auth = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
 strum = { workspace = true , features = ["derive"] }
+tap = { workspace = true }
 
 wcn_rpc = { workspace = true }
 serde = "1"

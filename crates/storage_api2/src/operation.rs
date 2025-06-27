@@ -2,21 +2,22 @@
 
 use {
     crate::{
-        Entry,
-        EntryExpiration,
-        EntryVersion,
-        Field,
-        Key,
+        Bytes,
+        Error,
+        ErrorKind,
         KeyspaceVersion,
         MapEntry,
         MapPage,
-        MapRecord,
         Namespace,
         Record,
+        RecordExpiration,
+        RecordVersion,
+        Result,
     },
     derive_more::derive::{From, TryInto},
-    std::any::type_name,
+    serde::{Deserialize, Serialize},
     strum::{EnumDiscriminants, IntoDiscriminant},
+    tap::TapFallible as _,
     wc::metrics::{self, enum_ordinalize::Ordinalize},
 };
 
@@ -25,19 +26,19 @@ use {
 #[strum_discriminants(name(Name))]
 #[strum_discriminants(derive(Ordinalize))]
 pub enum Operation<'a> {
-    Get(Get<'a>),
-    Set(Set<'a>),
-    Del(Del<'a>),
-    GetExp(GetExp<'a>),
-    SetExp(SetExp<'a>),
+    Get(&'a Get<'a>),
+    Set(&'a Set<'a>),
+    Del(&'a Del<'a>),
+    GetExp(&'a GetExp<'a>),
+    SetExp(&'a SetExp<'a>),
 
-    HGet(HGet<'a>),
-    HSet(HSet<'a>),
-    HDel(HDel<'a>),
-    HGetExp(HGetExp<'a>),
-    HSetExp(HSetExp<'a>),
-    HCard(HCard<'a>),
-    HScan(HScan<'a>),
+    HGet(&'a HGet<'a>),
+    HSet(&'a HSet<'a>),
+    HDel(&'a HDel<'a>),
+    HGetExp(&'a HGetExp<'a>),
+    HSetExp(&'a HSetExp<'a>),
+    HCard(&'a HCard<'a>),
+    HScan(&'a HScan<'a>),
 }
 
 impl metrics::Enum for Name {
@@ -66,15 +67,15 @@ impl<'a> Operation<'a> {
     }
 
     /// Returns key of this [`Operation`].
-    pub fn key(&self) -> &Key<'a> {
+    pub fn key(&self) -> &Bytes<'a> {
         match self {
             Self::Get(get) => &get.key,
-            Self::Set(set) => &set.entry.key,
+            Self::Set(set) => &set.key,
             Self::Del(del) => &del.key,
             Self::GetExp(get_exp) => &get_exp.key,
             Self::SetExp(set_exp) => &set_exp.key,
             Self::HGet(hget) => &hget.key,
-            Self::HSet(hset) => &hset.entry.key,
+            Self::HSet(hset) => &hset.key,
             Self::HDel(hdel) => &hdel.key,
             Self::HGetExp(hget_exp) => &hget_exp.key,
             Self::HSetExp(hset_exp) => &hset_exp.key,
@@ -84,113 +85,115 @@ impl<'a> Operation<'a> {
     }
 }
 
-/// Gets a [`Record`] by the provided [`Key`].
-#[derive(Clone, Debug)]
+/// Gets a [`Record`] by the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Get<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
+    pub key: Bytes<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Sets a new [`Entry`].
-#[derive(Clone, Debug)]
+/// Sets a new [`Record`] under the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Set<'a> {
     pub namespace: Namespace,
-    pub entry: Entry<'a>,
+    pub key: Bytes<'a>,
+    pub record: Record<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Deletes an [`Entry`] by the provided [`Key`].
-#[derive(Clone, Debug)]
+/// Deletes a [`Record`] by the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Del<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
-    pub version: EntryVersion,
+    pub key: Bytes<'a>,
+    pub version: RecordVersion,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Gets an [`EntryExpiration`] by the provided [`Key`].
-#[derive(Clone, Debug)]
+/// Gets a [`RecordExpiration`] by the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
+    pub key: Bytes<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Sets [`EntryExpiration`] on the [`Entry`] with the provided [`Key`].
-#[derive(Clone, Debug)]
+/// Sets [`RecordExpiration`] on the [`Record`] with the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
-    pub expiration: EntryExpiration,
-    pub version: EntryVersion,
+    pub key: Bytes<'a>,
+    pub expiration: RecordExpiration,
+    pub version: RecordVersion,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Gets a map [`Record`] by the provided [`Key`] and [`Field`].
-#[derive(Clone, Debug)]
+/// Gets a Map [`Record`] by the provided key and field.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HGet<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
-    pub field: Field<'a>,
+    pub key: Bytes<'a>,
+    pub field: Bytes<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
 /// Sets a new [`MapEntry`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HSet<'a> {
     pub namespace: Namespace,
+    pub key: Bytes<'a>,
     pub entry: MapEntry<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Deletes a [`MapEntry`] by the provided [`Key`] and [`Field`].
-#[derive(Clone, Debug)]
+/// Deletes a [`MapEntry`] by the provided key and field.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HDel<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
-    pub field: Field<'a>,
-    pub version: EntryVersion,
+    pub key: Bytes<'a>,
+    pub field: Bytes<'a>,
+    pub version: RecordVersion,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Gets a [`EntryExpiration`] by the provided [`Key`] and [`Field`].
-#[derive(Clone, Debug)]
+/// Gets a [`RecordExpiration`] by the provided key and field.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HGetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
-    pub field: Field<'a>,
+    pub key: Bytes<'a>,
+    pub field: Bytes<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Sets [`Expiration`] on the [`MapEntry`] with the provided [`Key`] and
-/// [`Field`].
-#[derive(Clone, Debug)]
+/// Sets [`RecordExpiration`] on the [`MapEntry`] with the provided key and
+/// field.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HSetExp<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
-    pub field: Field<'a>,
-    pub expiration: EntryExpiration,
-    pub version: EntryVersion,
+    pub key: Bytes<'a>,
+    pub field: Bytes<'a>,
+    pub expiration: RecordExpiration,
+    pub version: RecordVersion,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Returns cardinality of the map with the provided [`Key`].
-#[derive(Clone, Debug)]
+/// Returns cardinality of the Map with the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HCard<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
+    pub key: Bytes<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
-/// Returns a [`MapPage`] by iterating over the [`Field`]s of the map with
-/// the provided [`Key`].
-#[derive(Clone, Debug)]
+/// Returns a [`MapPage`] by iterating over the fields of the Map with
+/// the provided key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HScan<'a> {
     pub namespace: Namespace,
-    pub key: Key<'a>,
+    pub key: Bytes<'a>,
     pub count: u32,
-    pub cursor: Option<Field<'a>>,
+    pub cursor: Option<Bytes<'a>>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 
@@ -198,51 +201,30 @@ pub struct HScan<'a> {
 #[derive(Clone, Debug, From, PartialEq, Eq, EnumDiscriminants, TryInto)]
 #[strum_discriminants(name(OutputName))]
 #[strum_discriminants(derive(strum::Display))]
-pub enum Output {
-    Record(Option<Record>),
-    Expiration(Option<EntryExpiration>),
-    MapRecord(Option<MapRecord>),
-    MapPage(MapPage),
+pub enum Output<'a> {
+    Record(Option<Record<'a>>),
+    Expiration(Option<RecordExpiration>),
+    MapPage(MapPage<'a>),
     Cardinality(u64),
     None,
 }
 
-impl From<()> for Output {
+impl<'a> From<()> for Output<'a> {
     fn from(_: ()) -> Self {
         Self::None
     }
 }
 
-impl Output {
+impl<'a> Output<'a> {
     /// Tries to downcast an [`Output`] within a [`Result`] into a concrete
     /// output type.
-    pub fn downcast_result<T, E>(operation_result: Result<Self, E>) -> Result<T, E>
+    pub fn downcast_result<T>(operation_result: Result<Self>) -> Result<T>
     where
         Self: TryInto<T, Error = derive_more::TryIntoError<Self>>,
-        WrongOutputError: Into<E>,
     {
         operation_result?
             .try_into()
-            .map_err(|err| WrongOutputError {
-                expected: type_name::<T>(),
-                got: err.input.discriminant(),
-            })
-            .map_err(Into::into)
-    }
-}
-
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("Wrong operation output (expected: {expected}, got: {got})")]
-pub struct WrongOutputError {
-    expected: &'static str,
-    got: OutputName,
-}
-
-impl From<WrongOutputError> for crate::Error {
-    fn from(err: WrongOutputError) -> Self {
-        Self::new(
-            crate::ErrorKind::WrongOperationOutput,
-            Some(format!("{err}")),
-        )
+            .tap_err(|err| tracing::error!(?err, "Failed to downcast output"))
+            .map_err(|err| Error::new(ErrorKind::Internal, Some(err.to_string())))
     }
 }

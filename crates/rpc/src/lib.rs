@@ -4,14 +4,7 @@
 use {
     derive_more::{derive::TryFrom, Display},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
-    std::{
-        borrow::Cow,
-        fmt::Debug,
-        future::Future,
-        marker::PhantomData,
-        net::SocketAddr,
-        str::FromStr,
-    },
+    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
     transport2::Codec as CodecV2,
 };
@@ -46,85 +39,56 @@ mod test;
 const PROTOCOL_VERSION: u32 = 0;
 
 /// RPC API specification.
-///
-/// Expected to be implemented on unit types and should not contain data.
-///
-/// # Example
-///
-/// ```
-/// use wcn_rpc::ApiName;
-///
-/// struct MyApi;
-///
-/// enum RpcId {
-///     CreateUser = 0,
-///     UpdateUser = 1,
-///     DeleteUser = 2,
-/// }
-///
-/// impl wcn_rpc::Api for MyApi {
-///     const NAME: ApiName = ApiName::new("myApi");
-///     type RpcId = RpcId;
-/// }
-/// ```
 pub trait Api: Clone + Send + Sync + 'static {
     /// [`ApiName`] of this [`Api`].
     const NAME: ApiName;
 
     /// `enum` representation of all RPC IDs of this [`Api`].
-    ///
-    /// Should be convertible from/into `u8`.
-    type RpcId: Copy + Into<u8> + TryFrom<u8>;
+    type RpcId: Copy + Into<u8> + TryFrom<u8> + Send + Sync + 'static;
 }
 
 /// [`Api`] name.
 pub type ApiName = ServerName;
 
 /// Remote procedure call.
-pub trait RpcV2: Sized + Send + Sync {
+pub trait RpcV2: Sized + Send + Sync + 'static {
     /// ID of this [`Rpc`].
     const ID: u8;
 
     /// Request type of this [`Rpc`].
-    type Request: MessageOwned;
+    type Request: MessageV2;
 
     /// Response type of this [`Rpc`].
-    type Response: MessageOwned;
+    type Response: MessageV2;
 
     /// Serialization codec of this [`Rpc`].
     type Codec: CodecV2<Self::Request> + CodecV2<Self::Response>;
-
-    #[cfg(feature = "client")]
-    /// Sends this RPC over the provided connection.
-    fn send<'a, API: client2::Api, Output>(
-        &'a self,
-        conn: &'a client2::Connection<API>,
-    ) -> client2::Result<impl Future<Output = client2::Result<Output>> + 'a>
-    where
-        API::RpcHandler: client2::HandleRpc<'a, Self, Output = Output>,
-    {
-        conn.send(self)
-    }
 }
 
-type BorrowedRequest<'a, RPC> = <<RPC as RpcV2>::Request as MessageOwned>::Borrowed<'a>;
-type BorrowedResponse<'a, RPC> = <<RPC as RpcV2>::Response as MessageOwned>::Borrowed<'a>;
+/// [`RpcV2::Request`].
+pub type Request<RPC> = <RPC as RpcV2>::Request;
 
-pub struct UnaryV2<
-    'a,
-    const ID: u8,
-    Req: MessageOwned,
-    Resp: MessageOwned,
-    C: CodecV2<Req> + CodecV2<Resp>,
-> {
-    pub request: &'a Req::Borrowed<'a>,
-    pub _marker: PhantomData<(Req, Resp, C)>,
+/// [`RpcV2::Response`].
+pub type Response<RPC> = <RPC as RpcV2>::Response;
+
+/// [`MessageV2::Borrowed`] of [`RpcV2::Request`].
+pub type BorrowedRequest<'a, RPC> = <<RPC as RpcV2>::Request as MessageV2>::Borrowed<'a>;
+
+/// [`MessageV2::Borrowed`] of [`RpcV2::Response`].
+pub type BorrowedResponse<'a, RPC> = <<RPC as RpcV2>::Response as MessageV2>::Borrowed<'a>;
+
+/// Request-response RPC.
+pub trait UnaryRpc: RpcV2 {}
+
+/// Default implementation of [`UnaryRpc`].
+pub struct UnaryV2<const ID: u8, Req: MessageV2, Resp: MessageV2, C: CodecV2<Req> + CodecV2<Resp>> {
+    _marker: PhantomData<(Req, Resp, C)>,
 }
 
-impl<'a, const ID: u8, Req, Resp, C> RpcV2 for UnaryV2<'a, ID, Req, Resp, C>
+impl<const ID: u8, Req, Resp, C> RpcV2 for UnaryV2<ID, Req, Resp, C>
 where
-    Req: MessageOwned,
-    Resp: MessageOwned,
+    Req: MessageV2,
+    Resp: MessageV2,
     C: CodecV2<Req> + CodecV2<Resp>,
 {
     const ID: u8 = ID;
@@ -133,31 +97,23 @@ where
     type Codec = C;
 }
 
-// impl<'s, RPC> RpcV2 for RPC
-// where
-//     RPC: UnaryRpcV2<'s>,
-// {
-//     const ID: u8 = RPC::ID;
-
-//     type Request<'a> = Self;
-
-//     type Response<'a> = Self::Request<'a>;
-
-//     type Codec = Self::Codec;
-
-//     type Output = <Self::Response<'static> as ToOwned>::Owned;
-// }
-
-pub trait MessageOwned: DeserializeOwned + Serialize + Unpin + Sync + Send + 'static {
-    type Borrowed<'a>: MessageBorrowed;
+impl<const ID: u8, Req, Resp, C> UnaryRpc for UnaryV2<ID, Req, Resp, C>
+where
+    Req: MessageV2,
+    Resp: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+{
 }
 
-pub trait MessageBorrowed: Serialize + Unpin + Sync + Send {}
+/// RPC message.
+pub trait MessageV2: DeserializeOwned + Serialize + Unpin + Sync + Send + 'static {
+    type Borrowed<'a>: BorrowedMessage;
+}
 
-impl<T> MessageBorrowed for T where T: Serialize + Unpin + Sync + Send {}
+/// Borrowed [Message][`MessageV2`].
+pub trait BorrowedMessage: Serialize + Unpin + Sync + Send {}
 
-// type OwnedResponse<RPC> = <<RPC as RpcV2>::Response<'static> as
-// ToOwned>::Owned;
+impl<T> BorrowedMessage for T where T: Serialize + Unpin + Sync + Send {}
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -450,21 +406,25 @@ enum ConnectionStatusCode {
     Unauthorized = -3,
 }
 
-impl<T, E> MessageOwned for Result<T, E>
+impl<T, E> MessageV2 for Result<T, E>
 where
-    T: MessageOwned,
-    E: MessageOwned,
+    T: MessageV2,
+    E: MessageV2,
 {
     type Borrowed<'a> = Result<T::Borrowed<'a>, E::Borrowed<'a>>;
 }
 
-impl<T> MessageOwned for Option<T>
+impl<T> MessageV2 for Option<T>
 where
-    T: MessageOwned,
+    T: MessageV2,
 {
     type Borrowed<'a> = Option<T::Borrowed<'a>>;
 }
 
-impl MessageOwned for () {
+impl MessageV2 for () {
     type Borrowed<'a> = ();
+}
+
+impl MessageV2 for u64 {
+    type Borrowed<'a> = Self;
 }

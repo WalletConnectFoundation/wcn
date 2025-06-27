@@ -28,6 +28,7 @@ derive_more = { version = "1.0.0", features = [
 ] }
 derivative = "2"
 derive-where = "1.5"
+tap = "1.0"
 core = { package = "wcn_core", path = "crates/core" }
 auth = { package = "wcn_auth", path = "crates/auth" }
 domain = { package = "wcn_domain", path = "crates/domain" }

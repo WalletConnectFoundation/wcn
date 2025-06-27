@@ -5,7 +5,8 @@ pub use {
     wcn_rpc::{identity, Multiaddr, PeerAddr, PeerId},
 };
 use {
-    futures::{FutureExt as _, TryFutureExt as _},
+    futures::FutureExt as _,
+    serde::{Deserialize, Serialize},
     std::{borrow::Cow, future::Future, str::FromStr, time::Duration},
     time::OffsetDateTime as DateTime,
 };
@@ -14,13 +15,13 @@ pub mod operation;
 pub use operation::Operation;
 
 #[cfg(any(feature = "rpc_client", feature = "rpc_server"))]
-mod rpc;
+pub mod rpc;
 
 /// Namespace within a WCN cluster.
 ///
 /// Namespaces are isolated and every [`StorageApi`] [`Operation`] gets executed
 /// on a specific [`Namespace`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Namespace {
     /// ID of the node operator to which this namespace belongs.
     ///
@@ -35,7 +36,7 @@ pub struct Namespace {
 ///
 /// Keyspace changes after data rebalancing within a WCN Cluster.
 /// For data consistency reasons WCN Coordinators and WCN Replicas need to
-/// operate using same [`KeyspaceVersion`]. So for Coordinator->Replica
+/// operate using the same [`KeyspaceVersion`]. So for Coordinator->Replica
 /// [`StorageApi`] calls [`Operation`]s need to include the expected
 /// [`KeyspaceVersion`].
 ///
@@ -58,26 +59,32 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
     /// Executes the provided [`operation::Get`].
     fn get<'a>(
         &'a self,
-        get: operation::Get<'a>,
-    ) -> impl Future<Output = Result<Option<Record>>> + Send + 'a {
+        get: &'a operation::Get<'a>,
+    ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
         self.execute(get).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::Set`].
-    fn set<'a>(&'a self, set: operation::Set<'a>) -> impl Future<Output = Result<()>> + Send {
+    fn set<'a>(
+        &'a self,
+        set: &'a operation::Set<'a>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         self.execute(set).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::Del`].
-    fn del<'a>(&'a self, del: operation::Del<'a>) -> impl Future<Output = Result<()>> + Send {
+    fn del<'a>(
+        &'a self,
+        del: &'a operation::Del<'a>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         self.execute(del).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::GetExp`].
     fn get_exp<'a>(
         &'a self,
-        get_exp: operation::GetExp<'a>,
-    ) -> impl Future<Output = Result<Option<EntryExpiration>>> + Send {
+        get_exp: &'a operation::GetExp<'a>,
+    ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
         self.execute(get_exp)
             .map(operation::Output::downcast_result)
     }
@@ -85,8 +92,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
     /// Executes the provided [`operation::SetExp`].
     fn set_exp<'a>(
         &'a self,
-        set_exp: operation::SetExp<'a>,
-    ) -> impl Future<Output = Result<()>> + Send {
+        set_exp: &'a operation::SetExp<'a>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         self.execute(set_exp)
             .map(operation::Output::downcast_result)
     }
@@ -94,26 +101,32 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
     /// Executes the provided [`operation::HGet`].
     fn hget<'a>(
         &'a self,
-        hget: operation::HGet<'a>,
-    ) -> impl Future<Output = Result<Option<Record>>> + Send {
+        hget: &'a operation::HGet<'a>,
+    ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
         self.execute(hget).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HSet`].
-    fn hset<'a>(&'a self, hset: operation::HSet<'a>) -> impl Future<Output = Result<()>> + Send {
+    fn hset<'a>(
+        &'a self,
+        hset: &'a operation::HSet<'a>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         self.execute(hset).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HDel`].
-    fn hdel<'a>(&'a self, hdel: operation::HDel<'a>) -> impl Future<Output = Result<()>> + Send {
+    fn hdel<'a>(
+        &'a self,
+        hdel: &'a operation::HDel<'a>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         self.execute(hdel).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HGetExp`].
     fn hget_exp<'a>(
         &'a self,
-        hget_exp: operation::HGetExp<'a>,
-    ) -> impl Future<Output = Result<Option<EntryExpiration>>> + Send {
+        hget_exp: &'a operation::HGetExp<'a>,
+    ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
         self.execute(hget_exp)
             .map(operation::Output::downcast_result)
     }
@@ -121,8 +134,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
     /// Executes the provided [`operation::HSetExp`].
     fn hset_exp<'a>(
         &'a self,
-        hset_exp: operation::HSetExp<'a>,
-    ) -> impl Future<Output = Result<()>> + Send {
+        hset_exp: &'a operation::HSetExp<'a>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         self.execute(hset_exp)
             .map(operation::Output::downcast_result)
     }
@@ -130,113 +143,93 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
     /// Executes the provided [`operation::HCard`].
     fn hcard<'a>(
         &'a self,
-        hcard: operation::HCard<'a>,
-    ) -> impl Future<Output = Result<u64>> + Send {
+        hcard: &'a operation::HCard<'a>,
+    ) -> impl Future<Output = Result<u64>> + Send + 'a {
         self.execute(hcard).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HScan`].
     fn hscan<'a>(
         &'a self,
-        hscan: operation::HScan<'a>,
-    ) -> impl Future<Output = Result<MapPage>> + Send {
+        hscan: &'a operation::HScan<'a>,
+    ) -> impl Future<Output = Result<MapPage<'a>>> + Send + 'a {
         self.execute(hscan).map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`].
     fn execute<'a>(
         &'a self,
-        operation: impl Into<Operation<'a>> + Send,
-    ) -> impl Future<Output = Result<operation::Output>> + Send;
+        operation: impl Into<Operation<'a>> + Send + 'a,
+    ) -> impl Future<Output = Result<operation::Output<'a>>> + Send + 'a;
 }
 
 /// Raw bytes.
 pub type Bytes<'a> = Cow<'a, [u8]>;
 
-/// Key in a KV storage.
-#[derive(Clone, Debug)]
-pub struct Key<'a>(pub Bytes<'a>);
-
-/// Value in a KV storage.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Value<'a>(pub Bytes<'a>);
-
-/// Subkey of a [`MapEntry`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Field<'a>(pub Bytes<'a>);
-
-/// Basic KV storage entry.
-#[derive(Clone, Debug)]
-pub struct Entry<'a> {
-    /// [`Key`] of this [`Entry`].
-    pub key: Key<'a>,
-
-    /// [`Value`] of this [`Entry`].
-    pub value: Value<'a>,
-
-    /// Expiration time of this [`Entry`].
-    pub expiration: EntryExpiration,
-
-    /// Version of this [`Entry`].
-    pub version: EntryVersion,
-}
-
-/// Map entry in which each [`Value`] is associated with both [`Key`] and subkey
-/// ([`Field`]).
-#[derive(Clone, Debug)]
-pub struct MapEntry<'a> {
-    /// [`Key`] of this [`Entry`].
-    pub key: Key<'a>,
-
-    /// [`Field`] of this [`Entry`].
-    pub field: Field<'a>,
-
-    /// [`Value`] of this [`Entry`].
-    pub value: Value<'a>,
-
-    /// Expiration time of this [`Entry`].
-    pub expiration: EntryExpiration,
-
-    /// Version of this [`Entry`].
-    pub version: EntryVersion,
-}
-
-/// [`Entry`]/[`MapEntry`] without the associated [`Key`]/[`Field`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Record {
+/// Raw [`Bytes`] value with metadata related to this value.
+///
+/// [`Record`]s are being deleted from WCN Database after specified
+/// [`Record::expiration`] time.
+///
+/// A [`Record`] can not be overwritten by another [`Record`] with a lesser
+/// [version][`Record::version`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Record<'a> {
     /// Value of this [`Record`].
-    pub value: Value<'static>,
+    pub value: Bytes<'a>,
 
-    /// Expiration time of the associated [`Entry`]/[`MapEntry`].
-    pub expiration: EntryExpiration,
+    /// Expiration time of [`Record`].
+    pub expiration: RecordExpiration,
 
-    /// Version of the associated [`Entry`]/[`MapEntry`].
-    pub version: EntryVersion,
+    /// Version of this [`Record`].
+    pub version: RecordVersion,
 }
 
-/// [`MapEntry`] without the associated [`Key`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MapRecord {
-    /// Field of this [`MapRecord`].
-    pub field: Field<'static>,
-
-    /// Value of this [`MapRecord`].
-    pub value: Value<'static>,
-
-    /// Expiration time of the associated [`MapEntry`].
-    pub expiration: EntryExpiration,
-
-    /// Version of the associated [`MapEntry`].
-    pub version: EntryVersion,
+impl<'a> Record<'a> {
+    /// Converts `Self` into 'static.
+    pub fn into_static(self) -> Record<'static> {
+        Record {
+            value: Cow::Owned(self.value.into_owned()),
+            expiration: self.expiration,
+            version: self.version,
+        }
+    }
 }
 
-/// [`Entry`]/[`MapEntry`] expiration time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct EntryExpiration {
+/// Entry within a Map.
+///
+/// Maps are a separate data type of WCN Datbase, similar to Redis Hashes.
+/// They differ from regular KV pairs by having a subkey (AKA
+/// [field][MapEntry::field]).
+///
+/// Each Map key contains an ordered set of entries (ascending order by
+/// [`MapEntry::field`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MapEntry<'a> {
+    /// Subkey of this [`MapEntry`].
+    pub field: Bytes<'a>,
+
+    /// [`Record`] of this [`MapEntry`].
+    pub record: Record<'a>,
+}
+
+impl<'a> MapEntry<'a> {
+    /// Converts `Self` into 'static.
+    pub fn into_static(self) -> MapEntry<'static> {
+        MapEntry {
+            field: Cow::Owned(self.field.into_owned()),
+            record: self.record.into_static(),
+        }
+    }
+}
+
+/// Expiration time of a [`Record`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct RecordExpiration {
     unix_timestamp_secs: u64,
 }
 
-impl From<Duration> for EntryExpiration {
+impl From<Duration> for RecordExpiration {
     fn from(dur: Duration) -> Self {
         Self {
             unix_timestamp_secs: (DateTime::now_utc() + dur).unix_timestamp() as u64,
@@ -244,7 +237,7 @@ impl From<Duration> for EntryExpiration {
     }
 }
 
-impl From<DateTime> for EntryExpiration {
+impl From<DateTime> for RecordExpiration {
     fn from(dt: DateTime) -> Self {
         Self {
             unix_timestamp_secs: dt.unix_timestamp() as u64,
@@ -252,19 +245,9 @@ impl From<DateTime> for EntryExpiration {
     }
 }
 
-impl EntryExpiration {
-    pub fn from_unix_timestamp_secs(timestamp: u64) -> Self {
-        Self {
-            unix_timestamp_secs: timestamp,
-        }
-    }
-
-    pub fn unix_timestamp_secs(&self) -> u64 {
-        self.unix_timestamp_secs
-    }
-
-    pub fn to_duration(&self) -> Duration {
-        let expiry = DateTime::from_unix_timestamp(self.unix_timestamp_secs as i64)
+impl From<RecordExpiration> for Duration {
+    fn from(exp: RecordExpiration) -> Self {
+        let expiry = DateTime::from_unix_timestamp(exp.unix_timestamp_secs as i64)
             .unwrap_or(DateTime::UNIX_EPOCH);
 
         (expiry - DateTime::now_utc())
@@ -273,15 +256,18 @@ impl EntryExpiration {
     }
 }
 
-/// [`Entry`]/[`MapEntry`] version.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct EntryVersion {
-    unix_timestamp_micros: u64,
+/// Version of a [`Record`].
+///
+/// [`RecordVersion`] is a local client-side generated timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct RecordVersion {
+    /// UNIX timestamp (microseconds) representation of this [`RecordVersion`].
+    pub unix_timestamp_micros: u64,
 }
 
-impl EntryVersion {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> EntryVersion {
+impl RecordVersion {
+    /// Generates a new [`RecordVersion`] using the current timestamp.
+    pub fn now() -> RecordVersion {
         Self {
             unix_timestamp_micros: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -289,34 +275,36 @@ impl EntryVersion {
                 .as_micros() as u64,
         }
     }
-
-    pub fn from_unix_timestamp_micros(timestamp: u64) -> Self {
-        Self {
-            unix_timestamp_micros: timestamp,
-        }
-    }
-
-    pub fn unix_timestamp_micros(&self) -> u64 {
-        self.unix_timestamp_micros
-    }
 }
 
-/// Page of [`MapRecord`]s.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MapPage {
-    /// [`MapRecords`] of this [`Page`].
-    pub records: Vec<MapRecord>,
+/// Page of [map entries][MapEntry].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MapPage<'a> {
+    /// [`MapRecord`]s of this [`Page`].
+    pub entries: Vec<MapEntry<'a>>,
 
     /// Indicator of whether there's a next [`Page`] or not.
     pub has_next: bool,
 }
 
-impl MapPage {
+impl<'a> MapPage<'a> {
     /// Returns cursor pointing to the next [`Page`] if there is one.
-    pub fn next_page_cursor(&self) -> Option<&Field> {
+    pub fn next_page_cursor(&self) -> Option<&Bytes<'a>> {
         self.has_next
-            .then(|| self.records.last().map(|entry| &entry.field))
+            .then(|| self.entries.last().map(|entry| &entry.field))
             .flatten()
+    }
+
+    /// Converts `Self` into 'static.
+    pub fn into_static(self) -> MapPage<'static> {
+        MapPage {
+            entries: self
+                .entries
+                .into_iter()
+                .map(MapEntry::into_static)
+                .collect(),
+            has_next: self.has_next,
+        }
     }
 }
 
@@ -345,14 +333,15 @@ impl FromStr for Namespace {
     }
 }
 
+/// Error of parsing [`Namespace`] from a string.
 #[derive(Debug, thiserror::Error)]
 #[error("Invalid namespace: {_0}")]
 pub struct InvalidNamespaceError(Cow<'static, str>);
 
-/// Result of [`StorageApi`].
+/// [`StorageApi`] result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Error of [`StorageApi`].
+/// [`StorageApi`] error.
 #[derive(Debug, thiserror::Error)]
 #[error("{kind:?}({details:?})")]
 pub struct Error {
@@ -384,10 +373,6 @@ pub enum ErrorKind {
 
     /// Transport error.
     Transport,
-
-    // NOTE: This is effectively a bug, it's here just for completeness.
-    /// [`operation::WrongOutputError`].
-    WrongOperationOutput,
 
     /// Unable to determine [`ErrorKind`] of an [`Error`].
     Unknown,

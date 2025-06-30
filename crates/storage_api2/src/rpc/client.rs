@@ -1,5 +1,3 @@
-#![allow(private_interfaces)]
-
 pub use wcn_rpc::client2::Config;
 use {
     super::*,

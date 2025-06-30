@@ -1,8 +1,44 @@
+#![allow(private_interfaces)]
+
+pub use wcn_rpc::client2::Config;
 use {
     super::*,
     crate::{operation, MapPage, Operation, Record, Result, StorageApi},
-    wcn_rpc::client2::{Connection, ConnectionHandler, RpcHandler},
+    wcn_rpc::client2::{Client, Connection, ConnectionHandler, RpcHandler},
 };
+
+/// RPC [`Client`] of [`CoordinatorApi`].
+pub type Coordinator = Client<CoordinatorApi>;
+
+/// Outbound [`Connection`] to [`CoordinatorApi`].
+pub type CoordinatorConnection = Connection<CoordinatorApi>;
+
+/// RPC [`Client`] of [`ReplicaApi`].
+pub type Replica = Client<ReplicaApi>;
+
+/// Outbound [`Connection`] to [`ReplicaApi`].
+pub type ReplicaConnection = Connection<ReplicaApi>;
+
+/// RPC [`Client`] of [`DatabaseApi`].
+pub type Database = Client<DatabaseApi>;
+
+/// Outbound [`Connection`] to [`DatabaseApi`].
+pub type DatabaseConnection = Connection<DatabaseApi>;
+
+/// Creates a new [`Coordinator`] RPC client.
+pub fn coordinator(config: Config) -> wcn_rpc::client2::Result<Coordinator> {
+    Client::new(config, ConnectionHandler)
+}
+
+/// Creates a new [`ReplicaApi`] RPC client.
+pub fn replica(config: Config) -> wcn_rpc::client2::Result<Replica> {
+    Client::new(config, ConnectionHandler)
+}
+
+/// Creates a new [`DatabaseApi`] RPC client.
+pub fn database(config: Config) -> wcn_rpc::client2::Result<Database> {
+    Client::new(config, ConnectionHandler)
+}
 
 impl<Kind> wcn_rpc::client2::Api for Api<Kind>
 where

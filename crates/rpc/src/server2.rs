@@ -147,7 +147,7 @@ where
     }
 
     /// Runs this RPC [`Server`]
-    fn serve(self, cfg: Config) -> Result<impl Future<Output = ()>> {
+    fn serve(self, cfg: Config) -> Result<impl Future<Output = ()> + Send> {
         let transport_config = quic::new_quinn_transport_config(cfg.max_concurrent_rpcs);
         let server_tls_config = libp2p_tls::make_server_config(&cfg.keypair).map_err(Error::new)?;
         let server_tls_config =
@@ -174,6 +174,8 @@ where
 
         let rpc_semaphore = Arc::new(Semaphore::new(cfg.max_concurrent_rpcs as usize));
 
+        tracing::info!(port = cfg.port, server_name = cfg.name, "Serving");
+
         Ok(accept_connections(
             cfg,
             endpoint,
@@ -188,12 +190,14 @@ mod sealed {
     use super::*;
 
     pub trait ConnectionRouter: Clone + Send + Sync + 'static {
+        fn contains_api(&self, api_name: &ApiName) -> bool;
+
         /// Routes [`Connection`] to the [`Api`] connection handler.
         fn route_connection(
             &self,
             api_name: &ApiName,
             conn: Connection<'_>,
-        ) -> impl Future<Output = Option<Result<()>>> + Send;
+        ) -> impl Future<Output = Result<()>> + Send;
     }
 }
 
@@ -209,20 +213,18 @@ struct Multiplexer<A, B> {
 }
 
 impl<H: HandleConnection> sealed::ConnectionRouter for ApiServer<H> {
-    async fn route_connection(
-        &self,
-        api_name: &ApiName,
-        conn: Connection<'_>,
-    ) -> Option<Result<()>> {
-        if api_name != &H::Api::NAME {
-            return None;
+    fn contains_api(&self, api_name: &ApiName) -> bool {
+        api_name == &H::Api::NAME
+    }
+
+    async fn route_connection(&self, api_name: &ApiName, conn: Connection<'_>) -> Result<()> {
+        if !self.contains_api(api_name) {
+            return Err(ErrorInner::UnknownApi(*api_name).into());
         }
 
-        Some(
-            self.connection_handler
-                .handle_connection(conn.specify_api())
-                .await,
-        )
+        self.connection_handler
+            .handle_connection(conn.specify_api())
+            .await
     }
 }
 
@@ -231,14 +233,15 @@ where
     A: sealed::ConnectionRouter,
     B: sealed::ConnectionRouter,
 {
-    async fn route_connection(
-        &self,
-        api_name: &ApiName,
-        conn: Connection<'_>,
-    ) -> Option<Result<()>> {
-        match self.head.route_connection(api_name, conn).await {
-            opt @ Some(_) => opt,
-            None => self.tail.route_connection(api_name, conn).await,
+    fn contains_api(&self, api_name: &ApiName) -> bool {
+        self.head.contains_api(api_name) || self.tail.contains_api(api_name)
+    }
+
+    async fn route_connection(&self, api_name: &ApiName, conn: Connection<'_>) -> Result<()> {
+        if self.head.contains_api(api_name) {
+            self.head.route_connection(api_name, conn).await
+        } else {
+            self.tail.route_connection(api_name, conn).await
         }
     }
 }
@@ -345,16 +348,14 @@ fn accept_connection<R: sealed::ConnectionRouter>(
             _marker: PhantomData,
         };
 
-        match router.route_connection(&api_name, conn).await {
-            Some(res) => res,
-            None => {
-                tx.write_i32(ConnectionStatusCode::UnknownApi as i32)
-                    .await
-                    .map_err(Error::new)?;
+        let status = if router.contains_api(&api_name) {
+            ConnectionStatusCode::Ok
+        } else {
+            ConnectionStatusCode::UnknownApi
+        };
+        tx.write_i32(status as i32).await.map_err(Error::new)?;
 
-                Err(ErrorInner::UnknownApi(api_name).into())
-            }
-        }
+        router.route_connection(&api_name, conn).await
     }
     .map_err(|err| tracing::debug!(?err, "Inbound connection handler failed"))
     .with_metrics(future_metrics!("wcn_rpc_server_inbound_connection"))

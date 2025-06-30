@@ -40,7 +40,7 @@ impl From<Id> for u8 {
 #[derive(Clone, Copy, Debug)]
 pub struct Api<Kind>(PhantomData<Kind>);
 
-pub mod api_kind {
+mod api_kind {
     #[derive(Clone, Copy, Debug)]
     pub struct Coordinator;
 
@@ -54,21 +54,21 @@ pub mod api_kind {
 pub type CoordinatorApi = Api<api_kind::Coordinator>;
 
 impl wcn_rpc::Api for CoordinatorApi {
-    const NAME: ApiName = ApiName::new("StorageApiCoordinator");
+    const NAME: ApiName = ApiName::new("Coordinator");
     type RpcId = Id;
 }
 
 pub type ReplicaApi = Api<api_kind::Replica>;
 
 impl wcn_rpc::Api for ReplicaApi {
-    const NAME: ApiName = ApiName::new("StorageApiReplica");
+    const NAME: ApiName = ApiName::new("Replica");
     type RpcId = Id;
 }
 
 pub type DatabaseApi = Api<api_kind::Database>;
 
 impl wcn_rpc::Api for DatabaseApi {
-    const NAME: ApiName = ApiName::new("StorageApiDatabase");
+    const NAME: ApiName = ApiName::new("Database");
     type RpcId = Id;
 }
 

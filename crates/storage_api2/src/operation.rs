@@ -22,7 +22,7 @@ use {
 };
 
 /// Sum type of all Storage API operations.
-#[derive(Clone, Debug, From, EnumDiscriminants)]
+#[derive(Clone, Debug, From, EnumDiscriminants, PartialEq, Eq)]
 #[strum_discriminants(name(Name))]
 #[strum_discriminants(derive(Ordinalize))]
 pub enum Operation<'a> {
@@ -86,7 +86,7 @@ impl<'a> Operation<'a> {
 }
 
 /// Gets a [`Record`] by the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Get<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -94,7 +94,7 @@ pub struct Get<'a> {
 }
 
 /// Sets a new [`Record`] under the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Set<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -103,7 +103,7 @@ pub struct Set<'a> {
 }
 
 /// Deletes a [`Record`] by the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Del<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -112,7 +112,7 @@ pub struct Del<'a> {
 }
 
 /// Gets a [`RecordExpiration`] by the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetExp<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -120,7 +120,7 @@ pub struct GetExp<'a> {
 }
 
 /// Sets [`RecordExpiration`] on the [`Record`] with the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetExp<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -130,7 +130,7 @@ pub struct SetExp<'a> {
 }
 
 /// Gets a Map [`Record`] by the provided key and field.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HGet<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -139,7 +139,7 @@ pub struct HGet<'a> {
 }
 
 /// Sets a new [`MapEntry`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HSet<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -148,7 +148,7 @@ pub struct HSet<'a> {
 }
 
 /// Deletes a [`MapEntry`] by the provided key and field.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HDel<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -158,7 +158,7 @@ pub struct HDel<'a> {
 }
 
 /// Gets a [`RecordExpiration`] by the provided key and field.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HGetExp<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -168,7 +168,7 @@ pub struct HGetExp<'a> {
 
 /// Sets [`RecordExpiration`] on the [`MapEntry`] with the provided key and
 /// field.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HSetExp<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -179,7 +179,7 @@ pub struct HSetExp<'a> {
 }
 
 /// Returns cardinality of the Map with the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HCard<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,
@@ -188,7 +188,7 @@ pub struct HCard<'a> {
 
 /// Returns a [`MapPage`] by iterating over the fields of the Map with
 /// the provided key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HScan<'a> {
     pub namespace: Namespace,
     pub key: Bytes<'a>,

@@ -21,7 +21,7 @@ pub mod rpc;
 ///
 /// Namespaces are isolated and every [`StorageApi`] [`Operation`] gets executed
 /// on a specific [`Namespace`].
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Namespace {
     /// ID of the node operator to which this namespace belongs.
     ///
@@ -342,7 +342,7 @@ pub struct InvalidNamespaceError(Cow<'static, str>);
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// [`StorageApi`] error.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 #[error("{kind:?}({details:?})")]
 pub struct Error {
     kind: ErrorKind,
@@ -357,7 +357,7 @@ impl Error {
 }
 
 /// [`Error`] kind.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     /// Client is not authorized to perfrom an [`Operation`].
     Unauthorized,

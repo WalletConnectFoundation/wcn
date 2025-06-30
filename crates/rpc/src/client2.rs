@@ -179,6 +179,13 @@ impl<API: Api> Client<API> {
 
             drop(guard);
 
+            tracing::info!(
+                api = %API::NAME,
+                addr = %conn.remote_peer_addr(),
+                peer_id = %conn.remote_peer_id(),
+                "Connection established"
+            );
+
             Ok(conn)
         }
         .with_timeout(self.config.connection_timeout)

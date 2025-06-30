@@ -147,7 +147,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::Get(&a), b));
-        assert_eq!(self.client_conn.get(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.get(&op).await, res);
     }
 
     async fn test_set(&self) {
@@ -162,7 +162,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::Set(&a), b));
-        assert_eq!(self.client_conn.set(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.set(&op).await, res);
     }
 
     async fn test_del(&self) {
@@ -177,7 +177,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::Del(&a), b));
-        assert_eq!(self.client_conn.del(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.del(&op).await, res);
     }
 
     async fn test_get_exp(&self) {
@@ -191,7 +191,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::GetExp(&a), b));
-        assert_eq!(self.client_conn.get_exp(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.get_exp(&op).await, res);
     }
 
     async fn test_set_exp(&self) {
@@ -207,7 +207,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::SetExp(&a), b));
-        assert_eq!(self.client_conn.set_exp(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.set_exp(&op), res);
     }
 
     async fn test_hget(&self) {
@@ -222,7 +222,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HGet(&a), b));
-        assert_eq!(self.client_conn.hget(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hget(&op).await, res);
     }
 
     async fn test_hset(&self) {
@@ -237,7 +237,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HSet(&a), b));
-        assert_eq!(self.client_conn.hset(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hset(&op).await, res);
     }
 
     async fn test_hdel(&self) {
@@ -253,7 +253,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HDel(&a), b));
-        assert_eq!(self.client_conn.hdel(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hdel(&op).await, res);
     }
 
     async fn test_hget_exp(&self) {
@@ -268,7 +268,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HGetExp(&a), b));
-        assert_eq!(self.client_conn.hget_exp(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hget_exp(&op).await, res);
     }
 
     async fn test_hset_exp(&self) {
@@ -285,7 +285,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HSetExp(&a), b));
-        assert_eq!(self.client_conn.hset_exp(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hset_exp(&op).await, res);
     }
 
     async fn test_hcard(&self) {
@@ -299,7 +299,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HCard(&a), b));
-        assert_eq!(self.client_conn.hcard(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hcard(&op).await, res);
     }
 
     async fn test_hscan(&self) {
@@ -315,7 +315,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HScan(&a), b));
-        assert_eq!(self.client_conn.hscan(&op).await.map(Into::into), res);
+        assert_eq!(self.client_conn.hscan(&op).await, res);
     }
 }
 

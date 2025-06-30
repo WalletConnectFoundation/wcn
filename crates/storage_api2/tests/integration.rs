@@ -323,7 +323,7 @@ fn namespace() -> Namespace {
     let operator_id = rand::random::<[u8; 20]>();
     let id = rand::random::<u8>();
 
-    let operator_id = const_hex::encode(&operator_id);
+    let operator_id = const_hex::encode(operator_id);
     format!("{operator_id}/{id}").parse().unwrap()
 }
 

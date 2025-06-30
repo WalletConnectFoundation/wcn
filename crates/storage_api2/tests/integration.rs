@@ -207,7 +207,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::SetExp(&a), b));
-        assert_eq!(self.client_conn.set_exp(&op), res);
+        assert_eq!(self.client_conn.set_exp(&op).await, res);
     }
 
     async fn test_hget(&self) {

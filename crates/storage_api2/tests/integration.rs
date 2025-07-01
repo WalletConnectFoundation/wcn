@@ -8,7 +8,7 @@ use {
     tracing_subscriber::EnvFilter,
     wc::future::StaticFutureExt,
     wcn_rpc::{
-        client2::{Api, Client, Connection},
+        client2::{Api, Client, LoadBalancer},
         identity::Keypair,
         transport,
     },
@@ -63,7 +63,7 @@ async fn test_rpc_api<API, S>(
 ) where
     API: Api<ConnectionParameters = ()>,
     S: wcn_rpc::server2::Server,
-    Connection<API>: StorageApi,
+    LoadBalancer<API>: StorageApi,
 {
     let storage = TestStorage::default();
 
@@ -75,9 +75,9 @@ async fn test_rpc_api<API, S>(
         port: server_port,
         keypair: server_keypair,
         connection_timeout: Duration::from_secs(10),
-        max_connections: 1,
-        max_connections_per_ip: 1,
-        max_connection_rate_per_ip: 1,
+        max_connections: 2,
+        max_connections_per_ip: 2,
+        max_connection_rate_per_ip: 2,
         max_concurrent_rpcs: 10,
         priority: transport::Priority::High,
     };
@@ -95,14 +95,18 @@ async fn test_rpc_api<API, S>(
     let client = client(client_config).unwrap();
 
     let server_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, server_port);
-    let client_conn = client
+    let client_conn1 = client
+        .connect(server_addr, &server_peer_id, ())
+        .await
+        .unwrap();
+    let client_conn2 = client
         .connect(server_addr, &server_peer_id, ())
         .await
         .unwrap();
 
     let ctx = &TestContext {
         storage,
-        client_conn,
+        lb: LoadBalancer::new([client_conn1, client_conn2]),
     };
 
     ctx.test_operations().await;
@@ -112,12 +116,12 @@ async fn test_rpc_api<API, S>(
 
 struct TestContext<API: Api> {
     storage: TestStorage,
-    client_conn: Connection<API>,
+    lb: LoadBalancer<API>,
 }
 
 impl<API: Api> TestContext<API>
 where
-    Connection<API>: StorageApi,
+    LoadBalancer<API>: StorageApi,
 {
     async fn test_operations(&self) {
         self.test_get().await;
@@ -147,7 +151,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::Get(&a), b));
-        assert_eq!(self.client_conn.get(&op).await, res);
+        assert_eq!(self.lb.get(&op).await, res);
     }
 
     async fn test_set(&self) {
@@ -162,7 +166,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::Set(&a), b));
-        assert_eq!(self.client_conn.set(&op).await, res);
+        assert_eq!(self.lb.set(&op).await, res);
     }
 
     async fn test_del(&self) {
@@ -177,7 +181,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::Del(&a), b));
-        assert_eq!(self.client_conn.del(&op).await, res);
+        assert_eq!(self.lb.del(&op).await, res);
     }
 
     async fn test_get_exp(&self) {
@@ -191,7 +195,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::GetExp(&a), b));
-        assert_eq!(self.client_conn.get_exp(&op).await, res);
+        assert_eq!(self.lb.get_exp(&op).await, res);
     }
 
     async fn test_set_exp(&self) {
@@ -207,7 +211,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::SetExp(&a), b));
-        assert_eq!(self.client_conn.set_exp(&op).await, res);
+        assert_eq!(self.lb.set_exp(&op).await, res);
     }
 
     async fn test_hget(&self) {
@@ -222,7 +226,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HGet(&a), b));
-        assert_eq!(self.client_conn.hget(&op).await, res);
+        assert_eq!(self.lb.hget(&op).await, res);
     }
 
     async fn test_hset(&self) {
@@ -237,7 +241,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HSet(&a), b));
-        assert_eq!(self.client_conn.hset(&op).await, res);
+        assert_eq!(self.lb.hset(&op).await, res);
     }
 
     async fn test_hdel(&self) {
@@ -253,7 +257,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HDel(&a), b));
-        assert_eq!(self.client_conn.hdel(&op).await, res);
+        assert_eq!(self.lb.hdel(&op).await, res);
     }
 
     async fn test_hget_exp(&self) {
@@ -268,7 +272,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HGetExp(&a), b));
-        assert_eq!(self.client_conn.hget_exp(&op).await, res);
+        assert_eq!(self.lb.hget_exp(&op).await, res);
     }
 
     async fn test_hset_exp(&self) {
@@ -285,7 +289,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HSetExp(&a), b));
-        assert_eq!(self.client_conn.hset_exp(&op).await, res);
+        assert_eq!(self.lb.hset_exp(&op).await, res);
     }
 
     async fn test_hcard(&self) {
@@ -299,7 +303,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HCard(&a), b));
-        assert_eq!(self.client_conn.hcard(&op).await, res);
+        assert_eq!(self.lb.hcard(&op).await, res);
     }
 
     async fn test_hscan(&self) {
@@ -315,7 +319,7 @@ where
 
         self.storage
             .assert_next(&op, &res, |a, b| assert_eq!(Operation::HScan(&a), b));
-        assert_eq!(self.client_conn.hscan(&op).await, res);
+        assert_eq!(self.lb.hscan(&op).await, res);
     }
 }
 

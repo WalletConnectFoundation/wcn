@@ -574,7 +574,7 @@ impl metrics::Enum for ErrorKind {
 
 /// [`Connection`] Load balancer.
 ///
-/// Load balancer [`Connection::send`] across a list of [`Connection`]s using a
+/// Load balances [`Connection::send`] across a list of [`Connection`]s using a
 /// round-robin strategy.
 pub struct LoadBalancer<API: Api> {
     /// List of [`Connections`] of this [`LoadBalancer`].

@@ -9,21 +9,21 @@ use {
 };
 
 /// Creates a new [`CoordinatorApi`] RPC server.
-pub fn coordinator(storage_api: impl StorageApi) -> impl wcn_rpc::server2::Server {
+pub fn coordinator(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server {
     new::<api_kind::Coordinator>(storage_api)
 }
 
 /// Creates a new [`ReplicaApi`] RPC server.
-pub fn replica(storage_api: impl StorageApi) -> impl wcn_rpc::server2::Server {
+pub fn replica(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server {
     new::<api_kind::Replica>(storage_api)
 }
 
 /// Creates a new [`DatabaseApi`] RPC server.
-pub fn database(storage_api: impl StorageApi) -> impl wcn_rpc::server2::Server {
+pub fn database(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server {
     new::<api_kind::Database>(storage_api)
 }
 
-fn new<Kind>(storage_api: impl StorageApi) -> impl wcn_rpc::server2::Server
+fn new<Kind>(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server
 where
     Kind: Clone + Send + Sync + 'static,
     Api<Kind>: wcn_rpc::Api<RpcId = RpcId>,
@@ -35,14 +35,14 @@ where
 }
 
 #[derive(Clone)]
-struct ConnectionHandler<S: StorageApi, Kind> {
+struct ConnectionHandler<S: StorageApi + Clone, Kind> {
     rpc_handler: RpcHandler<S>,
     _marker: PhantomData<Kind>,
 }
 
 impl<S, Kind> HandleConnection for ConnectionHandler<S, Kind>
 where
-    S: StorageApi,
+    S: StorageApi + Clone,
     Kind: Clone + Send + Sync + 'static,
     Api<Kind>: wcn_rpc::Api<RpcId = RpcId>,
 {

@@ -55,7 +55,7 @@ pub type KeyspaceVersion = u64;
 ///   servers).
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
-pub trait StorageApi: Clone + Send + Sync + 'static {
+pub trait StorageApi: Send + Sync + 'static {
     /// Executes the provided [`operation::Get`].
     fn get<'a>(
         &'a self,

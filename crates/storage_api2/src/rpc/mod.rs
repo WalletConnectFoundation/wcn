@@ -156,14 +156,14 @@ impl Message for MapPage<'static> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Error {
     code: u8,
-    details: Option<String>,
+    message: Option<String>,
 }
 
 impl Error {
     fn new(code: ErrorCode, details: Option<String>) -> Self {
         Self {
             code: code as u8,
-            details,
+            message: details,
         }
     }
 }
@@ -190,10 +190,8 @@ impl From<Error> for crate::Error {
         use crate::ErrorKind;
 
         let Ok(code) = ErrorCode::try_from(err.code) else {
-            return Self::new(
-                crate::ErrorKind::Unknown,
-                Some(format!("Unexpected error code: {}", err.code)),
-            );
+            return Self::new(crate::ErrorKind::Unknown)
+                .with_message(format!("Unexpected error code: {}", err.code));
         };
 
         let kind = match code {
@@ -202,7 +200,10 @@ impl From<Error> for crate::Error {
             ErrorCode::Internal => ErrorKind::Internal,
         };
 
-        Self::new(kind, err.details)
+        Self {
+            kind,
+            message: err.message,
+        }
     }
 }
 
@@ -220,7 +221,7 @@ impl From<crate::Error> for Error {
             | ErrorKind::Unknown => ErrorCode::Internal,
         };
 
-        Error::new(code, err.details)
+        Error::new(code, err.message)
     }
 }
 

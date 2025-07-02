@@ -4,7 +4,7 @@ use {
         non_blocking::WorkerGuard,
         rolling::{RollingFileAppender, Rotation},
     },
-    tracing_subscriber::{prelude::*, EnvFilter},
+    tracing_subscriber::{EnvFilter, prelude::*},
 };
 
 /// The default log level for the stderr logger, which is used as a fallback if

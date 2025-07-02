@@ -5,7 +5,7 @@ use {
         db::{
             cf::{Column, DbColumn},
             context::{self, UnixTimestampMicros},
-            types::common::CommonStorage,
+            types::{common::CommonStorage, Record},
         },
         util::serde::serialize,
         Error,
@@ -13,13 +13,6 @@ use {
     },
     std::future::Future,
 };
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Record<V = Vec<u8>> {
-    pub value: V,
-    pub expiration: UnixTimestampSecs,
-    pub version: UnixTimestampMicros,
-}
 
 pub trait StringStorage<C>: CommonStorage<C>
 where
@@ -64,7 +57,7 @@ where
     ) -> impl Future<Output = Result<(), Error>> + Send + Sync;
 
     /// Returns the remaining time to live of a key that has a timeout.
-    fn exp(
+    fn get_exp(
         &self,
         key: &C::KeyType,
     ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync;
@@ -72,7 +65,7 @@ where
     /// Set a timeout on key. After the timeout has expired, the key will
     /// automatically be deleted. Passing `None` will remove the current timeout
     /// and persist the key.
-    fn setexp(
+    fn set_exp(
         &self,
         key: &C::KeyType,
         expiry: UnixTimestampSecs,
@@ -146,14 +139,14 @@ impl<C: Column> StringStorage<C> for DbColumn<C> {
         }
     }
 
-    fn exp(
+    fn get_exp(
         &self,
         key: &C::KeyType,
     ) -> impl Future<Output = Result<UnixTimestampSecs, Error>> + Send + Sync {
         self.expiration(key, None)
     }
 
-    async fn setexp(
+    async fn set_exp(
         &self,
         key: &C::KeyType,
         expiration: UnixTimestampSecs,
@@ -243,21 +236,21 @@ mod tests {
         let val = &TestValue::new("value2").into();
         {
             // Try to get TTL on non-existent key.
-            let res = db.exp(key).await;
+            let res = db.get_exp(key).await;
             assert!(matches!(res, Err(Error::EntryNotFound)));
 
             db.set(key, val, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            let res = db.exp(key).await;
+            let res = db.get_exp(key).await;
             assert_eq!(res, Ok(expiration));
 
             // Set TTL to 5 sec.
             let expiration = timestamp(5);
-            db.setexp(key, expiration, timestamp_micros())
+            db.set_exp(key, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            let ttl = db.exp(key).await.unwrap();
+            let ttl = db.get_exp(key).await.unwrap();
             assert_eq!(ttl, expiration);
         }
     }
@@ -352,15 +345,15 @@ mod tests {
                     version: timestamp1,
                 })
             );
-            assert_eq!(db.exp(key).await.unwrap(), expiry1);
+            assert_eq!(db.get_exp(key).await.unwrap(), expiry1);
 
             // Update the data with higher timestamp value. It's expected to succeed.
-            db.setexp(key, expiry2, timestamp2).await.unwrap();
-            assert_eq!(db.exp(key).await.unwrap(), expiry2);
+            db.set_exp(key, expiry2, timestamp2).await.unwrap();
+            assert_eq!(db.get_exp(key).await.unwrap(), expiry2);
 
             // Update the data with lower timestamp value. It's expected to be ignored.
-            db.setexp(key, expiry1, timestamp1).await.unwrap();
-            assert_eq!(db.exp(key).await.unwrap(), expiry2);
+            db.set_exp(key, expiry1, timestamp1).await.unwrap();
+            assert_eq!(db.get_exp(key).await.unwrap(), expiry2);
         }
     }
 

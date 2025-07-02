@@ -22,4 +22,4 @@ futures = "0.3"
 time = "0.3"
 
 # TODO: remove this dependency
-relay_rocks = { path = "../rocks" }
+wcn_rocks = { path = "../rocks" }

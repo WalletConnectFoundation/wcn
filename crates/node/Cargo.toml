@@ -42,10 +42,11 @@ pulse_api = { workspace = true, features = ["server", "client"] }
 pulse_monitor = { workspace = true }
 raft = { workspace = true }
 wcn_rpc = { workspace = true, features = ["server"] }
-relay_rocks = { workspace = true }
+wcn_rocks = { workspace = true }
 wc = { workspace = true, features = ["alloc", "future", "metrics"] }
 metrics = { workspace = true }
 time = { workspace = true }
+logging = { package = "wcn_logging", path = "../logging" }
 
 anyhow = "1"
 atty = "0.2"

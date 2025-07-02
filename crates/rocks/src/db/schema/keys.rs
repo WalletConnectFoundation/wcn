@@ -103,11 +103,6 @@ impl GenericKey {
         Self { position, data }
     }
 
-    /// Creates a new key with a keyspace position provided by the caller.
-    pub fn with_position(position: u64, data: Vec<u8>) -> Self {
-        Self { position, data }
-    }
-
     /// Data associated with this key.
     pub fn data(&self) -> &Vec<u8> {
         &self.data

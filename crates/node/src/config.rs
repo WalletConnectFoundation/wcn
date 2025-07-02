@@ -1,4 +1,4 @@
-pub use relay_rocks::RocksdbDatabaseConfig;
+pub use wcn_rocks::RocksdbDatabaseConfig;
 use {
     domain::NodeRegion,
     libp2p::PeerId,

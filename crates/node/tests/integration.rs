@@ -879,7 +879,7 @@ fn new_node_config() -> Config {
 
     let keypair = Keypair::generate_ed25519();
     let id = PeerId::from_public_key(&keypair.public());
-    let dir: PathBuf = format!("/tmp/wcn/test-node/{}", id).parse().unwrap();
+    let dir: PathBuf = format!("/tmp/wcn/test-node/{id}").parse().unwrap();
 
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let region = match n % 3 {

@@ -46,7 +46,7 @@ pulse_api = { package = "wcn_pulse_api", path = "crates/pulse_api" }
 pulse_monitor = { path = "crates/pulse_monitor" }
 raft = { path = "crates/raft" }
 wcn_rpc = { path = "crates/rpc" }
-relay_rocks = { path = "crates/rocks" }
+wcn_rocks = { path = "crates/rocks" }
 metrics = "0.23"
 time = "0.3"
 libp2p = { version = "0.55", default-features = false, features = ["serde"] }
@@ -99,3 +99,5 @@ unnecessary_box_returns = "warn"
 unnecessary_self_imports = "warn"
 unused_peekable = "warn"
 useless_let_if_seq = "warn"
+result_large_err = "allow"                # TODO: Remove after fixing code.
+large_enum_variant = "allow"              # TODO: Remove after fixing code.

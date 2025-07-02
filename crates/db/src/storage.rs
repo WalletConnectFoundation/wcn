@@ -1,29 +1,23 @@
 pub use wcn_rocks::StorageError as Error;
 use {
-    crate::Config,
-    futures::{future, stream::BoxStream, Stream, StreamExt, TryFutureExt as _},
-    raft::Infallible,
-    std::{
-        fmt::{self, Debug},
-        future::Future,
-        ops::RangeInclusive,
-    },
-    wcn::migration::{self, AnyError},
+    crate::config::Config,
+    storage_api::{Bytes, Namespace},
     wcn_rocks::{
-        db::{cf::DbColumn, migration::ExportItem, schema},
+        db::{
+            cf::DbColumn,
+            schema::{self, GenericKey},
+        },
         RocksBackend,
         RocksDatabaseBuilder,
         StorageError,
         StorageResult,
     },
+    xxhash_rust::xxh3::Xxh3Builder,
 };
 
-/// [`Storage`] backend.
 #[derive(Clone, Debug)]
 pub struct Storage {
-    /// The underlying database.
     db: RocksBackend,
-
     pub string: DbColumn<schema::StringColumn>,
     pub map: DbColumn<schema::MapColumn>,
 }
@@ -49,35 +43,8 @@ impl Storage {
         })
     }
 
-    // Required for tests only.
     pub fn db(&self) -> &RocksBackend {
         &self.db
-    }
-}
-
-impl<St, E> migration::StorageImport<St> for Storage
-where
-    St: Stream<Item = Result<ExportItem, E>> + Send + 'static,
-    E: fmt::Debug,
-{
-    fn import(&self, data: St) -> impl Future<Output = Result<(), impl AnyError>> {
-        self.db.import_all(data).map_err(map_err)
-    }
-}
-
-impl migration::StorageExport for Storage {
-    type Stream = BoxStream<'static, ExportItem>;
-
-    fn export(
-        &self,
-        keyrange: RangeInclusive<u64>,
-    ) -> impl Future<Output = Result<Self::Stream, impl AnyError>> {
-        let stream = self
-            .db
-            .export((self.string.clone(), self.map.clone()), keyrange)
-            .boxed();
-
-        future::ok::<_, Infallible>(stream)
     }
 }
 
@@ -93,5 +60,51 @@ fn map_err(err: wcn_rocks::Error) -> StorageError {
         }
         Error::Backend { kind, message } => StorageError::WcnBackend { kind, message },
         Error::Other(message) => StorageError::DbEngine(message),
+    }
+}
+
+/// Prepares a [`GenericKey`] for use with [`wcn_rocks`].
+pub fn key(namespace: &Namespace, key: Bytes<'_>) -> GenericKey {
+    static HASHER: Xxh3Builder = Xxh3Builder::new();
+
+    let key = KeyWrapper::private(namespace, &key).into_bytes();
+    let pos = std::hash::BuildHasher::hash_one(&HASHER, &key);
+    GenericKey::new(pos, key)
+}
+
+/// Key wrapper that adds a prefix to support different key formats (e.g.
+/// private vs shared).
+///
+/// Currently the only supported format is a private key (prefixed with a
+/// [`Namespace`]). In future it may be extended to support other key formats.
+#[derive(Clone, Debug)]
+struct KeyWrapper(Vec<u8>);
+
+impl KeyWrapper {
+    /// Key that is prefixed with a [`Namespace`].
+    const KIND_PRIVATE: u8 = 0;
+
+    /// Creates a new private [`Key`] using the provided namespace.
+    pub fn private(namespace: &Namespace, bytes: impl AsRef<[u8]>) -> Self {
+        let ns_bytes = namespace.as_bytes();
+        let key_bytes = bytes.as_ref();
+
+        let mut combined = Vec::with_capacity(1 + ns_bytes.len() + key_bytes.len());
+
+        // Write key kind prefix.
+        combined.push(Self::KIND_PRIVATE);
+
+        // Write namespace data.
+        combined.extend_from_slice(ns_bytes);
+
+        // Write the rest of the key.
+        combined.extend_from_slice(key_bytes);
+
+        Self(combined)
+    }
+
+    /// Converts this [`Key`] into bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
     }
 }

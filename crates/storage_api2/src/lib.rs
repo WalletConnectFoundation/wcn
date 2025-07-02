@@ -21,15 +21,16 @@ pub mod rpc;
 ///
 /// Namespaces are isolated and every [`StorageApi`] [`Operation`] gets executed
 /// on a specific [`Namespace`].
+///
+/// Currently it's represented by the node operator's Ethereum address, with an
+/// extra byte appended to support multiple namespaces per operator.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Namespace {
-    /// ID of the node operator to which this namespace belongs.
-    ///
-    /// Currentry an Ethereum address.
-    node_operator_id: [u8; 20],
+pub struct Namespace([u8; 21]);
 
-    /// ID of this [`Namespace`] within the node operator scope.
-    id: u8,
+impl Namespace {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 /// Version of the keyspace of a WCN cluster.
@@ -245,6 +246,18 @@ pub struct RecordExpiration {
     unix_timestamp_secs: u64,
 }
 
+impl RecordExpiration {
+    pub fn from_unix_timestamp_secs(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_secs: timestamp,
+        }
+    }
+
+    pub fn to_unix_timestamp_secs(&self) -> u64 {
+        self.unix_timestamp_secs
+    }
+}
+
 impl From<Duration> for RecordExpiration {
     fn from(dur: Duration) -> Self {
         Self {
@@ -290,6 +303,16 @@ impl RecordVersion {
                 .unwrap()
                 .as_micros() as u64,
         }
+    }
+
+    pub fn from_unix_timestamp_micros(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_micros: timestamp,
+        }
+    }
+
+    pub fn to_unix_timestamp_micros(&self) -> u64 {
+        self.unix_timestamp_micros
     }
 }
 
@@ -339,13 +362,16 @@ impl FromStr for Namespace {
             return Err(Error("Too many components".into()));
         }
 
-        Ok(Self {
-            node_operator_id: const_hex::decode_to_array(operator_id)
-                .map_err(|err| Error(format!("Invalid node operator id: {err}").into()))?,
-            id: id
-                .parse()
-                .map_err(|err| Error(format!("Invalid id: {err}").into()))?,
-        })
+        let mut bytes = [0u8; 21];
+
+        const_hex::decode_to_slice(operator_id, &mut bytes[..20])
+            .map_err(|err| Error(format!("Invalid node operator id: {err}").into()))?;
+
+        bytes[20] = id
+            .parse()
+            .map_err(|err| Error(format!("Invalid id: {err}").into()))?;
+
+        Ok(Self(bytes))
     }
 }
 
@@ -359,17 +385,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// [`StorageApi`] error.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-#[error("{kind:?}({details:?})")]
+#[error("{kind:?}({message:?})")]
 pub struct Error {
     kind: ErrorKind,
-    details: Option<String>,
-}
-
-impl Error {
-    /// Returns [`ErrorKind`] of this [`Error`].
-    pub fn kind(&self) -> ErrorKind {
-        self.kind
-    }
+    message: Option<String>,
 }
 
 /// [`Error`] kind.
@@ -396,8 +415,21 @@ pub enum ErrorKind {
 
 impl Error {
     /// Creates a new [`Error`].
-    fn new(kind: ErrorKind, details: Option<String>) -> Self {
-        Self { kind, details }
+    pub fn new(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            message: None,
+        }
+    }
+
+    pub fn with_message(mut self, message: impl ToString) -> Self {
+        self.message = Some(message.to_string());
+        self
+    }
+
+    /// Returns [`ErrorKind`] of this [`Error`].
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
     }
 }
 
@@ -405,14 +437,14 @@ impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self {
             kind,
-            details: None,
+            message: None,
         }
     }
 }
 
 #[cfg(test)]
 #[test]
-fn test_namespace_from_str() {
+fn namespace_from_str() {
     fn ns(s: &str) -> Result<Namespace, InvalidNamespaceError> {
         s.parse()
     }

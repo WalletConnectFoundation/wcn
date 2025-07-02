@@ -287,7 +287,7 @@ impl Output<'_> {
         operation_result?
             .try_into()
             .tap_err(|err| tracing::error!(?err, "Failed to downcast output"))
-            .map_err(|err| Error::new(ErrorKind::Internal, Some(err.to_string())))
+            .map_err(|err| Error::new(ErrorKind::Internal).with_message(err))
     }
 
     /// Converts `Self` into 'static.

@@ -1,6 +1,7 @@
 use {
     super::*,
-    crate::{rpc::Id as RpcId, StorageApi},
+    crate::{rpc::Id as RpcId, Operation, StorageApi},
+    futures::{FutureExt as _, TryFutureExt as _},
     wcn_rpc::{
         server2::{Connection, HandleConnection, HandleRequest, Result},
         Request,
@@ -77,83 +78,122 @@ struct RpcHandler<S: StorageApi> {
 impl<S: StorageApi> HandleRequest<Get> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<Get>) -> Response<Get> {
         self.storage_api
-            .get(&req)
+            .execute(Operation::Get(req))
+            .map_ok(operation::Output::into_static)
+            .map(operation::Output::downcast_result)
             .await
-            .map(|opt| opt.map(Record::into_static))
             .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<Set> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<Set>) -> Response<Set> {
-        self.storage_api.set(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::Set(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<Del> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<Del>) -> Response<Del> {
-        self.storage_api.del(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::Del(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<GetExp> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<GetExp>) -> Response<GetExp> {
-        self.storage_api.get_exp(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::GetExp(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<SetExp> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<SetExp>) -> Response<SetExp> {
-        self.storage_api.set_exp(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::SetExp(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HGet> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HGet>) -> Response<HGet> {
         self.storage_api
-            .hget(&req)
+            .execute(Operation::HGet(req))
+            .map_ok(operation::Output::into_static)
+            .map(operation::Output::downcast_result)
             .await
-            .map(|opt| opt.map(Record::into_static))
             .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HSet> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HSet>) -> Response<HSet> {
-        self.storage_api.hset(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::HSet(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HDel> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HDel>) -> Response<HDel> {
-        self.storage_api.hdel(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::HDel(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HGetExp> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HGetExp>) -> Response<HGetExp> {
-        self.storage_api.hget_exp(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::HGetExp(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HSetExp> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HSetExp>) -> Response<HSetExp> {
-        self.storage_api.hset_exp(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::HSetExp(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HCard> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HCard>) -> Response<HCard> {
-        self.storage_api.hcard(&req).await.map_err(Into::into)
+        self.storage_api
+            .execute(Operation::HCard(req))
+            .map(operation::Output::downcast_result)
+            .await
+            .map_err(Into::into)
     }
 }
 
 impl<S: StorageApi> HandleRequest<HScan> for RpcHandler<S> {
     async fn handle_request(&self, req: Request<HScan>) -> Response<HScan> {
         self.storage_api
-            .hscan(&req)
+            .execute(Operation::HScan(req))
+            .map_ok(operation::Output::into_static)
+            .map(operation::Output::downcast_result)
             .await
-            .map(MapPage::into_static)
             .map_err(Into::into)
     }
 }

@@ -12,7 +12,7 @@ use {
 };
 
 pub mod operation;
-pub use operation::Operation;
+pub use operation::{Operation, OperationRef};
 
 #[cfg(any(feature = "rpc_client", feature = "rpc_server"))]
 pub mod rpc;
@@ -61,7 +61,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         get: &'a operation::Get<'a>,
     ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
-        self.execute(get).map(operation::Output::downcast_result)
+        self.execute_ref(get)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::Set`].
@@ -69,7 +70,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         set: &'a operation::Set<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute(set).map(operation::Output::downcast_result)
+        self.execute_ref(set)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::Del`].
@@ -77,7 +79,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         del: &'a operation::Del<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute(del).map(operation::Output::downcast_result)
+        self.execute_ref(del)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::GetExp`].
@@ -85,7 +88,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         get_exp: &'a operation::GetExp<'a>,
     ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
-        self.execute(get_exp)
+        self.execute_ref(get_exp)
             .map(operation::Output::downcast_result)
     }
 
@@ -94,7 +97,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         set_exp: &'a operation::SetExp<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute(set_exp)
+        self.execute_ref(set_exp)
             .map(operation::Output::downcast_result)
     }
 
@@ -103,7 +106,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hget: &'a operation::HGet<'a>,
     ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
-        self.execute(hget).map(operation::Output::downcast_result)
+        self.execute_ref(hget)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HSet`].
@@ -111,7 +115,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hset: &'a operation::HSet<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute(hset).map(operation::Output::downcast_result)
+        self.execute_ref(hset)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HDel`].
@@ -119,7 +124,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hdel: &'a operation::HDel<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute(hdel).map(operation::Output::downcast_result)
+        self.execute_ref(hdel)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HGetExp`].
@@ -127,7 +133,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hget_exp: &'a operation::HGetExp<'a>,
     ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
-        self.execute(hget_exp)
+        self.execute_ref(hget_exp)
             .map(operation::Output::downcast_result)
     }
 
@@ -136,7 +142,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hset_exp: &'a operation::HSetExp<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute(hset_exp)
+        self.execute_ref(hset_exp)
             .map(operation::Output::downcast_result)
     }
 
@@ -145,7 +151,8 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hcard: &'a operation::HCard<'a>,
     ) -> impl Future<Output = Result<u64>> + Send + 'a {
-        self.execute(hcard).map(operation::Output::downcast_result)
+        self.execute_ref(hcard)
+            .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`operation::HScan`].
@@ -153,13 +160,22 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hscan: &'a operation::HScan<'a>,
     ) -> impl Future<Output = Result<MapPage<'a>>> + Send + 'a {
-        self.execute(hscan).map(operation::Output::downcast_result)
+        self.execute_ref(hscan)
+            .map(operation::Output::downcast_result)
+    }
+
+    /// Executes the provided [`StorageApi`] [`OperationRef`].
+    fn execute_ref<'a>(
+        &'a self,
+        operation: impl Into<OperationRef<'a>> + Send + 'a,
+    ) -> impl Future<Output = Result<operation::Output<'a>>> + Send + 'a {
+        self.execute(operation.into().to_owned())
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`].
     fn execute<'a>(
         &'a self,
-        operation: impl Into<Operation<'a>> + Send + 'a,
+        operation: Operation<'a>,
     ) -> impl Future<Output = Result<operation::Output<'a>>> + Send + 'a;
 }
 

@@ -371,6 +371,7 @@ fn find_available_port() -> u16 {
 
 #[derive(Clone, Default)]
 struct TestStorage {
+    #[allow(clippy::type_complexity)]
     expect: Arc<Mutex<Option<(Operation<'static>, Result<operation::Output<'static>>)>>>,
 }
 

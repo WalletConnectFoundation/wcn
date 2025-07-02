@@ -127,7 +127,7 @@ where
         &'a self,
         operation: crate::Operation<'a>,
     ) -> Result<operation::Output<'a>> {
-        Ok(match operation.into() {
+        Ok(match operation {
             Operation::Get(op) => self.send::<Get>(&op)?.await??.into(),
             Operation::Set(op) => self.send::<Set>(&op)?.await??.into(),
             Operation::Del(op) => self.send::<Del>(&op)?.await??.into(),

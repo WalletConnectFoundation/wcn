@@ -1,16 +1,8 @@
 pub use wcn_rocks::StorageError as Error;
 use {
-    crate::Config,
-    futures::{future, stream::BoxStream, Stream, StreamExt, TryFutureExt as _},
-    raft::Infallible,
-    std::{
-        fmt::{self, Debug},
-        future::Future,
-        ops::RangeInclusive,
-    },
-    wcn::migration::{self, AnyError},
+    crate::config::Config,
     wcn_rocks::{
-        db::{cf::DbColumn, migration::ExportItem, schema},
+        db::{cf::DbColumn, schema},
         RocksBackend,
         RocksDatabaseBuilder,
         StorageError,
@@ -18,12 +10,9 @@ use {
     },
 };
 
-/// [`Storage`] backend.
 #[derive(Clone, Debug)]
 pub struct Storage {
-    /// The underlying database.
     db: RocksBackend,
-
     pub string: DbColumn<schema::StringColumn>,
     pub map: DbColumn<schema::MapColumn>,
 }
@@ -49,35 +38,8 @@ impl Storage {
         })
     }
 
-    // Required for tests only.
     pub fn db(&self) -> &RocksBackend {
         &self.db
-    }
-}
-
-impl<St, E> migration::StorageImport<St> for Storage
-where
-    St: Stream<Item = Result<ExportItem, E>> + Send + 'static,
-    E: fmt::Debug,
-{
-    fn import(&self, data: St) -> impl Future<Output = Result<(), impl AnyError>> {
-        self.db.import_all(data).map_err(map_err)
-    }
-}
-
-impl migration::StorageExport for Storage {
-    type Stream = BoxStream<'static, ExportItem>;
-
-    fn export(
-        &self,
-        keyrange: RangeInclusive<u64>,
-    ) -> impl Future<Output = Result<Self::Stream, impl AnyError>> {
-        let stream = self
-            .db
-            .export((self.string.clone(), self.map.clone()), keyrange)
-            .boxed();
-
-        future::ok::<_, Infallible>(stream)
     }
 }
 

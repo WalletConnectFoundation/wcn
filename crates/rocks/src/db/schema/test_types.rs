@@ -1,6 +1,6 @@
 use {
     crate::{
-        db::{schema::GenericKey, types::map::Pair},
+        db::{schema::GenericKey, types::Pair},
         util::serde::serialize,
     },
     rand::{distributions::Alphanumeric, Rng},

@@ -1,20 +1,74 @@
 use {
-    crate::{config::Config, network::rpc, Error, Node},
+    crate::Error,
     metrics_exporter_prometheus::PrometheusHandle,
-    std::{future::Future, net::SocketAddr, path::Path, time::Duration},
+    std::{
+        future::Future,
+        net::SocketAddr,
+        path::{Path, PathBuf},
+        time::Duration,
+    },
     sysinfo::{NetworkExt, NetworksExt},
     tap::{TapFallible, TapOptional},
     tokio::sync::oneshot,
-    wcn::cluster::Consensus,
-    wcn_rpc::PeerAddr,
+    wcn_rocks::RocksBackend,
 };
 
-fn update_loop(
-    mut cancel: oneshot::Receiver<()>,
-    node: Node,
+pub struct Config {
+    pub rocksdb_dir: PathBuf,
+    pub rocksdb: Option<RocksBackend>,
+}
+
+pub fn run_update_loop(cfg: Config) -> oneshot::Sender<()> {
+    let (tx, rx) = oneshot::channel();
+    tokio::task::spawn_blocking(move || update_loop(rx, cfg));
+    tx
+}
+
+pub fn serve(
+    addr: SocketAddr,
     prometheus: PrometheusHandle,
-    cfg: Config,
-) {
+) -> Result<impl Future<Output = Result<(), Error>>, Error> {
+    let (tx, rx) = oneshot::channel::<()>();
+
+    tokio::task::spawn_blocking({
+        let prometheus = prometheus.clone();
+        move || prometheus_upkeep_loop(rx, prometheus)
+    });
+
+    let svc = axum::Router::new()
+        .route(
+            "/metrics",
+            axum::routing::get(move || async move { prometheus.render() }),
+        )
+        .into_make_service();
+
+    Ok(async move {
+        let _tx = tx;
+
+        tracing::info!(?addr, "starting metrics server");
+
+        async move {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, svc).await
+        }
+        .await
+        .map_err(Error::MetricsServer)
+    })
+}
+
+fn prometheus_upkeep_loop(mut cancel: oneshot::Receiver<()>, prometheus: PrometheusHandle) {
+    loop {
+        if !matches!(cancel.try_recv(), Err(oneshot::error::TryRecvError::Empty)) {
+            return;
+        }
+
+        prometheus.run_upkeep();
+
+        std::thread::sleep(Duration::from_secs(15));
+    }
+}
+
+fn update_loop(mut cancel: oneshot::Receiver<()>, cfg: Config) {
     use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
 
     let mut sys = sysinfo::System::new_all();
@@ -78,18 +132,15 @@ fn update_loop(
         // We have a similar issue to https://github.com/facebook/rocksdb/issues/3889
         // PhysicalCoreID() consumes 5-10% CPU, so for now rocksdb metrics are behind a
         // flag.
-        if cfg.rocksdb.enable_metrics {
-            update_rocksdb_metrics(node.storage().db());
+        if let Some(db) = &cfg.rocksdb {
+            update_rocksdb_metrics(db);
         }
-
-        // `metrics` crate leaks memory if not being polled.
-        prometheus.run_upkeep();
 
         std::thread::sleep(Duration::from_secs(15));
     }
 }
 
-fn update_rocksdb_metrics(db: &wcn_rocks::RocksBackend) {
+fn update_rocksdb_metrics(db: &RocksBackend) {
     match db.memory_usage() {
         Ok(s) => {
             metrics::gauge!("wcn_rocksdb_mem_table_total").set(s.mem_table_total as f64);
@@ -178,69 +229,4 @@ fn find_storage_mount_point(mut path: &Path) -> Option<&Path> {
             return None;
         }
     }
-}
-
-pub(crate) fn serve(
-    cfg: Config,
-    node: Node,
-    prometheus: PrometheusHandle,
-) -> Result<impl Future<Output = Result<(), Error>>, Error> {
-    let addr: SocketAddr = ([0, 0, 0, 0], cfg.metrics_server_port).into();
-
-    let (tx, rx) = oneshot::channel();
-
-    let node_ = node.clone();
-    let prometheus_ = prometheus.clone();
-    tokio::task::spawn_blocking(move || update_loop(rx, node_, prometheus_, cfg));
-
-    let prometheus_ = prometheus.clone();
-    let svc = axum::Router::new()
-        .route(
-            "/metrics",
-            axum::routing::get(move || async move { prometheus.render() }),
-        )
-        .route(
-            "/metrics/{peer_id}",
-            axum::routing::get(move |axum::extract::Path(peer_id)| {
-                scrape_prometheus(prometheus_.clone(), node.clone(), peer_id)
-            }),
-        )
-        .into_make_service();
-
-    Ok(async move {
-        tracing::info!(?addr, "starting metrics server");
-
-        let result = async move {
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, svc).await
-        }
-        .await
-        .map_err(Error::MetricsServer);
-
-        let _ = tx.send(());
-
-        result
-    })
-}
-
-async fn scrape_prometheus(
-    handle: PrometheusHandle,
-    node: Node,
-    peer_id: libp2p::PeerId,
-) -> String {
-    if node.id() == &peer_id {
-        return handle.render();
-    }
-
-    let cluster = node.consensus().cluster();
-    let Some(addr) = cluster.node(&peer_id).map(|n| &n.addr) else {
-        tracing::warn!(%peer_id, "not in cluster");
-        return String::new();
-    };
-
-    let addr = PeerAddr::new(peer_id, addr.clone());
-    rpc::Metrics::send(&node.network().replica_api_client, &addr, &())
-        .await
-        .map_err(|err| tracing::warn!(?err, %peer_id, "failed to scrape prometheus metrics"))
-        .unwrap_or_default()
 }

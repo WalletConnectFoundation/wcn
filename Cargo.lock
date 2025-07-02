@@ -1296,17 +1296,16 @@ checksum = "230c5f1ca6a325a32553f8640d31ac9b49f2411e901e427570154868b46da4f7"
 
 [[package]]
 name = "bindgen"
-version = "0.65.1"
+version = "0.69.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfdf7b466f9a4903edc73f95d6d2bcd5baf8ae620638762244d3f60143643cc5"
+checksum = "271383c67ccabffb7381723dea0672a673f292304fcb45c01cc648c7a8d58088"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
- "peeking_take_while",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -1668,7 +1667,6 @@ checksum = "67523a3b4be3ce1989d607a828d036249522dd9c1c8de7f4dd2dae43a37369d1"
 dependencies = [
  "glob",
  "libc",
- "libloading",
 ]
 
 [[package]]
@@ -4111,16 +4109,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
-name = "libloading"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
-dependencies = [
- "cfg-if",
- "windows-targets 0.52.4",
-]
-
-[[package]]
 name = "libm"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4347,14 +4335,12 @@ dependencies = [
 
 [[package]]
 name = "librocksdb-sys"
-version = "0.11.0+8.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3386f101bcb4bd252d8e9d2fb41ec3b0862a15a62b478c355b2982efa469e3e"
+version = "0.17.2+9.10.0"
+source = "git+https://github.com/rust-rocksdb/rust-rocksdb.git?rev=55d68c3#55d68c30c8d5a1924b794678d9f468f3559c2685"
 dependencies = [
  "bindgen",
  "bzip2-sys",
  "cc",
- "glob",
  "libc",
  "libz-sys",
  "lz4-sys",
@@ -4437,9 +4423,9 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lz4-sys"
-version = "1.9.4"
+version = "1.11.1+lz4-1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57d27b317e207b10f69f5e75494119e391a96f48861ae870d1da6edac98ca900"
+checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
 dependencies = [
  "cc",
  "libc",
@@ -5037,12 +5023,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8835116a5c179084a830efb3adc117ab007512b535bc1a21c991d3b32a6b44dd"
 
 [[package]]
-name = "peeking_take_while"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
-
-[[package]]
 name = "pem"
 version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5208,16 +5188,6 @@ name = "ppv-lite86"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
-
-[[package]]
-name = "prettyplease"
-version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d3928fb5db768cb86f891ff014f0144589297e3c6a1aba6ed7cecfdace270c7"
-dependencies = [
- "proc-macro2",
- "syn 2.0.101",
-]
 
 [[package]]
 name = "primitive-types"
@@ -5753,40 +5723,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e898588f33fdd5b9420719948f9f2a32c922a246964576f71ba7f24f80610fbc"
 
 [[package]]
-name = "relay_rocks"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "async-trait",
- "base64 0.21.7",
- "byteorder",
- "bytes",
- "chrono",
- "derive_more 1.0.0",
- "env_logger 0.10.2",
- "futures",
- "futures-util",
- "iter-read",
- "itertools 0.11.0",
- "linemux",
- "metrics",
- "postcard",
- "rand 0.8.5",
- "rocksdb",
- "serde",
- "serde_json",
- "tap",
- "tempfile",
- "test-context",
- "test-log",
- "thiserror 1.0.64",
- "tokio",
- "tokio-util",
- "tracing",
- "wc",
-]
-
-[[package]]
 name = "reqwest"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5899,9 +5835,8 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb6f170a4041d50a0ce04b0d2e14916d6ca863ea2e422689a5b694395d299ffe"
+version = "0.23.0"
+source = "git+https://github.com/rust-rocksdb/rust-rocksdb.git?rev=55d68c3#55d68c30c8d5a1924b794678d9f468f3559c2685"
 dependencies = [
  "libc",
  "librocksdb-sys",
@@ -7765,6 +7700,7 @@ dependencies = [
  "wcn_admin_api",
  "wcn_auth",
  "wcn_core",
+ "wcn_logging",
  "wcn_node",
  "wcn_replication",
  "wcn_rpc",
@@ -7900,6 +7836,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atty",
+ "axum",
+ "base64 0.20.0",
+ "derivative",
+ "derive_more 1.0.0",
+ "envy",
+ "futures",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "proc-mounts",
+ "serde",
+ "sysinfo",
+ "tap",
+ "thiserror 1.0.64",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "vergen",
+ "vergen-pretty",
+ "wc",
+ "wcn_logging",
+ "wcn_rocks",
+ "wcn_rpc",
+ "wcn_storage_api2",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "wcn_domain"
 version = "0.1.0"
 dependencies = [
@@ -7932,16 +7902,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_logging"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "wcn_migration_api"
 version = "0.1.0"
 dependencies = [
  "futures",
- "relay_rocks",
  "serde",
  "thiserror 1.0.64",
  "time",
  "tracing",
  "wc",
+ "wcn_rocks",
  "wcn_rpc",
 ]
 
@@ -7977,7 +7956,6 @@ dependencies = [
  "pulse_monitor",
  "raft",
  "rand 0.8.5",
- "relay_rocks",
  "reqwest",
  "rmp-serde",
  "rstest",
@@ -8006,10 +7984,12 @@ dependencies = [
  "wcn_core",
  "wcn_domain",
  "wcn_echo_api",
+ "wcn_logging",
  "wcn_migration_api",
  "wcn_pulse_api",
  "wcn_raft_api",
  "wcn_replication",
+ "wcn_rocks",
  "wcn_rpc",
  "wcn_storage_api",
  "xxhash-rust",
@@ -8074,6 +8054,40 @@ dependencies = [
  "wcn_core",
  "wcn_domain",
  "wcn_storage_api",
+]
+
+[[package]]
+name = "wcn_rocks"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "base64 0.21.7",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "derive_more 1.0.0",
+ "env_logger 0.10.2",
+ "futures",
+ "futures-util",
+ "iter-read",
+ "itertools 0.11.0",
+ "linemux",
+ "metrics",
+ "postcard",
+ "rand 0.8.5",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "tap",
+ "tempfile",
+ "test-context",
+ "test-log",
+ "thiserror 1.0.64",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wc",
 ]
 
 [[package]]

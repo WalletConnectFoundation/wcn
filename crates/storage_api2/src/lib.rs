@@ -245,6 +245,18 @@ pub struct RecordExpiration {
     unix_timestamp_secs: u64,
 }
 
+impl RecordExpiration {
+    pub fn from_unix_timestamp_secs(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_secs: timestamp,
+        }
+    }
+
+    pub fn to_unix_timestamp_secs(&self) -> u64 {
+        self.unix_timestamp_secs
+    }
+}
+
 impl From<Duration> for RecordExpiration {
     fn from(dur: Duration) -> Self {
         Self {
@@ -290,6 +302,16 @@ impl RecordVersion {
                 .unwrap()
                 .as_micros() as u64,
         }
+    }
+
+    pub fn from_unix_timestamp_micros(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_micros: timestamp,
+        }
+    }
+
+    pub fn to_unix_timestamp_micros(&self) -> u64 {
+        self.unix_timestamp_micros
     }
 }
 
@@ -359,17 +381,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// [`StorageApi`] error.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-#[error("{kind:?}({details:?})")]
+#[error("{kind:?}({message:?})")]
 pub struct Error {
     kind: ErrorKind,
-    details: Option<String>,
-}
-
-impl Error {
-    /// Returns [`ErrorKind`] of this [`Error`].
-    pub fn kind(&self) -> ErrorKind {
-        self.kind
-    }
+    message: Option<String>,
 }
 
 /// [`Error`] kind.
@@ -396,8 +411,21 @@ pub enum ErrorKind {
 
 impl Error {
     /// Creates a new [`Error`].
-    fn new(kind: ErrorKind, details: Option<String>) -> Self {
-        Self { kind, details }
+    pub fn new(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            message: None,
+        }
+    }
+
+    pub fn with_message(mut self, message: impl ToString) -> Self {
+        self.message = Some(message.to_string());
+        self
+    }
+
+    /// Returns [`ErrorKind`] of this [`Error`].
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
     }
 }
 
@@ -405,7 +433,7 @@ impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self {
             kind,
-            details: None,
+            message: None,
         }
     }
 }

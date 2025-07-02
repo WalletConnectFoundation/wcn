@@ -146,9 +146,7 @@ where
 
 impl From<wcn_rpc::client2::Error> for crate::Error {
     fn from(err: wcn_rpc::client2::Error) -> Self {
-        Self::new(
-            crate::ErrorKind::Transport,
-            Some(format!("wcn_rpc::client::Error: {err}")),
-        )
+        Self::new(crate::ErrorKind::Transport)
+            .with_message(format!("wcn_rpc::client::Error: {err}"))
     }
 }

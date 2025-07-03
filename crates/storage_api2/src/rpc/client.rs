@@ -105,9 +105,9 @@ where
 
     async fn execute_ref<'a>(
         &'a self,
-        operation: impl Into<crate::OperationRef<'a>> + Send + 'a,
+        operation: crate::OperationRef<'a>,
     ) -> Result<operation::Output<'a>> {
-        match operation.into() {
+        match operation {
             OperationRef::Get(get) => self.get(get).await.map(Into::into),
             OperationRef::Set(set) => self.set(set).await.map(Into::into),
             OperationRef::Del(del) => self.del(del).await.map(Into::into),

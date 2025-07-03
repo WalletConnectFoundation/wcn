@@ -566,5 +566,3 @@ impl metrics::Enum for ErrorKind {
         self.into()
     }
 }
-
-// TODO: Vec<Connection> Load Balancer

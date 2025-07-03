@@ -16,6 +16,7 @@ use {
         operation,
         Bytes,
         KeyspaceVersion,
+        LoadBalancer,
         MapEntry,
         MapPage,
         Namespace,
@@ -75,9 +76,9 @@ async fn test_rpc_api<API, S>(
         port: server_port,
         keypair: server_keypair,
         connection_timeout: Duration::from_secs(10),
-        max_connections: 1,
-        max_connections_per_ip: 1,
-        max_connection_rate_per_ip: 1,
+        max_connections: 2,
+        max_connections_per_ip: 2,
+        max_connection_rate_per_ip: 2,
         max_concurrent_rpcs: 10,
         priority: transport::Priority::High,
     };
@@ -95,14 +96,18 @@ async fn test_rpc_api<API, S>(
     let client = client(client_config).unwrap();
 
     let server_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, server_port);
-    let client_conn = client
+    let client_conn1 = client
+        .connect(server_addr, &server_peer_id, ())
+        .await
+        .unwrap();
+    let client_conn2 = client
         .connect(server_addr, &server_peer_id, ())
         .await
         .unwrap();
 
     let ctx = &TestContext {
         storage,
-        client_conn,
+        lb: LoadBalancer::new([client_conn1, client_conn2]),
     };
 
     ctx.test_operations().await;
@@ -112,7 +117,7 @@ async fn test_rpc_api<API, S>(
 
 struct TestContext<API: Api> {
     storage: TestStorage,
-    client_conn: Connection<API>,
+    lb: LoadBalancer<Connection<API>>,
 }
 
 impl<API: Api> TestContext<API>
@@ -146,7 +151,7 @@ where
 
         let expect = (operation.clone(), result.clone());
         let _ = self.storage.expect.lock().unwrap().insert(expect);
-        assert_eq!(self.client_conn.execute(operation).await, result);
+        assert_eq!(self.lb.execute(operation).await, result);
     }
 
     async fn test_get(&self) {

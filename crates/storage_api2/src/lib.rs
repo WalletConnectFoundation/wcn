@@ -7,7 +7,13 @@ pub use {
 use {
     futures::FutureExt as _,
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, future::Future, str::FromStr, time::Duration},
+    std::{
+        borrow::Cow,
+        future::Future,
+        str::FromStr,
+        sync::{atomic, atomic::AtomicUsize},
+        time::Duration,
+    },
     time::OffsetDateTime as DateTime,
 };
 
@@ -55,13 +61,13 @@ pub type KeyspaceVersion = u64;
 ///   servers).
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
-pub trait StorageApi: Clone + Send + Sync + 'static {
+pub trait StorageApi: Send + Sync + 'static {
     /// Executes the provided [`operation::Get`].
     fn get<'a>(
         &'a self,
         get: &'a operation::Get<'a>,
     ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
-        self.execute_ref(get)
+        self.execute_ref(OperationRef::Get(get))
             .map(operation::Output::downcast_result)
     }
 
@@ -70,7 +76,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         set: &'a operation::Set<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(set)
+        self.execute_ref(OperationRef::Set(set))
             .map(operation::Output::downcast_result)
     }
 
@@ -79,7 +85,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         del: &'a operation::Del<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(del)
+        self.execute_ref(OperationRef::Del(del))
             .map(operation::Output::downcast_result)
     }
 
@@ -88,7 +94,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         get_exp: &'a operation::GetExp<'a>,
     ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
-        self.execute_ref(get_exp)
+        self.execute_ref(OperationRef::GetExp(get_exp))
             .map(operation::Output::downcast_result)
     }
 
@@ -97,7 +103,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         set_exp: &'a operation::SetExp<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(set_exp)
+        self.execute_ref(OperationRef::SetExp(set_exp))
             .map(operation::Output::downcast_result)
     }
 
@@ -106,7 +112,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hget: &'a operation::HGet<'a>,
     ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
-        self.execute_ref(hget)
+        self.execute_ref(OperationRef::HGet(hget))
             .map(operation::Output::downcast_result)
     }
 
@@ -115,7 +121,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hset: &'a operation::HSet<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(hset)
+        self.execute_ref(OperationRef::HSet(hset))
             .map(operation::Output::downcast_result)
     }
 
@@ -124,7 +130,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hdel: &'a operation::HDel<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(hdel)
+        self.execute_ref(OperationRef::HDel(hdel))
             .map(operation::Output::downcast_result)
     }
 
@@ -133,7 +139,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hget_exp: &'a operation::HGetExp<'a>,
     ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
-        self.execute_ref(hget_exp)
+        self.execute_ref(OperationRef::HGetExp(hget_exp))
             .map(operation::Output::downcast_result)
     }
 
@@ -142,7 +148,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hset_exp: &'a operation::HSetExp<'a>,
     ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(hset_exp)
+        self.execute_ref(OperationRef::HSetExp(hset_exp))
             .map(operation::Output::downcast_result)
     }
 
@@ -151,7 +157,7 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hcard: &'a operation::HCard<'a>,
     ) -> impl Future<Output = Result<u64>> + Send + 'a {
-        self.execute_ref(hcard)
+        self.execute_ref(OperationRef::HCard(hcard))
             .map(operation::Output::downcast_result)
     }
 
@@ -160,16 +166,16 @@ pub trait StorageApi: Clone + Send + Sync + 'static {
         &'a self,
         hscan: &'a operation::HScan<'a>,
     ) -> impl Future<Output = Result<MapPage<'a>>> + Send + 'a {
-        self.execute_ref(hscan)
+        self.execute_ref(OperationRef::HScan(hscan))
             .map(operation::Output::downcast_result)
     }
 
     /// Executes the provided [`StorageApi`] [`OperationRef`].
     fn execute_ref<'a>(
         &'a self,
-        operation: impl Into<OperationRef<'a>> + Send + 'a,
+        operation: OperationRef<'a>,
     ) -> impl Future<Output = Result<operation::Output<'a>>> + Send + 'a {
-        self.execute(operation.into().to_owned())
+        self.execute(operation.to_owned())
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`].
@@ -407,6 +413,58 @@ impl From<ErrorKind> for Error {
             kind,
             details: None,
         }
+    }
+}
+
+/// [`StorageApi`] Load balancer.
+///
+/// Load balances execution of [`Operation`]s across a list of [`StorageApi`]
+/// implementors using a round-robin strategy.
+pub struct LoadBalancer<S> {
+    /// List of [`StorageApi`]s of this [`LoadBalancer`].
+    ///
+    /// Can be safely modified at any point.
+    pub apis: Vec<S>,
+
+    counter: AtomicUsize,
+}
+
+impl<S: StorageApi> LoadBalancer<S> {
+    /// Creates a new [`LoadBalancer`].
+    pub fn new(connections: impl IntoIterator<Item = S>) -> Self {
+        Self {
+            apis: connections.into_iter().collect(),
+            // overflows and starts from `0`
+            counter: usize::MAX.into(),
+        }
+    }
+
+    fn next_api(&self) -> Result<&S> {
+        if self.apis.is_empty() {
+            return Err(Error::new(
+                ErrorKind::Internal,
+                Some("LoadBalancer::apis is empty".to_string()),
+            ));
+        }
+
+        let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+        Ok(&self.apis[n % self.apis.len()])
+    }
+}
+
+impl<S: StorageApi> StorageApi for LoadBalancer<S> {
+    async fn execute_ref<'a>(
+        &'a self,
+        operation: OperationRef<'a>,
+    ) -> Result<operation::Output<'a>> {
+        self.next_api()?.execute_ref(operation).await
+    }
+
+    async fn execute<'a>(
+        &'a self,
+        operation: crate::Operation<'a>,
+    ) -> Result<operation::Output<'a>> {
+        self.next_api()?.execute(operation).await
     }
 }
 

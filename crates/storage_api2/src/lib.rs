@@ -443,7 +443,7 @@ impl<S: StorageApi> LoadBalancer<S> {
         if self.apis.len() == 0 {
             return Err(Error::new(
                 ErrorKind::Internal,
-                Some(format!("LoadBalancer::apis is empty")),
+                Some("LoadBalancer::apis is empty".to_string()),
             ));
         }
 

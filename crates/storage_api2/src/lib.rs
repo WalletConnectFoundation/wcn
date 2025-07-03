@@ -440,7 +440,7 @@ impl<S: StorageApi> LoadBalancer<S> {
     }
 
     fn next_api(&self) -> Result<&S> {
-        if self.apis.len() == 0 {
+        if self.apis.is_empty() {
             return Err(Error::new(
                 ErrorKind::Internal,
                 Some("LoadBalancer::apis is empty".to_string()),

@@ -8,7 +8,7 @@ use {
     tracing_subscriber::EnvFilter,
     wc::future::StaticFutureExt,
     wcn_rpc::{
-        client2::{Api, Client, LoadBalancer},
+        client2::{Api, Client, Connection},
         identity::Keypair,
         transport,
     },
@@ -16,6 +16,7 @@ use {
         operation,
         Bytes,
         KeyspaceVersion,
+        LoadBalancer,
         MapEntry,
         MapPage,
         Namespace,
@@ -63,7 +64,7 @@ async fn test_rpc_api<API, S>(
 ) where
     API: Api<ConnectionParameters = ()>,
     S: wcn_rpc::server2::Server,
-    LoadBalancer<API>: StorageApi,
+    Connection<API>: StorageApi,
 {
     let storage = TestStorage::default();
 
@@ -116,12 +117,12 @@ async fn test_rpc_api<API, S>(
 
 struct TestContext<API: Api> {
     storage: TestStorage,
-    lb: LoadBalancer<API>,
+    lb: LoadBalancer<Connection<API>>,
 }
 
 impl<API: Api> TestContext<API>
 where
-    LoadBalancer<API>: StorageApi,
+    Connection<API>: StorageApi,
 {
     async fn test_operations(&self) {
         self.test_get().await;
@@ -140,6 +141,19 @@ where
         self.test_hscan().await;
     }
 
+    async fn test_operation(
+        &self,
+        operation: impl Into<Operation<'static>>,
+        output: impl Into<operation::Output<'static>>,
+    ) {
+        let operation = operation.into();
+        let result = Ok(output.into());
+
+        let expect = (operation.clone(), result.clone());
+        let _ = self.storage.expect.lock().unwrap().insert(expect);
+        assert_eq!(self.lb.execute(operation).await, result);
+    }
+
     async fn test_get(&self) {
         let op = operation::Get {
             namespace: namespace(),
@@ -147,11 +161,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(opt(record));
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::Get(&a), b));
-        assert_eq!(self.lb.get(&op).await, res);
+        self.test_operation(op, opt(record)).await;
     }
 
     async fn test_set(&self) {
@@ -162,11 +172,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::Set(&a), b));
-        assert_eq!(self.lb.set(&op).await, res);
+        self.test_operation(op, ()).await;
     }
 
     async fn test_del(&self) {
@@ -177,11 +183,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::Del(&a), b));
-        assert_eq!(self.lb.del(&op).await, res);
+        self.test_operation(op, ()).await;
     }
 
     async fn test_get_exp(&self) {
@@ -191,11 +193,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(opt(record_expiration));
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::GetExp(&a), b));
-        assert_eq!(self.lb.get_exp(&op).await, res);
+        self.test_operation(op, opt(record_expiration)).await;
     }
 
     async fn test_set_exp(&self) {
@@ -207,11 +205,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::SetExp(&a), b));
-        assert_eq!(self.lb.set_exp(&op).await, res);
+        self.test_operation(op, ()).await;
     }
 
     async fn test_hget(&self) {
@@ -222,11 +216,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(opt(record));
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HGet(&a), b));
-        assert_eq!(self.lb.hget(&op).await, res);
+        self.test_operation(op, opt(record)).await;
     }
 
     async fn test_hset(&self) {
@@ -237,11 +227,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HSet(&a), b));
-        assert_eq!(self.lb.hset(&op).await, res);
+        self.test_operation(op, ()).await;
     }
 
     async fn test_hdel(&self) {
@@ -253,11 +239,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HDel(&a), b));
-        assert_eq!(self.lb.hdel(&op).await, res);
+        self.test_operation(op, ()).await;
     }
 
     async fn test_hget_exp(&self) {
@@ -268,11 +250,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(opt(record_expiration));
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HGetExp(&a), b));
-        assert_eq!(self.lb.hget_exp(&op).await, res);
+        self.test_operation(op, opt(record_expiration)).await;
     }
 
     async fn test_hset_exp(&self) {
@@ -285,11 +263,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HSetExp(&a), b));
-        assert_eq!(self.lb.hset_exp(&op).await, res);
+        self.test_operation(op, ()).await;
     }
 
     async fn test_hcard(&self) {
@@ -299,11 +273,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(random::<u64>());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HCard(&a), b));
-        assert_eq!(self.lb.hcard(&op).await, res);
+        self.test_operation(op, random::<u64>()).await;
     }
 
     async fn test_hscan(&self) {
@@ -315,11 +285,7 @@ where
             keyspace_version: keyspace_version(),
         };
 
-        let res = Ok(map_page());
-
-        self.storage
-            .assert_next(&op, &res, |a, b| assert_eq!(Operation::HScan(&a), b));
-        assert_eq!(self.lb.hscan(&op).await, res);
+        self.test_operation(op, map_page()).await;
     }
 }
 
@@ -410,46 +376,14 @@ fn find_available_port() -> u16 {
 
 #[derive(Clone, Default)]
 struct TestStorage {
-    expect_fn: Arc<Mutex<Option<Box<dyn TestStorageFn>>>>,
-}
-
-pub trait TestStorageFn:
-    for<'a> FnOnce(Operation<'a>) -> Result<operation::Output<'static>> + Send + 'static
-{
-}
-
-impl<F> TestStorageFn for F where
-    F: for<'a> FnOnce(Operation<'a>) -> Result<operation::Output<'static>> + Send + 'static
-{
-}
-
-impl TestStorage {
-    fn assert_next<Op, Out, F>(&self, op: &Op, result: &Result<Out>, assert_fn: F)
-    where
-        Op: Clone + Send + 'static,
-        Out: Clone + Into<operation::Output<'static>>,
-        F: for<'a> FnOnce(Op, Operation<'a>) + Send + 'static,
-    {
-        let op = op.clone();
-        let res = result.clone().map(Into::into);
-
-        let _ = self
-            .expect_fn
-            .lock()
-            .unwrap()
-            .insert(Box::new(move |operation| {
-                assert_fn(op, operation);
-                res
-            }));
-    }
+    #[allow(clippy::type_complexity)]
+    expect: Arc<Mutex<Option<(Operation<'static>, Result<operation::Output<'static>>)>>>,
 }
 
 impl StorageApi for TestStorage {
-    async fn execute<'a>(
-        &'a self,
-        operation: impl Into<Operation<'a>> + Send + 'a,
-    ) -> Result<operation::Output<'a>> {
-        let expect_fn = self.expect_fn.lock().unwrap().take().unwrap();
-        expect_fn(operation.into())
+    async fn execute<'a>(&'a self, operation: Operation<'a>) -> Result<operation::Output<'a>> {
+        let expected = self.expect.lock().unwrap().take().unwrap();
+        assert_eq!(operation, expected.0);
+        expected.1
     }
 }

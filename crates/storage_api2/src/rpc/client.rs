@@ -1,8 +1,8 @@
 pub use wcn_rpc::client2::Config;
 use {
     super::*,
-    crate::{operation, MapPage, Operation, Record, Result, StorageApi},
-    wcn_rpc::client2::{Client, Connection, ConnectionHandler, LoadBalancer, RpcHandler},
+    crate::{operation, MapPage, Operation, OperationRef, Record, Result, StorageApi},
+    wcn_rpc::client2::{Client, Connection, ConnectionHandler, RpcHandler},
 };
 
 /// RPC [`Client`] of [`CoordinatorApi`].
@@ -103,53 +103,43 @@ where
         self.send::<HScan>(op)?.await?.map_err(Into::into)
     }
 
-    async fn execute<'a>(
+    async fn execute_ref<'a>(
         &'a self,
-        operation: impl Into<crate::Operation<'a>> + Send + 'a,
+        operation: crate::OperationRef<'a>,
     ) -> Result<operation::Output<'a>> {
-        match operation.into() {
-            Operation::Get(get) => self.get(get).await.map(Into::into),
-            Operation::Set(set) => self.set(set).await.map(Into::into),
-            Operation::Del(del) => self.del(del).await.map(Into::into),
-            Operation::GetExp(get_exp) => self.get_exp(get_exp).await.map(Into::into),
-            Operation::SetExp(set_exp) => self.set_exp(set_exp).await.map(Into::into),
-            Operation::HGet(hget) => self.hget(hget).await.map(Into::into),
-            Operation::HSet(hset) => self.hset(hset).await.map(Into::into),
-            Operation::HDel(hdel) => self.hdel(hdel).await.map(Into::into),
-            Operation::HGetExp(hget_exp) => self.hget_exp(hget_exp).await.map(Into::into),
-            Operation::HSetExp(hset_exp) => self.hset_exp(hset_exp).await.map(Into::into),
-            Operation::HCard(hcard) => self.hcard(hcard).await.map(Into::into),
-            Operation::HScan(hscan) => self.hscan(hscan).await.map(Into::into),
+        match operation {
+            OperationRef::Get(get) => self.get(get).await.map(Into::into),
+            OperationRef::Set(set) => self.set(set).await.map(Into::into),
+            OperationRef::Del(del) => self.del(del).await.map(Into::into),
+            OperationRef::GetExp(get_exp) => self.get_exp(get_exp).await.map(Into::into),
+            OperationRef::SetExp(set_exp) => self.set_exp(set_exp).await.map(Into::into),
+            OperationRef::HGet(hget) => self.hget(hget).await.map(Into::into),
+            OperationRef::HSet(hset) => self.hset(hset).await.map(Into::into),
+            OperationRef::HDel(hdel) => self.hdel(hdel).await.map(Into::into),
+            OperationRef::HGetExp(hget_exp) => self.hget_exp(hget_exp).await.map(Into::into),
+            OperationRef::HSetExp(hset_exp) => self.hset_exp(hset_exp).await.map(Into::into),
+            OperationRef::HCard(hcard) => self.hcard(hcard).await.map(Into::into),
+            OperationRef::HScan(hscan) => self.hscan(hscan).await.map(Into::into),
         }
     }
-}
 
-impl<API> StorageApi for LoadBalancer<API>
-where
-    API: wcn_rpc::client2::Api<
-        ConnectionParameters = (),
-        ConnectionHandler = ConnectionHandler,
-        RpcHandler = RpcHandler,
-    >,
-    Connection<API>: StorageApi,
-{
     async fn execute<'a>(
         &'a self,
-        operation: impl Into<crate::Operation<'a>> + Send + 'a,
+        operation: crate::Operation<'a>,
     ) -> Result<operation::Output<'a>> {
-        Ok(match operation.into() {
-            Operation::Get(op) => self.send::<Get>(op)?.await??.into(),
-            Operation::Set(op) => self.send::<Set>(op)?.await??.into(),
-            Operation::Del(op) => self.send::<Del>(op)?.await??.into(),
-            Operation::GetExp(op) => self.send::<GetExp>(op)?.await??.into(),
-            Operation::SetExp(op) => self.send::<SetExp>(op)?.await??.into(),
-            Operation::HGet(op) => self.send::<HGet>(op)?.await??.into(),
-            Operation::HSet(op) => self.send::<HSet>(op)?.await??.into(),
-            Operation::HDel(op) => self.send::<HDel>(op)?.await??.into(),
-            Operation::HGetExp(op) => self.send::<HGetExp>(op)?.await??.into(),
-            Operation::HSetExp(op) => self.send::<HSetExp>(op)?.await??.into(),
-            Operation::HCard(op) => self.send::<HCard>(op)?.await??.into(),
-            Operation::HScan(op) => self.send::<HScan>(op)?.await??.into(),
+        Ok(match operation {
+            Operation::Get(op) => self.send::<Get>(&op)?.await??.into(),
+            Operation::Set(op) => self.send::<Set>(&op)?.await??.into(),
+            Operation::Del(op) => self.send::<Del>(&op)?.await??.into(),
+            Operation::GetExp(op) => self.send::<GetExp>(&op)?.await??.into(),
+            Operation::SetExp(op) => self.send::<SetExp>(&op)?.await??.into(),
+            Operation::HGet(op) => self.send::<HGet>(&op)?.await??.into(),
+            Operation::HSet(op) => self.send::<HSet>(&op)?.await??.into(),
+            Operation::HDel(op) => self.send::<HDel>(&op)?.await??.into(),
+            Operation::HGetExp(op) => self.send::<HGetExp>(&op)?.await??.into(),
+            Operation::HSetExp(op) => self.send::<HSetExp>(&op)?.await??.into(),
+            Operation::HCard(op) => self.send::<HCard>(&op)?.await??.into(),
+            Operation::HScan(op) => self.send::<HScan>(&op)?.await??.into(),
         })
     }
 }

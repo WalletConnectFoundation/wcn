@@ -22,10 +22,50 @@ use {
 };
 
 /// Sum type of all Storage API operations.
+#[derive(Clone, Debug, From, PartialEq, Eq)]
+pub enum Operation<'a> {
+    Get(Get<'a>),
+    Set(Set<'a>),
+    Del(Del<'a>),
+    GetExp(GetExp<'a>),
+    SetExp(SetExp<'a>),
+
+    HGet(HGet<'a>),
+    HSet(HSet<'a>),
+    HDel(HDel<'a>),
+    HGetExp(HGetExp<'a>),
+    HSetExp(HSetExp<'a>),
+    HCard(HCard<'a>),
+    HScan(HScan<'a>),
+}
+
+impl<'a> Operation<'a> {
+    /// Converts &self to [`OperationRef`].
+    ///
+    /// Reference to reference conversion, does not re-allocate.
+    pub fn to_ref(&'a self) -> OperationRef<'a> {
+        match self {
+            Self::Get(op) => OperationRef::Get(op),
+            Self::Set(op) => OperationRef::Set(op),
+            Self::Del(op) => OperationRef::Del(op),
+            Self::GetExp(op) => OperationRef::GetExp(op),
+            Self::SetExp(op) => OperationRef::SetExp(op),
+            Self::HGet(op) => OperationRef::HGet(op),
+            Self::HSet(op) => OperationRef::HSet(op),
+            Self::HDel(op) => OperationRef::HDel(op),
+            Self::HGetExp(op) => OperationRef::HGetExp(op),
+            Self::HSetExp(op) => OperationRef::HSetExp(op),
+            Self::HCard(op) => OperationRef::HCard(op),
+            Self::HScan(op) => OperationRef::HScan(op),
+        }
+    }
+}
+
+/// Sum type of references to all Storage API operations.
 #[derive(Clone, Debug, From, EnumDiscriminants, PartialEq, Eq)]
 #[strum_discriminants(name(Name))]
 #[strum_discriminants(derive(Ordinalize))]
-pub enum Operation<'a> {
+pub enum OperationRef<'a> {
     Get(&'a Get<'a>),
     Set(&'a Set<'a>),
     Del(&'a Del<'a>),
@@ -39,6 +79,28 @@ pub enum Operation<'a> {
     HSetExp(&'a HSetExp<'a>),
     HCard(&'a HCard<'a>),
     HScan(&'a HScan<'a>),
+}
+
+impl<'a> OperationRef<'a> {
+    /// Converts `self` into owned [`Operation`].
+    ///
+    /// Re-allocates the underying heap-allocated data.
+    pub fn to_owned(self) -> Operation<'a> {
+        match self {
+            Self::Get(op) => Operation::Get(op.clone()),
+            Self::Set(op) => Operation::Set(op.clone()),
+            Self::Del(op) => Operation::Del(op.clone()),
+            Self::GetExp(op) => Operation::GetExp(op.clone()),
+            Self::SetExp(op) => Operation::SetExp(op.clone()),
+            Self::HGet(op) => Operation::HGet(op.clone()),
+            Self::HSet(op) => Operation::HSet(op.clone()),
+            Self::HDel(op) => Operation::HDel(op.clone()),
+            Self::HGetExp(op) => Operation::HGetExp(op.clone()),
+            Self::HSetExp(op) => Operation::HSetExp(op.clone()),
+            Self::HCard(op) => Operation::HCard(op.clone()),
+            Self::HScan(op) => Operation::HScan(op.clone()),
+        }
+    }
 }
 
 impl metrics::Enum for Name {
@@ -60,7 +122,7 @@ impl metrics::Enum for Name {
     }
 }
 
-impl<'a> Operation<'a> {
+impl<'a> OperationRef<'a> {
     /// Returns [`Name`] of this [`Operation`].
     pub fn name(&self) -> Name {
         self.discriminant()
@@ -226,5 +288,16 @@ impl Output<'_> {
             .try_into()
             .tap_err(|err| tracing::error!(?err, "Failed to downcast output"))
             .map_err(|err| Error::new(ErrorKind::Internal, Some(err.to_string())))
+    }
+
+    /// Converts `Self` into 'static.
+    pub fn into_static(self) -> Output<'static> {
+        match self {
+            Self::Record(opt) => Output::Record(opt.map(Record::into_static)),
+            Self::Expiration(record_expiration) => Output::Expiration(record_expiration),
+            Self::MapPage(map_page) => Output::MapPage(map_page.into_static()),
+            Self::Cardinality(card) => Output::Cardinality(card),
+            Self::None => Output::None,
+        }
     }
 }

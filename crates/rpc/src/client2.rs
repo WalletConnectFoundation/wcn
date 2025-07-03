@@ -24,10 +24,7 @@ use {
         future::Future,
         io,
         net::{SocketAddr, SocketAddrV4},
-        sync::{
-            atomic::{self, AtomicUsize},
-            Arc,
-        },
+        sync::Arc,
         time::Duration,
     },
     strum::{EnumDiscriminants, IntoDiscriminant, IntoStaticStr},
@@ -567,46 +564,5 @@ fn check_connection_status(code: i32) -> Result<(), ErrorInner> {
 impl metrics::Enum for ErrorKind {
     fn as_str(&self) -> &'static str {
         self.into()
-    }
-}
-
-// TODO: Vec<Connection> Load Balancer
-
-/// [`Connection`] Load balancer.
-///
-/// Load balances [`Connection::send`] across a list of [`Connection`]s using a
-/// round-robin strategy.
-pub struct LoadBalancer<API: Api> {
-    /// List of [`Connections`] of this [`LoadBalancer`].
-    ///
-    /// Can be safely modified at any point.
-    pub connections: Vec<Connection<API>>,
-
-    counter: AtomicUsize,
-}
-
-impl<API: Api> LoadBalancer<API> {
-    /// Creates a new [`LoadBalancer`].
-    pub fn new(connections: impl IntoIterator<Item = Connection<API>>) -> Self {
-        Self {
-            connections: connections.into_iter().collect(),
-            // overflows and starts from `0`
-            counter: usize::MAX.into(),
-        }
-    }
-
-    /// Sends the provided RPC using this [`LoadBalancer`].
-    ///
-    /// Doesn't automatically retry errors, you can call this fn again if you
-    /// want to retry.
-    pub fn send<'a, RPC: RpcV2>(
-        &'a self,
-        input: &'a RpcHandlerInput<'a, API::RpcHandler, RPC>,
-    ) -> Result<impl Future<Output = Result<RpcHandlerOutput<API::RpcHandler, RPC>>> + Send + 'a>
-    where
-        API::RpcHandler: HandleRpc<RPC>,
-    {
-        let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
-        self.connections[n % self.connections.len()].send(input)
     }
 }

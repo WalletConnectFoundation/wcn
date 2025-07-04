@@ -2,13 +2,7 @@
 
 use {
     crate::{
-        self as cluster,
-        client,
-        node,
-        smart_contract,
-        Client,
-        Node,
-        Version as ClusterVersion,
+        self as cluster, client, node, smart_contract, Client, Node, Version as ClusterVersion,
     },
     derive_more::derive::Into,
     serde::{Deserialize, Serialize},

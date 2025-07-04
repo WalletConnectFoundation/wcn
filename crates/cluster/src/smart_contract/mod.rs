@@ -4,12 +4,7 @@ pub mod evm;
 
 use {
     crate::{
-        self as cluster,
-        migration,
-        node_operator,
-        Keyspace,
-        NodeOperators,
-        SerializedEvent,
+        self as cluster, migration, node_operator, Keyspace, NodeOperators, SerializedEvent,
         Settings,
     },
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
@@ -21,14 +16,7 @@ use {
 
 #[allow(unused_imports)] // for doc comments
 use crate::{
-    keyspace,
-    maintenance,
-    settings,
-    Cluster,
-    Maintenance,
-    Migration,
-    NodeOperator,
-    MAX_OPERATORS,
+    keyspace, maintenance, settings, Cluster, Maintenance, Migration, NodeOperator, MAX_OPERATORS,
 };
 
 /// Deployer of WCN Cluster [`SmartContract`]s.

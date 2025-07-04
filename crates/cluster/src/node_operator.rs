@@ -2,13 +2,7 @@
 
 use {
     crate::{
-        self as cluster,
-        client,
-        node,
-        smart_contract,
-        Client,
-        Config,
-        Node,
+        self as cluster, client, node, smart_contract, Client, Config, Node,
         Version as ClusterVersion,
     },
     derive_more::derive::{AsRef, Into},

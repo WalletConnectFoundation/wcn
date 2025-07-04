@@ -3,8 +3,13 @@ use {
         node_bindings::{Anvil, AnvilInstance},
         signers::local::PrivateKeySigner,
     },
+    assert_cmd::assert,
+    hex::ToHex,
     libp2p::PeerId,
-    std::{collections::HashSet, net::SocketAddrV4, time::Duration},
+    std::{
+        collections::HashSet, io::Write, net::SocketAddrV4, path::PathBuf, str::FromStr,
+        time::Duration,
+    },
     tracing_subscriber::EnvFilter,
     wcn_cluster::{
         keyspace::ReplicationStrategy,
@@ -12,13 +17,9 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read,
-            Signer,
+            Read, Signer,
         },
-        Cluster,
-        Node,
-        NodeOperator,
-        Settings,
+        Cluster, Node, NodeOperator, Settings, SmartContract,
     },
 };
 
@@ -175,4 +176,67 @@ async fn connect(
 ) -> Cluster<Config> {
     let provider = provider(new_signer(operator, anvil), anvil).await;
     Cluster::connect(Config, &provider, address).await.unwrap()
+}
+
+#[tokio::test]
+pub async fn cli_test_suite() {
+    // Spin up a local Anvil instance automatically
+    let anvil = Anvil::new()
+        .block_time(1)
+        .chain_id(31337)
+        .try_spawn()
+        .unwrap();
+
+    let cfg = Config;
+
+    let settings = Settings {
+        max_node_operator_data_bytes: 4096,
+    };
+
+    // Use Anvil's first key for deployment - convert PrivateKeySigner to our Signer
+    let private_key_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let signer =
+        Signer::try_from_private_key(&format!("{:#x}", private_key_signer.to_bytes())).unwrap();
+
+    let provider = provider(signer, &anvil).await;
+
+    let operators = (1..=5).map(|n| new_node_operator(n, &anvil)).collect();
+
+    let cluster = Cluster::deploy(cfg, &provider, settings, operators)
+        .await
+        .unwrap();
+
+    let sc = cluster.smart_contract();
+
+    let mut tempdir = std::env::temp_dir();
+    tempdir.push("test_key_file");
+
+    let key_bytes = anvil.keys()[0].to_bytes().to_vec();
+    let key_bytes = hex::encode(key_bytes).into_bytes();
+
+    let mut file = std::fs::File::create(&tempdir).unwrap();
+    file.write_all(&key_bytes).unwrap();
+
+    test_migration_start(&anvil, &tempdir, sc).unwrap();
+}
+
+fn test_migration_start(
+    anvil: &AnvilInstance,
+    dir: &PathBuf,
+    sc: &impl SmartContract,
+) -> anyhow::Result<()> {
+    let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
+
+    cmd.arg("migration")
+        .arg("--key-file")
+        .arg(dir.display().to_string())
+        .arg("--provider-url")
+        .arg(anvil.endpoint_url().to_string())
+        .arg("--contract-address")
+        .arg(sc.address().to_string())
+        .arg("start")
+        .assert()
+        .success();
+
+    Ok(())
 }

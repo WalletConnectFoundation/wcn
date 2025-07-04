@@ -4,13 +4,7 @@ pub mod evm;
 
 use {
     crate::{
-        self as cluster,
-        migration,
-        node_operator,
-        Event,
-        Keyspace,
-        NodeOperators,
-        Ownership,
+        self as cluster, migration, node_operator, Event, Keyspace, NodeOperators, Ownership,
         Settings,
     },
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
@@ -22,14 +16,7 @@ use {
 
 #[allow(unused_imports)] // for doc comments
 use crate::{
-    keyspace,
-    maintenance,
-    settings,
-    Cluster,
-    Maintenance,
-    Migration,
-    NodeOperator,
-    MAX_OPERATORS,
+    keyspace, maintenance, settings, Cluster, Maintenance, Migration, NodeOperator, MAX_OPERATORS,
 };
 
 /// Snapshot of [`cluster::View`] fetched from a [`SmartContract`] state.

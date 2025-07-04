@@ -2,14 +2,7 @@
 
 use {
     crate::{
-        self as cluster,
-        client,
-        node,
-        smart_contract,
-        Client,
-        Config,
-        EncryptionKey,
-        Node,
+        self as cluster, client, node, smart_contract, Client, Config, EncryptionKey, Node,
         Version as ClusterVersion,
     },
     derive_more::derive::{AsRef, Into},
@@ -62,7 +55,7 @@ impl Name {
 pub struct Data(pub(crate) Vec<u8>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
-#[derive(AsRef, Clone, Debug)]
+#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct NodeOperator<N = Node> {
     /// ID of this [`NodeOperator`].
     #[as_ref]

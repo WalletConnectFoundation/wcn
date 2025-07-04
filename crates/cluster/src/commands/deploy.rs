@@ -1,0 +1,85 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use tokio::{fs::File, io::AsyncReadExt};
+use wcn_cluster::{
+    node_operator::{Id, Name},
+    smart_contract::{self, Deployer, Read},
+    Node, NodeOperator, NodeOperators, Settings,
+};
+
+// TODO: discuss if ideal
+/// Maximum number of on-chain bytes stored for a single
+const MAX_NODE_OPERATOR_DATA_BYTES: u16 = 4096;
+
+#[derive(Debug, clap::Args)]
+pub struct DeployCmd {
+    #[command(flatten)]
+    shared_args: super::SharedArgs,
+
+    #[clap(long = "operators-file", short = 'n')]
+    /// Path to a file containing a serialized list initial node operators.
+    /// e.g. --operators-json '[{"peer_id":"abcdefg","addr":"127.0.0.1:40001"}]'
+    operators_file: Option<PathBuf>,
+
+    #[clap(long = "operators", short = 'o')]
+    /// JSON string containing a serialized list of initial node operators.
+    operators: Option<String>,
+}
+
+pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
+    let provider = cmd.shared_args.provider().await?;
+
+    // TOOD: maybe consider impl a default
+    let settings = Settings {
+        max_node_operator_data_bytes: MAX_NODE_OPERATOR_DATA_BYTES,
+    };
+
+    if cmd.operators.is_none() && cmd.operators_file.is_none() {
+        // TODO: discuss if worth emitting a warning instead of an error
+        return Err(anyhow::anyhow!(
+            "No operators provided, use --operators or --operators-file"
+        ));
+    }
+
+    let operators = {
+        if let Some(operators) = cmd.operators {
+            parse_operators_from_str(&operators)?
+        } else if let Some(path) = cmd.operators_file {
+            read_operators_from_file(&path).await?
+        } else {
+            vec![]
+        }
+    };
+
+    // let operators: Vec<_> = operators
+    //     .into_iter()
+    //     .map(NodeOperator::serialize)
+    //     .collect()?;
+    //
+    // let operators = NodeOperators::new(operators.into_iter().map(Some))?;
+    //
+    // let contract = provider.deploy(settings, operators).await?;
+    // let address = contract.address()?;
+    //
+    // println!("Cluster contract deployed at address: {}", address);
+
+    Ok(())
+}
+
+fn parse_operators_from_str(operators_str: &str) -> anyhow::Result<Vec<NodeOperator>> {
+    serde_json::from_str::<Vec<NodeOperator>>(operators_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse operators JSON: {}", e))
+}
+
+async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOperator>> {
+    let mut contents = File::open(path).await?;
+    let mut buf = String::new();
+
+    contents.read_to_string(&mut buf).await?;
+
+    let operators = serde_json::from_str::<Vec<NodeOperator>>(buf.as_str())
+        .map_err(|e| anyhow::anyhow!("Failed to parse operators file: {}", e))?;
+
+    Ok(operators)
+}

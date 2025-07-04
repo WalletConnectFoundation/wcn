@@ -7,7 +7,7 @@ use {
 };
 
 /// Client of a WCN cluster.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Client {
     /// [`PeerId`] of the [`Client`]. Used for authentication.
     pub peer_id: PeerId,

@@ -32,6 +32,19 @@ pub struct Namespace {
     id: u8,
 }
 
+impl Namespace {
+    pub fn as_bytes(&self) -> impl Iterator<Item = u8> {
+        self.node_operator_id.into_iter().chain(Some(self.id))
+    }
+
+    pub fn from_bytes(bytes: [u8; 21]) -> Self {
+        Self {
+            node_operator_id: bytes[0..20].try_into().unwrap(),
+            id: bytes[20],
+        }
+    }
+}
+
 /// Version of the keyspace of a WCN cluster.
 ///
 /// Keyspace changes after data rebalancing within a WCN Cluster.
@@ -245,6 +258,18 @@ pub struct RecordExpiration {
     unix_timestamp_secs: u64,
 }
 
+impl RecordExpiration {
+    pub fn from_unix_timestamp_secs(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_secs: timestamp,
+        }
+    }
+
+    pub fn to_unix_timestamp_secs(&self) -> u64 {
+        self.unix_timestamp_secs
+    }
+}
+
 impl From<Duration> for RecordExpiration {
     fn from(dur: Duration) -> Self {
         Self {
@@ -290,6 +315,16 @@ impl RecordVersion {
                 .unwrap()
                 .as_micros() as u64,
         }
+    }
+
+    pub fn from_unix_timestamp_micros(timestamp: u64) -> Self {
+        Self {
+            unix_timestamp_micros: timestamp,
+        }
+    }
+
+    pub fn to_unix_timestamp_micros(&self) -> u64 {
+        self.unix_timestamp_micros
     }
 }
 
@@ -359,17 +394,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// [`StorageApi`] error.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-#[error("{kind:?}({details:?})")]
+#[error("{kind:?}({message:?})")]
 pub struct Error {
     kind: ErrorKind,
-    details: Option<String>,
-}
-
-impl Error {
-    /// Returns [`ErrorKind`] of this [`Error`].
-    pub fn kind(&self) -> ErrorKind {
-        self.kind
-    }
+    message: Option<String>,
 }
 
 /// [`Error`] kind.
@@ -396,8 +424,21 @@ pub enum ErrorKind {
 
 impl Error {
     /// Creates a new [`Error`].
-    fn new(kind: ErrorKind, details: Option<String>) -> Self {
-        Self { kind, details }
+    pub fn new(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            message: None,
+        }
+    }
+
+    pub fn with_message(mut self, message: impl ToString) -> Self {
+        self.message = Some(message.to_string());
+        self
+    }
+
+    /// Returns [`ErrorKind`] of this [`Error`].
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
     }
 }
 
@@ -405,21 +446,38 @@ impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self {
             kind,
-            details: None,
+            message: None,
         }
     }
 }
 
 #[cfg(test)]
-#[test]
-fn test_namespace_from_str() {
-    fn ns(s: &str) -> Result<Namespace, InvalidNamespaceError> {
-        s.parse()
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_from_str() {
+        fn ns(s: &str) -> Result<Namespace, InvalidNamespaceError> {
+            s.parse()
+        }
+
+        assert!(ns("0x14Cb1e6fb683A83455cA283e10f4959740A49ed7/0").is_ok());
+        assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/0").is_ok());
+        assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/255").is_ok());
+        assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/256").is_err());
+        assert!(ns("4Cb1e6fb683A83455cA283e10f4959740A49ed7/1").is_err());
     }
 
-    assert!(ns("0x14Cb1e6fb683A83455cA283e10f4959740A49ed7/0").is_ok());
-    assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/0").is_ok());
-    assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/255").is_ok());
-    assert!(ns("14Cb1e6fb683A83455cA283e10f4959740A49ed7/256").is_err());
-    assert!(ns("4Cb1e6fb683A83455cA283e10f4959740A49ed7/1").is_err());
+    #[test]
+    fn namespace_from_bytes() {
+        let bytes = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ];
+        let ns = Namespace::from_bytes(bytes);
+        assert_eq!(ns.node_operator_id, [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+        ]);
+        assert_eq!(ns.id, 20);
+        assert_eq!(ns.as_bytes().collect::<Vec<_>>(), bytes.to_owned());
+    }
 }

@@ -1,5 +1,6 @@
 pub use db::{
     context::{DataContext, UnixTimestampSecs},
+    types::*,
     RocksBackend,
     RocksDatabaseBuilder,
     RocksdbDatabaseConfig,

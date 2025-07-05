@@ -92,7 +92,7 @@ fn generate(args: GenerateCmd) -> anyhow::Result<()> {
             data_encoding::BASE64.encode(&private_key)
         );
         println!("Public key: {}", data_encoding::BASE64.encode(&public_key));
-        println!("Peer ID: {}\n", peer_id);
+        println!("Peer ID: {peer_id}\n");
     }
 
     Ok(())
@@ -115,7 +115,7 @@ fn validate(args: ValidateCmd) -> anyhow::Result<()> {
         "Public key: {}",
         data_encoding::BASE64.encode(public_key.as_bytes())
     );
-    println!("Peer ID: {}\n", peer_id);
+    println!("Peer ID: {peer_id}\n");
 
     Ok(())
 }

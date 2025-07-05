@@ -18,20 +18,6 @@ use {
     migration_api::Server as _,
     pin_project::{pin_project, pinned_drop},
     raft::Raft,
-    relay_rocks::{
-        self as rocksdb,
-        db::{
-            cf::DbColumn,
-            migration::ExportItem,
-            schema::{self, GenericKey},
-            types::{
-                common::iterators::ScanOptions,
-                map::Pair,
-                MapStorage as _,
-                StringStorage as _,
-            },
-        },
-    },
     std::{
         collections::{HashMap, HashSet},
         fmt::Debug,
@@ -45,6 +31,15 @@ use {
     tokio::sync::mpsc,
     wc::metrics::{future_metrics, FutureExt as _},
     wcn::{cluster::Consensus, migration::PullKeyrangeError},
+    wcn_rocks::{
+        self as rocksdb,
+        db::{
+            cf::DbColumn,
+            migration::ExportItem,
+            schema::{self, GenericKey},
+            types::{common::iterators::ScanOptions, MapStorage as _, Pair, StringStorage as _},
+        },
+    },
     wcn_rpc::{
         client::middleware::{MeteredExt as _, WithTimeoutsExt as _},
         middleware::{Metered, Timeouts, WithTimeouts},
@@ -200,7 +195,7 @@ impl storage_api::Server for StorageApiServer {
         key: storage_api::Key,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
     {
-        async move { self.string_storage().exp(&generic_key(key)).await }
+        async move { self.string_storage().get_exp(&generic_key(key)).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
             .map(|res| match res {
                 Ok(timestamp) => Ok(Some(
@@ -221,7 +216,7 @@ impl storage_api::Server for StorageApiServer {
         let exp = expiration.into().unix_timestamp_secs();
         let ver = version.unix_timestamp_micros();
 
-        async move { self.string_storage().setexp(&key, exp, ver).await }
+        async move { self.string_storage().set_exp(&key, exp, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
             .map_err(storage_api::server::Error::new)
     }
@@ -279,7 +274,7 @@ impl storage_api::Server for StorageApiServer {
         field: storage_api::Field,
     ) -> impl Future<Output = storage_api::server::Result<Option<storage_api::EntryExpiration>>> + Send
     {
-        async move { self.map_storage().hexp(&generic_key(key), &field).await }
+        async move { self.map_storage().hget_exp(&generic_key(key), &field).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
             .map(|res| match res {
                 Ok(timestamp) => Ok(Some(
@@ -301,7 +296,7 @@ impl storage_api::Server for StorageApiServer {
         let exp = expiration.into().unix_timestamp_secs();
         let ver = version.unix_timestamp_micros();
 
-        async move { self.map_storage().hsetexp(&key, &field, exp, ver).await }
+        async move { self.map_storage().hset_exp(&key, &field, exp, ver).await }
             .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
             .map_err(storage_api::server::Error::new)
     }
@@ -342,7 +337,7 @@ impl storage_api::Server for StorageApiServer {
                         version: storage_api::EntryVersion::from_unix_timestamp_micros(rec.version),
                     })
                     .collect(),
-                has_next: res.has_more,
+                has_next: res.has_next,
             })
             .map_err(storage_api::server::Error::new)
     }

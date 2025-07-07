@@ -88,7 +88,7 @@ where
 
             let cfg = &self.inner.config;
             let view = self.inner.view.load_full();
-            let view = Arc::new((*view).clone().apply_event(&cfg, event).await?);
+            let view = Arc::new((*view).clone().apply_event(cfg, event).await?);
             self.inner.view.store(view);
             let _ = self.watch.send(());
         }
@@ -104,9 +104,6 @@ enum Error {
 
     #[error(transparent)]
     DataDeserialization(#[from] node_operator::DataDeserializationError),
-
-    #[error(transparent)]
-    ViewFetch(#[from] view::FetchError),
 
     #[error(transparent)]
     SmartContractRead(#[from] smart_contract::ReadError),

@@ -320,7 +320,3 @@ pub enum Error {
 
 /// Result of [`View::apply_event`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Error of fetching [`View`] from a [`smart_contract`].
-#[derive(Debug, thiserror::Error)]
-pub enum FetchError {}

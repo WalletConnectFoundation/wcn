@@ -70,11 +70,14 @@ pub struct NodeOperator<N = Node> {
     pub clients: Vec<Client>,
 }
 
+/// [`NodeOperator`] with serialized [`Data`].
 #[derive(AsRef, Debug)]
 pub struct Serialized {
+    /// ID of this [`NodeOperator`].
     #[as_ref]
     pub id: Id,
 
+    /// Serialized [`Data`].
     pub data: Data,
 }
 
@@ -85,6 +88,7 @@ pub struct Added {
     /// placed to.
     pub idx: Idx,
 
+    /// [`NodeOperator`] being added.
     pub operator: Serialized,
 
     /// Updated [`ClusterVersion`].
@@ -94,6 +98,7 @@ pub struct Added {
 /// Event of a [`NodeOperator`] being updated.
 #[derive(Debug)]
 pub struct Updated {
+    /// Updated [`NodeOperator`].
     pub operator: Serialized,
 
     /// Updated [`ClusterVersion`].

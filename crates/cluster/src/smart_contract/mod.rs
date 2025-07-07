@@ -32,6 +32,7 @@ use crate::{
     MAX_OPERATORS,
 };
 
+/// Snapshot of [`cluster::View`] fetched from a [`SmartContract`] state.
 pub struct ClusterView {
     pub node_operators: NodeOperators<node_operator::Serialized>,
 

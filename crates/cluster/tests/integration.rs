@@ -22,6 +22,19 @@ use {
     },
 };
 
+#[derive(Clone, Copy)]
+struct Config;
+
+impl wcn_cluster::Config for Config {
+    type SmartContract = evm::SmartContract<Signer>;
+    type KeyspaceShards = ();
+    type Node = wcn_cluster::Node;
+
+    fn new_node(&self, addr: SocketAddrV4, peer_id: PeerId) -> Self::Node {
+        wcn_cluster::Node::new(addr, peer_id)
+    }
+}
+
 #[tokio::test]
 async fn test_suite() {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
@@ -37,6 +50,8 @@ async fn test_suite() {
         .try_spawn()
         .unwrap();
 
+    let cfg = Config;
+
     let settings = Settings {
         max_node_operator_data_bytes: 4096,
     };
@@ -50,7 +65,7 @@ async fn test_suite() {
 
     let operators = (1..=5).map(|n| new_node_operator(n, &anvil)).collect();
 
-    let cluster = Cluster::<evm::SmartContract<Signer>>::deploy(&provider, settings, operators)
+    let cluster = Cluster::deploy(cfg, &provider, settings, operators)
         .await
         .unwrap();
 
@@ -106,7 +121,7 @@ async fn test_suite() {
         .unwrap();
 
     let mut operator2 = new_node_operator(2, &anvil);
-    operator2.data.name = node_operator::Name::new("NewName").unwrap();
+    operator2.name = node_operator::Name::new("NewName").unwrap();
     cluster.update_node_operator(operator2).await.unwrap();
 
     cluster
@@ -118,18 +133,14 @@ async fn test_suite() {
 }
 
 fn new_node_operator(n: u8, anvil: &AnvilInstance) -> NodeOperator {
-    let data = node_operator::Data {
+    NodeOperator {
+        id: operator_id(n, anvil),
         name: node_operator::Name::new(format!("Operator{n}")).unwrap(),
         nodes: vec![Node {
             peer_id: PeerId::random(),
             addr: SocketAddrV4::new([127, 0, 0, 1].into(), 40000 + n as u16),
         }],
         clients: vec![],
-    };
-
-    NodeOperator {
-        id: operator_id(n, anvil),
-        data,
     }
 }
 
@@ -154,9 +165,7 @@ async fn connect(
     operator: u8,
     address: smart_contract::Address,
     anvil: &AnvilInstance,
-) -> Cluster<evm::SmartContract<Signer>> {
+) -> Cluster<Config> {
     let provider = provider(new_signer(operator, anvil), anvil).await;
-    Cluster::<evm::SmartContract<Signer>>::connect(&provider, address)
-        .await
-        .unwrap()
+    Cluster::connect(Config, &provider, address).await.unwrap()
 }

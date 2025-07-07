@@ -10,41 +10,37 @@ use {
         node_operators,
         settings,
         smart_contract,
+        Config,
         Event,
         Keyspace,
         Maintenance,
         Migration,
+        NodeOperator,
         NodeOperators,
         Ownership,
         Settings,
     },
+    derive_where::derive_where,
     futures::future::OptionFuture,
     std::sync::Arc,
 };
 
 /// Read-only view of a WCN cluster.
-#[derive(Clone)]
-pub struct View<Shards = (), OperatorData = node_operator::Data> {
-    pub(super) node_operators: NodeOperators<OperatorData>,
+#[derive_where(Clone)]
+pub struct View<C: Config> {
+    pub(super) node_operators: NodeOperators<NodeOperator<C::Node>>,
 
     pub(super) ownership: Ownership,
     pub(super) settings: Settings,
 
-    pub(super) keyspace: Arc<Keyspace<Shards>>,
-    pub(super) migration: Option<Migration<Shards>>,
+    pub(super) keyspace: Arc<Keyspace<C::KeyspaceShards>>,
+    pub(super) migration: Option<Migration<C::KeyspaceShards>>,
     pub(super) maintenance: Option<Maintenance>,
 
     pub(super) cluster_version: cluster::Version,
 }
 
-impl<Shards> View<Shards> {
-    pub(super) async fn fetch(contract: &impl smart_contract::Read) -> Result<View, FetchError>
-    where
-        Keyspace: keyspace::sealed::Calculate<Shards>,
-    {
-        Ok(contract.cluster_view().await?.deserialize()?)
-    }
-
+impl<C: Config> View<C> {
     /// Returns [`Ownership`] of the WCN cluster.
     pub fn ownership(&self) -> &Ownership {
         &self.ownership
@@ -56,12 +52,12 @@ impl<Shards> View<Shards> {
     }
 
     /// Returns the primary [`Keyspace`] of the WCN cluster.
-    pub fn keyspace(&self) -> &Keyspace<Shards> {
+    pub fn keyspace(&self) -> &Keyspace<C::KeyspaceShards> {
         &self.keyspace
     }
 
     /// Returns the ongoing [`Migration`] of the WCN cluster.
-    pub fn migration(&self) -> Option<&Migration<Shards>> {
+    pub fn migration(&self) -> Option<&Migration<C::KeyspaceShards>> {
         self.migration.as_ref()
     }
 
@@ -71,7 +67,7 @@ impl<Shards> View<Shards> {
     }
 
     /// Returns [`NodeOperators`] of the WCN cluster.
-    pub fn node_operators(&self) -> &NodeOperators {
+    pub fn node_operators(&self) -> &NodeOperators<NodeOperator<C::Node>> {
         &self.node_operators
     }
 
@@ -91,7 +87,9 @@ impl<Shards> View<Shards> {
         Ok(())
     }
 
-    pub(super) fn require_migration(&self) -> Result<&Migration<Shards>, migration::NotFoundError> {
+    pub(super) fn require_migration(
+        &self,
+    ) -> Result<&Migration<C::KeyspaceShards>, migration::NotFoundError> {
         self.migration.as_ref().ok_or(migration::NotFoundError)
     }
 
@@ -100,9 +98,9 @@ impl<Shards> View<Shards> {
     }
 
     /// Applies the provided [`Event`] to this [`View`].
-    pub async fn apply_event(mut self, event: Event) -> Result<Self, Error>
+    pub async fn apply_event(mut self, cfg: &C, event: Event) -> Result<Self, Error>
     where
-        Keyspace: keyspace::sealed::Calculate<Shards>,
+        Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
     {
         let new_version = event.cluster_version();
 
@@ -120,8 +118,8 @@ impl<Shards> View<Shards> {
             Event::MigrationAborted(evt) => evt.apply(&mut self),
             Event::MaintenanceStarted(evt) => evt.apply(&mut self),
             Event::MaintenanceFinished(evt) => evt.apply(&mut self),
-            Event::NodeOperatorAdded(evt) => evt.apply(&mut self),
-            Event::NodeOperatorUpdated(evt) => evt.apply(&mut self),
+            Event::NodeOperatorAdded(evt) => evt.apply(cfg, &mut self),
+            Event::NodeOperatorUpdated(evt) => evt.apply(cfg, &mut self),
             Event::NodeOperatorRemoved(evt) => evt.apply(&mut self),
             Event::SettingsUpdated(evt) => evt.apply(&mut self),
         }?;
@@ -132,48 +130,35 @@ impl<Shards> View<Shards> {
     }
 }
 
-impl View {
-    pub(super) async fn calculate_keyspace<Shards>(self) -> View<Shards>
+impl<C: Config> View<C> {
+    pub(super) async fn from_sc(
+        cfg: &C,
+        view: smart_contract::ClusterView,
+    ) -> Result<Self, node_operator::DataDeserializationError>
     where
-        Keyspace: keyspace::sealed::Calculate<Shards>,
+        Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
     {
         let (keyspace, migration) = tokio::join!(
-            (*self.keyspace).clone().calculate(),
-            OptionFuture::from(self.migration.map(Migration::calculate_keyspace))
+            view.keyspace.calculate(),
+            OptionFuture::from(view.migration.map(Migration::calculate_keyspace))
         );
 
-        View {
-            node_operators: self.node_operators,
-            ownership: self.ownership,
-            settings: self.settings,
+        Ok(View {
+            node_operators: view.node_operators.try_map(|op| op.deserialize(cfg))?,
+            ownership: view.ownership,
+            settings: view.settings,
             keyspace: Arc::new(keyspace),
             migration,
-            maintenance: self.maintenance,
-            cluster_version: self.cluster_version,
-        }
-    }
-}
-
-impl<Shards> View<Shards, node_operator::SerializedData> {
-    pub(super) fn deserialize(
-        self,
-    ) -> Result<View<Shards>, node_operator::DataDeserializationError> {
-        Ok(View {
-            node_operators: self.node_operators.deserialize()?,
-            ownership: self.ownership,
-            settings: self.settings,
-            keyspace: self.keyspace,
-            migration: self.migration,
-            maintenance: self.maintenance,
-            cluster_version: self.cluster_version,
+            maintenance: view.maintenance,
+            cluster_version: view.cluster_version,
         })
     }
 }
 
 impl migration::Started {
-    async fn apply<Shards>(self, view: &mut View<Shards>) -> Result<()>
+    async fn apply<A: Config>(self, view: &mut View<A>) -> Result<()>
     where
-        Keyspace: keyspace::sealed::Calculate<Shards>,
+        Keyspace: keyspace::sealed::Calculate<A::KeyspaceShards>,
     {
         view.require_no_migration()?;
         view.require_no_maintenance()?;
@@ -192,7 +177,7 @@ impl migration::Started {
 }
 
 impl migration::DataPullCompleted {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<A: Config>(self, view: &mut View<A>) -> Result<()> {
         let idx = view.node_operators.require_idx(&self.operator_id)?;
         view.require_migration()?
             .require_id(self.migration_id)?
@@ -207,7 +192,7 @@ impl migration::DataPullCompleted {
 }
 
 impl migration::Completed {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, view: &mut View<C>) -> Result<()> {
         let idx = view.node_operators.require_idx(&self.operator_id)?;
         view.require_migration()?
             .require_id(self.migration_id)?
@@ -221,7 +206,7 @@ impl migration::Completed {
 }
 
 impl migration::Aborted {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, view: &mut View<C>) -> Result<()> {
         view.require_migration()?.require_id(self.migration_id)?;
         view.migration = None;
 
@@ -230,7 +215,7 @@ impl migration::Aborted {
 }
 
 impl maintenance::Started {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, view: &mut View<C>) -> Result<()> {
         view.require_no_migration()?;
         view.require_no_maintenance()?;
 
@@ -241,7 +226,7 @@ impl maintenance::Started {
 }
 
 impl maintenance::Finished {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, view: &mut View<C>) -> Result<()> {
         view.require_maintenance()?;
         view.maintenance = None;
 
@@ -250,28 +235,30 @@ impl maintenance::Finished {
 }
 
 impl node_operator::Added {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, cfg: &C, view: &mut View<C>) -> Result<()> {
         view.node_operators()
             .require_not_exists(&self.operator.id)?
             .require_free_slot(self.idx)?;
 
-        view.node_operators.set(self.idx, Some(self.operator));
+        view.node_operators
+            .set(self.idx, Some(self.operator.deserialize(cfg)?));
 
         Ok(())
     }
 }
 
 impl node_operator::Updated {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, cfg: &C, view: &mut View<C>) -> Result<()> {
         let idx = view.node_operators.require_idx(&self.operator.id)?;
-        view.node_operators.set(idx, Some(self.operator));
+        view.node_operators
+            .set(idx, Some(self.operator.deserialize(cfg)?));
 
         Ok(())
     }
 }
 
 impl node_operator::Removed {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, view: &mut View<C>) -> Result<()> {
         let idx = view.node_operators.require_idx(&self.id)?;
         view.node_operators.set(idx, None);
 
@@ -280,7 +267,7 @@ impl node_operator::Removed {
 }
 
 impl settings::Updated {
-    pub(super) fn apply<S>(self, view: &mut View<S>) -> Result<()> {
+    pub(super) fn apply<C: Config>(self, view: &mut View<C>) -> Result<()> {
         view.settings = self.settings;
 
         Ok(())
@@ -326,17 +313,10 @@ pub enum Error {
 
     #[error(transparent)]
     OperatorSlotOccupied(#[from] node_operators::SlotOccupiedError),
+
+    #[error(transparent)]
+    NodeOperatorDataDeserialization(#[from] node_operator::DataDeserializationError),
 }
 
 /// Result of [`View::apply_event`].
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Error of fetching [`View`] from a [`smart_contract`].
-#[derive(Debug, thiserror::Error)]
-pub enum FetchError {
-    #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
-
-    #[error("Smart-contract: {0}")]
-    SmartContractRead(#[from] smart_contract::ReadError),
-}

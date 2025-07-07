@@ -2,21 +2,21 @@ use {
     crate::{
         keyspace,
         node_operator,
-        smart_contract,
+        smart_contract::{self, Read as _},
         view,
+        Config,
+        Event,
         Inner,
         Keyspace,
-        SerializedEvent,
-        View,
     },
     futures::{Stream, StreamExt},
     std::{pin::pin, sync::Arc, time::Duration},
     tokio::sync::watch,
 };
 
-pub(super) struct Task<SC, Shards, Events> {
+pub(super) struct Task<C: Config, Events> {
     pub initial_events: Option<Events>,
-    pub inner: Arc<Inner<SC, Shards>>,
+    pub inner: Arc<Inner<C>>,
     pub watch: watch::Sender<()>,
 }
 
@@ -29,12 +29,10 @@ impl Drop for Guard {
     }
 }
 
-impl<SC, Shards, Events> Task<SC, Shards, Events>
+impl<C: Config, Events> Task<C, Events>
 where
-    SC: smart_contract::Read,
-    Shards: Clone + Send + Sync + 'static,
-    Events: Stream<Item = smart_contract::ReadResult<SerializedEvent>> + Send + 'static,
-    Keyspace: keyspace::sealed::Calculate<Shards>,
+    Events: Stream<Item = smart_contract::ReadResult<Event>> + Send + 'static,
+    Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
 {
     pub(super) fn spawn(self) -> Guard {
         let guard = Guard(tokio::spawn(self.run()));
@@ -67,9 +65,9 @@ where
     async fn update_view(&mut self) -> Result<()> {
         let events = self.inner.smart_contract.events().await?;
 
-        let new_view = View::fetch(&self.inner.smart_contract).await?;
+        let new_view = self.inner.smart_contract.cluster_view().await?;
         if self.inner.view.load().cluster_version != new_view.cluster_version {
-            let new_view = Arc::new(new_view.calculate_keyspace().await);
+            let new_view = Arc::new(crate::View::from_sc(&self.inner.config, new_view).await?);
             self.inner.view.store(new_view);
             let _ = self.watch.send(());
         }
@@ -80,16 +78,17 @@ where
     #[allow(clippy::needless_pass_by_ref_mut)] // otherwise `Steam` is required to be `Sync`
     async fn apply_events(
         &mut self,
-        events: impl Stream<Item = smart_contract::ReadResult<SerializedEvent>>,
+        events: impl Stream<Item = smart_contract::ReadResult<Event>>,
     ) -> Result<()> {
         let mut events = pin!(events);
 
         while let Some(res) = events.next().await {
-            let event = res?.deserialize()?;
+            let event = res?;
             tracing::info!(?event, "received");
 
+            let cfg = &self.inner.config;
             let view = self.inner.view.load_full();
-            let view = Arc::new((*view).clone().apply_event(event).await?);
+            let view = Arc::new((*view).clone().apply_event(cfg, event).await?);
             self.inner.view.store(view);
             let _ = self.watch.send(());
         }
@@ -105,9 +104,6 @@ enum Error {
 
     #[error(transparent)]
     DataDeserialization(#[from] node_operator::DataDeserializationError),
-
-    #[error(transparent)]
-    ViewFetch(#[from] view::FetchError),
 
     #[error(transparent)]
     SmartContractRead(#[from] smart_contract::ReadError),

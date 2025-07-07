@@ -23,6 +23,13 @@ pub struct Node {
     pub addr: SocketAddrV4,
 }
 
+impl Node {
+    /// Creates a new [`Node`].
+    pub fn new(addr: SocketAddrV4, peer_id: PeerId) -> Self {
+        Self { peer_id, addr }
+    }
+}
+
 // NOTE: The on-chain serialization is non self-describing!
 // This `struct` can not be changed, a `struct` with a new schema version should
 // be created instead.

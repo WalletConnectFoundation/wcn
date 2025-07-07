@@ -2,6 +2,7 @@
 
 use {
     super::{
+        ClusterView,
         ConnectionError,
         Connector,
         Deployer,
@@ -15,7 +16,6 @@ use {
         WriteResult,
     },
     crate::{
-        self as cluster,
         maintenance,
         migration,
         node_operator,
@@ -25,10 +25,8 @@ use {
         Keyspace,
         Maintenance,
         Migration,
-        NodeOperator,
         NodeOperators,
         Ownership,
-        SerializedEvent,
         Settings,
     },
     alloy::{
@@ -39,7 +37,7 @@ use {
         sol_types::{SolCall, SolEventInterface, SolInterface},
     },
     futures::{Stream, StreamExt},
-    std::{fmt, sync::Arc, time::Duration},
+    std::{fmt, time::Duration},
 };
 
 mod bindings {
@@ -113,7 +111,7 @@ impl Deployer<SmartContract<Signer>> for RpcProvider<Signer> {
     async fn deploy(
         &self,
         initial_settings: Settings,
-        initial_operators: NodeOperators<node_operator::SerializedData>,
+        initial_operators: NodeOperators<node_operator::Serialized>,
     ) -> Result<SmartContract<Signer>, DeploymentError> {
         let signer = self.signer.clone();
 
@@ -201,10 +199,7 @@ impl smart_contract::Write for SmartContract<Signer> {
         check_receipt(self.alloy.setMaintenance(false)).await
     }
 
-    async fn add_node_operator(
-        &self,
-        operator: NodeOperator<node_operator::SerializedData>,
-    ) -> WriteResult<()> {
+    async fn add_node_operator(&self, operator: node_operator::Serialized) -> WriteResult<()> {
         check_receipt(self.alloy.addNodeOperator(operator.into())).await
     }
 
@@ -249,13 +244,11 @@ impl<S: Send + Sync + 'static> smart_contract::Read for SmartContract<S> {
         smart_contract::Address(*self.alloy.address())
     }
 
-    async fn cluster_view(&self) -> ReadResult<cluster::View<(), node_operator::SerializedData>> {
+    async fn cluster_view(&self) -> ReadResult<ClusterView> {
         self.alloy.getView().call().await?.try_into()
     }
 
-    async fn events(
-        &self,
-    ) -> ReadResult<impl Stream<Item = ReadResult<SerializedEvent>> + Send + 'static> {
+    async fn events(&self) -> ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static> {
         let filter = Filter::new().address(*self.alloy.address());
 
         Ok(self
@@ -264,12 +257,12 @@ impl<S: Send + Sync + 'static> smart_contract::Read for SmartContract<S> {
             .subscribe_logs(&filter)
             .await?
             .into_stream()
-            .filter_map(|log| async move { SerializedEvent::try_from(log).transpose() }))
+            .filter_map(|log| async move { Event::try_from(log).transpose() }))
     }
 }
 
-impl SerializedEvent {
-    fn try_from(log: Log) -> ReadResult<Option<SerializedEvent>> {
+impl Event {
+    fn try_from(log: Log) -> ReadResult<Option<Event>> {
         use bindings::Cluster::ClusterEvents as Event;
 
         let evt =
@@ -294,7 +287,7 @@ impl SerializedEvent {
     }
 }
 
-impl<D> TryFrom<bindings::Cluster::MigrationStarted> for Event<D> {
+impl TryFrom<bindings::Cluster::MigrationStarted> for Event {
     type Error = ReadError;
 
     fn try_from(evt: bindings::Cluster::MigrationStarted) -> ReadResult<Self> {
@@ -311,7 +304,7 @@ impl<D> TryFrom<bindings::Cluster::MigrationStarted> for Event<D> {
     }
 }
 
-impl<D> From<bindings::Cluster::MigrationDataPullCompleted> for Event<D> {
+impl From<bindings::Cluster::MigrationDataPullCompleted> for Event {
     fn from(evt: bindings::Cluster::MigrationDataPullCompleted) -> Self {
         Self::MigrationDataPullCompleted(migration::DataPullCompleted {
             migration_id: evt.id,
@@ -321,7 +314,7 @@ impl<D> From<bindings::Cluster::MigrationDataPullCompleted> for Event<D> {
     }
 }
 
-impl<D> From<bindings::Cluster::MigrationCompleted> for Event<D> {
+impl From<bindings::Cluster::MigrationCompleted> for Event {
     fn from(evt: bindings::Cluster::MigrationCompleted) -> Self {
         Self::MigrationCompleted(migration::Completed {
             migration_id: evt.id,
@@ -331,7 +324,7 @@ impl<D> From<bindings::Cluster::MigrationCompleted> for Event<D> {
     }
 }
 
-impl<D> From<bindings::Cluster::MigrationAborted> for Event<D> {
+impl From<bindings::Cluster::MigrationAborted> for Event {
     fn from(evt: bindings::Cluster::MigrationAborted) -> Self {
         Self::MigrationAborted(migration::Aborted {
             migration_id: evt.id,
@@ -340,7 +333,7 @@ impl<D> From<bindings::Cluster::MigrationAborted> for Event<D> {
     }
 }
 
-impl<D> From<bindings::Cluster::MaintenanceToggled> for Event<D> {
+impl From<bindings::Cluster::MaintenanceToggled> for Event {
     fn from(evt: bindings::Cluster::MaintenanceToggled) -> Self {
         if evt.active {
             Self::MaintenanceStarted(maintenance::Started {
@@ -355,7 +348,7 @@ impl<D> From<bindings::Cluster::MaintenanceToggled> for Event<D> {
     }
 }
 
-impl From<bindings::Cluster::NodeOperatorAdded> for Event<node_operator::SerializedData> {
+impl From<bindings::Cluster::NodeOperatorAdded> for Event {
     fn from(evt: bindings::Cluster::NodeOperatorAdded) -> Self {
         let operator = bindings::Cluster::NodeOperator {
             addr: evt.operator,
@@ -370,7 +363,7 @@ impl From<bindings::Cluster::NodeOperatorAdded> for Event<node_operator::Seriali
     }
 }
 
-impl From<bindings::Cluster::NodeOperatorUpdated> for Event<node_operator::SerializedData> {
+impl From<bindings::Cluster::NodeOperatorUpdated> for Event {
     fn from(evt: bindings::Cluster::NodeOperatorUpdated) -> Self {
         let operator = bindings::Cluster::NodeOperator {
             addr: evt.operator,
@@ -384,7 +377,7 @@ impl From<bindings::Cluster::NodeOperatorUpdated> for Event<node_operator::Seria
     }
 }
 
-impl<D> From<bindings::Cluster::NodeOperatorRemoved> for Event<D> {
+impl From<bindings::Cluster::NodeOperatorRemoved> for Event {
     fn from(evt: bindings::Cluster::NodeOperatorRemoved) -> Self {
         Self::NodeOperatorRemoved(node_operator::Removed {
             id: evt.operator.into(),
@@ -393,7 +386,7 @@ impl<D> From<bindings::Cluster::NodeOperatorRemoved> for Event<D> {
     }
 }
 
-impl<D> From<bindings::Cluster::SettingsUpdated> for Event<D> {
+impl From<bindings::Cluster::SettingsUpdated> for Event {
     fn from(evt: bindings::Cluster::SettingsUpdated) -> Self {
         Self::SettingsUpdated(settings::Updated {
             settings: evt.newSettings.into(),
@@ -413,9 +406,9 @@ impl From<node_operator::Serialized> for bindings::Cluster::NodeOperator {
 
 impl From<bindings::Cluster::NodeOperator> for node_operator::Serialized {
     fn from(op: bindings::Cluster::NodeOperator) -> Self {
-        NodeOperator {
+        node_operator::Serialized {
             id: smart_contract::AccountAddress(op.addr),
-            data: node_operator::SerializedData(op.data.into()),
+            data: node_operator::Data(op.data.into()),
         }
     }
 }
@@ -476,7 +469,7 @@ impl From<bindings::Cluster::MaintenanceState> for Option<Maintenance> {
     }
 }
 
-impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator::SerializedData> {
+impl TryFrom<bindings::Cluster::ClusterView> for ClusterView {
     type Error = ReadError;
 
     fn try_from(view: bindings::Cluster::ClusterView) -> Result<Self, Self::Error> {
@@ -524,7 +517,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for cluster::View<(), node_operator
             node_operators,
             ownership: Ownership::new(view.owner.into()),
             settings: view.settings.into(),
-            keyspace: Arc::new(keyspace),
+            keyspace,
             migration,
             maintenance: view.maintenance.into(),
             cluster_version: view.version,

@@ -7,9 +7,10 @@ use {
         self as cluster,
         migration,
         node_operator,
+        Event,
         Keyspace,
         NodeOperators,
-        SerializedEvent,
+        Ownership,
         Settings,
     },
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
@@ -31,13 +32,26 @@ use crate::{
     MAX_OPERATORS,
 };
 
+pub struct ClusterView {
+    pub node_operators: NodeOperators<node_operator::Serialized>,
+
+    pub ownership: Ownership,
+    pub settings: Settings,
+
+    pub keyspace: Keyspace,
+    pub migration: Option<Migration>,
+    pub maintenance: Option<Maintenance>,
+
+    pub cluster_version: cluster::Version,
+}
+
 /// Deployer of WCN Cluster [`SmartContract`]s.
 pub trait Deployer<SC> {
     /// Deploys a new [`SmartContract`].
     fn deploy(
         &self,
         initial_settings: Settings,
-        initial_operators: NodeOperators<node_operator::SerializedData>,
+        initial_operators: NodeOperators<node_operator::Serialized>,
     ) -> impl Future<Output = Result<SC, DeploymentError>>;
 }
 
@@ -183,16 +197,12 @@ pub trait Read: Sized + Send + Sync + 'static {
     fn address(&self) -> Address;
 
     /// Returns the current [`cluster::View`].
-    fn cluster_view(
-        &self,
-    ) -> impl Future<Output = ReadResult<cluster::View<(), node_operator::SerializedData>>> + Send;
+    fn cluster_view(&self) -> impl Future<Output = ReadResult<ClusterView>> + Send;
 
     /// Subscribes to WCN Cluster [`Events`].
     fn events(
         &self,
-    ) -> impl Future<
-        Output = ReadResult<impl Stream<Item = ReadResult<SerializedEvent>> + Send + 'static>,
-    > + Send;
+    ) -> impl Future<Output = ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static>> + Send;
 }
 
 /// [`SmartContract`] address.

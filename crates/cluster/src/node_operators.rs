@@ -1,26 +1,20 @@
 //! Slot map of [`NodeOperator`]s.
 
 use {
-    crate::{self as cluster, node_operator, NodeOperator},
-    itertools::Itertools as _,
+    crate::{self as cluster, node_operator},
     std::collections::HashMap,
 };
 
 /// Slot map of [`NodeOperator`]s.
 #[derive(Debug, Clone)]
-pub struct NodeOperators<D = node_operator::Data> {
+pub struct NodeOperators<N> {
     id_to_idx: HashMap<node_operator::Id, node_operator::Idx>,
 
-    slots: Vec<Option<NodeOperator<D>>>,
+    slots: Vec<Option<N>>,
 }
 
-/// [`NodeOperators`] with [`node_operator::SerializedData`].
-pub type Serialized = NodeOperators<node_operator::SerializedData>;
-
-impl<Data> NodeOperators<Data> {
-    pub(super) fn new(
-        slots: impl IntoIterator<Item = Option<NodeOperator<Data>>>,
-    ) -> Result<Self, CreationError> {
+impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
+    pub(super) fn new(slots: impl IntoIterator<Item = Option<N>>) -> Result<Self, CreationError> {
         let slots: Vec<_> = slots.into_iter().collect();
 
         if slots.len() > cluster::MAX_OPERATORS {
@@ -31,8 +25,8 @@ impl<Data> NodeOperators<Data> {
 
         for (idx, slot) in slots.iter().enumerate() {
             if let Some(operator) = &slot {
-                if id_to_idx.insert(operator.id, idx as u8).is_some() {
-                    return Err(CreationError::OperatorDuplicate(operator.id));
+                if id_to_idx.insert(*operator.as_ref(), idx as u8).is_some() {
+                    return Err(CreationError::OperatorDuplicate(*operator.as_ref()));
                 };
             }
         }
@@ -40,12 +34,26 @@ impl<Data> NodeOperators<Data> {
         Ok(Self { id_to_idx, slots })
     }
 
-    pub(super) fn into_slots(self) -> Vec<Option<NodeOperator<Data>>> {
+    pub(super) fn try_map<T, E>(
+        self,
+        f: impl Fn(N) -> Result<T, E>,
+    ) -> Result<NodeOperators<T>, E> {
+        Ok(NodeOperators {
+            id_to_idx: self.id_to_idx,
+            slots: self
+                .slots
+                .into_iter()
+                .map(|opt| opt.map(&f).transpose())
+                .collect::<Result<_, _>>()?,
+        })
+    }
+
+    pub(super) fn into_slots(self) -> Vec<Option<N>> {
         self.slots
     }
 
-    pub(super) fn set(&mut self, idx: node_operator::Idx, slot: Option<NodeOperator<Data>>) {
-        if let Some(id) = self.get_by_idx(idx).map(|op| op.id) {
+    pub(super) fn set(&mut self, idx: node_operator::Idx, slot: Option<N>) {
+        if let Some(id) = self.get_by_idx(idx).map(|op| *op.as_ref()) {
             self.id_to_idx.remove(&id);
         }
 
@@ -54,7 +62,7 @@ impl<Data> NodeOperators<Data> {
         }
 
         if let Some(operator) = &slot {
-            self.id_to_idx.insert(operator.id, idx);
+            self.id_to_idx.insert(*operator.as_ref(), idx);
         }
 
         self.slots[idx as usize] = slot;
@@ -82,12 +90,12 @@ impl<Data> NodeOperators<Data> {
     }
 
     /// Gets an [`NodeOperator`] by [`Id`].
-    pub fn get(&self, id: &node_operator::Id) -> Option<&NodeOperator<Data>> {
+    pub fn get(&self, id: &node_operator::Id) -> Option<&N> {
         self.get_by_idx(self.get_idx(id)?)
     }
 
     /// Gets an [`NodeOperator`] by [`Idx`].
-    pub(super) fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&NodeOperator<Data>> {
+    pub(super) fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&N> {
         self.slots.get(idx as usize)?.as_ref()
     }
 
@@ -138,21 +146,6 @@ impl<Data> NodeOperators<Data> {
         }
 
         Ok(self)
-    }
-}
-
-impl Serialized {
-    pub(super) fn deserialize(
-        self,
-    ) -> Result<NodeOperators, node_operator::DataDeserializationError> {
-        Ok(NodeOperators {
-            id_to_idx: self.id_to_idx,
-            slots: self
-                .slots
-                .into_iter()
-                .map(|slot| slot.map(NodeOperator::deserialize).transpose())
-                .try_collect()?,
-        })
     }
 }
 

@@ -7,10 +7,11 @@ use {
         node,
         smart_contract,
         Client,
+        Config,
         Node,
         Version as ClusterVersion,
     },
-    derive_more::derive::Into,
+    derive_more::derive::{AsRef, Into},
     serde::{Deserialize, Serialize},
 };
 
@@ -47,78 +48,56 @@ impl Name {
     }
 }
 
-/// On-chain data of a [`NodeOperator`].
-#[derive(Clone, Debug)]
-pub struct Data {
+/// [`NodeOperator`] data serialized for on-chain storage.
+#[derive(Debug, Into)]
+pub struct Data(pub(crate) Vec<u8>);
+
+/// Entity operating a set of [`Node`]s within a WCN cluster.
+#[derive(AsRef, Clone, Debug)]
+pub struct NodeOperator<N = Node> {
+    /// ID of this [`NodeOperator`].
+    #[as_ref]
+    pub id: Id,
+
     /// Name of the [`NodeOperator`].
     pub name: Name,
 
     /// List of [`Node`]s of the [`NodeOperator`].
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<N>,
 
     /// List of [`Client`]s authorized to use the WCN cluster on behalf of the
     /// [`NodeOperator`].
     pub clients: Vec<Client>,
 }
 
-/// [`NodeOperator`] [`Data`] serialized for on-chain storage.
-#[derive(Debug, Into)]
-pub struct SerializedData(pub(crate) Vec<u8>);
-
-/// [`NodeOperator`] with [`SerializedData`].
-pub type Serialized = NodeOperator<SerializedData>;
-
-/// Entity operating a set of [`Node`]s within a WCN cluster.
-#[derive(Clone, Debug)]
-pub struct NodeOperator<D = Data> {
-    /// ID of this [`NodeOperator`].
+#[derive(AsRef, Debug)]
+pub struct Serialized {
+    #[as_ref]
     pub id: Id,
 
-    /// On-chain data of this [`NodeOperator`].
-    pub data: D,
+    pub data: Data,
 }
 
 /// Event of a new [`NodeOperator`] being added to a WCN cluster.
 #[derive(Debug)]
-pub struct Added<D = Data> {
+pub struct Added {
     /// [`Idx`] in the [`NodeOperators`] slot map the [`NodeOperator`] is being
     /// placed to.
     pub idx: Idx,
 
-    /// [`NodeOperator`] being added.
-    pub operator: NodeOperator<D>,
+    pub operator: Serialized,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
-}
-
-impl Added<SerializedData> {
-    pub(super) fn deserialize(self) -> Result<Added, DataDeserializationError> {
-        Ok(Added {
-            idx: self.idx,
-            operator: self.operator.deserialize()?,
-            cluster_version: self.cluster_version,
-        })
-    }
 }
 
 /// Event of a [`NodeOperator`] being updated.
 #[derive(Debug)]
-pub struct Updated<D = Data> {
-    /// Updated [`NodeOperator`].
-    pub operator: NodeOperator<D>,
+pub struct Updated {
+    pub operator: Serialized,
 
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,
-}
-
-impl Updated<SerializedData> {
-    pub(super) fn deserialize(self) -> Result<Updated, DataDeserializationError> {
-        Ok(Updated {
-            operator: self.operator.deserialize()?,
-            cluster_version: self.cluster_version,
-        })
-    }
 }
 
 /// Event of a [`NodeOperator`] being removed from a WCN cluster.
@@ -132,16 +111,7 @@ pub struct Removed {
 }
 
 impl NodeOperator {
-    pub(super) fn serialize(self) -> Result<NodeOperator<SerializedData>, DataSerializationError> {
-        Ok(NodeOperator {
-            id: self.id,
-            data: self.data.serialize()?,
-        })
-    }
-}
-
-impl Data {
-    pub(super) fn serialize(self) -> Result<SerializedData, DataSerializationError> {
+    pub(super) fn serialize(self) -> Result<Serialized, DataSerializationError> {
         use DataSerializationError as Error;
 
         // TODO: encrypt
@@ -158,12 +128,18 @@ impl Data {
         let mut buf = vec![0; size + 1];
         buf[0] = 0; // current schema version
         postcard::to_slice(&data, &mut buf[1..]).map_err(Error::from_postcard)?;
-        Ok(SerializedData(buf))
+        Ok(Serialized {
+            id: self.id,
+            data: Data(buf),
+        })
     }
 }
 
-impl NodeOperator<SerializedData> {
-    pub(super) fn deserialize(self) -> Result<NodeOperator, DataDeserializationError> {
+impl Serialized {
+    pub(super) fn deserialize<C: Config>(
+        self,
+        cfg: &C,
+    ) -> Result<NodeOperator<C::Node>, DataDeserializationError> {
         use DataDeserializationError as Error;
 
         let data_bytes = self.data.0;
@@ -176,12 +152,22 @@ impl NodeOperator<SerializedData> {
         let bytes = &data_bytes[1..];
 
         let data = match schema_version {
-            0 => postcard::from_bytes::<DataV0>(bytes).map(Into::into),
+            0 => postcard::from_bytes::<DataV0>(bytes),
             ver => return Err(Error::UnknownSchemaVersion(ver)),
         }
         .map_err(Error::from_postcard)?;
 
-        Ok(NodeOperator { id: self.id, data })
+        let nodes = data
+            .nodes
+            .into_iter()
+            .map(|node| cfg.new_node(node.addr, node.peer_id));
+
+        Ok(NodeOperator {
+            id: self.id,
+            name: data.name,
+            nodes: nodes.collect(),
+            clients: data.clients.into_iter().map(Into::into).collect(),
+        })
     }
 }
 
@@ -193,26 +179,6 @@ struct DataV0 {
     name: Name,
     nodes: Vec<node::V0>,
     clients: Vec<client::V0>,
-}
-
-impl From<Data> for DataV0 {
-    fn from(data: Data) -> Self {
-        Self {
-            name: data.name,
-            nodes: data.nodes.into_iter().map(Into::into).collect(),
-            clients: data.clients.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<DataV0> for Data {
-    fn from(data: DataV0) -> Self {
-        Self {
-            name: data.name,
-            nodes: data.nodes.into_iter().map(Into::into).collect(),
-            clients: data.clients.into_iter().map(Into::into).collect(),
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -245,7 +211,7 @@ impl DataDeserializationError {
     }
 }
 
-impl SerializedData {
+impl Data {
     /// Validates that [`SerializedData`] size doesn't exceed
     /// [`cluster::Settings::max_node_operator_data_bytes`].
     pub(super) fn validate(&self, settings: &cluster::Settings) -> Result<(), DataTooLargeError> {

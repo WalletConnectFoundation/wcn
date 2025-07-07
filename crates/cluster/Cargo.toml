@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 derive_more = { workspace = true, features = ["try_from", "into"] }
+derive-where = { workspace = true }
 derivative = { workspace = true }
 libp2p = { workspace = true }
 itertools = { workspace = true }

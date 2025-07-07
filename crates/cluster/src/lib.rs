@@ -4,8 +4,9 @@ use {
     arc_swap::ArcSwap,
     futures::Stream,
     itertools::Itertools,
-    smart_contract::evm,
-    std::{collections::HashSet, sync::Arc},
+    libp2p::PeerId,
+    smart_contract::{Read, Write as _},
+    std::{collections::HashSet, net::SocketAddrV4, sync::Arc},
     tokio::sync::watch,
 };
 
@@ -51,20 +52,43 @@ pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;
 /// Minimum number of [`NodeOperator`]s within a WCN [`Cluster`].
 pub const MIN_OPERATORS: u8 = keyspace::REPLICATION_FACTOR;
 
+/// [`Cluster`] config.
+pub trait Config: Send + Sync + 'static {
+    /// [`SmartContract`] implementation being used.
+    type SmartContract: smart_contract::Read;
+
+    /// `()` or [`keyspace::Shards`].
+    ///
+    /// Specify `()` if you don't need the shards.
+    type KeyspaceShards: Clone + Send + Sync + 'static;
+
+    /// Your application level defined [`Node`].
+    ///
+    /// Provided in orded to be able to inject application specific
+    /// data/logic into it.
+    ///
+    /// If no additional logic is required - just specify [`Node`].
+    type Node: Clone + Send + Sync + 'static;
+
+    /// Creates a new [`Config::Node`].
+    fn new_node(&self, addr: SocketAddrV4, peer_id: PeerId) -> Self::Node;
+}
+
 /// WCN cluster.
 ///
 /// Thin wrapper around the underlying [`SmartContract`] implementation.
 ///
 /// Performs preliminary invariant validation before calling the actual
 /// [`SmartContract`] methods.
-pub struct Cluster<SC = evm::SmartContract, Shards = ()> {
-    inner: Arc<Inner<SC, Shards>>,
+pub struct Cluster<C: Config> {
+    inner: Arc<Inner<C>>,
     _task_guard: Arc<task::Guard>,
 }
 
-struct Inner<SC, Shards> {
-    smart_contract: SC,
-    view: ArcSwap<View<Shards>>,
+struct Inner<C: Config> {
+    config: C,
+    smart_contract: C::SmartContract,
+    view: ArcSwap<View<C>>,
     watch: watch::Receiver<()>,
 }
 
@@ -78,7 +102,7 @@ pub type Version = u128;
 
 /// Events happening within a WCN [`Cluster`].
 #[derive(Debug)]
-pub enum Event<D = node_operator::Data> {
+pub enum Event {
     /// [`Migration`] has started.
     MigrationStarted(migration::Started),
 
@@ -98,10 +122,10 @@ pub enum Event<D = node_operator::Data> {
     MaintenanceFinished(maintenance::Finished),
 
     /// [`NodeOperator`] has been updated.
-    NodeOperatorAdded(node_operator::Added<D>),
+    NodeOperatorAdded(node_operator::Added),
 
     /// [`NodeOperator`] has been updated.
-    NodeOperatorUpdated(node_operator::Updated<D>),
+    NodeOperatorUpdated(node_operator::Updated),
 
     /// [`NodeOperator`] has been removed.
     NodeOperatorRemoved(node_operator::Removed),
@@ -110,52 +134,49 @@ pub enum Event<D = node_operator::Data> {
     SettingsUpdated(settings::Updated),
 }
 
-/// [`Event`] with [`node_operator::SerializedData`].
-pub type SerializedEvent = Event<node_operator::SerializedData>;
-
-impl<SC, Shards> Cluster<SC, Shards>
+impl<C: Config> Cluster<C>
 where
-    SC: smart_contract::Read,
-    Shards: Clone + Send + Sync + 'static,
-    Keyspace: keyspace::sealed::Calculate<Shards>,
+    Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
 {
     /// Deploys a new WCN [`Cluster`].
     pub async fn deploy(
-        deployer: &impl smart_contract::Deployer<SC>,
+        cfg: C,
+        deployer: &impl smart_contract::Deployer<C::SmartContract>,
         initial_settings: Settings,
         initial_operators: Vec<NodeOperator>,
     ) -> Result<Self, DeploymentError> {
         let operators: Vec<_> = initial_operators
             .into_iter()
-            .map(|op| {
-                let op = op.serialize()?;
-                op.data.validate(&initial_settings)?;
-                Ok::<_, DeploymentError>(op)
-            })
+            .map(NodeOperator::serialize)
             .try_collect()?;
 
         let operators = NodeOperators::new(operators.into_iter().map(Some))?;
 
         let contract = deployer.deploy(initial_settings, operators).await?;
 
-        Self::new(contract).await.map_err(Into::into)
+        Self::new(cfg, contract).await
     }
 
     /// Connects to an existing WCN [`Cluster`].
     pub async fn connect(
-        connector: &impl smart_contract::Connector<SC>,
+        cfg: C,
+        connector: &impl smart_contract::Connector<C::SmartContract>,
         contract_address: smart_contract::Address,
     ) -> Result<Self, ConnectionError> {
         let contract = connector.connect(contract_address).await?;
-        Self::new(contract).await.map_err(Into::into)
+        Self::new(cfg, contract).await
     }
 
-    async fn new(contract: SC) -> Result<Self, view::FetchError> {
+    async fn new<E>(cfg: C, contract: C::SmartContract) -> Result<Self, E>
+    where
+        E: From<node_operator::DataDeserializationError> + From<smart_contract::ReadError>,
+    {
         let events = contract.events().await?;
-        let view = View::fetch(&contract).await?.calculate_keyspace().await;
+        let view = View::from_sc(&cfg, contract.cluster_view().await?).await?;
 
         let (tx, rx) = watch::channel(());
         let inner = Arc::new(Inner {
+            config: cfg,
             smart_contract: contract,
             view: ArcSwap::new(Arc::new(view)),
             watch: rx,
@@ -175,16 +196,16 @@ where
     }
 }
 
-impl<SC, Shards> Cluster<SC, Shards> {
+impl<C: Config> Cluster<C> {
     /// Passes the current [`cluster::View`] into the provided closure.
     ///
     /// More efficient than calling [`Cluster::view`].
-    pub fn using_view<T>(&self, f: impl FnOnce(&View<Shards>) -> T) -> T {
+    pub fn using_view<T>(&self, f: impl FnOnce(&View<C>) -> T) -> T {
         f(&self.inner.view.load())
     }
 
     /// Returns the current [`cluster::View`].
-    pub fn view(&self) -> Arc<View<Shards>> {
+    pub fn view(&self) -> Arc<View<C>> {
         self.inner.view.load_full()
     }
 
@@ -200,12 +221,15 @@ impl<SC, Shards> Cluster<SC, Shards> {
     }
 
     /// Returns reference to the underlying [`SmartContract`].
-    pub fn smart_contract(&self) -> &SC {
+    pub fn smart_contract(&self) -> &C::SmartContract {
         &self.inner.smart_contract
     }
 }
 
-impl<SC: SmartContract, Shards> Cluster<SC, Shards> {
+impl<C: Config> Cluster<C>
+where
+    C::SmartContract: SmartContract,
+{
     /// Builds a new [`Keyspace`] using the provided [`migration::Plan`] and
     /// calls [`SmartContract::start_migration`].
     pub async fn start_migration(&self, plan: migration::Plan) -> Result<(), StartMigrationError> {
@@ -441,8 +465,8 @@ pub enum DeploymentError {
     #[error(transparent)]
     DataTooLarge(#[from] node_operator::DataTooLargeError),
 
-    #[error(transparent)]
-    FetchView(#[from] view::FetchError),
+    #[error("Smart-contract: {0}")]
+    SmartContractRead(#[from] smart_contract::ReadError),
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::DeploymentError),
@@ -454,8 +478,11 @@ pub enum ConnectionError {
     #[error(transparent)]
     SmartContract(#[from] smart_contract::ConnectionError),
 
+    #[error("Smart-contract: {0}")]
+    SmartContractRead(#[from] smart_contract::ReadError),
+
     #[error(transparent)]
-    FetchView(#[from] view::FetchError),
+    DataDeserialization(#[from] node_operator::DataDeserializationError),
 }
 
 /// [`Cluster::start_migration`] error.
@@ -644,22 +671,5 @@ impl Event {
             Event::NodeOperatorRemoved(evt) => evt.cluster_version,
             Event::SettingsUpdated(evt) => evt.cluster_version,
         }
-    }
-}
-
-impl SerializedEvent {
-    fn deserialize(self) -> Result<Event, node_operator::DataDeserializationError> {
-        Ok(match self {
-            Event::MigrationStarted(evt) => Event::MigrationStarted(evt),
-            Event::MigrationDataPullCompleted(evt) => Event::MigrationDataPullCompleted(evt),
-            Event::MigrationCompleted(evt) => Event::MigrationCompleted(evt),
-            Event::MigrationAborted(evt) => Event::MigrationAborted(evt),
-            Event::MaintenanceStarted(evt) => Event::MaintenanceStarted(evt),
-            Event::MaintenanceFinished(evt) => Event::MaintenanceFinished(evt),
-            Event::NodeOperatorAdded(evt) => Event::NodeOperatorAdded(evt.deserialize()?),
-            Event::NodeOperatorUpdated(evt) => Event::NodeOperatorUpdated(evt.deserialize()?),
-            Event::NodeOperatorRemoved(evt) => Event::NodeOperatorRemoved(evt),
-            Event::SettingsUpdated(evt) => Event::SettingsUpdated(evt),
-        })
     }
 }

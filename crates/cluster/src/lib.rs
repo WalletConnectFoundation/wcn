@@ -64,7 +64,7 @@ pub trait Config: Send + Sync + 'static {
 
     /// Your application level defined [`Node`].
     ///
-    /// Provided in orded to be able to inject application specific
+    /// Provided in order to be able to inject application specific
     /// data/logic into it.
     ///
     /// If no additional logic is required - just specify [`Node`].

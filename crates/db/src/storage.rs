@@ -67,8 +67,13 @@ fn map_err(err: wcn_rocks::Error) -> StorageError {
 pub fn key(namespace: &Namespace, key: Bytes<'_>) -> GenericKey {
     static HASHER: Xxh3Builder = Xxh3Builder::new();
 
-    let key = KeyWrapper::private(namespace, &key).into_bytes();
+    // Determine position in the keyspace before modifying the key, for consistency
+    // with the replication driver logic.
     let pos = std::hash::BuildHasher::hash_one(&HASHER, &key);
+
+    // Inject the namespace prefix.
+    let key = KeyWrapper::private(namespace, &key).into_bytes();
+
     GenericKey::new(pos, key)
 }
 

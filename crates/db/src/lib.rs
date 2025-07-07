@@ -59,7 +59,6 @@ pub fn run(
     Ok(async move {
         let _metrics_guard = metrics_guard;
 
-        // TODO: Should there be any extra logic, e.g. shutdown reason?
         tokio::select! {
             _ = shutdown_rx => {
                 tracing::info!("shutdown signal received");

@@ -2,9 +2,9 @@
 
 pub use wcn_rpc::{identity, Multiaddr, PeerId};
 use {
-    relay_rocks::db::migration::ExportItem,
     serde::{Deserialize, Serialize},
     std::ops::RangeInclusive,
+    wcn_rocks::db::migration::ExportItem,
     wcn_rpc::{self as rpc},
 };
 

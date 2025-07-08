@@ -133,15 +133,22 @@ async fn test_suite() {
 }
 
 fn new_node_operator(n: u8, anvil: &AnvilInstance) -> NodeOperator {
-    NodeOperator {
-        id: operator_id(n, anvil),
-        name: node_operator::Name::new(format!("Operator{n}")).unwrap(),
-        nodes: vec![Node {
-            peer_id: PeerId::random(),
-            addr: SocketAddrV4::new([127, 0, 0, 1].into(), 40000 + n as u16),
-        }],
-        clients: vec![],
-    }
+    NodeOperator::new(
+        operator_id(n, anvil),
+        node_operator::Name::new(format!("Operator{n}")).unwrap(),
+        vec![
+            Node {
+                peer_id: PeerId::random(),
+                addr: SocketAddrV4::new([127, 0, 0, 1].into(), 40000 + n as u16),
+            },
+            Node {
+                peer_id: PeerId::random(),
+                addr: SocketAddrV4::new([127, 0, 0, 1].into(), 50000 + n as u16),
+            },
+        ],
+        vec![],
+    )
+    .unwrap()
 }
 
 fn operator_id(n: u8, anvil: &AnvilInstance) -> node_operator::Id {

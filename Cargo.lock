@@ -7803,6 +7803,7 @@ dependencies = [
  "fpe",
  "futures",
  "hex",
+ "indexmap 2.9.0",
  "itertools 0.12.1",
  "libp2p",
  "postcard",

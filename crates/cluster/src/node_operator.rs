@@ -13,7 +13,14 @@ use {
     },
     derive_more::derive::{AsRef, Into},
     serde::{Deserialize, Serialize},
+    std::sync::{
+        atomic::{self, AtomicUsize},
+        Arc,
+    },
 };
+
+/// Minimum number of [`Node`]s each [`NodeOperator`] is required to have.
+pub const MIN_NODES: usize = 2;
 
 /// Globally unique identifier of a [`NodeOperator`];
 pub type Id = smart_contract::AccountAddress;
@@ -68,6 +75,45 @@ pub struct NodeOperator<N = Node> {
     /// List of [`Client`]s authorized to use the WCN cluster on behalf of the
     /// [`NodeOperator`].
     pub clients: Vec<Client>,
+
+    // for load balancing
+    counter: Arc<AtomicUsize>,
+}
+
+impl<N> NodeOperator<N> {
+    /// Creates a new [`NodeOperator`].
+    pub fn new(
+        id: Id,
+        name: Name,
+        nodes: Vec<N>,
+        clients: Vec<Client>,
+    ) -> Result<Self, CreationError> {
+        if nodes.len() < MIN_NODES {
+            return Err(CreationError::TooFewNodes(nodes.len()));
+        }
+
+        Ok(Self {
+            id,
+            name,
+            nodes,
+            clients,
+            // overflows and starts from `0`
+            counter: Arc::new(usize::MAX.into()),
+        })
+    }
+
+    /// Returns a [`Node`] of this [`NodeOperator`] responsible for the next
+    /// request.
+    ///
+    /// [`Node`]s are being iterated in round-robin fashion for load-balancing
+    /// purposes.
+    pub fn next_node(&self) -> &N {
+        // we've checked this in the constructor
+        debug_assert!(!self.nodes.is_empty());
+
+        let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+        &self.nodes[n % self.nodes.len()]
+    }
 }
 
 /// [`NodeOperator`] with serialized [`Data`].
@@ -165,14 +211,12 @@ impl Serialized {
         let nodes = data
             .nodes
             .into_iter()
-            .map(|node| cfg.new_node(node.addr, node.peer_id));
+            .map(|node| cfg.new_node(node.addr, node.peer_id))
+            .collect();
 
-        Ok(NodeOperator {
-            id: self.id,
-            name: data.name,
-            nodes: nodes.collect(),
-            clients: data.clients.into_iter().map(Into::into).collect(),
-        })
+        let clients = data.clients.into_iter().map(Into::into).collect();
+
+        Ok(NodeOperator::new(self.id, data.name, nodes, clients)?)
     }
 }
 
@@ -208,6 +252,9 @@ pub enum DataDeserializationError {
 
     #[error("Unknown schema version: {0}")]
     UnknownSchemaVersion(u8),
+
+    #[error(transparent)]
+    Constructor(#[from] CreationError),
 }
 
 impl DataDeserializationError {
@@ -229,6 +276,12 @@ impl Data {
 
         Ok(())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreationError {
+    #[error("Too few nodes: {_0} < {MIN_NODES}")]
+    TooFewNodes(usize),
 }
 
 /// [`SerializedData`] size is too large.

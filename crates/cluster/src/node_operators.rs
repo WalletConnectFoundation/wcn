@@ -2,26 +2,37 @@
 
 use {
     crate::{self as cluster, node_operator},
-    std::collections::HashMap,
+    indexmap::IndexMap,
+    std::sync::{
+        atomic::{self, AtomicUsize},
+        Arc,
+    },
 };
 
 /// Slot map of [`NodeOperator`]s.
 #[derive(Debug, Clone)]
 pub struct NodeOperators<N> {
-    id_to_idx: HashMap<node_operator::Id, node_operator::Idx>,
+    id_to_idx: IndexMap<node_operator::Id, node_operator::Idx>,
 
     slots: Vec<Option<N>>,
+
+    // for load balancing
+    counter: Arc<AtomicUsize>,
 }
 
 impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
     pub(super) fn new(slots: impl IntoIterator<Item = Option<N>>) -> Result<Self, CreationError> {
         let slots: Vec<_> = slots.into_iter().collect();
 
+        if slots.len() < cluster::MIN_OPERATORS as usize {
+            return Err(CreationError::TooFewOperators(slots.len()));
+        }
+
         if slots.len() > cluster::MAX_OPERATORS {
             return Err(CreationError::TooManyOperatorSlots(slots.len()));
         }
 
-        let mut id_to_idx = HashMap::with_capacity(slots.len());
+        let mut id_to_idx = IndexMap::with_capacity(slots.len());
 
         for (idx, slot) in slots.iter().enumerate() {
             if let Some(operator) = &slot {
@@ -31,7 +42,26 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
             }
         }
 
-        Ok(Self { id_to_idx, slots })
+        Ok(Self {
+            id_to_idx,
+            slots,
+            // overflows and starts from `0`
+            counter: Arc::new(usize::MAX.into()),
+        })
+    }
+
+    /// Returns a [`NodeOperator`] responsible for the next request.
+    ///
+    /// [`NodeOperator`]s are being iterated in round-robin fashion for
+    /// load-balancing purposes.
+    pub fn next(&self) -> &N {
+        // we've checked this in the constructor
+        debug_assert!(!self.id_to_idx.is_empty());
+
+        let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+        let idx = self.id_to_idx[n % self.id_to_idx.len()];
+        // if `id_to_idx` map contains the index the slot should always exist
+        self.slots[idx as usize].as_ref().unwrap()
     }
 
     pub(super) fn try_map<T, E>(
@@ -45,6 +75,7 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
                 .into_iter()
                 .map(|opt| opt.map(&f).transpose())
                 .collect::<Result<_, _>>()?,
+            counter: self.counter,
         })
     }
 
@@ -54,7 +85,7 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
 
     pub(super) fn set(&mut self, idx: node_operator::Idx, slot: Option<N>) {
         if let Some(id) = self.get_by_idx(idx).map(|op| *op.as_ref()) {
-            self.id_to_idx.remove(&id);
+            self.id_to_idx.shift_remove(&id);
         }
 
         if self.slots.len() >= idx as usize {

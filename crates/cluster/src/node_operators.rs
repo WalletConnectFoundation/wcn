@@ -16,6 +16,7 @@ pub struct NodeOperators<N> {
 
     slots: Vec<Option<N>>,
 
+    // for load balancing
     counter: Arc<AtomicUsize>,
 }
 

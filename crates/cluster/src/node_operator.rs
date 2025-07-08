@@ -97,6 +97,7 @@ impl<N> NodeOperator<N> {
             name,
             nodes,
             clients,
+            // overflows and starts from `0`
             counter: Arc::new(usize::MAX.into()),
         })
     }
@@ -279,7 +280,7 @@ impl Data {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreationError {
-    #[error("Too few nodes: {_0} < {}", MIN_NODES)]
+    #[error("Too few nodes: {_0} < {MIN_NODES}")]
     TooFewNodes(usize),
 }
 

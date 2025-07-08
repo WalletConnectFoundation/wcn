@@ -18,7 +18,6 @@ pub use {
     cluster::Cluster,
     config::{Config, RocksdbDatabaseConfig},
     consensus::Consensus,
-    logger::Logger,
     network::Network,
     storage::Storage,
 };
@@ -26,7 +25,6 @@ pub use {
 pub mod cluster;
 pub mod config;
 pub mod consensus;
-pub mod logger;
 pub mod metrics;
 pub mod network;
 pub mod signal;
@@ -99,7 +97,7 @@ mod alloc {
 }
 
 pub fn exec() -> anyhow::Result<()> {
-    let _logger = Logger::init(logger::LogFormat::Json, None, None);
+    let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
 
     let prometheus = PrometheusBuilder::new()
         .install_recorder()

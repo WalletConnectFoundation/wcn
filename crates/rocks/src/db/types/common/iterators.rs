@@ -1,6 +1,6 @@
 use {
     crate::{
-        db::{cf, migration::ExportFrame, schema::ColumnFamilyName, types::map},
+        db::{cf, migration::ExportFrame, schema::ColumnFamilyName, types::MapRecord},
         util::serde::{deserialize, serialize},
         DataContext,
         Error,
@@ -44,15 +44,15 @@ pub type GenericCursor = Vec<u8>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanResult<F, V> {
-    pub items: Vec<map::Record<F, V>>,
-    pub has_more: bool,
+    pub items: Vec<MapRecord<F, V>>,
+    pub has_next: bool,
 }
 
 impl<F, V> ScanResult<F, V> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             items: Vec::with_capacity(capacity),
-            has_more: false,
+            has_next: false,
         }
     }
 }
@@ -168,7 +168,7 @@ impl<C> IterTransform<C> for MapRecords
 where
     C: cf::Column,
 {
-    type Value = map::Record<C::SubKeyType, C::ValueType>;
+    type Value = MapRecord<C::SubKeyType, C::ValueType>;
 
     fn map(data: &KVBytes) -> Result<Option<Self::Value>, Error> {
         let subkey_slice = C::split_ext_key(&data.0)?;
@@ -180,7 +180,7 @@ where
             .modification_timestamp()
             .unwrap_or_else(|| data.creation_timestamp());
 
-        Ok(data.into_payload().map(|value| map::Record {
+        Ok(data.into_payload().map(|value| MapRecord {
             field,
             value,
             expiration: exp,
@@ -218,7 +218,7 @@ pub fn scan<C, T, V>(
 ) -> Result<ScanResult<C::SubKeyType, V>, Error>
 where
     C: cf::Column,
-    T: IterTransform<C, Value = map::Record<C::SubKeyType, V>>,
+    T: IterTransform<C, Value = MapRecord<C::SubKeyType, V>>,
 {
     let iter = if let Some(cursor) = &opts.cursor {
         // If we have a cursor, use a different version of the iterator, which skips to
@@ -257,7 +257,7 @@ where
         result.items.push(item?);
 
         if result.items.len() >= opts.count {
-            result.has_more = iter.next().is_some();
+            result.has_next = iter.next().is_some();
             break;
         }
     }

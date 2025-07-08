@@ -1,21 +1,21 @@
-pub use relay_rocks::StorageError as Error;
+pub use wcn_rocks::StorageError as Error;
 use {
     crate::Config,
     futures::{future, stream::BoxStream, Stream, StreamExt, TryFutureExt as _},
     raft::Infallible,
-    relay_rocks::{
-        db::{cf::DbColumn, migration::ExportItem, schema},
-        RocksBackend,
-        RocksDatabaseBuilder,
-        StorageError,
-        StorageResult,
-    },
     std::{
         fmt::{self, Debug},
         future::Future,
         ops::RangeInclusive,
     },
     wcn::migration::{self, AnyError},
+    wcn_rocks::{
+        db::{cf::DbColumn, migration::ExportItem, schema},
+        RocksBackend,
+        RocksDatabaseBuilder,
+        StorageError,
+        StorageResult,
+    },
 };
 
 /// [`Storage`] backend.
@@ -81,8 +81,8 @@ impl migration::StorageExport for Storage {
     }
 }
 
-fn map_err(err: relay_rocks::Error) -> StorageError {
-    use relay_rocks::Error;
+fn map_err(err: wcn_rocks::Error) -> StorageError {
+    use wcn_rocks::Error;
 
     match err {
         Error::Serialize => StorageError::Serialize,

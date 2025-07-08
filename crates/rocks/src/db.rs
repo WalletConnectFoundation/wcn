@@ -132,7 +132,7 @@ impl RocksBackend {
         &self,
         left: Option<K>,
         right: Option<K>,
-    ) -> rocksdb::DBIterator
+    ) -> rocksdb::DBIterator<'_>
     where
         C: cf::Column,
     {
@@ -156,14 +156,14 @@ impl RocksBackend {
     }
 
     /// Returns database iterator for a given prefix.
-    fn prefix_iterator<C, K: AsRef<[u8]>>(&self, prefix: K) -> rocksdb::DBIterator
+    fn prefix_iterator<C, K: AsRef<[u8]>>(&self, prefix: K) -> rocksdb::DBIterator<'_>
     where
         C: cf::Column,
     {
         self.db.prefix_iterator_cf(&self.cf_handle(C::NAME), prefix)
     }
 
-    fn prefix_iterator_with_cursor<C, K: AsRef<[u8]>>(&self, cursor: K) -> rocksdb::DBIterator
+    fn prefix_iterator_with_cursor<C, K: AsRef<[u8]>>(&self, cursor: K) -> rocksdb::DBIterator<'_>
     where
         C: cf::Column,
     {
@@ -576,25 +576,25 @@ mod tests {
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Set expiration to non-existent data.
-            db.setexp(key, timestamp(30), timestamp_micros())
+            db.set_exp(key, timestamp(30), timestamp_micros())
                 .await
                 .unwrap();
             assert_eq!(db.get(key).await.unwrap(), None);
 
             // Expiration from non-existent keys return an error.
-            assert!(matches!(db.exp(key).await, Err(Error::EntryNotFound)));
+            assert!(matches!(db.get_exp(key).await, Err(Error::EntryNotFound)));
 
             db.set(key, val, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            assert_eq!(db.exp(key).await, Ok(expiration));
+            assert_eq!(db.get_exp(key).await, Ok(expiration));
 
             // Should return proper TTL if set for an existing key.
             let expiration = timestamp(30);
-            db.setexp(key, expiration, timestamp_micros())
+            db.set_exp(key, expiration, timestamp_micros())
                 .await
                 .unwrap();
-            let result = db.exp(key).await.unwrap();
+            let result = db.get_exp(key).await.unwrap();
             assert_eq!(result, expiration);
         }
     }

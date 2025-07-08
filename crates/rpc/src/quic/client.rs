@@ -195,8 +195,7 @@ fn new_connection<H: Handshake>(
 
             if actual_peer_id != peer_id {
                 return Err(ConnectionError::Handshake(format!(
-                    "Invalid peer ID: expected: {} actual: {}",
-                    peer_id, actual_peer_id
+                    "Invalid peer ID: expected: {peer_id} actual: {actual_peer_id}"
                 )));
             }
 

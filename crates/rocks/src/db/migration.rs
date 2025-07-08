@@ -68,8 +68,8 @@ impl RocksBackend {
                 }
                 ExportItem::Done(n) if n != total_items_processed => {
                     return Err(Error::Other(format!(
-                        "`Done({n})` frame indicates more items than were actually processed ({})",
-                        total_items_processed
+                        "`Done({n})` frame indicates more items than were actually processed \
+                         ({total_items_processed})"
                     )));
                 }
                 ExportItem::Done(_) => {
@@ -157,7 +157,7 @@ mod test {
                     MapColumn,
                     StringColumn,
                 },
-                types::{map::Pair, string, MapStorage, StringStorage},
+                types::{MapStorage, Pair, Record, StringStorage},
             },
             util::{db_path::DBPath, timestamp_micros, timestamp_secs},
             RocksDatabaseBuilder,
@@ -244,7 +244,7 @@ mod test {
             let got = string.get(&key).await.unwrap();
             assert_eq!(
                 got,
-                Some(string::Record {
+                Some(Record {
                     value: val,
                     expiration,
                     version: timestamp,
@@ -257,7 +257,7 @@ mod test {
             let got = map.hget(&key, &pair.field).await.unwrap();
             assert_eq!(
                 got,
-                Some(string::Record {
+                Some(Record {
                     value: pair.value,
                     expiration,
                     version: timestamp,

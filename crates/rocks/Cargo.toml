@@ -1,5 +1,5 @@
 [package]
-name = "relay_rocks"
+name = "wcn_rocks"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -40,9 +40,7 @@ postcard = { version = "1.0", default-features = false, features = [
     "alloc",
     "use-std",
 ] }
-derive_more = { workspace = true, features = [
-    "from",
-] }
+derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["test-util"] }

@@ -64,12 +64,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 'main'
+          ref: "main"
       - id: get-current-version
         run: echo MAIN_VERSION=$(cat VERSION) >> $GITHUB_ENV
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }} 
+          ref: ${{ github.head_ref || github.ref_name }}
           token: ${{ secrets.RELEASE_PAT }}
       - id: bump-version
         run: |
@@ -78,14 +78,14 @@ jobs:
 
           TODAY=$(date +"%y%m%d")
 
-          if [[ $MAIN_MAJOR == $TODAY ]]; then 
+          if [[ $MAIN_MAJOR == $TODAY ]]; then
             NEW_VERSION=$MAIN_MAJOR.$((MAIN_MINOR + 1))
           else
             NEW_VERSION=$TODAY.0
           fi
 
           LOCAL_VERSION=$(cat VERSION)
-          if [[ $LOCAL_VERSION == $NEW_VERSION ]]; then 
+          if [[ $LOCAL_VERSION == $NEW_VERSION ]]; then
             exit 0
           fi
 
@@ -119,6 +119,7 @@ jobs:
   cargo-test:
     needs: [changed-files]
     if: needs.changed-files.outputs.rust == 'true'
+    timeout-minutes: 20
     runs-on:
       group: ubuntu-runners
     strategy:
@@ -146,7 +147,7 @@ jobs:
           else
             echo Unexpected test kind $TEST_KIND
             exit 1
-          fi 
+          fi
 
   cargo-fmt:
     needs: [changed-files]
@@ -188,7 +189,15 @@ jobs:
           command: check license
 
   docker-build-push:
-    needs: [changed-files, cargo-build, cargo-test, cargo-fmt, cargo-clippy, cargo-deny]
+    needs:
+      [
+        changed-files,
+        cargo-build,
+        cargo-test,
+        cargo-fmt,
+        cargo-clippy,
+        cargo-deny,
+      ]
     if: |
       needs.changed-files.result != 'failure' &&
       (needs.changed-files.outputs.rust == 'true' || needs.changed-files.outputs.dockerfile == 'true') &&
@@ -204,7 +213,7 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: docker/login-action@v2
         with:
           registry: ghcr.io
@@ -250,7 +259,7 @@ jobs:
 
   release:
     needs: [changed-files]
-    if: github.ref_name == 'main' && needs.changed-files.outputs.version == 'true' 
+    if: github.ref_name == 'main' && needs.changed-files.outputs.version == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -269,7 +278,7 @@ jobs:
 
       - name: push-tag
         run: |
-          VERSION=$(cat VERSION) 
+          VERSION=$(cat VERSION)
 
           git tag $VERSION
           git push origin "$VERSION"

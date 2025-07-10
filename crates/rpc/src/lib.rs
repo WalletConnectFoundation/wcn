@@ -6,11 +6,12 @@ use {
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
-    transport2::Codec as CodecV2,
 };
 pub use {
     libp2p::{identity, Multiaddr, PeerId},
-    transport2::PostcardCodec,
+    tokio_serde,
+    transport2::{Codec as CodecV2, Deserializer, PostcardCodec, Serializer},
+    wcn_rpc_derive::Message,
 };
 
 #[cfg(feature = "client")]
@@ -71,12 +72,6 @@ pub type Request<RPC> = <RPC as RpcV2>::Request;
 /// [`RpcV2::Response`].
 pub type Response<RPC> = <RPC as RpcV2>::Response;
 
-/// [`MessageV2::Borrowed`] of [`RpcV2::Request`].
-pub type BorrowedRequest<'a, RPC> = <<RPC as RpcV2>::Request as MessageV2>::Borrowed<'a>;
-
-/// [`MessageV2::Borrowed`] of [`RpcV2::Response`].
-pub type BorrowedResponse<'a, RPC> = <<RPC as RpcV2>::Response as MessageV2>::Borrowed<'a>;
-
 /// Request-response RPC.
 pub trait UnaryRpc: RpcV2 {}
 
@@ -106,14 +101,16 @@ where
 }
 
 /// RPC message.
-pub trait MessageV2: DeserializeOwned + Serialize + Unpin + Sync + Send + 'static {
-    type Borrowed<'a>: BorrowedMessage;
-}
+pub trait MessageV2: DeserializeOwned + BorrowedMessage<Owned = Self> + 'static {}
+
+impl<T> MessageV2 for T where T: DeserializeOwned + BorrowedMessage<Owned = Self> + 'static {}
 
 /// Borrowed [Message][`MessageV2`].
-pub trait BorrowedMessage: Serialize + Unpin + Sync + Send {}
+pub trait BorrowedMessage: Serialize + Unpin + Sync + Send {
+    type Owned: MessageV2;
 
-impl<T> BorrowedMessage for T where T: Serialize + Unpin + Sync + Send {}
+    fn into_owned(self) -> Self::Owned;
+}
 
 /// Error codes produced by this module.
 pub mod error_code {
@@ -394,25 +391,91 @@ enum ConnectionStatusCode {
     Unauthorized = -3,
 }
 
-impl<T, E> MessageV2 for Result<T, E>
+impl<T, E> BorrowedMessage for Result<T, E>
 where
-    T: MessageV2,
-    E: MessageV2,
+    T: BorrowedMessage,
+    E: BorrowedMessage,
 {
-    type Borrowed<'a> = Result<T::Borrowed<'a>, E::Borrowed<'a>>;
+    type Owned = Result<T::Owned, E::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        match self {
+            Ok(ok) => Ok(ok.into_owned()),
+            Err(err) => Err(err.into_owned()),
+        }
+    }
 }
 
-impl<T> MessageV2 for Option<T>
+impl<T> BorrowedMessage for Option<T>
 where
-    T: MessageV2,
+    T: BorrowedMessage,
 {
-    type Borrowed<'a> = Option<T::Borrowed<'a>>;
+    type Owned = Option<T::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        self.map(BorrowedMessage::into_owned)
+    }
 }
 
-impl MessageV2 for () {
-    type Borrowed<'a> = ();
+impl<T: Clone + BorrowedMessage> BorrowedMessage for &[T] {
+    type Owned = Vec<T::Owned>;
+
+    fn into_owned(self) -> Self::Owned {
+        self.iter()
+            .cloned()
+            .map(BorrowedMessage::into_owned)
+            .collect()
+    }
 }
 
-impl MessageV2 for u64 {
-    type Borrowed<'a> = Self;
+impl<T: MessageV2> BorrowedMessage for Vec<T> {
+    type Owned = Vec<T>;
+
+    fn into_owned(self) -> Self::Owned {
+        self
+    }
 }
+
+impl<T: Clone + BorrowedMessage> BorrowedMessage for &T {
+    type Owned = T::Owned;
+
+    fn into_owned(self) -> Self::Owned {
+        self.clone().into_owned()
+    }
+}
+
+impl BorrowedMessage for &str {
+    type Owned = String;
+
+    fn into_owned(self) -> Self::Owned {
+        self.to_string()
+    }
+}
+
+impl<T: Clone + BorrowedMessage> BorrowedMessage for Cow<'_, T> {
+    type Owned = T::Owned;
+
+    fn into_owned(self) -> T::Owned {
+        BorrowedMessage::into_owned(Cow::into_owned(self))
+    }
+}
+
+macro_rules! impl_borrowed_message {
+    ( $( $t:ty ),* $(,)? ) => {
+        $(
+            impl BorrowedMessage for $t {
+                type Owned = $t;
+
+                fn into_owned(self) -> Self::Owned {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+impl_borrowed_message!((), bool, char);
+impl_borrowed_message!(u8, u16, u32, u64, u128);
+impl_borrowed_message!(i8, i16, i32, i64, i128);
+impl_borrowed_message!(f32, f64);
+impl_borrowed_message!(String);

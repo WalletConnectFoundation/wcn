@@ -1,20 +1,17 @@
 #![allow(clippy::manual_async_fn)]
 
-pub use {
-    auth,
-    wcn_rpc::{identity, Multiaddr, PeerAddr, PeerId},
-};
 use {
-    futures::FutureExt as _,
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, future::Future, str::FromStr, time::Duration},
+    strum::IntoStaticStr,
     time::OffsetDateTime as DateTime,
+    wc::metrics::{self, enum_ordinalize::Ordinalize},
+    wcn_rpc::Message,
 };
 
 pub mod operation;
-pub use operation::{Operation, OperationRef};
+pub use operation::Operation;
 
-#[cfg(any(feature = "rpc_client", feature = "rpc_server"))]
 pub mod rpc;
 
 /// Namespace within a WCN cluster.
@@ -24,7 +21,7 @@ pub mod rpc;
 ///
 /// Currently it's represented by the node operator's Ethereum address, with an
 /// extra byte appended to support multiple namespaces per operator.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Message)]
 pub struct Namespace([u8; 21]);
 
 impl Namespace {
@@ -56,161 +53,61 @@ pub type KeyspaceVersion = u64;
 ///   servers).
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
-pub trait StorageApi: Clone + Send + Sync + 'static {
-    /// Executes the provided [`operation::Get`].
-    fn get<'a>(
-        &'a self,
-        get: &'a operation::Get<'a>,
-    ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
-        self.execute_ref(get)
-            .map(operation::Output::downcast_result)
+pub trait StorageApi: Send + Sync + 'static {
+    /// Executes the provided [`StorageApi`] [`Operation`] using a reference.
+    fn execute_ref(
+        &self,
+        operation: &Operation<'_>,
+    ) -> impl Future<Output = Result<operation::Output>> {
+        async { self.execute(operation.clone()).await }
     }
 
-    /// Executes the provided [`operation::Set`].
-    fn set<'a>(
-        &'a self,
-        set: &'a operation::Set<'a>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(set)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::Del`].
-    fn del<'a>(
-        &'a self,
-        del: &'a operation::Del<'a>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(del)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::GetExp`].
-    fn get_exp<'a>(
-        &'a self,
-        get_exp: &'a operation::GetExp<'a>,
-    ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
-        self.execute_ref(get_exp)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::SetExp`].
-    fn set_exp<'a>(
-        &'a self,
-        set_exp: &'a operation::SetExp<'a>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(set_exp)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HGet`].
-    fn hget<'a>(
-        &'a self,
-        hget: &'a operation::HGet<'a>,
-    ) -> impl Future<Output = Result<Option<Record<'a>>>> + Send + 'a {
-        self.execute_ref(hget)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HSet`].
-    fn hset<'a>(
-        &'a self,
-        hset: &'a operation::HSet<'a>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(hset)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HDel`].
-    fn hdel<'a>(
-        &'a self,
-        hdel: &'a operation::HDel<'a>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(hdel)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HGetExp`].
-    fn hget_exp<'a>(
-        &'a self,
-        hget_exp: &'a operation::HGetExp<'a>,
-    ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send + 'a {
-        self.execute_ref(hget_exp)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HSetExp`].
-    fn hset_exp<'a>(
-        &'a self,
-        hset_exp: &'a operation::HSetExp<'a>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        self.execute_ref(hset_exp)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HCard`].
-    fn hcard<'a>(
-        &'a self,
-        hcard: &'a operation::HCard<'a>,
-    ) -> impl Future<Output = Result<u64>> + Send + 'a {
-        self.execute_ref(hcard)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`operation::HScan`].
-    fn hscan<'a>(
-        &'a self,
-        hscan: &'a operation::HScan<'a>,
-    ) -> impl Future<Output = Result<MapPage<'a>>> + Send + 'a {
-        self.execute_ref(hscan)
-            .map(operation::Output::downcast_result)
-    }
-
-    /// Executes the provided [`StorageApi`] [`OperationRef`].
-    fn execute_ref<'a>(
-        &'a self,
-        operation: impl Into<OperationRef<'a>> + Send + 'a,
-    ) -> impl Future<Output = Result<operation::Output<'a>>> + Send + 'a {
-        self.execute(operation.into().to_owned())
+    /// Executes the provided [`StorageApi`] [`Operation`] using a [`Callback`].
+    fn execute_callback<C: Callback>(
+        &self,
+        operation: Operation<'_>,
+        callback: C,
+    ) -> impl Future<Output = Result<(), C::Error>> + Send {
+        async move {
+            let result = self.execute(operation).await;
+            callback.send_result(&result).await
+        }
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`].
-    fn execute<'a>(
-        &'a self,
-        operation: Operation<'a>,
-    ) -> impl Future<Output = Result<operation::Output<'a>>> + Send + 'a;
+    fn execute(
+        &self,
+        operation: Operation<'_>,
+    ) -> impl Future<Output = Result<operation::Output>> + Send;
 }
 
-/// Raw bytes.
-pub type Bytes<'a> = Cow<'a, [u8]>;
+/// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
+pub trait Callback: Send {
+    type Error;
 
-/// Raw [`Bytes`] value with metadata related to this value.
+    fn send_result(
+        self,
+        result: &Result<operation::Output>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// Raw bytes value with metadata related to this value.
 ///
 /// [`Record`]s are being deleted from WCN Database after specified
 /// [`Record::expiration`] time.
 ///
 /// A [`Record`] can not be overwritten by another [`Record`] with a lesser
 /// [version][`Record::version`].
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Record<'a> {
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Message)]
+pub struct RecordBorrowed<'a> {
     /// Value of this [`Record`].
-    pub value: Bytes<'a>,
+    pub value: &'a [u8],
 
     /// Expiration time of [`Record`].
     pub expiration: RecordExpiration,
 
     /// Version of this [`Record`].
     pub version: RecordVersion,
-}
-
-impl Record<'_> {
-    /// Converts `Self` into 'static.
-    pub fn into_static(self) -> Record<'static> {
-        Record {
-            value: Cow::Owned(self.value.into_owned()),
-            expiration: self.expiration,
-            version: self.version,
-        }
-    }
 }
 
 /// Entry within a Map.
@@ -221,27 +118,14 @@ impl Record<'_> {
 ///
 /// Each Map key contains an ordered set of entries (ascending order by
 /// [`MapEntry::field`]).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MapEntry<'a> {
-    /// Subkey of this [`MapEntry`].
-    pub field: Bytes<'a>,
-
-    /// [`Record`] of this [`MapEntry`].
-    pub record: Record<'a>,
-}
-
-impl MapEntry<'_> {
-    /// Converts `Self` into 'static.
-    pub fn into_static(self) -> MapEntry<'static> {
-        MapEntry {
-            field: Cow::Owned(self.field.into_owned()),
-            record: self.record.into_static(),
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Message)]
+pub struct MapEntryBorrowed<'a> {
+    pub field: &'a [u8],
+    pub record: RecordBorrowed<'a>,
 }
 
 /// Expiration time of a [`Record`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, Message)]
 pub struct RecordExpiration {
     unix_timestamp_secs: u64,
 }
@@ -288,7 +172,7 @@ impl From<RecordExpiration> for Duration {
 /// Version of a [`Record`].
 ///
 /// [`RecordVersion`] is a local client-side generated timestamp.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, Message)]
 pub struct RecordVersion {
     /// UNIX timestamp (microseconds) representation of this [`RecordVersion`].
     pub unix_timestamp_micros: u64,
@@ -317,33 +201,21 @@ impl RecordVersion {
 }
 
 /// Page of [map entries][MapEntry].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MapPage<'a> {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Message)]
+pub struct MapPage {
     /// [`MapRecord`]s of this [`Page`].
-    pub entries: Vec<MapEntry<'a>>,
+    pub entries: Vec<MapEntry>,
 
     /// Indicator of whether there's a next [`Page`] or not.
     pub has_next: bool,
 }
 
-impl<'a> MapPage<'a> {
+impl MapPage {
     /// Returns cursor pointing to the next [`Page`] if there is one.
-    pub fn next_page_cursor(&self) -> Option<&Bytes<'a>> {
+    pub fn next_page_cursor(&self) -> Option<&[u8]> {
         self.has_next
-            .then(|| self.entries.last().map(|entry| &entry.field))
+            .then(|| self.entries.last().map(|entry| entry.field.as_slice()))
             .flatten()
-    }
-
-    /// Converts `Self` into 'static.
-    pub fn into_static(self) -> MapPage<'static> {
-        MapPage {
-            entries: self
-                .entries
-                .into_iter()
-                .map(MapEntry::into_static)
-                .collect(),
-            has_next: self.has_next,
-        }
     }
 }
 
@@ -392,7 +264,7 @@ pub struct Error {
 }
 
 /// [`Error`] kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, IntoStaticStr, PartialEq, Eq, Ordinalize)]
 pub enum ErrorKind {
     /// Client is not authorized to perfrom an [`Operation`].
     Unauthorized,
@@ -439,6 +311,12 @@ impl From<ErrorKind> for Error {
             kind,
             message: None,
         }
+    }
+}
+
+impl metrics::Enum for ErrorKind {
+    fn as_str(&self) -> &'static str {
+        self.into()
     }
 }
 

@@ -12,6 +12,7 @@ client = []
 server = []
 
 [dependencies]
+wcn_rpc_derive = { path = "./derive" }
 derive_more = { workspace = true, features = ["display", "try_from"] }
 derive-where = { workspace = true }
 strum = { workspace = true , features = ["derive"] }

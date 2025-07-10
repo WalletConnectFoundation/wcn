@@ -3,7 +3,7 @@ use {
     derive_more::derive::TryFrom,
     serde::{Deserialize, Serialize},
     std::marker::PhantomData,
-    wcn_rpc::{ApiName, MessageV2 as Message, PostcardCodec},
+    wcn_rpc::{ApiName, Message, PostcardCodec},
 };
 
 #[cfg(feature = "rpc_client")]
@@ -74,89 +74,28 @@ impl wcn_rpc::Api for DatabaseApi {
 
 type UnaryRpc<const ID: u8, Req, Resp> = wcn_rpc::UnaryV2<ID, Req, Resp, PostcardCodec>;
 
-type Get = UnaryRpc<{ Id::Get as u8 }, operation::Get<'static>, Result<Option<Record<'static>>>>;
-type Set = UnaryRpc<{ Id::Set as u8 }, operation::Set<'static>, Result<()>>;
-type Del = UnaryRpc<{ Id::Del as u8 }, operation::Del<'static>, Result<()>>;
+type Get = UnaryRpc<{ Id::Get as u8 }, operation::Get, Result<Option<Record>>>;
+type Set = UnaryRpc<{ Id::Set as u8 }, operation::Set, Result<()>>;
+type Del = UnaryRpc<{ Id::Del as u8 }, operation::Del, Result<()>>;
 
-type GetExp =
-    UnaryRpc<{ Id::GetExp as u8 }, operation::GetExp<'static>, Result<Option<RecordExpiration>>>;
-type SetExp = UnaryRpc<{ Id::SetExp as u8 }, operation::SetExp<'static>, Result<()>>;
+type GetExp = UnaryRpc<{ Id::GetExp as u8 }, operation::GetExp, Result<Option<RecordExpiration>>>;
+type SetExp = UnaryRpc<{ Id::SetExp as u8 }, operation::SetExp, Result<()>>;
 
-type HGet = UnaryRpc<{ Id::HGet as u8 }, operation::HGet<'static>, Result<Option<Record<'static>>>>;
-type HSet = UnaryRpc<{ Id::HSet as u8 }, operation::HSet<'static>, Result<()>>;
-type HDel = UnaryRpc<{ Id::HDel as u8 }, operation::HDel<'static>, Result<()>>;
+type HGet = UnaryRpc<{ Id::HGet as u8 }, operation::HGet, Result<Option<Record>>>;
+type HSet = UnaryRpc<{ Id::HSet as u8 }, operation::HSet, Result<()>>;
+type HDel = UnaryRpc<{ Id::HDel as u8 }, operation::HDel, Result<()>>;
 
 type HGetExp =
-    UnaryRpc<{ Id::HGetExp as u8 }, operation::HGetExp<'static>, Result<Option<RecordExpiration>>>;
-type HSetExp = UnaryRpc<{ Id::HSetExp as u8 }, operation::HSetExp<'static>, Result<()>>;
+    UnaryRpc<{ Id::HGetExp as u8 }, operation::HGetExp, Result<Option<RecordExpiration>>>;
+type HSetExp = UnaryRpc<{ Id::HSetExp as u8 }, operation::HSetExp, Result<()>>;
 
-type HCard = UnaryRpc<{ Id::HCard as u8 }, operation::HCard<'static>, Result<u64>>;
-type HScan = UnaryRpc<{ Id::HScan as u8 }, operation::HScan<'static>, Result<MapPage<'static>>>;
+type HCard = UnaryRpc<{ Id::HCard as u8 }, operation::HCard, Result<u64>>;
+type HScan = UnaryRpc<{ Id::HScan as u8 }, operation::HScan, Result<MapPage>>;
 
-impl Message for operation::Get<'static> {
-    type Borrowed<'a> = operation::Get<'a>;
-}
-
-impl Message for operation::Set<'static> {
-    type Borrowed<'a> = operation::Set<'a>;
-}
-
-impl Message for operation::Del<'static> {
-    type Borrowed<'a> = operation::Del<'a>;
-}
-
-impl Message for operation::GetExp<'static> {
-    type Borrowed<'a> = operation::GetExp<'a>;
-}
-
-impl Message for operation::SetExp<'static> {
-    type Borrowed<'a> = operation::SetExp<'a>;
-}
-
-impl Message for operation::HSet<'static> {
-    type Borrowed<'a> = operation::HSet<'a>;
-}
-
-impl Message for operation::HGet<'static> {
-    type Borrowed<'a> = operation::HGet<'a>;
-}
-
-impl Message for operation::HDel<'static> {
-    type Borrowed<'a> = operation::HDel<'a>;
-}
-
-impl Message for operation::HGetExp<'static> {
-    type Borrowed<'a> = operation::HGetExp<'a>;
-}
-
-impl Message for operation::HSetExp<'static> {
-    type Borrowed<'a> = operation::HSetExp<'a>;
-}
-
-impl Message for operation::HCard<'static> {
-    type Borrowed<'a> = operation::HCard<'a>;
-}
-
-impl Message for operation::HScan<'static> {
-    type Borrowed<'a> = operation::HScan<'a>;
-}
-
-impl Message for Record<'static> {
-    type Borrowed<'a> = Record<'a>;
-}
-
-impl Message for RecordExpiration {
-    type Borrowed<'a> = Self;
-}
-
-impl Message for MapPage<'static> {
-    type Borrowed<'a> = MapPage<'a>;
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Error {
+#[derive(Clone, Debug, Serialize, Deserialize, Message)]
+struct ErrorBorrowed<'a> {
     code: u8,
-    message: Option<String>,
+    message: Option<&'a str>,
 }
 
 impl Error {
@@ -207,11 +146,11 @@ impl From<Error> for crate::Error {
     }
 }
 
-impl From<crate::Error> for Error {
-    fn from(err: crate::Error) -> Self {
+impl From<crate::ErrorKind> for ErrorCode {
+    fn from(kind: crate::ErrorKind) -> Self {
         use crate::ErrorKind;
 
-        let code = match err.kind {
+        match kind {
             ErrorKind::Unauthorized => ErrorCode::Unauthorized,
             ErrorKind::KeyspaceVersionMismatch => ErrorCode::KeyspaceVersionMismatch,
 
@@ -219,12 +158,12 @@ impl From<crate::Error> for Error {
             | ErrorKind::Timeout
             | ErrorKind::Transport
             | ErrorKind::Unknown => ErrorCode::Internal,
-        };
-
-        Error::new(code, err.message)
+        }
     }
 }
 
-impl Message for Error {
-    type Borrowed<'a> = Self;
+impl From<crate::Error> for Error {
+    fn from(err: crate::Error) -> Self {
+        Error::new(err.kind.into(), err.message)
+    }
 }

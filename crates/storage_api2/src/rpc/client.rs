@@ -1,8 +1,9 @@
 pub use wcn_rpc::client2::Config;
 use {
     super::*,
-    crate::{operation, MapPage, Operation, OperationRef, Record, Result, StorageApi},
-    wcn_rpc::client2::{Client, Connection, ConnectionHandler, RpcHandler},
+    crate::{operation, Operation, Result, StorageApi},
+    futures::TryFutureExt as _,
+    wcn_rpc::client2::{Client, Connection, ConnectionHandler, RpcHandler, UnaryRpc},
 };
 
 /// RPC [`Client`] of [`CoordinatorApi`].
@@ -55,93 +56,51 @@ where
         RpcHandler = RpcHandler,
     >,
 {
-    async fn get(&self, op: &operation::Get<'_>) -> Result<Option<Record<'_>>> {
-        self.send::<Get>(op)?.await?.map_err(Into::into)
-    }
+    async fn execute_ref(&self, operation: &Operation<'_>) -> Result<operation::Output> {
+        use operation::{Borrowed, Owned};
 
-    async fn set(&self, op: &operation::Set<'_>) -> Result<()> {
-        self.send::<Set>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn del(&self, op: &operation::Del<'_>) -> Result<()> {
-        self.send::<Del>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn get_exp(&self, op: &operation::GetExp<'_>) -> Result<Option<RecordExpiration>> {
-        self.send::<GetExp>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn set_exp(&self, op: &operation::SetExp<'_>) -> Result<()> {
-        self.send::<SetExp>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hget(&self, op: &operation::HGet<'_>) -> Result<Option<Record<'_>>> {
-        self.send::<HGet>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hset(&self, op: &operation::HSet<'_>) -> Result<()> {
-        self.send::<HSet>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hdel(&self, op: &operation::HDel<'_>) -> Result<()> {
-        self.send::<HDel>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hget_exp(&self, op: &operation::HGetExp<'_>) -> Result<Option<RecordExpiration>> {
-        self.send::<HGetExp>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hset_exp(&self, op: &operation::HSetExp<'_>) -> Result<()> {
-        self.send::<HSetExp>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hcard(&self, op: &operation::HCard<'_>) -> Result<u64> {
-        self.send::<HCard>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn hscan(&self, op: &operation::HScan<'_>) -> Result<MapPage<'_>> {
-        self.send::<HScan>(op)?.await?.map_err(Into::into)
-    }
-
-    async fn execute_ref<'a>(
-        &'a self,
-        operation: impl Into<crate::OperationRef<'a>> + Send + 'a,
-    ) -> Result<operation::Output<'a>> {
-        match operation.into() {
-            OperationRef::Get(get) => self.get(get).await.map(Into::into),
-            OperationRef::Set(set) => self.set(set).await.map(Into::into),
-            OperationRef::Del(del) => self.del(del).await.map(Into::into),
-            OperationRef::GetExp(get_exp) => self.get_exp(get_exp).await.map(Into::into),
-            OperationRef::SetExp(set_exp) => self.set_exp(set_exp).await.map(Into::into),
-            OperationRef::HGet(hget) => self.hget(hget).await.map(Into::into),
-            OperationRef::HSet(hset) => self.hset(hset).await.map(Into::into),
-            OperationRef::HDel(hdel) => self.hdel(hdel).await.map(Into::into),
-            OperationRef::HGetExp(hget_exp) => self.hget_exp(hget_exp).await.map(Into::into),
-            OperationRef::HSetExp(hset_exp) => self.hset_exp(hset_exp).await.map(Into::into),
-            OperationRef::HCard(hcard) => self.hcard(hcard).await.map(Into::into),
-            OperationRef::HScan(hscan) => self.hscan(hscan).await.map(Into::into),
+        match operation {
+            Operation::Owned(owned) => match owned {
+                Owned::Get(op) => Get::send_request(self, op)?.map_ok(into).await?,
+                Owned::Set(op) => Set::send_request(self, op)?.map_ok(into).await?,
+                Owned::Del(op) => Del::send_request(self, op)?.map_ok(into).await?,
+                Owned::GetExp(op) => GetExp::send_request(self, op)?.map_ok(into).await?,
+                Owned::SetExp(op) => SetExp::send_request(self, op)?.map_ok(into).await?,
+                Owned::HGet(op) => HGet::send_request(self, op)?.map_ok(into).await?,
+                Owned::HSet(op) => HSet::send_request(self, op)?.map_ok(into).await?,
+                Owned::HDel(op) => HDel::send_request(self, op)?.map_ok(into).await?,
+                Owned::HGetExp(op) => HGetExp::send_request(self, op)?.map_ok(into).await?,
+                Owned::HSetExp(op) => HSetExp::send_request(self, op)?.map_ok(into).await?,
+                Owned::HCard(op) => HCard::send_request(self, op)?.map_ok(into).await?,
+                Owned::HScan(op) => HScan::send_request(self, op)?.map_ok(into).await?,
+            },
+            Operation::Borrowed(borrowed) => match borrowed {
+                Borrowed::Get(op) => Get::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::Set(op) => Set::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::Del(op) => Del::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::GetExp(op) => GetExp::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::SetExp(op) => SetExp::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HGet(op) => HGet::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HSet(op) => HSet::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HDel(op) => HDel::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HGetExp(op) => HGetExp::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HSetExp(op) => HSetExp::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HCard(op) => HCard::send_request(self, op)?.map_ok(into).await?,
+                Borrowed::HScan(op) => HScan::send_request(self, op)?.map_ok(into).await?,
+            },
         }
     }
 
-    async fn execute<'a>(
-        &'a self,
-        operation: crate::Operation<'a>,
-    ) -> Result<operation::Output<'a>> {
-        Ok(match operation {
-            Operation::Get(op) => self.send::<Get>(&op)?.await??.into(),
-            Operation::Set(op) => self.send::<Set>(&op)?.await??.into(),
-            Operation::Del(op) => self.send::<Del>(&op)?.await??.into(),
-            Operation::GetExp(op) => self.send::<GetExp>(&op)?.await??.into(),
-            Operation::SetExp(op) => self.send::<SetExp>(&op)?.await??.into(),
-            Operation::HGet(op) => self.send::<HGet>(&op)?.await??.into(),
-            Operation::HSet(op) => self.send::<HSet>(&op)?.await??.into(),
-            Operation::HDel(op) => self.send::<HDel>(&op)?.await??.into(),
-            Operation::HGetExp(op) => self.send::<HGetExp>(&op)?.await??.into(),
-            Operation::HSetExp(op) => self.send::<HSetExp>(&op)?.await??.into(),
-            Operation::HCard(op) => self.send::<HCard>(&op)?.await??.into(),
-            Operation::HScan(op) => self.send::<HScan>(&op)?.await??.into(),
-        })
+    async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output> {
+        self.execute_ref(&operation).await
     }
+}
+
+fn into<T>(result: super::Result<T>) -> Result<operation::Output>
+where
+    T: Into<operation::Output>,
+{
+    result.map(Into::into).map_err(Into::into)
 }
 
 impl From<wcn_rpc::client2::Error> for crate::Error {

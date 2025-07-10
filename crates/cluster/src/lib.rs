@@ -2,7 +2,6 @@
 
 use {
     arc_swap::ArcSwap,
-    derive_where::derive_where,
     futures::Stream,
     itertools::Itertools,
     libp2p::PeerId,
@@ -81,7 +80,6 @@ pub trait Config: Send + Sync + 'static {
 ///
 /// Performs preliminary invariant validation before calling the actual
 /// [`SmartContract`] methods.
-#[derive_where(Clone)]
 pub struct Cluster<C: Config> {
     inner: Arc<Inner<C>>,
     _task_guard: Arc<task::Guard>,

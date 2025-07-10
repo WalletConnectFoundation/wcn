@@ -96,7 +96,7 @@ where
     }
 }
 
-/// [`HandleUnaryRpc`] specialization for cases when the response is an owned
+/// [`HandleUnary`] specialization for cases when the response is an owned
 /// value.
 pub trait HandleRequest<RPC: UnaryRpc>: Send + Sync {
     /// Handles the provided RPC request.
@@ -110,7 +110,6 @@ impl<RPC, H> HandleUnary<RPC> for H
 where
     RPC: UnaryRpc,
     H: HandleRequest<RPC>,
-    RPC::Codec: tokio_serde::Serializer<RPC::Response, Error: StdError>,
 {
     async fn handle(&self, request: RPC::Request, responder: Responder<'_, RPC>) -> Result<()> {
         let resp = self.handle_request(request).await;

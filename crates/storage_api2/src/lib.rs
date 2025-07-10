@@ -54,6 +54,7 @@ pub type KeyspaceVersion = u64;
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
 pub trait StorageApi: Send + Sync + 'static {
+    /// Executes the provided [`StorageApi`] [`Operation`] using a reference.
     fn execute_ref<'a, 'b>(
         &self,
         operation: &'a Operation<'b>,

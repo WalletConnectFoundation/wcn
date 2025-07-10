@@ -94,93 +94,6 @@ impl<'a> Borrowed<'a> {
     }
 }
 
-// impl<'a> Operation<'a> {
-//     /// Converts &self to [`OperationRef`].
-//     ///
-//     /// Reference to reference conversion, does not re-allocate.
-//     pub fn borrowed(&self) -> OperationBorrowed<'_, 'a> {
-//         match self {
-//             Operation::Owned(operation_owned) => todo!(),
-//             Operation::OwnedRef(operation_owned) => todo!(),
-//             Operation::Borrowed(operation_borrowed) => todo!(),
-//             Operation::BorrowedRef(operation_borrowed) => todo!(),
-//         }
-//     }
-// }
-
-// /// Sum type of references to all Storage API operations.
-// #[derive(Clone, Debug, From, EnumDiscriminants, PartialEq, Eq)]
-// #[strum_discriminants(name(Name))]
-// #[strum_discriminants(derive(Ordinalize, IntoStaticStr))]
-// pub enum OperationRef<'a, 'b> {
-//     Get(&'a Get<'b>),
-//     Set(&'a Set<'b>),
-//     Del(&'a Del<'b>),
-//     GetExp(&'a GetExp<'b>),
-//     SetExp(&'a SetExp<'b>),
-
-//     HGet(&'a HGet<'b>),
-//     HSet(&'a HSet<'b>),
-//     HDel(&'a HDel<'b>),
-//     HGetExp(&'a HGetExp<'b>),
-//     HSetExp(&'a HSetExp<'b>),
-//     HCard(&'a HCard<'b>),
-//     HScan(&'a HScan<'b>),
-// }
-
-// impl<'a, 'b> OperationRef<'a, 'b> {
-//     /// Converts `self` into owned [`Operation`].
-//     ///
-//     /// Re-allocates the underying heap-allocated data.
-//     pub fn to_owned(self) -> Operation<'b> {
-//         match self {
-//             Self::Get(op) => Operation::Get(op.clone()),
-//             Self::Set(op) => Operation::Set(op.clone()),
-//             Self::Del(op) => Operation::Del(op.clone()),
-//             Self::GetExp(op) => Operation::GetExp(op.clone()),
-//             Self::SetExp(op) => Operation::SetExp(op.clone()),
-//             Self::HGet(op) => Operation::HGet(op.clone()),
-//             Self::HSet(op) => Operation::HSet(op.clone()),
-//             Self::HDel(op) => Operation::HDel(op.clone()),
-//             Self::HGetExp(op) => Operation::HGetExp(op.clone()),
-//             Self::HSetExp(op) => Operation::HSetExp(op.clone()),
-//             Self::HCard(op) => Operation::HCard(op.clone()),
-//             Self::HScan(op) => Operation::HScan(op.clone()),
-//         }
-//     }
-// }
-
-// impl metrics::Enum for Name {
-//     fn as_str(&self) -> &'static str {
-//         self.into()
-//     }
-// }
-
-// impl<'a, 'b> OperationRef<'a, 'b> {
-//     /// Returns [`Name`] of this [`Operation`].
-//     pub fn name(&self) -> Name {
-//         self.discriminant()
-//     }
-
-//     /// Returns key of this [`Operation`].
-//     pub fn key(&self) -> &Bytes<'a> {
-//         match self {
-//             Self::Get(get) => &get.key,
-//             Self::Set(set) => &set.key,
-//             Self::Del(del) => &del.key,
-//             Self::GetExp(get_exp) => &get_exp.key,
-//             Self::SetExp(set_exp) => &set_exp.key,
-//             Self::HGet(hget) => &hget.key,
-//             Self::HSet(hset) => &hset.key,
-//             Self::HDel(hdel) => &hdel.key,
-//             Self::HGetExp(hget_exp) => &hget_exp.key,
-//             Self::HSetExp(hset_exp) => &hset_exp.key,
-//             Self::HCard(hcard) => &hcard.key,
-//             Self::HScan(hscan) => &hscan.key,
-//         }
-//     }
-// }
-
 /// Gets a [`Record`] by the provided key.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, Message)]
 pub struct GetBorrowed<'a> {
@@ -310,23 +223,6 @@ impl Output {
         Self::None(())
     }
 }
-
-// impl From<()> for Output {
-//     fn from(_: ()) -> Self {
-//         Self::None
-//     }
-// }
-
-// impl<'a> TryFrom<&'a Output> for &'a () {
-//     type Error = derive_more::TryIntoError<&'a Output>;
-
-//     fn try_from(output: &'a Output) -> std::result::Result<Self, Self::Error>
-// {         match output {
-//             Output::None => Ok(&()),
-//             _ => Err(derive_more::TryIntoError::new(output, "", "")),
-//         }
-//     }
-// }
 
 impl Output {
     /// Tries to downcast an [`Output`] within a [`Result`] into a concrete

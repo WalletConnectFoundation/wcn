@@ -14,7 +14,6 @@ use {
     },
     wcn_storage_api2::{
         operation,
-        Bytes,
         KeyspaceVersion,
         MapEntry,
         MapPage,
@@ -138,15 +137,15 @@ where
 
     async fn test_operation(
         &self,
-        operation: impl Into<Operation<'static>>,
-        output: impl Into<operation::Output<'static>>,
+        operation: impl Into<operation::Owned>,
+        output: impl Into<operation::Output>,
     ) {
-        let operation = operation.into();
+        let operation: Operation<'_> = operation.into().into();
         let result = Ok(output.into());
 
         let expect = (operation.clone(), result.clone());
         let _ = self.storage.expect.lock().unwrap().insert(expect);
-        assert_eq!(self.client_conn.execute(operation).await, result);
+        assert_eq!(self.client_conn.execute(operation.into()).await, result);
     }
 
     async fn test_get(&self) {
@@ -300,7 +299,7 @@ fn keyspace_version() -> Option<KeyspaceVersion> {
     }
 }
 
-fn record() -> Record<'static> {
+fn record() -> Record {
     Record {
         value: bytes(),
         expiration: record_expiration(),
@@ -308,14 +307,14 @@ fn record() -> Record<'static> {
     }
 }
 
-fn map_entry() -> MapEntry<'static> {
+fn map_entry() -> MapEntry {
     MapEntry {
         field: bytes(),
         record: record(),
     }
 }
 
-fn map_page() -> MapPage<'static> {
+fn map_page() -> MapPage {
     let mut rng = rand::thread_rng();
 
     let len = rng.gen_range(1..=1000);
@@ -338,7 +337,7 @@ fn opt<T>(f: fn() -> T) -> Option<T> {
     }
 }
 
-fn bytes() -> Bytes<'static> {
+fn bytes() -> Vec<u8> {
     let mut rng = rand::thread_rng();
 
     let mut buf = vec![0u8; rng.gen_range(1..=4096)];
@@ -372,11 +371,11 @@ fn find_available_port() -> u16 {
 #[derive(Clone, Default)]
 struct TestStorage {
     #[allow(clippy::type_complexity)]
-    expect: Arc<Mutex<Option<(Operation<'static>, Result<operation::Output<'static>>)>>>,
+    expect: Arc<Mutex<Option<(Operation<'static>, Result<operation::Output>)>>>,
 }
 
 impl StorageApi for TestStorage {
-    async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output<'_>> {
+    async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output> {
         let expected = self.expect.lock().unwrap().take().unwrap();
         assert_eq!(operation, expected.0);
         expected.1

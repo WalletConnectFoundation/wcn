@@ -66,7 +66,6 @@ pub trait HandleConnection<API: Api>: Clone + Send + Sync + 'static {
 
 /// Handler of [`Outbound`] RPCs.
 pub trait HandleRpc<RPC: RpcV2, Input>: Send + Sync + 'static {
-    // type Input<'a>: Send + Sync + 'a;
     type Output;
 
     fn handle_rpc<'a>(
@@ -78,7 +77,7 @@ pub trait HandleRpc<RPC: RpcV2, Input>: Send + Sync + 'static {
 
 /// Client-side extension for [`UnaryRpc`](super::UnaryRpc)
 /// providing convinience [`UnaryRpc::send_request`] function that does not
-/// require manually specifying any type parameters.
+/// require to manually specify any type parameters.
 pub trait UnaryRpc: super::UnaryRpc {
     /// Sends request and waits for a [`Response`].
     fn send_request<'a, API: Api, Req>(
@@ -661,5 +660,3 @@ impl<RPC: RpcV2> Stream for ResponseStream<RPC> {
         Poll::Ready(Some(codec.deserialize(&bytes).map_err(Error::codec)))
     }
 }
-
-// TODO: Vec<Connection> Load Balancer

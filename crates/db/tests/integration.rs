@@ -95,7 +95,10 @@ async fn test_string_ops(client: &Connection<DatabaseApi>) {
         key: key.clone().into(),
         keyspace_version,
     };
-    assert!(client.get(&get).await.unwrap().is_none());
+    assert_eq!(
+        client.execute(get.clone().into()).await,
+        Ok(Output::Record(None))
+    );
 
     let expiration = exp(120);
     let version = ver(1);
@@ -110,15 +113,15 @@ async fn test_string_ops(client: &Connection<DatabaseApi>) {
         },
         keyspace_version,
     };
-    client.set(&set).await.unwrap();
+    assert_eq!(client.execute(set.into()).await, Ok(Output::none()));
 
     assert_eq!(
-        client.get(&get).await.unwrap(),
-        Some(Record {
+        client.execute(get.clone().into()).await.unwrap(),
+        Output::Record(Some(Record {
             value: value.clone().into(),
             expiration,
             version
-        })
+        }))
     );
 
     let expiration = exp(150);
@@ -131,14 +134,17 @@ async fn test_string_ops(client: &Connection<DatabaseApi>) {
         version,
         keyspace_version,
     };
-    client.set_exp(&set_exp).await.unwrap();
+    assert_eq!(client.execute(set_exp.into()).await, Ok(Output::none()));
 
-    let op = GetExp {
+    let get_exp = GetExp {
         namespace,
         key: key.clone().into(),
         keyspace_version,
     };
-    assert_eq!(client.get_exp(&op).await.unwrap(), Some(expiration));
+    assert_eq!(
+        client.execute(get_exp.into()).await,
+        Ok(Output::Expiration(Some(expiration)))
+    );
 
     let del = Del {
         namespace,
@@ -146,8 +152,8 @@ async fn test_string_ops(client: &Connection<DatabaseApi>) {
         keyspace_version,
         version: ver(3),
     };
-    client.del(&del).await.unwrap();
-    assert!(client.get(&get).await.unwrap().is_none());
+    assert_eq!(client.execute(del.into()).await, Ok(Output::none()));
+    assert_eq!(client.execute(get.into()).await, Ok(Output::Record(None)));
 }
 
 async fn test_map_ops(client: &Connection<DatabaseApi>) {
@@ -176,7 +182,7 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
             keyspace_version,
         };
 
-        client.hset(&hset).await.unwrap();
+        assert_eq!(client.execute(hset.into()).await, Ok(Output::none()));
     }
 
     let (field, value) = pairs.pop().unwrap();
@@ -187,12 +193,12 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
         keyspace_version,
     };
     assert_eq!(
-        client.hget(&hget).await.unwrap(),
-        Some(Record {
+        client.execute(hget.into()).await.unwrap(),
+        Output::Record(Some(Record {
             value: value.clone().into(),
             expiration,
             version
-        })
+        }))
     );
 
     {
@@ -206,7 +212,7 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
             version: ver(2),
             keyspace_version,
         };
-        client.hset_exp(&hset_exp).await.unwrap();
+        assert_eq!(client.execute(hset_exp.into()).await, Ok(Output::none()));
 
         let hget_exp = HGetExp {
             namespace,
@@ -214,7 +220,10 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
             field: field.clone().into(),
             keyspace_version,
         };
-        assert_eq!(client.hget_exp(&hget_exp).await.unwrap(), Some(expiration));
+        assert_eq!(
+            client.execute(hget_exp.into()).await,
+            Ok(Output::Expiration(Some(expiration)))
+        );
     }
 
     let hdel = HDel {
@@ -224,14 +233,17 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
         keyspace_version,
         version: ver(3),
     };
-    client.hdel(&hdel).await.unwrap();
+    assert_eq!(client.execute(hdel.into()).await, Ok(Output::none()));
 
     let hcard = HCard {
         namespace,
         key: key.clone().into(),
         keyspace_version,
     };
-    assert_eq!(client.hcard(&hcard).await.unwrap(), 4);
+    assert_eq!(
+        client.execute(hcard.into()).await,
+        Ok(Output::Cardinality(4))
+    );
 
     let hscan = HScan {
         namespace,
@@ -252,7 +264,11 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
             },
         })
         .collect();
-    let result = client.hscan(&hscan).await.unwrap();
+
+    let result = match client.execute(hscan.clone().into()).await.unwrap() {
+        Output::MapPage(page) => page,
+        _ => panic!("wrong output"),
+    };
     assert_eq!(result, MapPage {
         entries,
         has_next: true,
@@ -262,7 +278,7 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
         namespace,
         key: key.clone().into(),
         count: 1,
-        cursor: result.next_page_cursor().cloned(),
+        cursor: result.next_page_cursor().map(ToOwned::to_owned),
         keyspace_version,
     };
     let entries = pairs
@@ -277,7 +293,10 @@ async fn test_map_ops(client: &Connection<DatabaseApi>) {
             },
         })
         .collect();
-    let result = client.hscan(&hscan).await.unwrap();
+    let result = match client.execute(hscan.into()).await.unwrap() {
+        Output::MapPage(page) => page,
+        _ => panic!("wrong output"),
+    };
     assert_eq!(result, MapPage {
         entries,
         has_next: false,
@@ -301,14 +320,17 @@ async fn test_namespaces(client: &Connection<DatabaseApi>) {
         key: key.clone().into(),
         keyspace_version,
     };
-    assert!(client.get(&get).await.unwrap().is_none());
+    assert_eq!(
+        client.execute(get.clone().into()).await,
+        Ok(Output::Record(None))
+    );
 
     let get = Get {
         namespace: namespace2,
         key: key.clone().into(),
         keyspace_version,
     };
-    assert!(client.get(&get).await.unwrap().is_none());
+    assert_eq!(client.execute(get.into()).await, Ok(Output::Record(None)));
 
     let set = Set {
         namespace: namespace1,
@@ -320,7 +342,7 @@ async fn test_namespaces(client: &Connection<DatabaseApi>) {
         },
         keyspace_version,
     };
-    client.set(&set).await.unwrap();
+    assert_eq!(client.execute(set.into()).await, Ok(Output::none()));
 
     let set = Set {
         namespace: namespace2,
@@ -332,7 +354,7 @@ async fn test_namespaces(client: &Connection<DatabaseApi>) {
         },
         keyspace_version,
     };
-    client.set(&set).await.unwrap();
+    assert_eq!(client.execute(set.into()).await, Ok(Output::none()));
 
     let get = Get {
         namespace: namespace1,
@@ -340,12 +362,12 @@ async fn test_namespaces(client: &Connection<DatabaseApi>) {
         keyspace_version,
     };
     assert_eq!(
-        client.get(&get).await.unwrap(),
-        Some(Record {
+        client.execute(get.into()).await.unwrap(),
+        Output::Record(Some(Record {
             value: value1.clone().into(),
             expiration,
             version
-        })
+        }))
     );
 
     let get = Get {
@@ -354,12 +376,12 @@ async fn test_namespaces(client: &Connection<DatabaseApi>) {
         keyspace_version,
     };
     assert_eq!(
-        client.get(&get).await.unwrap(),
-        Some(Record {
+        client.execute(get.into()).await.unwrap(),
+        Output::Record(Some(Record {
             value: value2.clone().into(),
             expiration,
             version
-        })
+        }))
     );
 }
 

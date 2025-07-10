@@ -8078,6 +8078,8 @@ dependencies = [
 name = "wcn_replication2"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
+ "derive-where",
  "derive_more 1.0.0",
  "futures",
  "smallvec",
@@ -8086,10 +8088,8 @@ dependencies = [
  "tokio",
  "tracing",
  "wc",
- "wcn_client_api",
- "wcn_core",
- "wcn_domain",
- "wcn_storage_api",
+ "wcn_cluster",
+ "wcn_storage_api2",
 ]
 
 [[package]]
@@ -8162,6 +8162,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wc",
+ "wcn_rpc_derive",
+]
+
+[[package]]
+name = "wcn_rpc_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]

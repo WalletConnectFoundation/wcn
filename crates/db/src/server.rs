@@ -2,7 +2,7 @@ use {
     crate::storage::{self, Storage},
     std::sync::Arc,
     storage_api::{
-        operation::Output,
+        operation::{self, Output},
         MapEntry,
         MapPage,
         Operation,
@@ -46,66 +46,66 @@ impl Server {
 }
 
 impl StorageApi for Server {
-    async fn execute<'a>(&'a self, op: Operation<'a>) -> storage_api::Result<Output<'a>> {
+    async fn execute(&self, op: Operation<'_>) -> storage_api::Result<Output> {
         use storage_api::{Error, ErrorKind};
 
-        let res = match op {
-            Operation::Get(op) => self
+        let res = match op.into_owned() {
+            operation::Owned::Get(op) => self
                 .string_storage()
-                .get(&storage::key(&op.namespace, op.key))
+                .get(&storage::key(&op.namespace, &op.key))
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "get"))
                 .await
                 .map(|res| Output::Record(res.map(map_record))),
 
-            Operation::Set(op) => self
+            operation::Owned::Set(op) => self
                 .string_storage()
                 .set(
-                    &storage::key(&op.namespace, op.key),
+                    &storage::key(&op.namespace, &op.key),
                     &op.record.value.into(),
                     op.record.expiration.to_unix_timestamp_secs(),
                     op.record.version.to_unix_timestamp_micros(),
                 )
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "set"))
                 .await
-                .map(|_| Output::None),
+                .map(|_| Output::None(())),
 
-            Operation::Del(op) => self
+            operation::Owned::Del(op) => self
                 .string_storage()
                 .del(
-                    &storage::key(&op.namespace, op.key),
+                    &storage::key(&op.namespace, &op.key),
                     op.version.to_unix_timestamp_micros(),
                 )
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "del"))
                 .await
-                .map(|_| Output::None),
+                .map(|_| Output::None(())),
 
-            Operation::GetExp(op) => self
+            operation::Owned::GetExp(op) => self
                 .string_storage()
-                .get_exp(&storage::key(&op.namespace, op.key))
+                .get_exp(&storage::key(&op.namespace, &op.key))
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "get_exp"))
                 .await
                 .pipe(map_expiration)
                 .map(Output::Expiration),
 
-            Operation::SetExp(op) => self
+            operation::Owned::SetExp(op) => self
                 .string_storage()
                 .set_exp(
-                    &storage::key(&op.namespace, op.key),
+                    &storage::key(&op.namespace, &op.key),
                     op.expiration.to_unix_timestamp_secs(),
                     op.version.to_unix_timestamp_micros(),
                 )
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "set_exp"))
                 .await
-                .map(|_| Output::None),
+                .map(|_| Output::None(())),
 
-            Operation::HGet(op) => self
+            operation::Owned::HGet(op) => self
                 .map_storage()
-                .hget(&storage::key(&op.namespace, op.key), &op.field.into())
+                .hget(&storage::key(&op.namespace, &op.key), &op.field.into())
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
                 .await
                 .map(|res| Output::Record(res.map(map_record))),
 
-            Operation::HSet(op) => {
+            operation::Owned::HSet(op) => {
                 let entry = op.entry;
                 let record = entry.record;
                 let pair = Pair::new(entry.field.into(), record.value.into());
@@ -114,60 +114,59 @@ impl StorageApi for Server {
 
                 self.map_storage()
                     .hset(
-                        &storage::key(&op.namespace, op.key),
+                        &storage::key(&op.namespace, &op.key),
                         &pair,
                         expiration,
                         version,
                     )
                     .with_metrics(future_metrics!("storage_operation", "op_name" => "hset"))
                     .await
-                    .map(|_| Output::None)
+                    .map(|_| Output::None(()))
             }
 
-            Operation::HDel(op) => self
+            operation::Owned::HDel(op) => self
                 .map_storage()
                 .hdel(
-                    &storage::key(&op.namespace, op.key),
+                    &storage::key(&op.namespace, &op.key),
                     &op.field.into(),
                     op.version.to_unix_timestamp_micros(),
                 )
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
                 .await
-                .map(|_| Output::None),
+                .map(|_| Output::None(())),
 
-            Operation::HGetExp(op) => self
+            operation::Owned::HGetExp(op) => self
                 .map_storage()
-                .hget_exp(&storage::key(&op.namespace, op.key), &op.field.into())
+                .hget_exp(&storage::key(&op.namespace, &op.key), &op.field.into())
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
                 .await
                 .pipe(map_expiration)
                 .map(Output::Expiration),
 
-            Operation::HSetExp(op) => self
+            operation::Owned::HSetExp(op) => self
                 .map_storage()
                 .hset_exp(
-                    &storage::key(&op.namespace, op.key),
+                    &storage::key(&op.namespace, &op.key),
                     &op.field.into(),
                     op.expiration.to_unix_timestamp_secs(),
                     op.version.to_unix_timestamp_micros(),
                 )
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hset_exp"))
                 .await
-                .map(|_| Output::None),
+                .map(|_| Output::None(())),
 
-            Operation::HCard(op) => self
+            operation::Owned::HCard(op) => self
                 .map_storage()
-                .hcard(&storage::key(&op.namespace, op.key))
+                .hcard(&storage::key(&op.namespace, &op.key))
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hcard"))
                 .await
                 .map(|card| Output::Cardinality(card as u64)),
 
-            Operation::HScan(op) => {
-                let cursor = op.cursor.map(|cur| cur.into_owned());
-                let opts = ScanOptions::new(op.count as usize).with_cursor(cursor);
+            operation::Owned::HScan(op) => {
+                let opts = ScanOptions::new(op.count as usize).with_cursor(op.cursor);
 
                 self.map_storage()
-                    .hscan(&storage::key(&op.namespace, op.key), opts)
+                    .hscan(&storage::key(&op.namespace, &op.key), opts)
                     .with_metrics(future_metrics!("storage_operation", "op_name" => "hscan"))
                     .await
                     .map(|res| {
@@ -199,7 +198,7 @@ impl StorageApi for Server {
 }
 
 #[inline]
-fn map_record<'a>(rec: wcn_rocks::Record) -> storage_api::Record<'a> {
+fn map_record(rec: wcn_rocks::Record) -> storage_api::Record {
     storage_api::Record {
         value: rec.value.into(),
         expiration: RecordExpiration::from_unix_timestamp_secs(rec.expiration),

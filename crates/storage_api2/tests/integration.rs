@@ -376,7 +376,7 @@ struct TestStorage {
 }
 
 impl StorageApi for TestStorage {
-    async fn execute<'a>(&'a self, operation: Operation<'a>) -> Result<operation::Output<'a>> {
+    async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output<'_>> {
         let expected = self.expect.lock().unwrap().take().unwrap();
         assert_eq!(operation, expected.0);
         expected.1

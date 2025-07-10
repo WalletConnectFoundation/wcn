@@ -6,35 +6,36 @@ use {
             server::filter::{self, Filter, RejectionReason},
         },
         transport,
-        transport2::{self, BiDirectionalStream, RecvStream, SendStream},
+        transport2::{BiDirectionalStream, RecvStream, SendStream, Serializer},
         Api,
         ApiName,
-        BorrowedResponse,
+        BorrowedMessage,
         ConnectionStatusCode,
         RpcV2,
         ServerName,
         UnaryRpc,
     },
     derive_where::derive_where,
-    futures::{
-        sink::SinkMapErr,
-        stream::MapErr,
-        FutureExt,
-        Sink,
-        SinkExt,
-        Stream,
-        StreamExt,
-        TryFutureExt as _,
-        TryStreamExt as _,
-    },
+    futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStream as _},
     libp2p::{identity, PeerId},
+    pin_project::pin_project,
     quinn::crypto::rustls::{self, QuicServerConfig},
-    std::{future::Future, io, marker::PhantomData, sync::Arc, time::Duration},
+    std::{
+        error::Error as StdError,
+        future::Future,
+        io,
+        marker::PhantomData,
+        pin::{pin, Pin},
+        sync::Arc,
+        task::{self, ready, Poll},
+        time::Duration,
+    },
     tap::Pipe as _,
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         sync::{OwnedSemaphorePermit, Semaphore},
     },
+    tokio_serde::Deserializer as _,
     wc::{
         future::{FutureExt as _, StaticFutureExt},
         metrics::{self, future_metrics, Enum as _, EnumLabel, FutureExt as _, StringLabel},
@@ -65,6 +66,38 @@ pub trait HandleRpc<RPC: RpcV2>: Send + Sync {
 }
 
 /// [`HandleRpc`] specialization for [`UnaryRpc`]s.
+pub trait HandleUnary<RPC: UnaryRpc>: Send + Sync {
+    /// Handles the provided RPC request.
+    fn handle(
+        &self,
+        request: RPC::Request,
+        responder: Responder<'_, RPC>,
+    ) -> impl Future<Output = Result<()>> + Send;
+}
+
+impl<RPC, H> HandleRpc<RPC> for H
+where
+    RPC: UnaryRpc,
+    H: HandleUnary<RPC>,
+{
+    fn handle_rpc<'a>(
+        &'a self,
+        rpc: &'a mut Inbound<RPC>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        async {
+            let req = StreamExt::next(&mut pin!(&mut rpc.request_stream))
+                .await
+                .ok_or_else(|| Error::new(ErrorInner::StreamFinished))??;
+
+            let responder = Responder { rpc };
+
+            self.handle(req, responder).await
+        }
+    }
+}
+
+/// [`HandleUnaryRpc`] specialization for cases when the response is an owned
+/// value.
 pub trait HandleRequest<RPC: UnaryRpc>: Send + Sync {
     /// Handles the provided RPC request.
     fn handle_request(
@@ -73,28 +106,16 @@ pub trait HandleRequest<RPC: UnaryRpc>: Send + Sync {
     ) -> impl Future<Output = RPC::Response> + Send + '_;
 }
 
-impl<RPC, H> HandleRpc<RPC> for H
+impl<RPC, H> HandleUnary<RPC> for H
 where
     RPC: UnaryRpc,
     H: HandleRequest<RPC>,
+    RPC::Codec: tokio_serde::Serializer<RPC::Response, Error: StdError>,
 {
-    fn handle_rpc<'a>(
-        &'a self,
-        rpc: &'a mut Inbound<RPC>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        async {
-            let req = rpc
-                .recv
-                .next()
-                .await
-                .ok_or_else(|| Error::new(transport2::Error::StreamFinished))??;
-
-            let resp = self.handle_request(req).await;
-
-            rpc.send.send(&resp).await?;
-
-            Ok(())
-        }
+    async fn handle(&self, request: RPC::Request, responder: Responder<'_, RPC>) -> Result<()> {
+        let resp = self.handle_request(request).await;
+        responder.respond(&resp).await?;
+        Ok(())
     }
 }
 
@@ -424,13 +445,15 @@ impl<API: Api> InboundRpc<API> {
             assert_eq!(id, RPC::ID);
         }
 
-        let (recv, send) = self.stream.upgrade();
-
         Inbound {
-            send: SinkExt::<&RPC::Response>::sink_map_err(send, |err: transport2::Error| {
-                Error::new(err)
-            }),
-            recv: recv.map_err(Error::new),
+            request_stream: RequestStream {
+                recv_stream: self.stream.rx,
+                codec: Default::default(),
+            },
+            response_sink: ResponseSink {
+                send_stream: self.stream.tx,
+                codec: Default::default(),
+            },
             _permit: self.permit,
         }
     }
@@ -445,24 +468,28 @@ impl<API: super::Api> InboundRpc<API> {
 
 /// Inbound RPC of a specific type.
 pub struct Inbound<RPC: RpcV2> {
-    #[allow(clippy::type_complexity)]
-    recv: MapErr<RecvStream<RPC::Request, RPC::Codec>, fn(transport2::Error) -> Error>,
-
-    #[allow(clippy::type_complexity)]
-    send: SinkMapErr<SendStream<RPC::Codec>, fn(transport2::Error) -> Error>,
+    pub request_stream: RequestStream<RPC>,
+    pub response_sink: ResponseSink<RPC>,
 
     _permit: OwnedSemaphorePermit,
 }
 
-impl<RPC: RpcV2> Inbound<RPC> {
-    /// Returns mutable references to the underlying request/response streams.
-    pub fn streams_mut(
-        &mut self,
-    ) -> (
-        &mut impl Stream<Item = Result<RPC::Request>>,
-        &mut (impl for<'a, 'b> Sink<&'a BorrowedResponse<'b, RPC>, Error = Error> + 'static),
-    ) {
-        (&mut self.recv, &mut self.send)
+/// [`UnaryRpc`] responder.
+pub struct Responder<'a, RPC: UnaryRpc> {
+    rpc: &'a mut Inbound<RPC>,
+}
+
+impl<'s, RPC: UnaryRpc> Responder<'s, RPC> {
+    /// Sends a response.
+    pub fn respond<'a, T>(
+        self,
+        response: &'a T,
+    ) -> impl Future<Output = Result<()>> + Send + use<'s, 'a, T, RPC>
+    where
+        T: BorrowedMessage<Owned = RPC::Response>,
+        RPC::Codec: Serializer<T>,
+    {
+        self.rpc.response_sink.send(response)
     }
 }
 
@@ -551,6 +578,14 @@ impl Error {
     fn new(err: impl Into<ErrorInner>) -> Self {
         Self(err.into())
     }
+
+    fn codec(err: impl StdError) -> Self {
+        Self::new(ErrorInner::Codec(err.to_string()))
+    }
+
+    fn io(err: io::Error) -> Self {
+        Self::new(ErrorInner::IO(err))
+    }
 }
 
 impl From<ErrorInner> for Error {
@@ -591,12 +626,97 @@ enum ErrorInner {
     #[error("Unknown API: {0}")]
     UnknownApi(rpc::ApiName),
 
-    #[error("Transport: {0}")]
-    Transport(#[from] transport2::Error),
+    #[error("Codec: {0}")]
+    Codec(String),
+
+    #[error("IO: {0:?}")]
+    IO(io::Error),
+
+    #[error("Stream unexpectedly finished")]
+    StreamFinished,
 
     #[error("Failed to read RPC ID without blocking")]
     ReadRpcId,
 
     #[error("Unknown RPC ID: {0}")]
     UnknownRpcId(u8),
+}
+
+/// [`Stream`] of inbound RPC requests.
+#[pin_project(project = RequestStreamProj)]
+pub struct RequestStream<RPC: RpcV2> {
+    #[pin]
+    recv_stream: RecvStream,
+    #[pin]
+    codec: RPC::Codec,
+}
+
+impl<RPC: RpcV2> Stream for RequestStream<RPC> {
+    type Item = Result<RPC::Request>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Option<Self::Item>> {
+        let bytes = match ready!(self.as_mut().project().recv_stream.try_poll_next(cx)) {
+            Some(res) => res.map_err(Error::io)?,
+            None => return Poll::Ready(None),
+        };
+
+        let codec = self.as_mut().project().codec;
+
+        Poll::Ready(Some(codec.deserialize(&bytes).map_err(Error::codec)))
+    }
+}
+
+/// [`Sink`] for outbound RPC requests.
+#[pin_project(project = RequestSinkProj)]
+pub struct ResponseSink<RPC: RpcV2> {
+    #[pin]
+    send_stream: SendStream,
+    #[pin]
+    codec: RPC::Codec,
+}
+
+impl<RPC: RpcV2, T> Sink<&T> for ResponseSink<RPC>
+where
+    T: BorrowedMessage<Owned = RPC::Response>,
+    RPC::Codec: Serializer<T>,
+{
+    type Error = Error;
+
+    fn poll_ready(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
+        self.project().send_stream.poll_ready(cx).map_err(Error::io)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: &T) -> Result<(), Self::Error> {
+        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, item)
+            .map_err(Error::codec)?;
+
+        self.as_mut()
+            .project()
+            .send_stream
+            .start_send(bytes)
+            .map_err(Error::io)?;
+
+        Ok(())
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
+        self.project().send_stream.poll_flush(cx).map_err(Error::io)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
+        ready!(self.as_mut().project().send_stream.poll_flush(cx)).map_err(Error::io)?;
+        self.project().send_stream.poll_close(cx).map_err(Error::io)
+    }
 }

@@ -104,7 +104,7 @@ where
                 }),
             Err(err) => Err(ErrorBorrowed {
                 code: ErrorCode::from(err.kind) as u8,
-                message: err.message.as_ref().map(|s| s.as_str()),
+                message: err.message.as_deref(),
             }),
         };
 

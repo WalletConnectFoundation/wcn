@@ -55,17 +55,17 @@ pub type KeyspaceVersion = u64;
 ///   Database instances.
 pub trait StorageApi: Send + Sync + 'static {
     /// Executes the provided [`StorageApi`] [`Operation`] using a reference.
-    fn execute_ref<'a, 'b>(
+    fn execute_ref(
         &self,
-        operation: &'a Operation<'b>,
+        operation: &Operation<'_>,
     ) -> impl Future<Output = Result<operation::Output>> {
         async { self.execute(operation.clone()).await }
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`] using a [`Callback`].
-    fn execute_callback<'a, C: Callback>(
+    fn execute_callback<C: Callback>(
         &self,
-        operation: Operation<'a>,
+        operation: Operation<'_>,
         callback: C,
     ) -> impl Future<Output = Result<(), C::Error>> + Send {
         async move {
@@ -75,9 +75,9 @@ pub trait StorageApi: Send + Sync + 'static {
     }
 
     /// Executes the provided [`StorageApi`] [`Operation`].
-    fn execute<'a>(
+    fn execute(
         &self,
-        operation: Operation<'a>,
+        operation: Operation<'_>,
     ) -> impl Future<Output = Result<operation::Output>> + Send;
 }
 

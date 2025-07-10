@@ -27,7 +27,7 @@ pub enum Operation<'a> {
     Borrowed(Borrowed<'a>),
 }
 
-impl<'a> Operation<'a> {
+impl Operation<'_> {
     /// Converts this [`Operation`] into [`Owned`].
     ///
     /// Re-allocates if it's [`Borrowed`].
@@ -73,7 +73,7 @@ pub enum Borrowed<'a> {
     HScan(HScanBorrowed<'a>),
 }
 
-impl<'a> Borrowed<'a> {
+impl Borrowed<'_> {
     /// Converts this [`Borrowed`] [`Operation`] into [`Owned`] by
     /// re-allocating.
     pub fn into_owned(self) -> Owned {

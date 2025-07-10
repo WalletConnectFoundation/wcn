@@ -69,7 +69,7 @@ pub fn key(namespace: &Namespace, key: &[u8]) -> GenericKey {
 
     // Determine position in the keyspace before modifying the key, for consistency
     // with the replication driver logic.
-    let pos = std::hash::BuildHasher::hash_one(&HASHER, &key);
+    let pos = std::hash::BuildHasher::hash_one(&HASHER, key);
 
     // Inject the namespace prefix.
     let key = KeyWrapper::private(namespace, key).into_bytes();

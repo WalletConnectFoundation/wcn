@@ -145,7 +145,7 @@ where
 
         let expect = (operation.clone(), result.clone());
         let _ = self.storage.expect.lock().unwrap().insert(expect);
-        assert_eq!(self.client_conn.execute(operation.into()).await, result);
+        assert_eq!(self.client_conn.execute(operation).await, result);
     }
 
     async fn test_get(&self) {
@@ -342,7 +342,7 @@ fn bytes() -> Vec<u8> {
 
     let mut buf = vec![0u8; rng.gen_range(1..=4096)];
     rng.fill(&mut buf[..]);
-    buf.into()
+    buf
 }
 
 fn record_expiration() -> RecordExpiration {

@@ -61,7 +61,7 @@ impl StorageApi for Server {
                 .string_storage()
                 .set(
                     &storage::key(&op.namespace, &op.key),
-                    &op.record.value.into(),
+                    &op.record.value,
                     op.record.expiration.to_unix_timestamp_secs(),
                     op.record.version.to_unix_timestamp_micros(),
                 )
@@ -100,7 +100,7 @@ impl StorageApi for Server {
 
             operation::Owned::HGet(op) => self
                 .map_storage()
-                .hget(&storage::key(&op.namespace, &op.key), &op.field.into())
+                .hget(&storage::key(&op.namespace, &op.key), &op.field)
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hget"))
                 .await
                 .map(|res| Output::Record(res.map(map_record))),
@@ -108,7 +108,7 @@ impl StorageApi for Server {
             operation::Owned::HSet(op) => {
                 let entry = op.entry;
                 let record = entry.record;
-                let pair = Pair::new(entry.field.into(), record.value.into());
+                let pair = Pair::new(entry.field, record.value);
                 let expiration = record.expiration.to_unix_timestamp_secs();
                 let version = record.version.to_unix_timestamp_micros();
 
@@ -128,7 +128,7 @@ impl StorageApi for Server {
                 .map_storage()
                 .hdel(
                     &storage::key(&op.namespace, &op.key),
-                    &op.field.into(),
+                    &op.field,
                     op.version.to_unix_timestamp_micros(),
                 )
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hdel"))
@@ -137,7 +137,7 @@ impl StorageApi for Server {
 
             operation::Owned::HGetExp(op) => self
                 .map_storage()
-                .hget_exp(&storage::key(&op.namespace, &op.key), &op.field.into())
+                .hget_exp(&storage::key(&op.namespace, &op.key), &op.field)
                 .with_metrics(future_metrics!("storage_operation", "op_name" => "hget_exp"))
                 .await
                 .pipe(map_expiration)
@@ -147,7 +147,7 @@ impl StorageApi for Server {
                 .map_storage()
                 .hset_exp(
                     &storage::key(&op.namespace, &op.key),
-                    &op.field.into(),
+                    &op.field,
                     op.expiration.to_unix_timestamp_secs(),
                     op.version.to_unix_timestamp_micros(),
                 )
@@ -174,9 +174,9 @@ impl StorageApi for Server {
                             .items
                             .into_iter()
                             .map(|rec| MapEntry {
-                                field: rec.field.into(),
+                                field: rec.field,
                                 record: Record {
-                                    value: rec.value.into(),
+                                    value: rec.value,
                                     expiration: RecordExpiration::from_unix_timestamp_secs(
                                         rec.expiration,
                                     ),
@@ -200,7 +200,7 @@ impl StorageApi for Server {
 #[inline]
 fn map_record(rec: wcn_rocks::Record) -> storage_api::Record {
     storage_api::Record {
-        value: rec.value.into(),
+        value: rec.value,
         expiration: RecordExpiration::from_unix_timestamp_secs(rec.expiration),
         version: RecordVersion::from_unix_timestamp_micros(rec.version),
     }

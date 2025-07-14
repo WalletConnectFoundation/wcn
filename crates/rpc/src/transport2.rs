@@ -32,6 +32,31 @@ impl<M: MessageV2, S> Deserializer<M> for S where
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct JsonCodec;
+
+impl<T> tokio_serde::Deserializer<T> for JsonCodec
+where
+    for<'a> T: Deserialize<'a>,
+{
+    type Error = serde_json::Error;
+
+    fn deserialize(self: Pin<&mut Self>, src: &BytesMut) -> Result<T, Self::Error> {
+        serde_json::from_slice(src)
+    }
+}
+
+impl<T> tokio_serde::Serializer<T> for JsonCodec
+where
+    T: Serialize,
+{
+    type Error = serde_json::Error;
+
+    fn serialize(self: Pin<&mut Self>, data: &T) -> Result<Bytes, Self::Error> {
+        serde_json::to_vec(data).map(Into::into)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PostcardCodec;
 
 impl<T> tokio_serde::Deserializer<T> for PostcardCodec

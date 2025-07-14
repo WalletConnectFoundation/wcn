@@ -4,9 +4,17 @@ use {
         transport,
         transport2::{BiDirectionalStream, RecvStream, SendStream, Serializer},
         BorrowedMessage,
+        CodecV2,
         ConnectionStatusCode,
+        MessageV2,
+        Request,
+        RequestCodec,
         Response,
         RpcV2,
+        StreamItem,
+        StreamingRpc,
+        StreamingV2,
+        UnaryV2,
     },
     derive_where::derive_where,
     futures::{FutureExt, Sink, SinkExt, Stream, StreamExt as _, TryStream as _},
@@ -16,6 +24,7 @@ use {
         error::Error as StdError,
         future::Future,
         io,
+        marker::PhantomData,
         net::{SocketAddr, SocketAddrV4},
         pin::{pin, Pin},
         sync::Arc,
@@ -28,7 +37,6 @@ use {
         io::{AsyncReadExt as _, AsyncWriteExt},
         sync::{watch, Mutex},
     },
-    tokio_serde::Deserializer,
     wc::{
         future::FutureExt as _,
         metrics::{self, enum_ordinalize::Ordinalize, EnumLabel, StringLabel},
@@ -261,8 +269,8 @@ where
 
 /// Outbound RPC of a specific type.
 pub struct Outbound<RPC: RpcV2> {
-    pub request_sink: RequestSink<RPC>,
-    pub response_stream: ResponseStream<RPC>,
+    pub request_sink: RequestSink<RPC::Request, RPC::Codec>,
+    pub response_stream: ResponseStream<RPC::Response, RPC::Codec>,
 }
 
 /// Outbound connection.
@@ -275,6 +283,10 @@ pub struct Connection<API: Api> {
 }
 
 type ConnectionMutex<Params> = Mutex<(watch::Sender<Option<quinn::Connection>>, Params)>;
+type StreamingResponse<RPC> = Result<(
+    Response<RPC>,
+    ResponseStream<StreamItem<RPC>, RequestCodec<RPC>>,
+)>;
 
 struct ConnectionInner<API: Api> {
     client: Client<API>,
@@ -353,6 +365,37 @@ impl<API: Api> Connection<API> {
         })
     }
 
+    pub fn send_streaming<'a, RPC: StreamingRpc>(
+        &'a self,
+        input: &'a Request<RPC>,
+    ) -> Result<impl Future<Output = StreamingResponse<RPC>> + Send + 'a>
+    where
+        Request<RPC>: Sync + 'a,
+        API::RpcHandler: HandleRpc<
+            RPC,
+            Request<RPC>,
+            Output = (Response<RPC>, ResponseStream<RPC::Item, RPC::Codec>),
+        >,
+    {
+        let rpc = self.new_outbound_rpc::<RPC>().tap_err(|err| {
+            if err.requires_reconnect() {
+                self.reconnect();
+            }
+        })?;
+
+        Ok(async move {
+            self.inner
+                .rpc_handler
+                .handle_rpc(rpc, input)
+                .await
+                .tap_err(|err| {
+                    if err.0.requires_reconnect() {
+                        self.reconnect();
+                    }
+                })
+        })
+    }
+
     fn new_outbound_rpc<RPC: RpcV2>(&self) -> Result<Outbound<RPC>, ErrorInner> {
         let quic = self.inner.watch_rx.borrow();
         let Some(conn) = quic.as_ref() else {
@@ -374,14 +417,8 @@ impl<API: Api> Connection<API> {
         let stream = BiDirectionalStream::new(tx, rx);
 
         Ok(Outbound {
-            request_sink: RequestSink {
-                send_stream: stream.tx,
-                codec: Default::default(),
-            },
-            response_stream: ResponseStream {
-                recv_stream: stream.rx,
-                codec: Default::default(),
-            },
+            request_sink: RequestSink::new(stream.tx, Default::default()),
+            response_stream: ResponseStream::new(stream.rx, Default::default()),
         })
     }
 
@@ -437,19 +474,64 @@ impl<API: Api> Connection<API> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RpcHandler;
 
-impl<RPC: UnaryRpc, Req> HandleRpc<RPC, Req> for RpcHandler
+impl<const ID: u8, Req, Resp, C, M> HandleRpc<UnaryV2<ID, Req, Resp, C>, M> for RpcHandler
 where
-    Req: BorrowedMessage<Owned = RPC::Request>,
-    RPC::Codec: Serializer<Req>,
+    Req: MessageV2,
+    Resp: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+    M: BorrowedMessage<Owned = <UnaryV2<ID, Req, Resp, C> as RpcV2>::Request>,
+    UnaryV2<ID, Req, Resp, C>: UnaryRpc,
+    <UnaryV2<ID, Req, Resp, C> as RpcV2>::Codec: Serializer<M>,
 {
-    type Output = RPC::Response;
+    type Output = Response<UnaryV2<ID, Req, Resp, C>>;
 
-    async fn handle_rpc<'a>(&'a self, rpc: Outbound<RPC>, req: &'a Req) -> Result<RPC::Response> {
+    async fn handle_rpc<'a>(
+        &'a self,
+        rpc: Outbound<UnaryV2<ID, Req, Resp, C>>,
+        req: &'a M,
+    ) -> Result<Self::Output> {
         pin!(rpc.request_sink).send(req).await?;
         pin!(rpc.response_stream)
             .next()
             .await
             .ok_or_else(|| Error::new(ErrorInner::StreamFinished))?
+    }
+}
+
+impl<const ID: u8, Req, Resp, Item, C, M> HandleRpc<StreamingV2<ID, Req, Resp, Item, C>, M>
+    for RpcHandler
+where
+    Req: MessageV2,
+    Resp: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+    M: BorrowedMessage<Owned = Request<StreamingV2<ID, Req, Resp, Item, C>>>,
+    StreamingV2<ID, Req, Resp, Item, C>: StreamingRpc,
+    RequestCodec<StreamingV2<ID, Req, Resp, Item, C>>: Serializer<M>,
+{
+    type Output = (
+        Response<StreamingV2<ID, Req, Resp, Item, C>>,
+        ResponseStream<
+            StreamItem<StreamingV2<ID, Req, Resp, Item, C>>,
+            RequestCodec<StreamingV2<ID, Req, Resp, Item, C>>,
+        >,
+    );
+
+    async fn handle_rpc<'a>(
+        &'a self,
+        mut rpc: Outbound<StreamingV2<ID, Req, Resp, Item, C>>,
+        req: &'a M,
+    ) -> Result<Self::Output> {
+        // Send request.
+        pin!(rpc.request_sink).send(req).await?;
+
+        // Read response frame.
+        let resp = pin!(&mut rpc.response_stream)
+            .next()
+            .await
+            .ok_or_else(|| Error::new(ErrorInner::StreamFinished))??;
+
+        // Return both the response, and the stream of items.
+        Ok((resp, rpc.response_stream.convert()))
     }
 }
 
@@ -586,17 +668,28 @@ impl metrics::Enum for ErrorKind {
 
 /// [`Sink`] for outbound RPC requests.
 #[pin_project(project = RequestSinkProj)]
-pub struct RequestSink<RPC: RpcV2> {
+pub struct RequestSink<I, C> {
     #[pin]
     send_stream: SendStream,
     #[pin]
-    codec: RPC::Codec,
+    codec: C,
+    _marker: PhantomData<I>,
 }
 
-impl<RPC: RpcV2, T> Sink<&T> for RequestSink<RPC>
+impl<I, C> RequestSink<I, C> {
+    fn new(send_stream: SendStream, codec: C) -> Self {
+        Self {
+            send_stream,
+            codec,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<I, C, T> Sink<&T> for RequestSink<I, C>
 where
-    T: BorrowedMessage<Owned = RPC::Request>,
-    RPC::Codec: Serializer<T>,
+    T: BorrowedMessage<Owned = I>,
+    C: Serializer<T>,
 {
     type Error = Error;
 
@@ -636,15 +729,35 @@ where
 
 /// [`Stream`] of inbound RPC responses.
 #[pin_project(project = ResponseStreamProj)]
-pub struct ResponseStream<RPC: RpcV2> {
+pub struct ResponseStream<I, C> {
     #[pin]
     recv_stream: RecvStream,
     #[pin]
-    codec: RPC::Codec,
+    codec: C,
+    _marker: PhantomData<I>,
 }
 
-impl<RPC: RpcV2> Stream for ResponseStream<RPC> {
-    type Item = Result<RPC::Response>;
+impl<I, C> ResponseStream<I, C> {
+    fn new(recv_stream: RecvStream, codec: C) -> Self {
+        Self {
+            recv_stream,
+            codec,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Convert to a different stream item, while preserving the codec.
+    fn convert<T>(self) -> ResponseStream<T, C> {
+        ResponseStream::new(self.recv_stream, self.codec)
+    }
+}
+
+impl<I, C> Stream for ResponseStream<I, C>
+where
+    I: MessageV2,
+    C: CodecV2<I>,
+{
+    type Item = Result<I>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,

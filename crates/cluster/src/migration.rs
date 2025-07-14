@@ -5,6 +5,7 @@ use {
         Keyspace,
         Version as ClusterVersion,
     },
+    serde::{Deserialize, Serialize},
     std::{collections::HashSet, sync::Arc},
 };
 
@@ -12,7 +13,7 @@ use {
 pub type Id = u64;
 
 /// Data migration process within a WCN cluster.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Migration<Shards = ()> {
     id: Id,
     keyspace: Arc<Keyspace<Shards>>,
@@ -115,7 +116,7 @@ impl Migration {
 }
 
 /// [`Migration`] has started.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Started {
     /// [`Id`] of the [`Migration`] being started.
     pub migration_id: Id,
@@ -128,7 +129,7 @@ pub struct Started {
 }
 
 /// [`NodeOperator`](crate::NodeOperator) has completed the data pull.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DataPullCompleted {
     /// [`Id`] of the [`Migration`].
     pub migration_id: Id,
@@ -141,7 +142,7 @@ pub struct DataPullCompleted {
 }
 
 /// [`Migration`] has been completed.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Completed {
     /// [`Id`] of the completed [`Migration`].
     pub migration_id: Id,
@@ -154,7 +155,7 @@ pub struct Completed {
 }
 
 /// [`Migration`] has been aborted.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Aborted {
     /// [`Id`] of the [`Migration`].
     pub migration_id: Id,

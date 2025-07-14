@@ -3,6 +3,7 @@
 use {
     crate::{self as cluster, node_operator},
     indexmap::IndexMap,
+    serde::{Deserialize, Serialize},
     std::sync::{
         atomic::{self, AtomicUsize},
         Arc,
@@ -10,7 +11,7 @@ use {
 };
 
 /// Slot map of [`NodeOperator`]s.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeOperators<N> {
     id_to_idx: IndexMap<node_operator::Id, node_operator::Idx>,
 

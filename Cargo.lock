@@ -8162,6 +8162,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wc",
+ "wcn_rpc_derive",
+]
+
+[[package]]
+name = "wcn_rpc_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
@@ -8198,6 +8208,7 @@ dependencies = [
  "wc",
  "wcn_auth",
  "wcn_rpc",
+ "wcn_storage_api2",
 ]
 
 [[package]]

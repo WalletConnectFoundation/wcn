@@ -8,7 +8,7 @@ publish = false
 workspace = true
 
 [features]
-default = ["rpc_client", "rpc_server"]
+default = []
 rpc_client = ["wcn_rpc/client"]
 rpc_server = ["wcn_rpc/server"]
 
@@ -28,6 +28,7 @@ time = "0.3"
 const-hex = "1.14"
 
 [dev-dependencies]
+wcn_storage_api2 = { path = ".", features = ["rpc_client", "rpc_server"] }
 tokio = { version = "1", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand = "0.8"

@@ -1,7 +1,7 @@
 pub use wcn_rocks::StorageError as Error;
 use {
     crate::config::Config,
-    storage_api::{Bytes, Namespace},
+    storage_api::Namespace,
     wcn_rocks::{
         db::{
             cf::DbColumn,
@@ -64,15 +64,15 @@ fn map_err(err: wcn_rocks::Error) -> StorageError {
 }
 
 /// Prepares a [`GenericKey`] for use with [`wcn_rocks`].
-pub fn key(namespace: &Namespace, key: Bytes<'_>) -> GenericKey {
+pub fn key(namespace: &Namespace, key: &[u8]) -> GenericKey {
     static HASHER: Xxh3Builder = Xxh3Builder::new();
 
     // Determine position in the keyspace before modifying the key, for consistency
     // with the replication driver logic.
-    let pos = std::hash::BuildHasher::hash_one(&HASHER, &key);
+    let pos = std::hash::BuildHasher::hash_one(&HASHER, key);
 
     // Inject the namespace prefix.
-    let key = KeyWrapper::private(namespace, &key).into_bytes();
+    let key = KeyWrapper::private(namespace, key).into_bytes();
 
     GenericKey::new(pos, key)
 }

@@ -211,18 +211,6 @@ pub trait Read: Sized + Send + Sync + 'static {
 #[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Address(evm::Address);
 
-// TODO: Decide if we want to keep it.
-impl Address {
-    /// Instantiate by hashing public key bytes.
-    ///
-    /// # Panics
-    ///
-    /// If the input is not exactly 64 bytes.
-    pub fn from_bytes(pubkey: &[u8]) -> Self {
-        Self(evm::Address::from_raw_public_key(pubkey))
-    }
-}
-
 /// Account address on the chain hosting WCN cluster [`SmartContract`].
 #[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountAddress(evm::Address);

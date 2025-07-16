@@ -531,7 +531,7 @@ where
             .ok_or_else(|| Error::new(ErrorInner::StreamFinished))??;
 
         // Return both the response, and the stream of items.
-        Ok((resp, rpc.response_stream.convert()))
+        Ok((resp, rpc.response_stream.transmute()))
     }
 }
 
@@ -747,7 +747,7 @@ impl<I, C> ResponseStream<I, C> {
     }
 
     /// Convert to a different stream item, while preserving the codec.
-    fn convert<T>(self) -> ResponseStream<T, C> {
+    fn transmute<T>(self) -> ResponseStream<T, C> {
         ResponseStream::new(self.recv_stream, self.codec)
     }
 }

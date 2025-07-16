@@ -41,23 +41,20 @@ impl crate::ClusterApi for Connection<ClusterApi> {
         &self,
     ) -> crate::Result<impl Stream<Item = crate::Result<wcn_cluster::Event>> + Send + 'static> {
         let (resp, stream) = self.send_streaming::<GetEventStream>(&())?.await?;
-        resp?;
-        Ok(stream.map(flatten_stream_result))
-    }
-}
 
-#[inline]
-fn flatten_stream_result<T>(
-    res: Result<Result<MessageWrapper<T>, Error>, wcn_rpc::client2::Error>,
-) -> Result<T, crate::Error> {
-    res.map_err(crate::Error::transport)?
-        .map(|msg| msg.into_inner())
-        .map_err(crate::Error::transport)
+        resp?;
+
+        Ok(stream.map(|res| {
+            res.map_err(crate::Error::transport)?
+                .map(MessageWrapper::into_inner)
+                .map_err(crate::Error::transport)
+        }))
+    }
 }
 
 impl From<wcn_rpc::client2::Error> for crate::Error {
     fn from(err: wcn_rpc::client2::Error) -> Self {
         Self::new(crate::ErrorKind::Transport)
-            .with_message(format!("wcn_rpc::client::Error: {err}"))
+            .with_message(format!("wcn_cluster_api::client::Error: {err}"))
     }
 }

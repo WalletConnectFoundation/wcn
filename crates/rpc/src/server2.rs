@@ -121,7 +121,7 @@ where
         };
 
         let mut stream = pin!(stream);
-        let mut sink = rpc.response_sink.convert::<Item>();
+        let mut sink = rpc.response_sink.transmute::<Item>();
 
         // The loop is to make sure that we stop and drop the request as soon as the
         // connection stream is no longer available.
@@ -747,7 +747,7 @@ impl<I, C> ResponseSink<I, C> {
     }
 
     /// Convert to a different sink item, while preserving the codec.
-    fn convert<T>(self) -> ResponseSink<T, C> {
+    fn transmute<T>(self) -> ResponseSink<T, C> {
         ResponseSink::new(self.send_stream, self.codec)
     }
 

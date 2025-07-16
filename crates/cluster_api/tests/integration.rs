@@ -11,12 +11,13 @@ use {
     tap::Pipe,
     wcn_cluster::{
         Cluster,
+        Event,
         Node,
         NodeOperator,
         node_operator,
         smart_contract::{self, Signer, evm::RpcProvider},
     },
-    wcn_cluster_api::{ClusterApi, SmartContractReader},
+    wcn_cluster_api::{ClusterApi, Read, SmartContractReader},
     wcn_rpc::{PeerId, identity::Keypair, server2::Server},
 };
 
@@ -49,11 +50,12 @@ async fn test_rpc() {
     let cluster = Cluster::deploy(cfg, &provider, settings, operators)
         .await
         .unwrap();
+    let smart_contract = cluster.smart_contract().clone();
 
     let server_keypair = Keypair::generate_ed25519();
     let server_peer_id = server_keypair.public().to_peer_id();
 
-    let proxy = SmartContractReader::new(cluster.smart_contract().clone());
+    let proxy = SmartContractReader::new(smart_contract.clone());
     let server = wcn_cluster_api::rpc::server::new(proxy)
         .serve(wcn_rpc::server2::Config {
             name: "test_cluster_api",
@@ -89,10 +91,10 @@ async fn test_rpc() {
         .unwrap();
 
     let address = client_conn.address().await.unwrap();
-    dbg!(address);
+    assert_eq!(address, smart_contract.address());
 
     let cluster_view = client_conn.cluster_view().await.unwrap();
-    dbg!(cluster_view);
+    assert_eq!(cluster_view.cluster_version, 1);
 
     let events = client_conn.events().await.unwrap();
 
@@ -104,10 +106,11 @@ async fn test_rpc() {
     }
 
     let events = events.take(3).try_collect::<Vec<_>>().await.unwrap();
-    dbg!(events);
+    assert_eq!(events.len(), 3);
 
-    // TODO: Actual tests.
-    // TODO: Ensure serialization compatibility.
+    for evt in events {
+        assert!(matches!(evt, Event::NodeOperatorAdded(_)));
+    }
 
     server.abort();
 }

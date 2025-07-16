@@ -8,7 +8,7 @@ publish = false
 workspace = true
 
 [features]
-default = ["rpc_client", "rpc_server"]
+default = []
 rpc_client = ["wcn_rpc/client"]
 rpc_server = ["wcn_rpc/server"]
 
@@ -16,7 +16,6 @@ rpc_server = ["wcn_rpc/server"]
 wcn_cluster = { path = "../cluster" }
 wc = { workspace = true, features = ["future", "metrics"] }
 derive_more = { workspace = true, features = ["from", "try_into"] }
-strum = { workspace = true, features = ["derive"] }
 tap = { workspace = true }
 wcn_rpc = { workspace = true }
 serde = "1"
@@ -25,11 +24,10 @@ tracing = "0.1"
 futures = "0.3"
 
 [dev-dependencies]
+wcn_cluster_api = { path = ".", features = ["rpc_client", "rpc_server"] }
 logging = { package = "wcn_logging", path = "../logging" }
 alloy = { version = "1.0", default-features = false, features = [
     "provider-anvil-node",
     "node-bindings",
 ] }
 tokio = { version = "1", default-features = false }
-rand = "0.9"
-rand_chacha = "0.9"

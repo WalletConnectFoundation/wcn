@@ -266,7 +266,7 @@ pub struct Error {
 /// [`Error`] kind.
 #[derive(Clone, Copy, Debug, IntoStaticStr, PartialEq, Eq, Ordinalize)]
 pub enum ErrorKind {
-    /// Client is not authorized to perfrom an [`Operation`].
+    /// Client is not authorized to perform an [`Operation`].
     Unauthorized,
 
     /// [`KeyspaceVersion`] mismatch.

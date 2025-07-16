@@ -64,7 +64,7 @@ pub trait HandleConnection: Clone + Send + Sync + 'static {
 /// Handler of [`Inbound`] RPCs.
 pub trait HandleRpc<RPC: RpcV2>: Send + Sync {
     /// Handles the provided [`Inbound`] RPC.
-    fn handle_rpc<'a>(&'a self, rpc: Inbound<RPC>) -> impl Future<Output = Result<()>> + Send + 'a;
+    fn handle_rpc(&self, rpc: Inbound<RPC>) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// [`HandleRpc`] specialization for [`UnaryRpc`]s.

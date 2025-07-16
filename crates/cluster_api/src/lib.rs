@@ -83,7 +83,7 @@ impl Error {
 /// [`Error`] kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
-    /// Client is not authorized to perfrom an [`Operation`].
+    /// Client is not authorized to perform an [`Operation`].
     Unauthorized,
 
     /// [`Operation`] timeout.

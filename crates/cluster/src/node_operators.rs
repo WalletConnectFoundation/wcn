@@ -8,10 +8,11 @@ use {
         atomic::{self, AtomicUsize},
         Arc,
     },
+    tap::Pipe,
 };
 
 /// Slot map of [`NodeOperator`]s.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NodeOperators<N> {
     id_to_idx: IndexMap<node_operator::Id, node_operator::Idx>,
 
@@ -178,6 +179,32 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
         }
 
         Ok(self)
+    }
+}
+
+impl<N> Serialize for NodeOperators<N>
+where
+    N: AsRef<node_operator::Id> + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.slots[..].serialize(serializer)
+    }
+}
+
+impl<'de, N> Deserialize<'de> for NodeOperators<N>
+where
+    N: AsRef<node_operator::Id> + Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Vec::<Option<N>>::deserialize(deserializer)?
+            .pipe(Self::new)
+            .map_err(serde::de::Error::custom)
     }
 }
 

@@ -7941,6 +7941,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_cluster_api"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "derive-where",
+ "derive_more 1.0.0",
+ "futures",
+ "serde",
+ "tap",
+ "thiserror 1.0.64",
+ "tokio",
+ "tracing",
+ "wc",
+ "wcn_cluster",
+ "wcn_cluster_api",
+ "wcn_logging",
+ "wcn_rpc",
+]
+
+[[package]]
 name = "wcn_core"
 version = "0.1.0"
 dependencies = [

@@ -10,7 +10,7 @@ use {
 pub use {
     libp2p::{identity, Multiaddr, PeerId},
     tokio_serde,
-    transport2::{Codec as CodecV2, Deserializer, PostcardCodec, Serializer},
+    transport2::{Codec as CodecV2, Deserializer, JsonCodec, PostcardCodec, Serializer},
     wcn_rpc_derive::Message,
 };
 
@@ -72,6 +72,10 @@ pub type Request<RPC> = <RPC as RpcV2>::Request;
 /// [`RpcV2::Response`].
 pub type Response<RPC> = <RPC as RpcV2>::Response;
 
+// TODO: Come up with a better name.
+/// [`RpcV2::Codec`].
+pub type RequestCodec<RPC> = <RPC as RpcV2>::Codec;
+
 /// Request-response RPC.
 pub trait UnaryRpc: RpcV2 {}
 
@@ -98,6 +102,46 @@ where
     Resp: MessageV2,
     C: CodecV2<Req> + CodecV2<Resp>,
 {
+}
+
+pub trait StreamingRpc: RpcV2 {
+    type Item: MessageV2;
+}
+
+/// [`StreamingRpc::Item`].
+pub type StreamItem<RPC> = <RPC as StreamingRpc>::Item;
+
+pub struct StreamingV2<
+    const ID: u8,
+    Req: MessageV2,
+    Resp: MessageV2,
+    Item,
+    C: CodecV2<Req> + CodecV2<Resp>,
+> {
+    _marker: PhantomData<(Req, Resp, Item, C)>,
+}
+
+impl<const ID: u8, Req, Resp, Item, C> RpcV2 for StreamingV2<ID, Req, Resp, Item, C>
+where
+    Req: MessageV2,
+    Resp: MessageV2,
+    Item: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+{
+    const ID: u8 = ID;
+    type Request = Req;
+    type Response = Resp;
+    type Codec = C;
+}
+
+impl<const ID: u8, Req, Resp, Item, C> StreamingRpc for StreamingV2<ID, Req, Resp, Item, C>
+where
+    Req: MessageV2,
+    Resp: MessageV2,
+    Item: MessageV2,
+    C: CodecV2<Req> + CodecV2<Resp>,
+{
+    type Item = Item;
 }
 
 /// RPC message.

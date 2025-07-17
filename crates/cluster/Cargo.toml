@@ -20,7 +20,15 @@ tokio-stream = { workspace = true }
 
 sharding = { path = "../sharding" }
 
-alloy = { version = "1.0", default-features = false, features = ["sol-types", "contract", "signer-local", "network", "reqwest", "provider-ws", "rpc-types"] }
+alloy = { version = "1.0", default-features = false, features = [
+    "sol-types",
+    "contract",
+    "signer-local",
+    "network",
+    "reqwest",
+    "provider-ws",
+    "rpc-types",
+] }
 
 anyhow = "1"
 thiserror = "1"
@@ -37,10 +45,13 @@ serde_json = "1"
 
 tokio = { version = "1", features = ["full"] }
 arc-swap = "1.7"
-indexmap = "2"
+indexmap = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
-alloy = { version = "1.0", default-features = false, features = ["provider-anvil-node", "node-bindings"] }
+alloy = { version = "1.0", default-features = false, features = [
+    "provider-anvil-node",
+    "node-bindings",
+] }
 tokio = { version = "1", default-features = false }
 
 tracing-subscriber = { version = "0.3", features = [

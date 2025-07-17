@@ -33,6 +33,7 @@ use crate::{
 };
 
 /// Snapshot of [`cluster::View`] fetched from a [`SmartContract`] state.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ClusterView {
     pub node_operators: NodeOperators<node_operator::Serialized>,
 

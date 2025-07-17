@@ -2,6 +2,7 @@ use {
     crate::node_operator::{self},
     derivative::Derivative,
     derive_more::TryFrom,
+    serde::{Deserialize, Serialize},
     sharding::ShardId,
     std::collections::HashSet,
     xxhash_rust::xxh3::Xxh3Builder,
@@ -17,7 +18,7 @@ pub const REPLICATION_FACTOR: u8 = 5;
 ///
 /// [`Keyspace`] is being split into a set of equally sized [`Shards`],
 /// and each [`Shard`] is being assigned to a set of [`node_operator`]s.
-#[derive(Clone, Derivative)]
+#[derive(Clone, Derivative, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct Keyspace<S = ()> {
     operators: HashSet<node_operator::Idx>,
@@ -41,7 +42,7 @@ pub struct Shard {
 
 /// Strategy of distributing [`Shard`]s to [`node_operator`]s.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, Default, TryFrom, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, TryFrom, Eq, PartialEq, Serialize, Deserialize)]
 #[try_from(repr)]
 pub enum ReplicationStrategy {
     /// [`Shard`]s are being uniformly distributed across [`node_operator`]s.

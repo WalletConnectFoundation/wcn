@@ -6,6 +6,7 @@ use {
     futures::Stream,
     itertools::Itertools,
     libp2p::PeerId,
+    serde::{Deserialize, Serialize},
     smart_contract::{Read, Write as _},
     std::{collections::HashSet, net::SocketAddrV4, sync::Arc},
     tokio::sync::watch,
@@ -103,7 +104,7 @@ struct Inner<C: Config> {
 pub type Version = u128;
 
 /// Events happening within a WCN [`Cluster`].
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Event {
     /// [`Migration`] has started.
     MigrationStarted(migration::Started),

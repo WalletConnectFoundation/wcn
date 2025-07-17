@@ -1,7 +1,7 @@
 [package]
-name = "wcn_storage_api2"
+name = "wcn_cluster_api"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [lints]
@@ -13,22 +13,22 @@ rpc_client = ["wcn_rpc/client"]
 rpc_server = ["wcn_rpc/server"]
 
 [dependencies]
+wcn_cluster = { path = "../cluster" }
 wc = { workspace = true, features = ["future", "metrics"] }
-auth = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
-strum = { workspace = true, features = ["derive"] }
+derive-where = { workspace = true }
 tap = { workspace = true }
-
 wcn_rpc = { workspace = true }
 serde = "1"
 thiserror = "1"
 tracing = "0.1"
 futures = "0.3"
-time = "0.3"
-const-hex = "1.14"
 
 [dev-dependencies]
-wcn_storage_api2 = { path = ".", features = ["rpc_client", "rpc_server"] }
+wcn_cluster_api = { path = ".", features = ["rpc_client", "rpc_server"] }
+logging = { package = "wcn_logging", path = "../logging" }
+alloy = { version = "1.0", default-features = false, features = [
+    "provider-anvil-node",
+    "node-bindings",
+] }
 tokio = { version = "1", default-features = false }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rand = "0.8"

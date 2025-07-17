@@ -5,13 +5,7 @@ use {
         Event,
         smart_contract::{Address, ClusterView},
     },
-    wcn_rpc::{
-        ApiName,
-        BorrowedMessage,
-        JsonCodec,
-        Message,
-        client2::{Client, Connection},
-    },
+    wcn_rpc::{ApiName, BorrowedMessage, JsonCodec, Message},
 };
 
 #[cfg(feature = "rpc_client")]
@@ -42,12 +36,6 @@ impl wcn_rpc::Api for ClusterApi {
     type RpcId = Id;
 }
 
-/// RPC [`Client`] of [`ClusterApi`].
-pub type Cluster = Client<ClusterApi>;
-
-/// Outbound [`Connection`] to [`ClusterApi`].
-pub type ClusterConnection = Connection<ClusterApi>;
-
 type UnaryRpc<const ID: u8, Req, Resp> = wcn_rpc::UnaryV2<ID, Req, Resp, JsonCodec>;
 type StreamingRpc<const ID: u8, Req, Resp, Item> =
     wcn_rpc::StreamingV2<ID, Req, Resp, Item, JsonCodec>;
@@ -71,6 +59,10 @@ impl Error {
             code: code as u8,
             message: details,
         }
+    }
+
+    fn internal(err: impl ToString) -> Self {
+        Self::new(ErrorCode::Internal, Some(err.to_string()))
     }
 }
 

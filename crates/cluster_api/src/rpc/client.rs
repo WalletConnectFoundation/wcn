@@ -2,14 +2,14 @@ pub use wcn_rpc::client2::Config;
 use {
     super::*,
     futures::{Stream, StreamExt},
-    wcn_rpc::{
-        Request,
-        Response,
-        client2::{Client, Connection, ConnectionHandler, RpcHandler},
-    },
+    wcn_rpc::client2::{Client, Connection, ConnectionHandler, RpcHandler, UnaryRpc},
 };
 
+/// RPC [`Client`] of [`ClusterApi`].
 pub type Cluster = Client<ClusterApi>;
+
+/// Outbound [`Connection`] to [`ClusterApi`].
+pub type ClusterConnection = Connection<ClusterApi>;
 
 /// Creates a new [`ClusterApi`] RPC client.
 pub fn new(config: Config) -> wcn_rpc::client2::Result<Cluster> {
@@ -24,15 +24,11 @@ impl wcn_rpc::client2::Api for ClusterApi {
 
 impl crate::ClusterApi for Connection<ClusterApi> {
     async fn address(&self) -> crate::Result<Address> {
-        Ok(self
-            .send::<GetAddress, Request<GetAddress>, Response<GetAddress>>(&())?
-            .await??
-            .into_inner())
+        Ok(GetAddress::send_request(self, &())?.await??.into_inner())
     }
 
     async fn cluster_view(&self) -> crate::Result<ClusterView> {
-        Ok(self
-            .send::<GetClusterView, Request<GetClusterView>, Response<GetClusterView>>(&())?
+        Ok(GetClusterView::send_request(self, &())?
             .await??
             .into_inner())
     }

@@ -17,7 +17,7 @@ use {
         node_operator,
         smart_contract::{self, Signer, evm::RpcProvider},
     },
-    wcn_cluster_api::{ClusterApi, Read, SmartContractReader},
+    wcn_cluster_api::{ClusterApi, Read},
     wcn_rpc::{PeerId, identity::Keypair, server2::Server},
 };
 
@@ -55,8 +55,7 @@ async fn test_rpc() {
     let server_keypair = Keypair::generate_ed25519();
     let server_peer_id = server_keypair.public().to_peer_id();
 
-    let proxy = SmartContractReader::new(smart_contract.clone());
-    let server = wcn_cluster_api::rpc::server::new(proxy)
+    let server = wcn_cluster_api::rpc::server::new(smart_contract.clone())
         .serve(wcn_rpc::server2::Config {
             name: "test_cluster_api",
             port,

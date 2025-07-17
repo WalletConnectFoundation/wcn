@@ -1,4 +1,4 @@
-use futures::{Stream, TryStreamExt};
+use futures::Stream;
 pub use wcn_cluster::{
     Event,
     smart_contract::{Address, ClusterView, Read},
@@ -19,42 +19,6 @@ pub trait ClusterApi: Clone + Send + Sync + 'static {
 
 /// [`ClusterApi`] result.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[derive(Clone)]
-pub struct SmartContractReader<C> {
-    smart_contract: C,
-}
-
-impl<C> SmartContractReader<C>
-where
-    C: Read,
-{
-    pub fn new(smart_contract: C) -> Self {
-        Self { smart_contract }
-    }
-}
-
-impl<C: Read + Clone> ClusterApi for SmartContractReader<C> {
-    async fn address(&self) -> Result<Address> {
-        Ok(self.smart_contract.address())
-    }
-
-    async fn cluster_view(&self) -> Result<ClusterView> {
-        self.smart_contract
-            .cluster_view()
-            .await
-            .map_err(Error::internal)
-    }
-
-    async fn events(&self) -> Result<impl Stream<Item = Result<Event>> + Send + 'static> {
-        Ok(self
-            .smart_contract
-            .events()
-            .await
-            .map_err(Error::internal)?
-            .map_err(Error::internal))
-    }
-}
 
 /// [`ClusterApi`] error.
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]

@@ -16,6 +16,7 @@ rpc_server = ["wcn_rpc/server"]
 wcn_cluster = { path = "../cluster" }
 wc = { workspace = true, features = ["future", "metrics"] }
 derive_more = { workspace = true, features = ["from", "try_into"] }
+derive-where = { workspace = true }
 tap = { workspace = true }
 wcn_rpc = { workspace = true }
 serde = "1"

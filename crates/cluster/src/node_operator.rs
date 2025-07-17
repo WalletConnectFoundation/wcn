@@ -56,7 +56,7 @@ impl Name {
 }
 
 /// [`NodeOperator`] data serialized for on-chain storage.
-#[derive(Debug, Into)]
+#[derive(Debug, Into, Serialize, Deserialize)]
 pub struct Data(pub(crate) Vec<u8>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
@@ -117,7 +117,7 @@ impl<N> NodeOperator<N> {
 }
 
 /// [`NodeOperator`] with serialized [`Data`].
-#[derive(AsRef, Debug)]
+#[derive(AsRef, Debug, Serialize, Deserialize)]
 pub struct Serialized {
     /// ID of this [`NodeOperator`].
     #[as_ref]
@@ -128,7 +128,7 @@ pub struct Serialized {
 }
 
 /// Event of a new [`NodeOperator`] being added to a WCN cluster.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Added {
     /// [`Idx`] in the [`NodeOperators`] slot map the [`NodeOperator`] is being
     /// placed to.
@@ -142,7 +142,7 @@ pub struct Added {
 }
 
 /// Event of a [`NodeOperator`] being updated.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Updated {
     /// Updated [`NodeOperator`].
     pub operator: Serialized,
@@ -152,7 +152,7 @@ pub struct Updated {
 }
 
 /// Event of a [`NodeOperator`] being removed from a WCN cluster.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Removed {
     /// [`Id`] of the [`NodeOperator`] being removed.
     pub id: Id,

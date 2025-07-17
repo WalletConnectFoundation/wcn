@@ -1,6 +1,10 @@
+use {
+    crate::{node_operator, smart_contract, Version as ClusterVersion},
+    serde::{Deserialize, Serialize},
+};
+
 #[allow(unused_imports)]
 use crate::Cluster; // for doc comments
-use crate::{node_operator, smart_contract, Version as ClusterVersion};
 
 /// Maintenance process within a WCN cluster.
 ///
@@ -8,7 +12,7 @@ use crate::{node_operator, smart_contract, Version as ClusterVersion};
 /// maintenance.
 ///
 /// Owner of the [`Cluster`] is also allowed to start [`Maintenance`].
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Maintenance {
     slot: smart_contract::AccountAddress,
 }
@@ -28,7 +32,7 @@ impl Maintenance {
 }
 
 /// [`Maintenance`] has started.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Started {
     /// [`smart_contract::AccountAddress`] of the account that
     /// started the [`Maintenance`].
@@ -39,7 +43,7 @@ pub struct Started {
 }
 
 /// [`Maintenance`] has been finished.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Finished {
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,

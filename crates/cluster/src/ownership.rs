@@ -1,12 +1,15 @@
 //! Ownership of a WCN cluster.
 
-use crate::{smart_contract, SmartContract};
+use {
+    crate::{smart_contract, SmartContract},
+    serde::{Deserialize, Serialize},
+};
 
 /// Ownership of a WCN cluster.
 ///
 /// Cluster has a single owner, and some [`smart_contract`] methods are
 /// restricted to be executed only by the owner.
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ownership {
     owner: smart_contract::AccountAddress,
 }

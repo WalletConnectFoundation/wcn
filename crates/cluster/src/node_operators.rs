@@ -126,7 +126,7 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
     }
 
     /// Gets an [`NodeOperator`] by [`Idx`].
-    pub(super) fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&N> {
+    pub fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&N> {
         self.slots.get(idx as usize)?.as_ref()
     }
 

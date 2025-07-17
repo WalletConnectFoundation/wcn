@@ -40,6 +40,25 @@ pub struct View<C: Config> {
     pub(super) cluster_version: cluster::Version,
 }
 
+impl<C: Config<KeyspaceShards = keyspace::Shards>> View {
+    pub fn primary_replica_set(&self, key: u64) -> keyspace::ReplicaSet<&C::Node> {
+        // TODO: make sure that `unwrap` is always safe
+        self.keyspace
+            .shard(key)
+            .replica_set()
+            .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
+    }
+
+    pub fn secondary_replica_set(&self, key: u64) -> Option<keyspace::ReplicaSet<&C::Node>> {
+        // TODO: make sure that `unwrap` is always safe
+        self.migration()?
+            .keyspace()
+            .shard(key)
+            .replica_set()
+            .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
+    }
+}
+
 impl<C: Config> View<C> {
     /// Returns [`Ownership`] of the WCN cluster.
     pub fn ownership(&self) -> &Ownership {

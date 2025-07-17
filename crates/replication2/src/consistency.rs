@@ -1,14 +1,19 @@
-use {derive_more::derive::Deref, smallvec::SmallVec, storage_api::PeerAddr};
+use {
+    crate::OperationResults,
+    cluster::keyspace::REPLICATION_FACTOR,
+    derive_more::derive::Deref,
+    smallvec::SmallVec,
+    storage_api::{operation, PeerAddr},
+};
 
 /// Replication consistency mechanism guaranteeing majority of replicas
 /// (quorum threshold) return the same result.
-pub struct MajorityQuorum<T> {
-    threshold: usize,
-    results: ReplicationResults<T>,
-    reached_idx: Option<usize>,
+pub enum MajorityQuorum<'a> {
+    Pending { results: &'a mut OperationResults },
+    Reached { idx: usize },
 }
 
-impl<T: Clone + Eq> MajorityQuorum<T> {
+impl MajorityQuorum {
     /// Creates a new [`Quorum`] with the provided quorum `threshold`.
     pub fn new(threshold: usize) -> Self {
         Self {
@@ -19,7 +24,11 @@ impl<T: Clone + Eq> MajorityQuorum<T> {
     }
 
     /// Pushes the provided replication result.
-    pub fn push(&mut self, replica_addr: PeerAddr, result: storage_api::client::Result<T>) {
+    pub fn push(
+        &mut self,
+        replica_addr: PeerAddr,
+        result: storage_api::Result<operation::Output<'static>>,
+    ) {
         if let Some(res) = self.is_reached() {
             return self.results.push(ReplicationResult {
                 replica_addr,
@@ -49,7 +58,7 @@ impl<T: Clone + Eq> MajorityQuorum<T> {
 
     /// Indicates whether the [`MajorityQuorum`] is reached by returning the
     /// replication [`Result`] the quorum agreed upon.
-    pub fn is_reached(&self) -> Option<&storage_api::client::Result<T>> {
+    pub fn is_reached(&self) -> Option<&storage_api::Result<operation::Output>> {
         self.reached_idx.map(|idx| &self.results[idx].inner)
     }
 
@@ -69,27 +78,31 @@ impl<T: Clone + Eq> MajorityQuorum<T> {
     }
 
     /// Converts [`MajorityQuorum`] into the underlying [`ReplicationResults`].
-    pub fn into_results(self) -> ReplicationResults<T> {
+    pub fn into_results(self) -> ReplicationResults {
         self.results
     }
 }
 
-pub type ReplicationResults<T> = SmallVec<[ReplicationResult<T>; 3]>;
+pub type ReplicationResults = SmallVec<[ReplicationResult; REPLICATION_FACTOR as usize]>;
 
 #[derive(Deref)]
-pub(super) struct ReplicationResult<T> {
+pub(super) struct ReplicationResult {
     #[deref]
-    pub inner: storage_api::client::Result<T>,
+    pub inner: storage_api::Result<operation::Output<'static>>,
     pub replica_addr: PeerAddr,
     within_quorum: bool,
 }
 
 #[cfg(test)]
 mod test {
-    use {super::*, storage_api::PeerId};
+    use {
+        super::*,
+        std::time::Duration,
+        storage_api::{PeerId, Record, RecordExpiration, RecordVersion},
+    };
 
-    impl<T> ReplicationResult<T> {
-        pub(crate) fn new_test(inner: storage_api::client::Result<T>) -> Self {
+    impl ReplicationResult {
+        pub(crate) fn new_test(inner: storage_api::Result<operation::Output<'static>>) -> Self {
             Self {
                 inner,
                 replica_addr: "12D3KooWDJrGKPuU1vJLBZv2UXfcZvdBprUgAkjvkUET7q2PzwPp-/ip4/10.0.0.1/\
@@ -116,7 +129,19 @@ mod test {
             "/ip4/10.0.0.3/udp/3010/quic-v1".parse().unwrap(),
         );
 
-        let mut quorum = MajorityQuorum::<u8>::new(2);
+        let record1 = Record::<'static> {
+            value: b"record1".into(),
+            expiration: Duration::from_secs(30).into(),
+            version: RecordVersion::now(),
+        };
+
+        let record2 = Record::<'static> {
+            value: b"record2".into(),
+            expiration: Duration::from_secs(30).into(),
+            version: RecordVersion::now(),
+        };
+
+        let mut quorum = MajorityQuorum::new(2);
         quorum.push(addr1.clone(), Ok(42));
         assert_eq!(quorum.is_reached(), None);
         quorum.push(addr2.clone(), Ok(42));

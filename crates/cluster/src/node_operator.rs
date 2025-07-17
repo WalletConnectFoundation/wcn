@@ -62,6 +62,9 @@ pub struct Data(pub(crate) Vec<u8>);
 /// Entity operating a set of [`Node`]s within a WCN cluster.
 #[derive(AsRef, Clone, Debug)]
 pub struct NodeOperator<N = Node> {
+    /// [`Idx`] of this [`NodeOperator`].
+    pub(super) idx: Idx,
+
     /// ID of this [`NodeOperator`].
     #[as_ref]
     pub id: Id,
@@ -93,6 +96,8 @@ impl<N> NodeOperator<N> {
         }
 
         Ok(Self {
+            // will be set later, once this struct becomes a part of `NodeOperators` collection
+            idx: 0,
             id,
             name,
             nodes,

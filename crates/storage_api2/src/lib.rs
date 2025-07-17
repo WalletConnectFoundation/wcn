@@ -58,7 +58,7 @@ pub trait StorageApi: Send + Sync + 'static {
     fn execute_ref(
         &self,
         operation: &Operation<'_>,
-    ) -> impl Future<Output = Result<operation::Output>> {
+    ) -> impl Future<Output = Result<operation::Output>> + Send {
         async { self.execute(operation.clone()).await }
     }
 
@@ -83,7 +83,7 @@ pub trait StorageApi: Send + Sync + 'static {
 
 /// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
 pub trait Callback: Send {
-    type Error;
+    type Error: Send + 'static;
 
     fn send_result(
         self,
@@ -108,6 +108,16 @@ pub struct RecordBorrowed<'a> {
 
     /// Version of this [`Record`].
     pub version: RecordVersion,
+}
+
+impl Record {
+    pub fn borrow(&self) -> RecordBorrowed<'_> {
+        RecordBorrowed {
+            value: &self.value,
+            expiration: self.expiration,
+            version: self.version,
+        }
+    }
 }
 
 /// Entry within a Map.
@@ -287,7 +297,7 @@ pub enum ErrorKind {
 
 impl Error {
     /// Creates a new [`Error`].
-    pub fn new(kind: ErrorKind) -> Self {
+    pub const fn new(kind: ErrorKind) -> Self {
         Self {
             kind,
             message: None,

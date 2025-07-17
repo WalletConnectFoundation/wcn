@@ -1,14 +1,49 @@
-pub use {
-    client_api::SubscriptionEvent,
-    storage_api::{self as storage, auth, identity, Multiaddr, PeerAddr, PeerId},
-};
 use {
+    cluster::{
+        keyspace::{self, Shards, REPLICATION_FACTOR},
+        node_operator,
+        Cluster,
+        Keyspace,
+        NodeOperator,
+    },
     consistency::ReplicationResults,
     derive_more::derive::AsRef,
-    domain::{Cluster, HASHER},
-    futures::{channel::oneshot, stream::FuturesUnordered, FutureExt, Stream, StreamExt},
-    std::{collections::HashSet, future::Future, hash::BuildHasher, sync::Arc, time::Duration},
-    storage_api::client::RemoteStorage,
+    derive_where::derive_where,
+    futures::{
+        channel::oneshot,
+        future::{Either, OptionFuture},
+        stream::{self, FuturesUnordered},
+        FutureExt,
+        Stream,
+        StreamExt,
+    },
+    futures_concurrency::{
+        future::{Join as _, Race as _},
+        stream::Merge,
+    },
+    std::{
+        array,
+        cell::RefCell,
+        collections::{HashMap, HashSet},
+        future::{self, Future},
+        hash::BuildHasher,
+        ops::Add,
+        pin::pin,
+        sync::Arc,
+        time::Duration,
+    },
+    storage_api::{
+        operation,
+        rpc::client::ReplicaConnection,
+        Callback,
+        Error,
+        ErrorKind,
+        MapEntryBorrowed,
+        Operation,
+        Record,
+        RecordBorrowed,
+        StorageApi,
+    },
     tap::{Pipe, TapFallible as _},
     wc::metrics::{
         self,
@@ -18,926 +53,380 @@ use {
         FutureExt as _,
         StringLabel,
     },
-    wcn_core::cluster,
+    xxhash_rust::xxh3::Xxh3Builder,
 };
 
 mod consistency;
 mod reconciliation;
 
-/// WCN replication driver.
-#[derive(Clone)]
-pub struct Driver {
-    client_api: client_api::Client,
-    storage_api: storage_api::Client,
-    metrics_tag: &'static str,
+const RF: usize = keyspace::REPLICATION_FACTOR as usize;
+
+#[derive_where(Clone)]
+pub struct Coordinator<C: cluster::Config> {
+    cluster: Cluster<C>,
 }
 
-/// Replication config.
-pub struct Config {
-    /// [`Keypair`] to be used for RPC clients.
-    pub keypair: identity::Keypair,
-
-    /// Timeout of establishing a network connection.
-    pub connection_timeout: Duration,
-
-    /// Timeout of an API operation.
-    pub operation_timeout: Duration,
-
-    /// [`PeerAddr`]s of the nodes to connect to.
-    pub nodes: HashSet<PeerAddr>,
-
-    /// A list of storage namespaces to be used.
-    pub namespaces: Vec<auth::Auth>,
-
-    /// Additional metrics tag being used for all [`Driver`] metrics.
-    pub metrics_tag: &'static str,
-}
-
-impl Config {
-    /// Creates a new [`Config`] with the provided list of nodes to connect to
-    /// and other options defaults.
-    pub fn new(nodes: HashSet<PeerAddr>) -> Self {
-        Self {
-            keypair: identity::Keypair::generate_ed25519(),
-            connection_timeout: Duration::from_secs(5),
-            operation_timeout: Duration::from_secs(10),
-            nodes,
-            namespaces: Vec::new(),
-            metrics_tag: "default",
-        }
-    }
-
-    /// Overwrites [`Config::keypair`].
-    pub fn with_keypair(mut self, keypair: identity::Keypair) -> Self {
-        self.keypair = keypair;
-        self
-    }
-
-    /// Overwrites [`Config::connection_timeout`].
-    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
-        self.connection_timeout = timeout;
-        self
-    }
-
-    /// Overwrites [`Config::operation_timeout`].
-    pub fn with_operation_timeout(mut self, timeout: Duration) -> Self {
-        self.operation_timeout = timeout;
-        self
-    }
-
-    /// Overwrites [`Config::namespaces`].
-    pub fn with_namespaces(mut self, namespaces: impl Into<Vec<auth::Auth>>) -> Self {
-        self.namespaces = namespaces.into();
-        self
-    }
-
-    /// Overwrites [`Config::metrics_tag`].
-    pub fn with_metrics_tag(mut self, tag: &'static str) -> Self {
-        self.metrics_tag = tag;
-        self
-    }
-}
-
-/// Error of [`Driver::new`].
-#[derive(Clone, Debug, thiserror::Error)]
-#[error("{_0}")]
-pub struct CreationError(String);
-
-impl Driver {
-    /// Creates a new replication [`Driver`].
-    pub async fn new(cfg: Config) -> Result<Self, CreationError> {
-        let client_api_cfg = client_api::client::Config::new(cfg.nodes)
-            .with_keypair(cfg.keypair.clone())
-            .with_connection_timeout(cfg.connection_timeout)
-            .with_operation_timeout(cfg.operation_timeout)
-            .with_namespaces(cfg.namespaces)
-            .with_metrics_tag(cfg.metrics_tag);
-
-        let client_api = client_api::Client::new(client_api_cfg)
-            .await
-            .map_err(|err| CreationError(err.to_string()))?;
-
-        let storage_api_cfg = storage_api::client::Config::new(client_api.auth_token())
-            .with_keypair(cfg.keypair)
-            .with_connection_timeout(cfg.connection_timeout)
-            .with_operation_timeout(cfg.operation_timeout)
-            .with_metrics_tag(cfg.metrics_tag);
-
-        let storage_api = storage_api::Client::new(storage_api_cfg)
-            .map_err(|err| CreationError(err.to_string()))?;
-
-        Ok(Self {
-            client_api,
-            storage_api,
-            metrics_tag: cfg.metrics_tag,
-        })
-    }
-
-    /// Gets a [`storage::Record`] by the provided [`storage::Key`].
-    pub async fn get(&self, key: storage::Key) -> Result<Option<storage::Record>> {
-        self.replicate(Get { key }).await
-    }
-
-    /// Sets the provided [`storage::Entry`].
-    pub async fn set(&self, entry: storage::Entry) -> Result<()> {
-        self.replicate(Set { entry }).await
-    }
-
-    /// Deletes a [`storage::Entry`] by the provided [`storage::Key`].
-    pub async fn del(&self, key: storage::Key) -> Result<()> {
-        let version = storage::EntryVersion::new();
-        self.replicate(Del { key, version }).await
-    }
-
-    /// Gets a [`storage::EntryExpiration`] by the provided [`storage::Key`].
-    pub async fn get_exp(&self, key: storage::Key) -> Result<Option<storage::EntryExpiration>> {
-        self.replicate(GetExp { key }).await
-    }
-
-    /// Sets [`storage::EntryExpiration`] on the [`storage::Entry`] with the
-    /// provided [`storage::Key`].
-    pub async fn set_exp(
+impl<Cfg> StorageApi for Coordinator<Cfg>
+where
+    Cfg: cluster::Config<KeyspaceShards = keyspace::Shards>,
+    NodeOperator<Cfg::Node>: StorageApi,
+{
+    async fn execute_callback<C: Callback>(
         &self,
-        key: storage::Key,
-        expiration: impl Into<storage::EntryExpiration>,
-    ) -> Result<()> {
-        self.replicate(SetExp {
-            key,
-            expiration: expiration.into(),
-            version: storage::EntryVersion::new(),
-        })
-        .await
-    }
+        operation: Operation<'_>,
+        callback: C,
+    ) -> Result<(), C::Error> {
+        static HASHER: Xxh3Builder = Xxh3Builder::new();
 
-    /// Gets a map [`storage::Record`] by the provided [`storage::Key`] and
-    /// [`storage::Field`].
-    pub async fn hget(
-        &self,
-        key: storage::Key,
-        field: storage::Field,
-    ) -> Result<Option<storage::Record>> {
-        self.replicate(HGet { key, field }).await
-    }
+        let operation = &operation;
 
-    /// Sets the provided [`storage::MapEntry`].
-    pub async fn hset(&self, entry: storage::MapEntry) -> Result<()> {
-        self.replicate(HSet { entry }).await
-    }
+        // IMPORTANT: WCN DB MUST use the same hashing algorithm, and it MUST hash the
+        // same bytes (only the base key, without namespace).
+        let key = HASHER.hash_one(operation.key());
 
-    /// Deletes a [`storage::MapEntry`] by the provided [`storage::Key`] and
-    /// [`storage::Field`].
-    pub async fn hdel(&self, key: storage::Key, field: storage::Field) -> Result<()> {
-        self.replicate(HDel {
-            key,
-            field,
-            version: storage::EntryVersion::new(),
-        })
-        .await
-    }
+        let is_write = operation.is_write();
 
-    /// Gets a [`storage::EntryExpiration`] by the provided [`storage::Key`] and
-    /// [`Field`].
-    pub async fn hget_exp(
-        &self,
-        key: storage::Key,
-        field: storage::Field,
-    ) -> Result<Option<storage::EntryExpiration>> {
-        self.replicate(HGetExp { key, field }).await
-    }
+        let cluster_view = &self.cluster.view();
 
-    /// Sets [`storage::Expiration`] on the [`storage::MapEntry`] with the
-    /// provided [`storage::Key`] and [`storage::Field`].
-    pub async fn hset_exp(
-        &self,
-        key: storage::Key,
-        field: storage::Field,
-        expiration: impl Into<storage::EntryExpiration>,
-    ) -> Result<()> {
-        self.replicate(HSetExp {
-            key,
-            field,
-            expiration: expiration.into(),
-            version: storage::EntryVersion::new(),
-        })
-        .await
-    }
+        let replicate_to = |node_operator| async move {
+            (operator_idx, node_operator.execute_ref(operation).map(|response| )
+        };
 
-    /// Returns cardinality of the map with the provided [`storage::Key`].
-    pub async fn hcard(&self, key: storage::Key) -> Result<u64> {
-        self.replicate(HCard { key }).await
-    }
+        let mut primary_replica_set = ReplicaSet::new(key, cluster_view.keyspace());
+        let primary_replica_futures = primary_replica_set
+            .replicas
+            .map(|operator_idx| stream::once(replicate_to(operator_idx)))
+            .merge();
 
-    /// Returns a [`storage::MapPage`] by iterating over the [`storage::Field`]s
-    /// of the map with the provided [`storage::Key`].
-    pub async fn hscan(
-        &self,
-        key: storage::Key,
-        count: u32,
-        cursor: Option<storage::Field>,
-    ) -> Result<storage::MapPage> {
-        self.replicate(HScan { key, count, cursor }).await
-    }
-
-    /// Returns [`Value`]s of the map with the provided [`Key`].
-    pub async fn hvals(&self, key: storage::Key) -> Result<Vec<storage::Value>> {
-        // `1000` is generous, relay has ~100 limit for these small maps
-        self.hscan(key, 1000, None)
-            .await
-            .map(|page| page.records.into_iter().map(|rec| rec.value).collect())
-    }
-
-    /// Publishes the provided message to the specified channel.
-    pub async fn publish(&self, channel: Vec<u8>, message: Vec<u8>) -> Result<()> {
-        self.client_api
-            .publish(channel, message)
-            .with_metrics(future_metrics!(
-                "wcn_replication_driver_publish",
-                StringLabel<"tag", &'static str> => &self.metrics_tag
-            ))
-            .await
-            .tap_err(|_| {
-                metrics::counter!(
-                    "wcn_replication_driver_publish_errors",
-                    StringLabel<"tag", &'static str> => &self.metrics_tag
-                )
-                .increment(1)
-            })
-            .map_err(Error::ClientApi)
-    }
-
-    /// Subscribes to the [`storage::SubscriptionEvent`]s of the provided
-    /// `channel`s, and handles them using the provided `event_handler`.
-    pub async fn subscribe(
-        &self,
-        channels: HashSet<Vec<u8>>,
-    ) -> Result<impl Stream<Item = Result<SubscriptionEvent>>> {
-        let stream = self
-            .client_api
-            .subscribe(channels)
-            .with_metrics(future_metrics!(
-                "wcn_replication_driver_subscribe",
-                StringLabel<"tag", &'static str> => &self.metrics_tag
-            ))
-            .await
-            .tap_err(|_| {
-                metrics::counter!(
-                    "wcn_replication_driver_subscribe_errors",
-                    StringLabel<"tag", &'static str> => &self.metrics_tag
-                )
-                .increment(1)
-            })
-            .map_err(Error::ClientApi)?
-            .map(|res| res.map_err(Error::ClientApi));
-
-        Ok(stream)
-    }
-
-    async fn replicate<Op: StorageOperation>(&self, operation: Op) -> Result<Op::Output> {
-        async move {
-            ReplicationTask::spawn(self, operation)
-                .await
-                .map_err(|_| Error::TaskCancelled)?
-        }
-        .with_metrics(future_metrics!(
-            "wcn_replication_driver_operation",
-            EnumLabel<"name", OperationName> => Op::NAME,
-            StringLabel<"tag", &'static str> => &self.metrics_tag
-        ))
-        .await
-        .tap_err(|err| {
-            metrics::counter!("wcn_replication_driver_operation_errors",
-                EnumLabel<"operation", OperationName> => Op::NAME,
-                StringLabel<"error"> => err.as_str(),
-                StringLabel<"tag", &'static str> => &self.metrics_tag
-            )
-            .increment(1)
-        })
-    }
-
-    fn cluster(&self) -> Arc<Cluster> {
-        self.client_api.cluster().load_full()
-    }
-}
-
-type Quorum<T> = consistency::MajorityQuorum<T>;
-
-struct ReplicationTask<Op: StorageOperation> {
-    driver: Driver,
-
-    operation: Op,
-    key_hash: u64,
-
-    result_channel: Option<oneshot::Sender<Result<Op::Output>>>,
-}
-
-impl<Op: StorageOperation> ReplicationTask<Op> {
-    fn spawn(driver: &Driver, operation: Op) -> oneshot::Receiver<Result<Op::Output>> {
-        let key_hash = HASHER.hash_one(operation.as_ref().as_bytes());
-
-        let (tx, rx) = oneshot::channel();
-
-        Self {
-            driver: driver.clone(),
-            operation,
-            key_hash,
-            result_channel: Some(tx),
-        }
-        .run()
-        .with_metrics(future_metrics!("wcn_replication_driver_task",
-            EnumLabel<"operation", OperationName> => Op::NAME,
-            StringLabel<"tag", &'static str> => &driver.metrics_tag
-        ))
-        .pipe(tokio::spawn);
-
-        rx
-    }
-
-    async fn run(mut self) {
-        let mut attempt = 0;
-
-        // Retry once if we've got a `KeyspaceVersionMismatch` error.
-        let quorum = loop {
-            attempt += 1;
-
-            match self.execute_operation().await {
-                Ok(quorum) => break quorum,
-                Err(err) if err.is_keyspace_version_mismatch() && attempt < 2 => {
-                    // TODO: reconsider this value / make configurable once tested on Mainnet
-                    tokio::time::sleep(Duration::from_millis(500)).await
-                }
-                Err(err) => {
-                    if let Some(channel) = self.result_channel.take() {
-                        let _ = channel.send(Err(err));
-                    }
-                    return;
-                }
+        let replicate_to_secondary = |operator_idx| async move {
+            // Make sure that if an operator is in both primary and secondary
+            // keyspaces we only replicate once.
+            if !primary_replica_set.replicas.contains(&operator_idx) {
+                return None;
             }
+
+            Some(replicate_to(operator_idx).await)
         };
 
-        if let Some(Ok(value)) = quorum.is_reached() {
-            self.repair(&quorum, value).await;
-        }
+        // If there's an ongoing data migration and this is a write, then we need to
+        // replicate to an additional set of replicas.
+        let mut secondary_replica_set = cluster_view
+            .migration()
+            .filter(|_| is_write)
+            .map(|migration| ReplicaSet::new(key, migration.keyspace()));
 
-        if let Some(channel) = self.result_channel.take() {
-            let _ = channel.send(self.reconcile(quorum));
-        }
-    }
-
-    async fn execute_operation(&mut self) -> Result<consistency::MajorityQuorum<Op::Output>> {
-        let cluster = self.driver.cluster();
-
-        let replica_set = match cluster.replica_set(self.key_hash, Op::IS_WRITE) {
-            Ok(set) => set,
-            Err(err) => return Err(Error::Cluster(err)),
+        let secondary_replica_futures = match &secondary_replica_set {
+            Some(replica_set) => replica_set
+                .replicas
+                .map(|idx| stream::once(replicate_to_secondary(idx)))
+                .merge()
+                .filter_map(future::ready)
+                .pipe(Either::Left),
+            None => Either::Right(stream::empty()),
         };
 
-        let mut result_stream: FuturesUnordered<_> = replica_set
-            .nodes
-            .map(|node| async {
-                let peer = PeerAddr::new(node.id, node.addr.clone());
+        let mut response_futures =
+            pin!((primary_replica_futures, secondary_replica_futures).merge());
 
-                self.operation
-                    .execute(self.driver.storage_api.remote_storage(&peer))
-                    .map(|res| (peer.clone(), res))
-                    .await
-            })
-            .collect();
+        let mut responses: ResponseBuffer = std::array::from_fn(|_| None);
 
-        let mut quorum = consistency::MajorityQuorum::new(replica_set.required_count);
-
-        while let Some((peer, result)) = result_stream.next().await {
-            quorum.push(peer, result);
-
-            let Some(result) = quorum.is_reached() else {
-                continue;
+        let quorum_response_idx = loop {
+            let Some((operator_idx, response)) = response_futures.next().await else {
+                break None;
             };
 
-            match result {
-                Ok(value) => {
-                    if let Some(channel) = self.result_channel.take() {
-                        let _ = channel.send(Ok(value.clone()));
-                    }
-                }
-                Err(err) => return Err(Error::StorageApi(err.clone())),
+            let response_idx = receive_response(&mut responses, response);
+
+            let primary_quorum_response =
+                primary_replica_set.response_received(operator_idx, response_idx);
+
+            let secondary_quorum_response = secondary_replica_set
+                .as_mut()
+                .map(|replica_set| replica_set.response_received(operator_idx, response_idx))
+                .flatten();
+
+            match (primary_quorum_response, secondary_quorum_response) {
+                (Some(idx), _) if secondary_replica_set.is_none() => break Some(idx),
+
+                // If both replica sets reached quorum, but the responses are different, then we
+                // return `None` indicating that quorum hasn't been reached.
+                (Some(a), Some(b)) => break Some(a).filter(|_| a == b),
+
+                _ => continue,
             };
-        }
-
-        Ok(quorum)
-    }
-
-    async fn repair(&self, quorum: &Quorum<Op::Output>, value: &Op::Output) {
-        let stream: FuturesUnordered<_> = quorum
-            .minority_replicas()
-            .map(|addr| {
-                self.operation
-                    .repair(self.driver.storage_api.remote_storage(addr), value)
-                    .map(|res| match res {
-                        Ok(true) => metrics::counter!("wcn_replication_driver_read_repairs",
-                            EnumLabel<"operation_name", OperationName> => Op::NAME,
-                            StringLabel<"tag", &'static str> => &self.driver.metrics_tag
-                        )
-                        .increment(1),
-                        Ok(false) => {}
-                        Err(_) => metrics::counter!("wcn_replication_driver_read_repair_errors",
-                            EnumLabel<"operation_name", OperationName> => Op::NAME,
-                            StringLabel<"tag", &'static str> => &self.driver.metrics_tag
-                        )
-                        .increment(1),
-                    })
-            })
-            .collect();
-
-        stream.collect::<Vec<()>>().await;
-    }
-
-    fn reconcile(&self, quorum: Quorum<Op::Output>) -> Result<Op::Output> {
-        let required_replicas = quorum.threshold();
-        match Op::reconcile(quorum.into_results(), required_replicas) {
-            Some(Ok(value)) => {
-                metrics::counter!("wcn_replication_driver_reconciliations",
-                    EnumLabel<"operation_name", OperationName> => Op::NAME,
-                    StringLabel<"tag", &'static str> => &self.driver.metrics_tag
-                )
-                .increment(1);
-                Ok(value)
-            }
-            Some(Err(_)) => {
-                metrics::counter!("wcn_replication_driver_reconciliation_errors",
-                    EnumLabel<"operation_name", OperationName> => Op::NAME,
-                    StringLabel<"tag", &'static str> => &self.driver.metrics_tag
-                )
-                .increment(1);
-                Err(Error::InconsistentResults)
-            }
-            None => Err(Error::InconsistentResults),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Ordinalize)]
-enum OperationName {
-    Get,
-    Set,
-    Del,
-    GetExp,
-    SetExp,
-    HGet,
-    HSet,
-    HDel,
-    HGetExp,
-    HSetExp,
-    HCard,
-    HScan,
-}
-
-impl metrics::Enum for OperationName {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Get => "get",
-            Self::Set => "set",
-            Self::Del => "del",
-            Self::GetExp => "get_exp",
-            Self::SetExp => "set_exp",
-            Self::HGet => "hget",
-            Self::HSet => "hset",
-            Self::HDel => "hdel",
-            Self::HGetExp => "hget_exp",
-            Self::HSetExp => "hset_exp",
-            Self::HCard => "hcard",
-            Self::HScan => "hscan",
-        }
-    }
-}
-
-trait StorageOperation: AsRef<storage::Key> + Send + Sync + 'static {
-    type Output: Clone + Eq + Send + Sync;
-
-    const NAME: OperationName;
-    const IS_WRITE: bool;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> + Send;
-
-    fn repair(
-        &self,
-        _storage: RemoteStorage<'_>,
-        _output: &Self::Output,
-    ) -> impl Future<Output = storage_api::client::Result<bool>> + Send {
-        async { Ok(false) }
-    }
-
-    fn reconcile(
-        _results: ReplicationResults<Self::Output>,
-        _required_replicas: usize,
-    ) -> Option<reconciliation::Result<Self::Output>> {
-        None
-    }
-}
-
-#[derive(AsRef)]
-struct Get {
-    #[as_ref]
-    key: storage::Key,
-}
-
-impl StorageOperation for Get {
-    type Output = Option<storage::Record>;
-
-    const NAME: OperationName = OperationName::Get;
-    const IS_WRITE: bool = false;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.get(self.key.clone())
-    }
-
-    fn repair(
-        &self,
-        storage: RemoteStorage<'_>,
-        output: &Self::Output,
-    ) -> impl Future<Output = storage_api::client::Result<bool>> {
-        let entry = output.as_ref().map(|rec| storage::Entry {
-            key: self.key.clone(),
-            value: rec.value.clone(),
-            expiration: rec.expiration,
-            version: rec.version,
-        });
-
-        async move {
-            if let Some(entry) = entry {
-                storage.set(entry).await.map(|()| true)
-            } else {
-                Ok(false)
-            }
-        }
-    }
-}
-
-struct Set {
-    entry: storage::Entry,
-}
-
-impl AsRef<storage::Key> for Set {
-    fn as_ref(&self) -> &storage::Key {
-        &self.entry.key
-    }
-}
-
-impl StorageOperation for Set {
-    type Output = ();
-
-    const NAME: OperationName = OperationName::Set;
-    const IS_WRITE: bool = true;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.set(self.entry.clone())
-    }
-}
-
-#[derive(AsRef)]
-struct Del {
-    #[as_ref]
-    key: storage::Key,
-    version: storage::EntryVersion,
-}
-
-impl StorageOperation for Del {
-    type Output = ();
-
-    const NAME: OperationName = OperationName::Del;
-    const IS_WRITE: bool = true;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.del(self.key.clone(), self.version)
-    }
-}
-
-#[derive(AsRef)]
-struct GetExp {
-    #[as_ref]
-    key: storage::Key,
-}
-
-impl StorageOperation for GetExp {
-    type Output = Option<storage::EntryExpiration>;
-
-    const NAME: OperationName = OperationName::GetExp;
-    const IS_WRITE: bool = false;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.get_exp(self.key.clone())
-    }
-}
-
-#[derive(AsRef)]
-struct SetExp {
-    #[as_ref]
-    key: storage::Key,
-    expiration: storage::EntryExpiration,
-    version: storage::EntryVersion,
-}
-
-impl StorageOperation for SetExp {
-    type Output = ();
-
-    const NAME: OperationName = OperationName::SetExp;
-    const IS_WRITE: bool = true;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.set_exp(self.key.clone(), self.expiration, self.version)
-    }
-}
-
-#[derive(AsRef)]
-struct HGet {
-    #[as_ref]
-    key: storage::Key,
-    field: storage::Field,
-}
-
-impl StorageOperation for HGet {
-    type Output = Option<storage::Record>;
-
-    const NAME: OperationName = OperationName::HGet;
-    const IS_WRITE: bool = false;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hget(self.key.clone(), self.field.clone())
-    }
-
-    fn repair(
-        &self,
-        storage: RemoteStorage<'_>,
-        output: &Self::Output,
-    ) -> impl Future<Output = storage_api::client::Result<bool>> {
-        let entry = output.as_ref().map(|rec| storage::MapEntry {
-            key: self.key.clone(),
-            field: self.field.clone(),
-            value: rec.value.clone(),
-            expiration: rec.expiration,
-            version: rec.version,
-        });
-
-        async move {
-            if let Some(entry) = entry {
-                storage.hset(entry).await.map(|()| true)
-            } else {
-                Ok(false)
-            }
-        }
-    }
-}
-
-struct HSet {
-    entry: storage::MapEntry,
-}
-
-impl AsRef<storage::Key> for HSet {
-    fn as_ref(&self) -> &storage::Key {
-        &self.entry.key
-    }
-}
-
-impl StorageOperation for HSet {
-    type Output = ();
-
-    const NAME: OperationName = OperationName::HSet;
-    const IS_WRITE: bool = true;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hset(self.entry.clone())
-    }
-}
-
-#[derive(AsRef)]
-struct HDel {
-    #[as_ref]
-    key: storage::Key,
-    field: storage::Field,
-    version: storage::EntryVersion,
-}
-
-impl StorageOperation for HDel {
-    type Output = ();
-
-    const NAME: OperationName = OperationName::HDel;
-    const IS_WRITE: bool = true;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hdel(self.key.clone(), self.field.clone(), self.version)
-    }
-}
-
-#[derive(AsRef)]
-struct HGetExp {
-    #[as_ref]
-    key: storage::Key,
-    field: storage::Field,
-}
-
-impl StorageOperation for HGetExp {
-    type Output = Option<storage::EntryExpiration>;
-
-    const NAME: OperationName = OperationName::HGetExp;
-    const IS_WRITE: bool = false;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hget_exp(self.key.clone(), self.field.clone())
-    }
-}
-
-#[derive(AsRef)]
-struct HSetExp {
-    #[as_ref]
-    key: storage::Key,
-    field: storage::Field,
-    expiration: storage::EntryExpiration,
-    version: storage::EntryVersion,
-}
-
-impl StorageOperation for HSetExp {
-    type Output = ();
-
-    const NAME: OperationName = OperationName::HSetExp;
-    const IS_WRITE: bool = true;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hset_exp(
-            self.key.clone(),
-            self.field.clone(),
-            self.expiration,
-            self.version,
-        )
-    }
-}
-
-#[derive(AsRef)]
-struct HCard {
-    #[as_ref]
-    key: storage::Key,
-}
-
-impl StorageOperation for HCard {
-    type Output = u64;
-
-    const NAME: OperationName = OperationName::HCard;
-    const IS_WRITE: bool = false;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hcard(self.key.clone())
-    }
-
-    fn reconcile(
-        results: ReplicationResults<Self::Output>,
-        required_replicas: usize,
-    ) -> Option<reconciliation::Result<Self::Output>> {
-        Some(reconciliation::reconcile_map_cardinality(
-            results,
-            required_replicas,
-        ))
-    }
-}
-
-#[derive(AsRef)]
-struct HScan {
-    #[as_ref]
-    key: storage::Key,
-    count: u32,
-    cursor: Option<storage::Field>,
-}
-
-impl StorageOperation for HScan {
-    type Output = storage::MapPage;
-
-    const NAME: OperationName = OperationName::HScan;
-    const IS_WRITE: bool = false;
-
-    fn execute(
-        &self,
-        storage: RemoteStorage<'_>,
-    ) -> impl Future<Output = storage_api::client::Result<Self::Output>> {
-        storage.hscan(self.key.clone(), self.count, self.cursor.clone())
-    }
-
-    fn reconcile(
-        results: ReplicationResults<Self::Output>,
-        required_replicas: usize,
-    ) -> Option<reconciliation::Result<Self::Output>> {
-        Some(reconciliation::reconcile_map_page(
-            results,
-            required_replicas,
-        ))
-    }
-}
-
-/// [`Driver`] operation [`Result`].
-pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Error of a [`Driver`] operation.
-#[derive(Clone, Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Cluster error: {_0:?}")]
-    Cluster(cluster::Error),
-
-    #[error("Task cancelled")]
-    TaskCancelled,
-
-    #[error("Inconsistent results")]
-    InconsistentResults,
-
-    #[error("Storage API: {_0}")]
-    StorageApi(storage_api::client::Error),
-
-    #[error("Client API: {_0}")]
-    ClientApi(client_api::client::Error),
-}
-
-impl Error {
-    fn is_keyspace_version_mismatch(&self) -> bool {
-        matches!(
-            self,
-            Self::StorageApi(storage_api::client::Error::KeyspaceVersionMismatch)
-        )
-    }
-
-    fn as_str(&self) -> &'static str {
-        use {
-            client_api::client::Error as ClientError,
-            cluster::Error as ClusterError,
-            storage::client::Error as StorageError,
         };
 
-        match self {
-            Self::Cluster(err) => match err {
-                ClusterError::NotBootstrapped => "cluster_not_bootstrapped",
-                ClusterError::NodeAlreadyExists => "cluster_node_already_exists",
-                ClusterError::NodeAlreadyStarted => "cluster_node_already_started",
-                ClusterError::UnknownNode => "cluster_unknown_node",
-                ClusterError::TooManyNodes => "cluster_too_many_nodes",
-                ClusterError::TooFewNodes => "cluster_too_few_nodes",
-                ClusterError::NotNormal => "cluster_not_normal",
-                ClusterError::NoMigration => "cluster_no_migration",
-                ClusterError::KeyspaceVersionMismatch => "cluster_keyspace_version_mismatch",
-                ClusterError::InvalidNode(_) => "cluster_invalid_node",
-                ClusterError::Bug(_) => "cluster_bug",
-            },
-            Self::TaskCancelled => "task_cancelled",
-            Self::InconsistentResults => "inconsistent_results",
-            Self::StorageApi(err) => match err {
-                StorageError::Transport(_) => "storage_transport",
-                StorageError::Timeout => "storage_timeout",
-                StorageError::Throttled => "storage_throttled",
-                StorageError::Unauthorized => "storage_unauthorized",
-                StorageError::KeyspaceVersionMismatch => "storage_keyspace_version_mismatch",
-                StorageError::Other(_) => "storage_other",
-            },
-            Self::ClientApi(err) => match err {
-                ClientError::Api(_) => "client_api",
-                ClientError::Transport(_) => "client_transport",
-                ClientError::Unauthorized => "client_unauthorized",
-                ClientError::Timeout => "client_timeout",
-                ClientError::Serialization => "client_serialization",
-                ClientError::TokenTtl => "client_token_ttl",
-                ClientError::TokenUpdate(_) => "client_token_update",
-                ClientError::ClusterUpdate(_) => "client_cluster_update",
-                ClientError::Cluster(_) => "client_cluster",
-                ClientError::NodeNotAvailable => "client_node_not_available",
-                ClientError::Other(_) => "client_other",
-            },
+        let quorum_response = match quorum_response_idx {
+            None if is_write => None,
+
+            // If we didn't get the quorum and this is a read operation, then try to reconciliate
+            // the responses.
+            None => reconciliate(&responses[..RF]),
+
+            Some(idx) => responses[idx as usize].as_ref(),
         }
+        .unwrap_or_else(|| {
+            metrics::counter!("wcn_replication_coordinator_inconsistent_results");
+            const { &Err(Error::new(ErrorKind::Internal)) }
+        });
+
+        let callback_fut = callback.send_result(quorum_response);
+
+        let mut read_repair = quorum_response
+            .as_ref()
+            .ok()
+            .filter(|_| is_repairable(operation))
+            .map(|output| ReadRepair {
+                operation,
+                output,
+                targets: Default::default(),
+                replica_set: &primary_replica_set,
+            });
+
+        let complete_replication_fut = async {
+            // Drive all futures to completion
+            while let Some((operator_idx, response)) = response_futures.next().await {
+                if let Some(repair) = &mut read_repair {
+                    repair.check_response(operator_idx, response);
+                }
+            }
+
+            if let Some(repair) = read_repair {
+                repair.run().await;
+            }
+        };
+
+        let (callback_result, _) = (callback_fut, complete_replication_fut).join().await;
+
+        callback_result
+    }
+
+    async fn execute(&self, _operation: Operation<'_>) -> storage_api::Result<operation::Output> {
+        tracing::error!("StorageApi::execute should not be used with replication::Coordinator");
+        Err(Error::new(ErrorKind::Internal))
     }
 }
+
+type Response = storage_api::Result<operation::Output>;
+
+// Worst case scenario RF * 2 responses, if every replica returns a different
+// response.
+type ResponseBuffer = [Option<Response>; RF * 2];
+
+fn receive_response(buf: &mut ResponseBuffer, response: Response) -> u8 {
+    for (idx, slot) in buf.iter_mut().enumerate() {
+        match slot {
+            Some(resp) if resp == &response => {}
+            None => *slot = Some(response),
+            _ => continue,
+        }
+
+        return idx as u8;
+    }
+
+    // should never happen as we make no more than 2 * RF requests
+    panic!("too many responses")
+}
+
+struct ReplicaSet {
+    /// If the quorum is reached this is the position of the response in
+    /// the [`ResponseBuffer`].
+    quorum_response_idx: Option<u8>,
+
+    replicas: [node_operator::Idx; RF],
+
+    /// Mapping to the corresponding response for each replica.
+    replica_responses: [Option<u8>; RF],
+
+    /// How many replicas returned a specific response.
+    replicas_per_response: [u8; RF * 2],
+}
+
+impl ReplicaSet {
+    fn new(key: u64, keyspace: &Keyspace<Shards>) -> Self {
+        Self {
+            quorum_response_idx: None,
+            replicas: keyspace.shard(key).replica_set(),
+            replica_responses: Default::default(),
+            replicas_per_response: Default::default(),
+        }
+    }
+
+    fn response_received(
+        &mut self,
+        operator_idx: node_operator::Idx,
+        response_idx: u8,
+    ) -> Option<u8> {
+        let Some(replica_idx) = self.replicas.iter().position(|idx| *idx == operator_idx) else {
+            return self.quorum_response_idx;
+        };
+
+        self.replica_responses[replica_idx as usize] = Some(response_idx);
+        self.replicas_per_response[response_idx as usize] += 1;
+
+        if self.replicas_per_response[response_idx as usize] >= RF as u8 {
+            self.quorum_response_idx = Some(response_idx);
+        }
+
+        self.quorum_response_idx
+    }
+}
+
+fn reconciliate(responses: &[Option<Response>]) -> Option<&Response> {
+    todo!()
+}
+
+// TODO: figure out how to repair `hscan`
+struct ReadRepair<'a> {
+    operation: &'a Operation<'a>,
+
+    /// Successfull response to be used as the baseline for repair.
+    output: &'a operation::Output,
+
+    /// Repair targets.
+    ///
+    /// Can't be more than `RF / 2`.
+    targets: [Option<node_operator::Idx>; RF / 2],
+
+    replica_set: &'a ReplicaSet,
+}
+
+impl ReadRepair<'_> {
+    fn check_response(&mut self, operator_idx: node_operator::Idx, response: Response) {
+        match response {
+            Ok(output) if &output != self.output => {}
+
+            // Errors are not being repaired.
+            _ => return,
+        }
+
+        let _ = self.targets.iter_mut().find_map(|slot| match slot {
+            None => Some(*slot = Some(operator_idx)),
+            Some(_) => None,
+        });
+    }
+
+    async fn run(self) {
+        self.targets.map(|operation_idx| )
+    }
+}
+
+fn is_repairable(operation: &Operation<'_>) -> bool {
+    use operation::{Borrowed, Owned};
+
+    match operation {
+        Operation::Owned(owned) => match owned {
+            Owned::Get(_) | Owned::HGet(_) => true,
+            Owned::Set(_)
+            | Owned::Del(_)
+            | Owned::GetExp(_)
+            | Owned::SetExp(_)
+            | Owned::HSet(_)
+            | Owned::HDel(_)
+            | Owned::HGetExp(_)
+            | Owned::HSetExp(_)
+            | Owned::HCard(_)
+            | Owned::HScan(_) => false,
+        },
+        Operation::Borrowed(borrowed) => match borrowed {
+            Borrowed::Get(_) | Borrowed::HGet(_) => true,
+            Borrowed::Set(_)
+            | Borrowed::Del(_)
+            | Borrowed::GetExp(_)
+            | Borrowed::SetExp(_)
+            | Borrowed::HSet(_)
+            | Borrowed::HDel(_)
+            | Borrowed::HGetExp(_)
+            | Borrowed::HSetExp(_)
+            | Borrowed::HCard(_)
+            | Borrowed::HScan(_) => false,
+        },
+    }
+}
+
+/// Given an [`Operation`] and it's successful [`operation::Output`] returns
+/// another [`Operation`] meant to repair replicas that responded with a
+/// wrong [`operation::Output`].
+fn repair_operation<'a>(
+    operation: &Operation<'a>,
+    output: &operation::Output,
+) -> Option<Operation<'a>> {
+    use operation::{Borrowed, Owned};
+
+    // TODO: consider refactoring `Operation` (again) in a way so:
+    // `enum Get = GetBorrowed | GetOwned`
+    Some(Operation::Borrowed(match op {
+        Operation::Owned(owned) => match owned {
+            Owned::Get(get) => match output {
+                operation::Output::Record(Some(record)) => operation::SetBorrowed {
+                    namespace: get.namespace,
+                    key: &get.key,
+                    record: record.borrow(),
+                    keyspace_version: get.keyspace_version,
+                }
+                .into(),
+                _ => return None,
+            },
+            Owned::HGet(hget) => match output {
+                operation::Output::Record(Some(record)) => operation::HSetBorrowed {
+                    namespace: hget.namespace,
+                    key: &hget.key,
+                    entry: MapEntryBorrowed {
+                        field: &hget.field,
+                        record: record.borrow(),
+                    },
+                    keyspace_version: hget.keyspace_version,
+                }
+                .into(),
+                _ => return None,
+            },
+            Owned::Set(_)
+            | Owned::Del(_)
+            | Owned::GetExp(_)
+            | Owned::SetExp(_)
+            | Owned::HSet(_)
+            | Owned::HDel(_)
+            | Owned::HGetExp(_)
+            | Owned::HSetExp(_)
+            | Owned::HCard(_)
+            | Owned::HScan(_) => return None,
+        },
+        Operation::Borrowed(owned) => match owned {
+            Borrowed::Get(get) => match output {
+                operation::Output::Record(Some(record)) => operation::SetBorrowed {
+                    namespace: get.namespace,
+                    key: &get.key,
+                    record: record.borrow(),
+                    keyspace_version: get.keyspace_version,
+                }
+                .into(),
+                _ => return None,
+            },
+            Borrowed::HGet(hget) => match output {
+                operation::Output::Record(Some(record)) => operation::HSetBorrowed {
+                    namespace: hget.namespace,
+                    key: &hget.key,
+                    entry: MapEntryBorrowed {
+                        field: &hget.field,
+                        record: record.borrow(),
+                    },
+                    keyspace_version: hget.keyspace_version,
+                }
+                .into(),
+                _ => return None,
+            },
+            Borrowed::Set(_)
+            | Borrowed::Del(_)
+            | Borrowed::GetExp(_)
+            | Borrowed::SetExp(_)
+            | Borrowed::HSet(_)
+            | Borrowed::HDel(_)
+            | Borrowed::HGetExp(_)
+            | Borrowed::HSetExp(_)
+            | Borrowed::HCard(_)
+            | Borrowed::HScan(_) => return None,
+        },
+    }))
+}
+
+fn read_repair(replica_set: &ReplicaSet) -> impl Future<()> {}

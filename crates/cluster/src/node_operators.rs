@@ -45,7 +45,6 @@ impl<N> NodeOperators<N> {
 
         for (idx, slot) in slots.iter_mut().enumerate() {
             if let Some(operator) = slot {
-                operator.idx = idx as u8;
                 if id_to_idx.insert(*operator.as_ref(), idx as u8).is_some() {
                     return Err(CreationError::OperatorDuplicate(*operator.as_ref()));
                 };
@@ -88,7 +87,6 @@ impl<N> NodeOperators<N> {
         }
 
         if let Some(operator) = &mut slot {
-            operator.idx = idx;
             self.id_to_idx.insert(*operator.as_ref(), idx);
         }
 

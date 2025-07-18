@@ -44,7 +44,8 @@ pub struct View<C: Config> {
 
 impl<C: Config<KeyspaceShards = keyspace::Shards>> View<C> {
     pub fn primary_replica_set(&self, key: u64) -> keyspace::ReplicaSet<&NodeOperator<C::Node>> {
-        // TODO: make sure that `unwrap` is always safe
+        // NOTE(unwrap): we use `Keyspace::validate` every time it enters the system,
+        // therefore guaranteeing that every `NodeOperatorIdx` is valid.
         self.keyspace
             .shard(key)
             .replica_set()
@@ -55,7 +56,8 @@ impl<C: Config<KeyspaceShards = keyspace::Shards>> View<C> {
         &self,
         key: u64,
     ) -> Option<keyspace::ReplicaSet<&NodeOperator<C::Node>>> {
-        // TODO: make sure that `unwrap` is always safe
+        // NOTE(unwrap): we use `Keyspace::validate` every time it enters the system,
+        // therefore guaranteeing that every `NodeOperatorIdx` is valid.
         self.migration()?
             .keyspace()
             .shard(key)
@@ -168,14 +170,22 @@ impl<C: Config> View<C> {
             OptionFuture::from(view.migration.map(Migration::calculate_keyspace))
         );
 
-        let slots: Vec<_> = view
+        let node_operators = view
             .node_operators
             .into_iter()
             .map(|slot| slot.map(|operator| operator.deserialize(cfg)).transpose())
-            .try_collect()?;
+            .try_collect::<_, Vec<_>, _>()?
+            .pipe(NodeOperators::from_slots)?;
+
+        keyspace.validate(&node_operators)?;
+
+        migration
+            .as_ref()
+            .map(|migration| migration.keyspace().validate(&node_operators))
+            .transpose()?;
 
         Ok(View {
-            node_operators: NodeOperators::from_slots(slots)?,
+            node_operators,
             ownership: view.ownership,
             settings: view.settings,
             keyspace: Arc::new(keyspace),
@@ -194,6 +204,8 @@ impl migration::Started {
         view.require_no_migration()?;
         view.require_no_maintenance()?;
         view.keyspace().require_diff(&self.new_keyspace)?;
+
+        self.new_keyspace.validate(view.node_operators())?;
 
         let pulling: Vec<_> = self.new_keyspace.operators().collect();
 
@@ -331,6 +343,9 @@ pub enum Error {
     SameKeyspace(#[from] keyspace::SameKeyspaceError),
 
     #[error(transparent)]
+    KeyspaceUnknownOperator(#[from] keyspace::UnknownNodeOperator),
+
+    #[error(transparent)]
     NotPulling(#[from] migration::OperatorNotPullingError),
 
     #[error(transparent)]
@@ -356,6 +371,9 @@ pub enum CreationError {
 
     #[error(transparent)]
     NodeOperators(#[from] node_operators::CreationError),
+
+    #[error(transparent)]
+    KeyspaceUnknownOperator(#[from] keyspace::UnknownNodeOperator),
 }
 
 /// Result of [`View::apply_event`].

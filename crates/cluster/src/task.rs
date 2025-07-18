@@ -1,7 +1,6 @@
 use {
     crate::{
         keyspace,
-        node_operator,
         smart_contract::{self, Read as _},
         view,
         Config,
@@ -103,7 +102,7 @@ enum Error {
     ApplyEvent(#[from] view::Error),
 
     #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
+    View(#[from] view::CreationError),
 
     #[error(transparent)]
     SmartContractRead(#[from] smart_contract::ReadError),

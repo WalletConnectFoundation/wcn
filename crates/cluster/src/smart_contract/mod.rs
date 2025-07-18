@@ -3,16 +3,7 @@
 pub mod evm;
 
 use {
-    crate::{
-        self as cluster,
-        migration,
-        node_operator,
-        Event,
-        Keyspace,
-        NodeOperators,
-        Ownership,
-        Settings,
-    },
+    crate::{self as cluster, migration, node_operator, Event, Keyspace, Ownership, Settings},
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
     derive_more::derive::{Display, From},
     futures::Stream,
@@ -35,7 +26,7 @@ use crate::{
 /// Snapshot of [`cluster::View`] fetched from a [`SmartContract`] state.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClusterView {
-    pub node_operators: NodeOperators<node_operator::Serialized>,
+    pub node_operators: Vec<Option<node_operator::Serialized>>,
 
     pub ownership: Ownership,
     pub settings: Settings,
@@ -53,7 +44,7 @@ pub trait Deployer<SC> {
     fn deploy(
         &self,
         initial_settings: Settings,
-        initial_operators: NodeOperators<node_operator::Serialized>,
+        initial_operators: Vec<node_operator::Serialized>,
     ) -> impl Future<Output = Result<SC, DeploymentError>>;
 }
 

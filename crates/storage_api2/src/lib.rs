@@ -21,7 +21,7 @@ pub mod rpc;
 ///
 /// Currently it's represented by the node operator's Ethereum address, with an
 /// extra byte appended to support multiple namespaces per operator.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Message)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Message)]
 pub struct Namespace([u8; 21]);
 
 impl Namespace {

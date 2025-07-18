@@ -1,30 +1,37 @@
 //! Slot map of [`NodeOperator`]s.
 
 use {
-    crate::{self as cluster, node_operator},
+    crate::{self as cluster, node_operator, NodeOperator},
     indexmap::IndexMap,
-    serde::{Deserialize, Serialize},
     std::sync::{
         atomic::{self, AtomicUsize},
         Arc,
     },
-    tap::Pipe,
 };
 
-/// Slot map of [`NodeOperator`]s.
+/// Collection of [`NodeOperator`]s within a WCN Cluster.
+///
+/// Acts like a slot map with stable ordering and without shifts.
+///
+/// Once [`NodeOperator`] gets added into this collection it gets assigned a
+/// stable [`node_operator::Idx`]. This index never changes unless the
+/// [`NodeOperator`] gets removed, then the index may be reused by another
+/// [`NodeOperator`].
 #[derive(Debug, Clone)]
 pub struct NodeOperators<N> {
     id_to_idx: IndexMap<node_operator::Id, node_operator::Idx>,
 
-    slots: Vec<Option<N>>,
+    slots: Vec<Option<NodeOperator<N>>>,
 
     // for load balancing
     counter: Arc<AtomicUsize>,
 }
 
-impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
-    pub(super) fn new(slots: impl IntoIterator<Item = Option<N>>) -> Result<Self, CreationError> {
-        let slots: Vec<_> = slots.into_iter().collect();
+impl<N> NodeOperators<N> {
+    pub(super) fn from_slots(
+        slots: impl IntoIterator<Item = Option<NodeOperator<N>>>,
+    ) -> Result<Self, CreationError> {
+        let mut slots: Vec<_> = slots.into_iter().collect();
 
         if slots.len() < cluster::MIN_OPERATORS as usize {
             return Err(CreationError::TooFewOperators(slots.len()));
@@ -36,8 +43,9 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
 
         let mut id_to_idx = IndexMap::with_capacity(slots.len());
 
-        for (idx, slot) in slots.iter().enumerate() {
-            if let Some(operator) = &slot {
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if let Some(operator) = slot {
+                operator.idx = idx as u8;
                 if id_to_idx.insert(*operator.as_ref(), idx as u8).is_some() {
                     return Err(CreationError::OperatorDuplicate(*operator.as_ref()));
                 };
@@ -56,7 +64,7 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
     ///
     /// [`NodeOperator`]s are being iterated in round-robin fashion for
     /// load-balancing purposes.
-    pub fn next(&self) -> &N {
+    pub fn next(&self) -> &NodeOperator<N> {
         // we've checked this in the constructor
         debug_assert!(!self.id_to_idx.is_empty());
 
@@ -66,26 +74,11 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
         self.slots[idx as usize].as_ref().unwrap()
     }
 
-    pub(super) fn try_map<T, E>(
-        self,
-        f: impl Fn(N) -> Result<T, E>,
-    ) -> Result<NodeOperators<T>, E> {
-        Ok(NodeOperators {
-            id_to_idx: self.id_to_idx,
-            slots: self
-                .slots
-                .into_iter()
-                .map(|opt| opt.map(&f).transpose())
-                .collect::<Result<_, _>>()?,
-            counter: self.counter,
-        })
-    }
-
-    pub(super) fn into_slots(self) -> Vec<Option<N>> {
+    pub(super) fn into_slots(self) -> Vec<Option<NodeOperator<N>>> {
         self.slots
     }
 
-    pub(super) fn set(&mut self, idx: node_operator::Idx, slot: Option<N>) {
+    pub(super) fn set(&mut self, idx: node_operator::Idx, mut slot: Option<NodeOperator<N>>) {
         if let Some(id) = self.get_by_idx(idx).map(|op| *op.as_ref()) {
             self.id_to_idx.shift_remove(&id);
         }
@@ -94,7 +87,8 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
             self.expand(idx);
         }
 
-        if let Some(operator) = &slot {
+        if let Some(operator) = &mut slot {
+            operator.idx = idx;
             self.id_to_idx.insert(*operator.as_ref(), idx);
         }
 
@@ -123,12 +117,12 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
     }
 
     /// Gets an [`NodeOperator`] by [`Id`].
-    pub fn get(&self, id: &node_operator::Id) -> Option<&N> {
+    pub fn get(&self, id: &node_operator::Id) -> Option<&NodeOperator<N>> {
         self.get_by_idx(self.get_idx(id)?)
     }
 
     /// Gets an [`NodeOperator`] by [`Idx`].
-    pub fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&N> {
+    pub fn get_by_idx(&self, idx: node_operator::Idx) -> Option<&NodeOperator<N>> {
         self.slots.get(idx as usize)?.as_ref()
     }
 
@@ -179,32 +173,6 @@ impl<N: AsRef<node_operator::Id>> NodeOperators<N> {
         }
 
         Ok(self)
-    }
-}
-
-impl<N> Serialize for NodeOperators<N>
-where
-    N: AsRef<node_operator::Id> + Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.slots[..].serialize(serializer)
-    }
-}
-
-impl<'de, N> Deserialize<'de> for NodeOperators<N>
-where
-    N: AsRef<node_operator::Id> + Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Vec::<Option<N>>::deserialize(deserializer)?
-            .pipe(Self::new)
-            .map_err(serde::de::Error::custom)
     }
 }
 

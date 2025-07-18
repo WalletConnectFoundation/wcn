@@ -22,13 +22,15 @@ use {
     },
     derive_where::derive_where,
     futures::future::OptionFuture,
+    itertools::Itertools,
     std::sync::Arc,
+    tap::Pipe as _,
 };
 
 /// Read-only view of a WCN cluster.
 #[derive_where(Clone)]
 pub struct View<C: Config> {
-    pub(super) node_operators: NodeOperators<NodeOperator<C::Node>>,
+    pub(super) node_operators: NodeOperators<C::Node>,
 
     pub(super) ownership: Ownership,
     pub(super) settings: Settings,
@@ -40,8 +42,8 @@ pub struct View<C: Config> {
     pub(super) cluster_version: cluster::Version,
 }
 
-impl<C: Config<KeyspaceShards = keyspace::Shards>> View {
-    pub fn primary_replica_set(&self, key: u64) -> keyspace::ReplicaSet<&C::Node> {
+impl<C: Config<KeyspaceShards = keyspace::Shards>> View<C> {
+    pub fn primary_replica_set(&self, key: u64) -> keyspace::ReplicaSet<&NodeOperator<C::Node>> {
         // TODO: make sure that `unwrap` is always safe
         self.keyspace
             .shard(key)
@@ -49,13 +51,17 @@ impl<C: Config<KeyspaceShards = keyspace::Shards>> View {
             .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
     }
 
-    pub fn secondary_replica_set(&self, key: u64) -> Option<keyspace::ReplicaSet<&C::Node>> {
+    pub fn secondary_replica_set(
+        &self,
+        key: u64,
+    ) -> Option<keyspace::ReplicaSet<&NodeOperator<C::Node>>> {
         // TODO: make sure that `unwrap` is always safe
         self.migration()?
             .keyspace()
             .shard(key)
             .replica_set()
             .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
+            .pipe(Some)
     }
 }
 
@@ -86,7 +92,7 @@ impl<C: Config> View<C> {
     }
 
     /// Returns [`NodeOperators`] of the WCN cluster.
-    pub fn node_operators(&self) -> &NodeOperators<NodeOperator<C::Node>> {
+    pub fn node_operators(&self) -> &NodeOperators<C::Node> {
         &self.node_operators
     }
 
@@ -153,7 +159,7 @@ impl<C: Config> View<C> {
     pub(super) async fn from_sc(
         cfg: &C,
         view: smart_contract::ClusterView,
-    ) -> Result<Self, node_operator::DataDeserializationError>
+    ) -> Result<Self, CreationError>
     where
         Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
     {
@@ -162,8 +168,14 @@ impl<C: Config> View<C> {
             OptionFuture::from(view.migration.map(Migration::calculate_keyspace))
         );
 
+        let slots: Vec<_> = view
+            .node_operators
+            .into_iter()
+            .map(|slot| slot.map(|operator| operator.deserialize(cfg)).transpose())
+            .try_collect()?;
+
         Ok(View {
-            node_operators: view.node_operators.try_map(|op| op.deserialize(cfg))?,
+            node_operators: NodeOperators::from_slots(slots)?,
             ownership: view.ownership,
             settings: view.settings,
             keyspace: Arc::new(keyspace),
@@ -335,6 +347,15 @@ pub enum Error {
 
     #[error(transparent)]
     NodeOperatorDataDeserialization(#[from] node_operator::DataDeserializationError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreationError {
+    #[error(transparent)]
+    DataDeserialization(#[from] node_operator::DataDeserializationError),
+
+    #[error(transparent)]
+    NodeOperators(#[from] node_operators::CreationError),
 }
 
 /// Result of [`View::apply_event`].

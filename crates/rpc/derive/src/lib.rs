@@ -59,7 +59,7 @@ pub fn derive_message(input: TokenStream) -> TokenStream {
     });
 
     TokenStream::from(quote! {
-        #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, wcn_rpc::Message)]
+        #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, wcn_rpc::Message)]
         pub struct #owned_type_name {
             #(#owned_fields),*
         }

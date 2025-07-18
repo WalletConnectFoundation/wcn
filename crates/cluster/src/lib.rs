@@ -148,12 +148,13 @@ where
         initial_settings: Settings,
         initial_operators: Vec<NodeOperator>,
     ) -> Result<Self, DeploymentError> {
-        let operators: Vec<_> = initial_operators
+        // Pass the initial set of operators through the `NodeOperators` collection to
+        // check invariants.
+        let operators = NodeOperators::from_slots(initial_operators.into_iter().map(Some))?
+            .into_slots()
             .into_iter()
-            .map(NodeOperator::serialize)
+            .filter_map(|slot| slot.map(|operator| operator.serialize()))
             .try_collect()?;
-
-        let operators = NodeOperators::new(operators.into_iter().map(Some))?;
 
         let contract = deployer.deploy(initial_settings, operators).await?;
 
@@ -172,7 +173,7 @@ where
 
     async fn new<E>(cfg: C, contract: C::SmartContract) -> Result<Self, E>
     where
-        E: From<node_operator::DataDeserializationError> + From<smart_contract::ReadError>,
+        E: From<view::CreationError> + From<smart_contract::ReadError>,
     {
         let events = contract.events().await?;
         let view = View::from_sc(&cfg, contract.cluster_view().await?).await?;
@@ -463,7 +464,7 @@ pub enum DeploymentError {
     DataSerialization(#[from] node_operator::DataSerializationError),
 
     #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
+    View(#[from] view::CreationError),
 
     #[error(transparent)]
     DataTooLarge(#[from] node_operator::DataTooLargeError),
@@ -485,7 +486,7 @@ pub enum ConnectionError {
     SmartContractRead(#[from] smart_contract::ReadError),
 
     #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
+    View(#[from] view::CreationError),
 }
 
 /// [`Cluster::start_migration`] error.

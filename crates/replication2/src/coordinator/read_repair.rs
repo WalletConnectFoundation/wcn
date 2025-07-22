@@ -15,7 +15,7 @@ const MAX_TARGETS: usize = RF - super::MAJORITY_QUORUM_THRESHOLD;
 pub(super) struct ReadRepair<'a, N> {
     operation: &'a Operation<'a>,
 
-    /// Successfull response to be used as the baseline for repair.
+    /// Successful response to be used as the baseline for repair.
     output: &'a operation::Output,
 
     /// Replicas to be repaired.

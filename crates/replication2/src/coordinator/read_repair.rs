@@ -77,7 +77,7 @@ impl<'a, N> ReadRepair<'a, N> {
 
     pub(super) async fn run(self)
     where
-        NodeOperator<N>: StorageApi,
+        N: StorageApi,
     {
         let Some(operation) = &repair_operation(self.operation, self.output) else {
             return;
@@ -86,7 +86,7 @@ impl<'a, N> ReadRepair<'a, N> {
         self.targets
             .map(|opt| async move {
                 if let Some(operator) = opt {
-                    let _ = operator.execute_ref(operation).await.tap_err(|_| {
+                    let _ = super::execute(operator, operation).await.tap_err(|_| {
                         metrics::counter!("wcn_replication_coordinator_read_repair_errors")
                             .increment(1);
                     });

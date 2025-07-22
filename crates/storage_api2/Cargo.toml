@@ -11,11 +11,13 @@ workspace = true
 default = []
 rpc_client = ["wcn_rpc/client"]
 rpc_server = ["wcn_rpc/server"]
+testing = ["xxhash-rust"]
 
 [dependencies]
 wc = { workspace = true, features = ["future", "metrics"] }
 auth = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
+derive-where = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 tap = { workspace = true }
 
@@ -26,6 +28,9 @@ tracing = "0.1"
 futures = "0.3"
 time = "0.3"
 const-hex = "1.14"
+
+# testing
+xxhash-rust = { workspace = true, optional = true }
 
 [dev-dependencies]
 wcn_storage_api2 = { path = ".", features = ["rpc_client", "rpc_server"] }

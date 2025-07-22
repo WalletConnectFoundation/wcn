@@ -197,9 +197,9 @@ impl<C: Config> View<C> {
 }
 
 impl migration::Started {
-    async fn apply<A: Config>(self, view: &mut View<A>) -> Result<()>
+    async fn apply<C: Config>(self, view: &mut View<C>) -> Result<()>
     where
-        Keyspace: keyspace::sealed::Calculate<A::KeyspaceShards>,
+        Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
     {
         view.require_no_migration()?;
         view.require_no_maintenance()?;

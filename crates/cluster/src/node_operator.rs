@@ -56,7 +56,7 @@ impl Name {
 }
 
 /// [`NodeOperator`] data serialized for on-chain storage.
-#[derive(Debug, Into, Serialize, Deserialize)]
+#[derive(Clone, Debug, Into, Serialize, Deserialize)]
 pub struct Data(pub(crate) Vec<u8>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
@@ -117,7 +117,7 @@ impl<N> NodeOperator<N> {
 }
 
 /// [`NodeOperator`] with serialized [`Data`].
-#[derive(AsRef, Debug, Serialize, Deserialize)]
+#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct Serialized {
     /// ID of this [`NodeOperator`].
     #[as_ref]
@@ -128,7 +128,7 @@ pub struct Serialized {
 }
 
 /// Event of a new [`NodeOperator`] being added to a WCN cluster.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Added {
     /// [`Idx`] in the [`NodeOperators`] slot map the [`NodeOperator`] is being
     /// placed to.
@@ -142,7 +142,7 @@ pub struct Added {
 }
 
 /// Event of a [`NodeOperator`] being updated.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Updated {
     /// Updated [`NodeOperator`].
     pub operator: Serialized,
@@ -152,7 +152,7 @@ pub struct Updated {
 }
 
 /// Event of a [`NodeOperator`] being removed from a WCN cluster.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Removed {
     /// [`Id`] of the [`NodeOperator`] being removed.
     pub id: Id,
@@ -211,7 +211,12 @@ impl Serialized {
         let nodes = data
             .nodes
             .into_iter()
-            .map(|node| cfg.new_node(node.addr, node.peer_id))
+            .map(|node| {
+                cfg.new_node(self.id, Node {
+                    peer_id: node.peer_id,
+                    addr: node.addr,
+                })
+            })
             .collect();
 
         let clients = data.clients.into_iter().map(Into::into).collect();

@@ -1,7 +1,8 @@
 //! Smart-contract managing the state of a WCN cluster.
 
 pub mod evm;
-
+#[cfg(feature = "testing")]
+pub mod fake;
 use {
     crate::{self as cluster, migration, node_operator, Event, Keyspace, Ownership, Settings},
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
@@ -270,7 +271,7 @@ pub type ReadResult<T> = std::result::Result<T, ReadError>;
 impl Signer {
     pub fn try_from_private_key(hex: &str) -> Result<Self, InvalidPrivateKeyError> {
         let private_key = PrivateKeySigner::from_str(hex)
-            .map_err(|err| InvalidPrivateKeyError(err.to_string()))?;
+            .map_err(|err| InvalidPrivateKeyError(format!("{err:?}")))?;
 
         Ok(Self {
             address: AccountAddress(private_key.address()),

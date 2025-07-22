@@ -35,6 +35,7 @@ pub struct Keyspace<S = ()> {
 }
 
 /// All [`Shard`]s within a [`Keyspace`].
+#[derive(Clone)]
 pub struct Shards(sharding::Keyspace<node_operator::Idx, { REPLICATION_FACTOR as usize }>);
 
 /// A single [`Shard`] within a [`Keyspace`].

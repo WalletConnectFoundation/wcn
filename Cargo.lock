@@ -8337,6 +8337,7 @@ name = "wcn_storage_api2"
 version = "0.1.0"
 dependencies = [
  "const-hex",
+ "derive-where",
  "derive_more 1.0.0",
  "futures",
  "rand 0.8.5",
@@ -8352,6 +8353,7 @@ dependencies = [
  "wcn_auth",
  "wcn_rpc",
  "wcn_storage_api2",
+ "xxhash-rust",
 ]
 
 [[package]]

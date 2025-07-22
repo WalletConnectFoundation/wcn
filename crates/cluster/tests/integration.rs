@@ -28,10 +28,10 @@ struct Config;
 impl wcn_cluster::Config for Config {
     type SmartContract = evm::SmartContract<Signer>;
     type KeyspaceShards = ();
-    type Node = wcn_cluster::Node;
+    type Node = Node;
 
-    fn new_node(&self, addr: SocketAddrV4, peer_id: PeerId) -> Self::Node {
-        wcn_cluster::Node::new(addr, peer_id)
+    fn new_node(&self, _operator_id: node_operator::Id, node: Node) -> Self::Node {
+        node
     }
 }
 

@@ -1,7 +1,7 @@
 //! Slot map of [`NodeOperator`]s.
 
 use {
-    crate::{self as cluster, node_operator, NodeOperator},
+    crate::{self as cluster, node_operator, Node, NodeOperator},
     indexmap::IndexMap,
     std::sync::{
         atomic::{self, AtomicUsize},
@@ -18,7 +18,7 @@ use {
 /// [`NodeOperator`] gets removed, then the index may be reused by another
 /// [`NodeOperator`].
 #[derive(Debug, Clone)]
-pub struct NodeOperators<N> {
+pub struct NodeOperators<N = Node> {
     id_to_idx: IndexMap<node_operator::Id, node_operator::Idx>,
 
     slots: Vec<Option<NodeOperator<N>>>,
@@ -75,6 +75,25 @@ impl<N> NodeOperators<N> {
 
     pub(super) fn into_slots(self) -> Vec<Option<NodeOperator<N>>> {
         self.slots
+    }
+
+    pub fn slots(&self) -> &[Option<NodeOperator<N>>] {
+        &self.slots
+    }
+
+    #[cfg(feature = "testing")]
+    pub(super) fn free_idx(&self) -> Option<node_operator::Idx> {
+        let opt = self
+            .slots
+            .iter()
+            .enumerate()
+            .find_map(|(idx, slot)| slot.is_none().then_some(idx as u8));
+
+        Some(match opt {
+            Some(idx) => idx,
+            None if self.slots.len() != cluster::MAX_OPERATORS => self.slots.len() as u8,
+            _ => return None,
+        })
     }
 
     pub(super) fn set(&mut self, idx: node_operator::Idx, mut slot: Option<NodeOperator<N>>) {

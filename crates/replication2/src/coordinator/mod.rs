@@ -7,12 +7,16 @@ use {
     std::{future, hash::BuildHasher, pin::pin},
     storage_api::{operation, Callback, Error, ErrorKind, Operation, StorageApi},
     tap::Pipe,
+    tokio::sync::oneshot,
     wc::metrics,
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
 mod read_repair;
 mod reconciliation;
+
+#[cfg(test)]
+pub mod test;
 
 const RF: usize = keyspace::REPLICATION_FACTOR as usize;
 
@@ -31,24 +35,26 @@ impl<C: cluster::Config> Coordinator<C> {
     }
 }
 
+// WARNING: WCN DB MUST use the same hashing algorithm, and it MUST hash the
+// same bytes (only the base key, without namespace).
+fn hash(key: &[u8]) -> u64 {
+    static HASHER: Xxh3Builder = Xxh3Builder::new();
+    HASHER.hash_one(key)
+}
+
 impl<Cfg> StorageApi for Coordinator<Cfg>
 where
     Cfg: cluster::Config<KeyspaceShards = keyspace::Shards>,
-    NodeOperator<Cfg::Node>: StorageApi,
+    Cfg::Node: StorageApi,
 {
     async fn execute_callback<C: Callback>(
         &self,
         operation: Operation<'_>,
         callback: C,
     ) -> Result<(), C::Error> {
-        static HASHER: Xxh3Builder = Xxh3Builder::new();
-
         let operation = &operation;
 
-        // WARNING: WCN DB MUST use the same hashing algorithm, and it MUST hash the
-        // same bytes (only the base key, without namespace).
-        let key = HASHER.hash_one(operation.key());
-
+        let key = hash(operation.key());
         let is_write = operation.is_write();
 
         let cluster_view = &self.cluster.view();
@@ -57,7 +63,7 @@ where
         let primary_replicas = primary_quorum.replica_set;
         let primary_replica_requests = primary_quorum
             .replica_set
-            .map(|oper| oper.execute_ref(operation).map(move |resp| (oper, resp)))
+            .map(|operator| execute(operator, operation).map(move |resp| (operator, resp)))
             .map(stream::once)
             .merge();
 
@@ -77,7 +83,7 @@ where
                 return None;
             }
 
-            Some((operator, operator.execute_ref(operation).await))
+            Some((operator, execute(operator, operation).await))
         };
 
         let secondary_replica_requests = (&secondary_quorum).pipe(|opt| {
@@ -169,13 +175,56 @@ where
         callback_result
     }
 
-    async fn execute(&self, _operation: Operation<'_>) -> storage_api::Result<operation::Output> {
-        tracing::error!("StorageApi::execute should not be used with replication::Coordinator");
-        Err(Error::new(ErrorKind::Internal))
+    async fn execute(&self, operation: Operation<'_>) -> storage_api::Result<operation::Output> {
+        let (tx, rx) = oneshot::channel();
+
+        let this = self.clone();
+        let operation = operation.into_owned();
+        let handle = tokio::spawn(async move {
+            this.execute_callback(operation.into(), ResponseChannel(tx))
+                .await
+        });
+        drop(handle);
+
+        match rx.await {
+            Ok(resp) => resp,
+            Err(_) => {
+                tracing::warn!("Coordinator::execute_callback task cancelled");
+                Err(Error::new(ErrorKind::Internal))
+            }
+        }
+    }
+}
+
+async fn execute<N: StorageApi>(
+    operator: &NodeOperator<N>,
+    operation: &Operation<'_>,
+) -> storage_api::Result<operation::Output> {
+    let mut retries_left = operator.nodes.len();
+
+    // Retry transport errors using different nodes.
+    loop {
+        retries_left -= 1;
+        match operator.next_node().execute_ref(operation).await {
+            Err(err) if err.kind() == ErrorKind::Transport && retries_left > 0 => {}
+            res => return res,
+        }
     }
 }
 
 type Response = storage_api::Result<operation::Output>;
+
+/// Dummy [`Callback`] impl to make [`Coordinator`] compatible with
+/// [`StorageApi::execute`].
+struct ResponseChannel(tokio::sync::oneshot::Sender<Response>);
+
+impl Callback for ResponseChannel {
+    type Error = Response;
+
+    async fn send_result(self, resp: &Response) -> storage_api::Result<(), Response> {
+        self.0.send(resp.clone())
+    }
+}
 
 // Worst case scenario RF * 2 responses, if every replica returns a different
 // response.

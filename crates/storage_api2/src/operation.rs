@@ -25,6 +25,8 @@ use {
 pub enum Operation<'a> {
     #[from(forward)]
     Owned(Owned),
+
+    #[from]
     Borrowed(Borrowed<'a>),
 }
 

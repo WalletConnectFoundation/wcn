@@ -1,14 +1,15 @@
 //! WalletConnect Network Cluster.
 
+pub use libp2p::PeerId;
 use {
     arc_swap::ArcSwap,
+    derive_more::derive::From,
     derive_where::derive_where,
     futures::Stream,
     itertools::Itertools,
-    libp2p::PeerId,
     serde::{Deserialize, Serialize},
     smart_contract::{Read, Write as _},
-    std::{collections::HashSet, net::SocketAddrV4, sync::Arc},
+    std::{collections::HashSet, sync::Arc},
     tokio::sync::watch,
 };
 
@@ -48,6 +49,9 @@ pub use maintenance::Maintenance;
 mod task;
 use task::Task;
 
+#[cfg(feature = "testing")]
+pub mod fake;
+
 /// Maximum number of [`NodeOperator`]s within a WCN [`Cluster`].
 pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;
 
@@ -73,7 +77,7 @@ pub trait Config: Send + Sync + 'static {
     type Node: Clone + Send + Sync + 'static;
 
     /// Creates a new [`Config::Node`].
-    fn new_node(&self, addr: SocketAddrV4, peer_id: PeerId) -> Self::Node;
+    fn new_node(&self, operator_id: node_operator::Id, node: Node) -> Self::Node;
 }
 
 /// WCN cluster.
@@ -104,7 +108,7 @@ struct Inner<C: Config> {
 pub type Version = u128;
 
 /// Events happening within a WCN [`Cluster`].
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, From, Serialize, Deserialize)]
 pub enum Event {
     /// [`Migration`] has started.
     MigrationStarted(migration::Started),
@@ -124,7 +128,7 @@ pub enum Event {
     /// [`Maintenance`] has been finished.
     MaintenanceFinished(maintenance::Finished),
 
-    /// [`NodeOperator`] has been updated.
+    /// [`NodeOperator`] has been added.
     NodeOperatorAdded(node_operator::Added),
 
     /// [`NodeOperator`] has been updated.

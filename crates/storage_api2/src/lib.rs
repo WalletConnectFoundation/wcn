@@ -1,6 +1,7 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
+    futures::FutureExt as _,
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, future::Future, str::FromStr, time::Duration},
     strum::IntoStaticStr,
@@ -13,6 +14,9 @@ pub mod operation;
 pub use operation::Operation;
 
 pub mod rpc;
+
+#[cfg(feature = "testing")]
+pub mod fake;
 
 /// Namespace within a WCN cluster.
 ///
@@ -54,6 +58,204 @@ pub type KeyspaceVersion = u64;
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
 pub trait StorageApi: Send + Sync + 'static {
+    /// Gets a [`Record`] by the provided key.
+    fn get(
+        &self,
+        namespace: Namespace,
+        key: &[u8],
+    ) -> impl Future<Output = Result<Option<Record>>> + Send {
+        let op = operation::GetBorrowed {
+            namespace,
+            key,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::Get(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    /// Sets a new [`Record`] under the provided key.
+    fn set<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        record: RecordBorrowed<'a>,
+    ) -> impl Future<Output = Result<()>> + Send {
+        let op = operation::SetBorrowed {
+            namespace,
+            key,
+            record,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::Set(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn del(&self, namespace: Namespace, key: &[u8]) -> impl Future<Output = Result<()>> + Send {
+        let op = operation::DelBorrowed {
+            namespace,
+            key,
+            version: RecordVersion::now(),
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::Del(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn get_exp(
+        &self,
+        namespace: Namespace,
+        key: &[u8],
+    ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send {
+        let op = operation::GetExpBorrowed {
+            namespace,
+            key,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::GetExp(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn set_exp(
+        &self,
+        namespace: Namespace,
+        key: &[u8],
+        expiration: impl Into<RecordExpiration>,
+    ) -> impl Future<Output = Result<()>> + Send {
+        let op = operation::SetExpBorrowed {
+            namespace,
+            key,
+            expiration: expiration.into(),
+            version: RecordVersion::now(),
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::SetExp(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hget<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        field: &'a [u8],
+    ) -> impl Future<Output = Result<Option<Record>>> + Send {
+        let op = operation::HGetBorrowed {
+            namespace,
+            key,
+            field,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HGet(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hset<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        entry: MapEntryBorrowed<'a>,
+    ) -> impl Future<Output = Result<()>> + Send {
+        let op = operation::HSetBorrowed {
+            namespace,
+            key,
+            entry,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HSet(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hdel<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        field: &'a [u8],
+    ) -> impl Future<Output = Result<()>> + Send {
+        let op = operation::HDelBorrowed {
+            namespace,
+            key,
+            field,
+            version: RecordVersion::now(),
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HDel(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hget_exp<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        field: &'a [u8],
+    ) -> impl Future<Output = Result<Option<RecordExpiration>>> + Send {
+        let op = operation::HGetExpBorrowed {
+            namespace,
+            key,
+            field,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HGetExp(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hset_exp<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        field: &'a [u8],
+        expiration: impl Into<RecordExpiration>,
+    ) -> impl Future<Output = Result<()>> + Send {
+        let op = operation::HSetExpBorrowed {
+            namespace,
+            key,
+            field,
+            expiration: expiration.into(),
+            version: RecordVersion::now(),
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HSetExp(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hcard(&self, namespace: Namespace, key: &[u8]) -> impl Future<Output = Result<u64>> + Send {
+        let op = operation::HCardBorrowed {
+            namespace,
+            key,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HCard(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
+    fn hscan<'a>(
+        &self,
+        namespace: Namespace,
+        key: &'a [u8],
+        count: u32,
+        cursor: Option<&'a [u8]>,
+    ) -> impl Future<Output = Result<MapPage>> + Send {
+        let op = operation::HScanBorrowed {
+            namespace,
+            key,
+            count,
+            cursor,
+            keyspace_version: None,
+        };
+
+        self.execute(operation::Borrowed::HScan(op).into())
+            .map(operation::Output::downcast_result)
+    }
+
     /// Executes the provided [`StorageApi`] [`Operation`] using a reference.
     fn execute_ref(
         &self,
@@ -78,7 +280,9 @@ pub trait StorageApi: Send + Sync + 'static {
     fn execute(
         &self,
         operation: Operation<'_>,
-    ) -> impl Future<Output = Result<operation::Output>> + Send;
+    ) -> impl Future<Output = Result<operation::Output>> + Send {
+        async move { self.execute_ref(&operation).await }
+    }
 }
 
 /// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
@@ -98,7 +302,7 @@ pub trait Callback: Send {
 ///
 /// A [`Record`] can not be overwritten by another [`Record`] with a lesser
 /// [version][`Record::version`].
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Message)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Message)]
 pub struct RecordBorrowed<'a> {
     /// Value of this [`Record`].
     pub value: &'a [u8],
@@ -110,6 +314,16 @@ pub struct RecordBorrowed<'a> {
     pub version: RecordVersion,
 }
 
+impl<'a> RecordBorrowed<'a> {
+    pub fn new(value: &'a [u8], expiration: impl Into<RecordExpiration>) -> Self {
+        Self {
+            value,
+            expiration: expiration.into(),
+            version: RecordVersion::now(),
+        }
+    }
+}
+
 impl Record {
     pub fn borrow(&self) -> RecordBorrowed<'_> {
         RecordBorrowed {
@@ -117,6 +331,12 @@ impl Record {
             expiration: self.expiration,
             version: self.version,
         }
+    }
+}
+
+impl RecordBorrowed<'_> {
+    pub fn into_owned(&self) -> Record {
+        wcn_rpc::BorrowedMessage::into_owned(self)
     }
 }
 

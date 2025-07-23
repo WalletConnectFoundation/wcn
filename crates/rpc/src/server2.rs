@@ -583,7 +583,7 @@ impl Error {
     }
 
     fn io(err: io::Error) -> Self {
-        Self::new(ErrorInner::IO(err))
+        Self::new(ErrorInner::Io(err))
     }
 }
 
@@ -627,9 +627,6 @@ enum ErrorInner {
 
     #[error("Codec: {0}")]
     Codec(String),
-
-    #[error("IO: {0:?}")]
-    IO(io::Error),
 
     #[error("Stream unexpectedly finished")]
     StreamFinished,

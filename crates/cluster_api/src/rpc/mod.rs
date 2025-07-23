@@ -57,22 +57,6 @@ enum GetEventStreamItem {
     Event(Result<Event>),
 }
 
-// impl GetEventStreamItem {
-//     fn ack() -> Self {
-//         Self::Ack(())
-//     }
-
-//     fn downcast_result<T>(res: Result<Self>) -> super::Result<T>
-//     where
-//         T: TryFrom<Self, Error = derive_more::TryIntoError<Self>>,
-//     {
-//         res?.try_into().map_err(|item| {
-//             super::Error::new(super::ErrorKind::Unknown)
-//                 .with_message(format!("Unexpected {item:?}"))
-//         })
-//     }
-// }
-
 #[derive(Clone, Debug, Serialize, Deserialize, Message, thiserror::Error)]
 #[error("code = {code}, message = {message:?}")]
 struct Error {

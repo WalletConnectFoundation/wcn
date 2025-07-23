@@ -1,11 +1,11 @@
 use {
-    derive_more::derive::TryFrom,
+    derive_more::derive::{TryFrom, TryInto},
     serde::{Deserialize, Serialize, de::DeserializeOwned},
     wcn_cluster::{
         Event,
         smart_contract::{Address, ClusterView},
     },
-    wcn_rpc::{ApiName, BorrowedMessage, JsonCodec, Message},
+    wcn_rpc::{ApiName, BorrowedMessage, JsonCodec, Message, RpcV2},
 };
 
 #[cfg(feature = "rpc_client")]
@@ -37,14 +37,41 @@ impl wcn_rpc::Api for ClusterApi {
 }
 
 type UnaryRpc<const ID: u8, Req, Resp> = wcn_rpc::UnaryV2<ID, Req, Resp, JsonCodec>;
-type StreamingRpc<const ID: u8, Req, Resp, Item> =
-    wcn_rpc::StreamingV2<ID, Req, Resp, Item, JsonCodec>;
 
 type GetAddress = UnaryRpc<{ Id::GetAddress as u8 }, (), Result<MessageWrapper<Address>>>;
 type GetClusterView =
     UnaryRpc<{ Id::GetClusterView as u8 }, (), Result<MessageWrapper<ClusterView>>>;
-type GetEventStream =
-    StreamingRpc<{ Id::GetEventStream as u8 }, (), Result<()>, Result<MessageWrapper<Event>>>;
+
+struct GetEventStream;
+
+impl RpcV2 for GetEventStream {
+    const ID: u8 = Id::GetEventStream as u8;
+    type Request = ();
+    type Response = GetEventStreamItem;
+    type Codec = JsonCodec;
+}
+
+#[derive(Debug, TryInto, Serialize, Deserialize, Message)]
+enum GetEventStreamItem {
+    Ack(Result<()>),
+    Event(Result<Event>),
+}
+
+// impl GetEventStreamItem {
+//     fn ack() -> Self {
+//         Self::Ack(())
+//     }
+
+//     fn downcast_result<T>(res: Result<Self>) -> super::Result<T>
+//     where
+//         T: TryFrom<Self, Error = derive_more::TryIntoError<Self>>,
+//     {
+//         res?.try_into().map_err(|item| {
+//             super::Error::new(super::ErrorKind::Unknown)
+//                 .with_message(format!("Unexpected {item:?}"))
+//         })
+//     }
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Message, thiserror::Error)]
 #[error("code = {code}, message = {message:?}")]

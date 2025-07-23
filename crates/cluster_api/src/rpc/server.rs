@@ -1,19 +1,20 @@
 use {
-    super::Error,
+    super::{Error, GetEventStreamItem},
     crate::rpc::{GetAddress, GetClusterView, GetEventStream, Id as RpcId, MessageWrapper},
     derive_where::derive_where,
-    futures::{Stream, TryStreamExt as _},
+    futures::{SinkExt as _, StreamExt as _},
     std::sync::Arc,
+    tap::Pipe as _,
     wcn_cluster::smart_contract::{self, Read},
     wcn_rpc::{
         Request,
         Response,
-        StreamItem,
         server2::{
             Connection,
             HandleConnection,
             HandleRequest,
-            HandleStreamingRequest,
+            HandleRpc,
+            Inbound,
             Result,
             Server,
         },
@@ -72,25 +73,26 @@ impl<S: Read> HandleRequest<GetClusterView> for RpcHandler<S> {
     }
 }
 
-impl<S: Read> HandleStreamingRequest<GetEventStream> for RpcHandler<S> {
-    async fn handle_request(
-        &self,
-        _: Request<GetEventStream>,
-    ) -> (
-        Response<GetEventStream>,
-        Option<impl Stream<Item = StreamItem<GetEventStream>> + Send>,
-    ) {
-        match self.smart_contract.events().await {
-            Ok(stream) => {
-                let stream = stream
-                    .map_ok(MessageWrapper)
-                    .map_err(crate::Error::internal)
-                    .map_err(Into::into);
+impl<S: Read> HandleRpc<GetEventStream> for RpcHandler<S> {
+    async fn handle_rpc(&self, rpc: &mut Inbound<GetEventStream>) -> Result<()> {
+        let res = self.smart_contract.events().await;
 
-                (Ok(()), Some(stream))
-            }
+        let (events, ack) = match res {
+            Ok(events) => (Some(events), Ok(())),
+            Err(err) => (None, Err(Error::internal(err))),
+        };
 
-            Err(err) => (Err(Error::internal(err)), None),
+        rpc.response_sink
+            .send(&GetEventStreamItem::Ack(ack))
+            .await?;
+
+        if let Some(events) = events {
+            events
+                .map(|res| GetEventStreamItem::Event(res.map_err(Error::internal)))
+                .pipe(|responses| rpc.response_sink.send_all(responses))
+                .await?;
         }
+
+        Ok(())
     }
 }

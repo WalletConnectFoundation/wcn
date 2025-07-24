@@ -180,11 +180,10 @@ where
 
         let this = self.clone();
         let operation = operation.into_owned();
-        let handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             this.execute_callback(operation.into(), ResponseChannel(tx))
                 .await
         });
-        drop(handle);
 
         match rx.await {
             Ok(resp) => resp,

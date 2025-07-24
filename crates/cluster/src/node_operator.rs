@@ -69,12 +69,12 @@ pub struct NodeOperator<N = Node> {
     /// Name of the [`NodeOperator`].
     pub name: Name,
 
-    /// List of [`Node`]s of the [`NodeOperator`].
-    pub nodes: Vec<N>,
-
     /// List of [`Client`]s authorized to use the WCN cluster on behalf of the
     /// [`NodeOperator`].
     pub clients: Vec<Client>,
+
+    /// List of [`Node`]s of the [`NodeOperator`].
+    nodes: Vec<N>,
 
     // for load balancing
     counter: Arc<AtomicUsize>,
@@ -113,6 +113,13 @@ impl<N> NodeOperator<N> {
 
         let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
         &self.nodes[n % self.nodes.len()]
+    }
+
+    /// List of [`Node`]s of the [`NodeOperator`].
+    ///
+    /// [`NodeOperator`] is guaranteed to always have at least 2 nodes.
+    pub fn nodes(&self) -> &[N] {
+        &self.nodes
     }
 }
 

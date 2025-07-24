@@ -200,9 +200,9 @@ async fn execute<N: StorageApi>(
     operator: &NodeOperator<N>,
     operation: &Operation<'_>,
 ) -> storage_api::Result<operation::Output> {
-    // NOTE: `NodeOperator::nodes` is always => 1, this is an invariant of
+    // NOTE: `NodeOperator::nodes` is always => 2, this is an invariant of
     // `NodeOperator` and we check that in the constructor.
-    let mut retries_left = operator.nodes.len();
+    let mut retries_left = operator.nodes().len();
 
     // Retry transport errors using different nodes.
     loop {

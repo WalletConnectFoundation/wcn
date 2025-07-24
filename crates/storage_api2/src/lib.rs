@@ -15,7 +15,7 @@ pub use operation::Operation;
 pub mod rpc;
 
 #[cfg(feature = "testing")]
-pub mod fake;
+pub mod testing;
 
 /// Namespace within a WCN cluster.
 ///

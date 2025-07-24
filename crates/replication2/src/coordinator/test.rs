@@ -5,28 +5,28 @@ use {
         keyspace::{self, ReplicaSet},
         migration,
         node_operator,
-        smart_contract,
+        smart_contract::{self, testing::FakeSmartContract},
         Cluster,
         Node,
         NodeOperator,
     },
     std::{collections::HashSet, sync::Arc, time::Duration},
-    storage_api::{operation, Operation, RecordBorrowed, StorageApi},
+    storage_api::{operation, testing::FakeStorage, Operation, RecordBorrowed, StorageApi},
 };
 
 #[derive(Clone, Default)]
 struct Config {
-    smart_contract_registry: smart_contract::fake::Registry,
-    storage_registy: storage_api::fake::Registry<node_operator::Id>,
+    smart_contract_registry: smart_contract::testing::FakeRegistry,
+    storage_registy: storage_api::testing::FakeRegistry<node_operator::Id>,
 }
 
 #[derive(Clone)]
 struct Replica {
-    storage: storage_api::fake::Storage,
+    storage: storage_api::testing::FakeStorage,
 }
 
 impl cluster::Config for Config {
-    type SmartContract = smart_contract::fake::SmartContract;
+    type SmartContract = FakeSmartContract;
     type KeyspaceShards = keyspace::Shards;
     type Node = Replica;
 
@@ -61,12 +61,12 @@ impl Context {
         let cluster = Cluster::deploy(
             cfg.clone(),
             &cfg.smart_contract_registry
-                .deployer(smart_contract::fake::signer(42)),
+                .deployer(smart_contract::testing::signer(42)),
             cluster::Settings {
                 max_node_operator_data_bytes: 1024,
             },
             (0..8)
-                .map(|idx| cluster::fake::node_operator(idx as u8))
+                .map(|idx| cluster::testing::node_operator(idx as u8))
                 .collect(),
         )
         .await
@@ -88,7 +88,7 @@ impl Context {
             .secondary_replica_set(hash(key.as_bytes()))
     }
 
-    fn storage(&self, operator_id: node_operator::Id) -> storage_api::fake::Storage {
+    fn storage(&self, operator_id: node_operator::Id) -> FakeStorage {
         self.config.storage_registy.get(operator_id)
     }
 
@@ -104,7 +104,7 @@ impl Context {
         let mut new_operators = HashSet::new();
 
         for n in 0..current_operators.len() {
-            let operator = cluster::fake::node_operator(100 + n as u8);
+            let operator = cluster::testing::node_operator(100 + n as u8);
             new_operators.insert(operator.id);
 
             self.coordinator

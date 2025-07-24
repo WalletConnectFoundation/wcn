@@ -36,7 +36,7 @@ use {
 };
 
 #[derive(Clone, Default)]
-pub struct Registry {
+pub struct FakeRegistry {
     inner: Arc<Mutex<RegistryInner>>,
 }
 
@@ -46,7 +46,7 @@ struct RegistryInner {
     contracts: HashMap<Address, Arc<Mutex<Inner>>>,
 }
 
-impl Registry {
+impl FakeRegistry {
     pub fn deployer(&self, signer: Signer) -> Deployer {
         Deployer {
             signer,
@@ -68,15 +68,15 @@ impl Registry {
 
 pub struct Deployer {
     signer: Signer,
-    registry: Registry,
+    registry: FakeRegistry,
 }
 
-impl super::Deployer<SmartContract> for Deployer {
+impl super::Deployer<FakeSmartContract> for Deployer {
     async fn deploy(
         &self,
         initial_settings: Settings,
         initial_operators: Vec<node_operator::Serialized>,
-    ) -> Result<SmartContract, DeploymentError> {
+    ) -> Result<FakeSmartContract, DeploymentError> {
         let operator_indexes = (0..initial_operators.len()).map(|idx| idx as u8).collect();
 
         let keyspace = Keyspace::new(
@@ -116,7 +116,7 @@ impl super::Deployer<SmartContract> for Deployer {
             .contracts
             .insert(contract_address, contract.clone());
 
-        Ok(SmartContract {
+        Ok(FakeSmartContract {
             signer: self.signer.clone(),
             inner: contract,
         })
@@ -125,11 +125,11 @@ impl super::Deployer<SmartContract> for Deployer {
 
 pub struct Connector {
     signer: Signer,
-    registry: Registry,
+    registry: FakeRegistry,
 }
 
-impl super::Connector<SmartContract> for Connector {
-    async fn connect(&self, address: Address) -> Result<SmartContract, ConnectionError> {
+impl super::Connector<FakeSmartContract> for Connector {
+    async fn connect(&self, address: Address) -> Result<FakeSmartContract, ConnectionError> {
         let contract = self
             .registry
             .inner()
@@ -138,7 +138,7 @@ impl super::Connector<SmartContract> for Connector {
             .cloned()
             .ok_or(ConnectionError::UnknownContract)?;
 
-        Ok(SmartContract {
+        Ok(FakeSmartContract {
             signer: self.signer.clone(),
             inner: contract,
         })
@@ -148,7 +148,7 @@ impl super::Connector<SmartContract> for Connector {
 struct Config;
 
 impl crate::Config for Config {
-    type SmartContract = SmartContract;
+    type SmartContract = FakeSmartContract;
     type KeyspaceShards = ();
     type Node = Node;
 
@@ -158,18 +158,18 @@ impl crate::Config for Config {
 }
 
 #[derive(Clone)]
-pub struct SmartContract {
+pub struct FakeSmartContract {
     signer: Signer,
     inner: Arc<Mutex<Inner>>,
 }
 
-impl SmartContract {
+impl FakeSmartContract {
     fn inner(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap()
     }
 }
 
-impl SmartContract {
+impl FakeSmartContract {
     async fn write<Ev>(&self, f: impl FnOnce(&mut Inner) -> Ev) -> WriteResult<()>
     where
         Ev: Into<Event>,
@@ -211,7 +211,7 @@ impl Inner {
     }
 }
 
-impl super::Write for SmartContract {
+impl super::Write for FakeSmartContract {
     fn signer(&self) -> &Signer {
         &self.signer
     }
@@ -306,7 +306,7 @@ impl super::Write for SmartContract {
     }
 }
 
-impl super::Read for SmartContract {
+impl super::Read for FakeSmartContract {
     fn address(&self) -> Address {
         self.inner().address
     }

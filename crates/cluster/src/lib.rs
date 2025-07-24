@@ -50,7 +50,7 @@ mod task;
 use task::Task;
 
 #[cfg(feature = "testing")]
-pub mod fake;
+pub mod testing;
 
 /// Maximum number of [`NodeOperator`]s within a WCN [`Cluster`].
 pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;

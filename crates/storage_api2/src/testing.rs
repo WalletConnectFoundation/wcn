@@ -22,20 +22,20 @@ use {
 };
 
 #[derive_where(Clone, Default)]
-pub struct Registry<K> {
+pub struct FakeRegistry<K> {
     inner: Arc<Mutex<RegistryInner<K>>>,
 }
 
 #[derive_where(Default)]
 struct RegistryInner<K> {
-    storages: HashMap<K, Storage>,
+    storages: HashMap<K, FakeStorage>,
 }
 
-impl<K> Registry<K>
+impl<K> FakeRegistry<K>
 where
     K: Eq + Hash,
 {
-    pub fn get(&self, key: K) -> Storage {
+    pub fn get(&self, key: K) -> FakeStorage {
         self.inner
             .lock()
             .unwrap()
@@ -47,11 +47,11 @@ where
 }
 
 #[derive(Clone, Default)]
-pub struct Storage {
+pub struct FakeStorage {
     inner: Arc<Mutex<Inner>>,
 }
 
-impl Storage {
+impl FakeStorage {
     pub fn break_(&self) {
         self.inner.lock().unwrap().broken = true;
     }
@@ -64,7 +64,7 @@ struct Inner {
     map: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Record>>,
 }
 
-impl StorageApi for Storage {
+impl StorageApi for FakeStorage {
     async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output> {
         let mut this = self.inner.lock().unwrap();
 

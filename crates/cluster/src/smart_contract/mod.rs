@@ -2,7 +2,7 @@
 
 pub mod evm;
 #[cfg(feature = "testing")]
-pub mod fake;
+pub mod testing;
 use {
     crate::{self as cluster, migration, node_operator, Event, Keyspace, Ownership, Settings},
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},

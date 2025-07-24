@@ -27,7 +27,7 @@ pub fn node_operator(id: u8) -> NodeOperator {
     });
 
     NodeOperator::new(
-        smart_contract::fake::account_address(id),
+        smart_contract::testing::account_address(id),
         node_operator::Name::new(format!("Operator{id}")).unwrap(),
         nodes.collect(),
         vec![],

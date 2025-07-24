@@ -7,6 +7,10 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+default = []
+testing = []
+
 [dependencies]
 derive_more = { workspace = true, features = ["try_from", "into"] }
 derive-where = { workspace = true }

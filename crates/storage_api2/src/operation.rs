@@ -9,6 +9,7 @@ use {
         MapPage,
         Namespace,
         Record,
+        RecordBorrowed,
         RecordExpiration,
         RecordVersion,
         Result,
@@ -24,6 +25,8 @@ use {
 pub enum Operation<'a> {
     #[from(forward)]
     Owned(Owned),
+
+    #[from]
     Borrowed(Borrowed<'a>),
 }
 
@@ -35,6 +38,22 @@ impl Operation<'_> {
         match self {
             Self::Owned(owned) => owned,
             Self::Borrowed(borrowed) => borrowed.into_owned(),
+        }
+    }
+
+    /// Returns the key of a KV pair of this [`Operation`].
+    pub fn key(&self) -> &[u8] {
+        match self {
+            Self::Owned(owned) => owned.key(),
+            Self::Borrowed(borrowed) => borrowed.key(),
+        }
+    }
+
+    /// Indicates whether this [`Operation`] is a write.
+    pub fn is_write(&self) -> bool {
+        match self {
+            Self::Owned(owned) => owned.is_write(),
+            Self::Borrowed(borrowed) => borrowed.is_write(),
         }
     }
 }
@@ -54,6 +73,44 @@ pub enum Owned {
     HSetExp(HSetExp),
     HCard(HCard),
     HScan(HScan),
+}
+
+impl Owned {
+    /// Returns the key of a KV pair of this [`Owned`] [`Operation`].
+    pub fn key(&self) -> &[u8] {
+        match self {
+            Self::Get(op) => &op.key,
+            Self::Set(op) => &op.key,
+            Self::Del(op) => &op.key,
+            Self::GetExp(op) => &op.key,
+            Self::SetExp(op) => &op.key,
+            Self::HGet(op) => &op.key,
+            Self::HSet(op) => &op.key,
+            Self::HDel(op) => &op.key,
+            Self::HGetExp(op) => &op.key,
+            Self::HSetExp(op) => &op.key,
+            Self::HCard(op) => &op.key,
+            Self::HScan(op) => &op.key,
+        }
+    }
+
+    /// Indicates whether this [`Owned`] [`Operation`] is a write.
+    pub fn is_write(&self) -> bool {
+        match self {
+            Self::Set(_)
+            | Self::Del(_)
+            | Self::SetExp(_)
+            | Self::HSet(_)
+            | Self::HDel(_)
+            | Self::HSetExp(_) => true,
+            Self::Get(_)
+            | Self::GetExp(_)
+            | Self::HGet(_)
+            | Self::HGetExp(_)
+            | Self::HCard(_)
+            | Self::HScan(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, From, PartialEq, Eq)]
@@ -92,6 +149,42 @@ impl Borrowed<'_> {
             Self::HScan(op) => Owned::HScan(op.into_owned()),
         }
     }
+
+    /// Returns the key of a KV pair of this [`Borrowed`] [`Operation`].
+    pub fn key(&self) -> &[u8] {
+        match self {
+            Self::Get(op) => op.key,
+            Self::Set(op) => op.key,
+            Self::Del(op) => op.key,
+            Self::GetExp(op) => op.key,
+            Self::SetExp(op) => op.key,
+            Self::HGet(op) => op.key,
+            Self::HSet(op) => op.key,
+            Self::HDel(op) => op.key,
+            Self::HGetExp(op) => op.key,
+            Self::HSetExp(op) => op.key,
+            Self::HCard(op) => op.key,
+            Self::HScan(op) => op.key,
+        }
+    }
+
+    /// Indicates whether this [`Borrowed`] [`Operation`] is a write.
+    pub fn is_write(&self) -> bool {
+        match self {
+            Self::Set(_)
+            | Self::Del(_)
+            | Self::SetExp(_)
+            | Self::HSet(_)
+            | Self::HDel(_)
+            | Self::HSetExp(_) => true,
+            Self::Get(_)
+            | Self::GetExp(_)
+            | Self::HGet(_)
+            | Self::HGetExp(_)
+            | Self::HCard(_)
+            | Self::HScan(_) => false,
+        }
+    }
 }
 
 /// Gets a [`Record`] by the provided key.
@@ -107,7 +200,7 @@ pub struct GetBorrowed<'a> {
 pub struct SetBorrowed<'a> {
     pub namespace: Namespace,
     pub key: &'a [u8],
-    pub record: Record,
+    pub record: RecordBorrowed<'a>,
     pub keyspace_version: Option<KeyspaceVersion>,
 }
 

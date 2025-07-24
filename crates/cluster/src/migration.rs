@@ -66,6 +66,10 @@ impl<Shards> Migration<Shards> {
         self.pulling_operators.contains(&idx)
     }
 
+    pub fn pulling_count(&self) -> usize {
+        self.pulling_operators.len()
+    }
+
     pub(crate) fn complete_pull(&mut self, idx: node_operator::Idx) {
         self.pulling_operators.remove(&idx);
     }
@@ -116,7 +120,7 @@ impl Migration {
 }
 
 /// [`Migration`] has started.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Started {
     /// [`Id`] of the [`Migration`] being started.
     pub migration_id: Id,
@@ -129,7 +133,7 @@ pub struct Started {
 }
 
 /// [`NodeOperator`](crate::NodeOperator) has completed the data pull.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataPullCompleted {
     /// [`Id`] of the [`Migration`].
     pub migration_id: Id,
@@ -142,7 +146,7 @@ pub struct DataPullCompleted {
 }
 
 /// [`Migration`] has been completed.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completed {
     /// [`Id`] of the completed [`Migration`].
     pub migration_id: Id,
@@ -155,7 +159,7 @@ pub struct Completed {
 }
 
 /// [`Migration`] has been aborted.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Aborted {
     /// [`Id`] of the [`Migration`].
     pub migration_id: Id,

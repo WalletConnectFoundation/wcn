@@ -1,13 +1,15 @@
 //! WalletConnect Network Cluster.
 
+pub use libp2p::PeerId;
 use {
     arc_swap::ArcSwap,
+    derive_more::derive::From,
+    derive_where::derive_where,
     futures::Stream,
     itertools::Itertools,
-    libp2p::PeerId,
     serde::{Deserialize, Serialize},
     smart_contract::{Read, Write as _},
-    std::{collections::HashSet, net::SocketAddrV4, sync::Arc},
+    std::{collections::HashSet, sync::Arc},
     tokio::sync::watch,
 };
 
@@ -47,6 +49,9 @@ pub use maintenance::Maintenance;
 mod task;
 use task::Task;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 /// Maximum number of [`NodeOperator`]s within a WCN [`Cluster`].
 pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;
 
@@ -72,7 +77,7 @@ pub trait Config: Send + Sync + 'static {
     type Node: Clone + Send + Sync + 'static;
 
     /// Creates a new [`Config::Node`].
-    fn new_node(&self, addr: SocketAddrV4, peer_id: PeerId) -> Self::Node;
+    fn new_node(&self, operator_id: node_operator::Id, node: Node) -> Self::Node;
 }
 
 /// WCN cluster.
@@ -81,6 +86,7 @@ pub trait Config: Send + Sync + 'static {
 ///
 /// Performs preliminary invariant validation before calling the actual
 /// [`SmartContract`] methods.
+#[derive_where(Clone)]
 pub struct Cluster<C: Config> {
     inner: Arc<Inner<C>>,
     _task_guard: Arc<task::Guard>,
@@ -102,7 +108,7 @@ struct Inner<C: Config> {
 pub type Version = u128;
 
 /// Events happening within a WCN [`Cluster`].
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, From, Serialize, Deserialize)]
 pub enum Event {
     /// [`Migration`] has started.
     MigrationStarted(migration::Started),
@@ -122,7 +128,7 @@ pub enum Event {
     /// [`Maintenance`] has been finished.
     MaintenanceFinished(maintenance::Finished),
 
-    /// [`NodeOperator`] has been updated.
+    /// [`NodeOperator`] has been added.
     NodeOperatorAdded(node_operator::Added),
 
     /// [`NodeOperator`] has been updated.
@@ -146,12 +152,13 @@ where
         initial_settings: Settings,
         initial_operators: Vec<NodeOperator>,
     ) -> Result<Self, DeploymentError> {
-        let operators: Vec<_> = initial_operators
+        // Pass the initial set of operators through the `NodeOperators` collection to
+        // check invariants.
+        let operators = NodeOperators::from_slots(initial_operators.into_iter().map(Some))?
+            .into_slots()
             .into_iter()
-            .map(NodeOperator::serialize)
+            .filter_map(|slot| slot.map(|operator| operator.serialize()))
             .try_collect()?;
-
-        let operators = NodeOperators::new(operators.into_iter().map(Some))?;
 
         let contract = deployer.deploy(initial_settings, operators).await?;
 
@@ -170,7 +177,7 @@ where
 
     async fn new<E>(cfg: C, contract: C::SmartContract) -> Result<Self, E>
     where
-        E: From<node_operator::DataDeserializationError> + From<smart_contract::ReadError>,
+        E: From<view::CreationError> + From<smart_contract::ReadError>,
     {
         let events = contract.events().await?;
         let view = View::from_sc(&cfg, contract.cluster_view().await?).await?;
@@ -461,7 +468,7 @@ pub enum DeploymentError {
     DataSerialization(#[from] node_operator::DataSerializationError),
 
     #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
+    View(#[from] view::CreationError),
 
     #[error(transparent)]
     DataTooLarge(#[from] node_operator::DataTooLargeError),
@@ -483,7 +490,7 @@ pub enum ConnectionError {
     SmartContractRead(#[from] smart_contract::ReadError),
 
     #[error(transparent)]
-    DataDeserialization(#[from] node_operator::DataDeserializationError),
+    View(#[from] view::CreationError),
 }
 
 /// [`Cluster::start_migration`] error.

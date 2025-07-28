@@ -1,21 +1,28 @@
 use {
     crate::{
         operation,
+        DataFrame,
+        DataType,
         Error,
         ErrorKind,
+        KeyspaceVersion,
         MapEntry,
         MapPage,
         Namespace,
         Operation,
+        PullDataItem,
         Record,
         RecordExpiration,
         Result,
         StorageApi,
     },
     derive_where::derive_where,
+    futures::{stream, Stream},
     std::{
         collections::{BTreeMap, HashMap},
         hash::{BuildHasher, Hash},
+        iter,
+        ops::RangeInclusive,
         sync::{Arc, Mutex},
     },
     xxhash_rust::xxh3::Xxh3Builder,
@@ -87,6 +94,56 @@ impl StorageApi for FakeStorage {
             operation::Owned::HCard(op) => this.hcard(op).into(),
             operation::Owned::HScan(op) => this.hscan(op).into(),
         })
+    }
+
+    async fn pull_data(
+        &self,
+        keyrange: RangeInclusive<u64>,
+        _keyspace_version: KeyspaceVersion,
+    ) -> Result<impl Stream<Item = Result<PullDataItem>> + Send> {
+        let this = self.inner.lock().unwrap();
+
+        if this.broken {
+            return Err(Error::new(ErrorKind::Internal));
+        }
+
+        let start = keyrange.start().to_be_bytes().to_vec();
+        let end = keyrange.end().to_be_bytes().to_vec();
+
+        let kv: Vec<_> = this
+            .kv
+            .range(start.clone()..=end.clone())
+            .map(|(key, record)| {
+                Ok(PullDataItem::Frame(DataFrame {
+                    data_type: DataType::Kv,
+                    key: key.clone(),
+                    value: serde_json::to_vec(record).unwrap(),
+                }))
+            })
+            .collect();
+
+        let map: Vec<_> = this
+            .map
+            .range(start..=end)
+            .flat_map(|(key, entries)| {
+                entries.iter().map(|(field, record)| {
+                    Ok(PullDataItem::Frame(DataFrame {
+                        data_type: DataType::Map,
+                        key: key.iter().chain(field.iter()).copied().collect(),
+                        value: serde_json::to_vec(record).unwrap(),
+                    }))
+                })
+            })
+            .collect();
+
+        let count = kv.len() + map.len();
+
+        let iter = kv
+            .into_iter()
+            .chain(map.into_iter())
+            .chain(iter::once(Ok(PullDataItem::Done(count as u64))));
+
+        Ok(stream::iter(iter))
     }
 }
 

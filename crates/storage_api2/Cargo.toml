@@ -11,7 +11,7 @@ workspace = true
 default = []
 rpc_client = ["wcn_rpc/client"]
 rpc_server = ["wcn_rpc/server"]
-testing = ["xxhash-rust"]
+testing = ["xxhash-rust", "serde_json"]
 
 [dependencies]
 wc = { workspace = true, features = ["future", "metrics"] }
@@ -31,6 +31,7 @@ const-hex = "1.14"
 
 # testing
 xxhash-rust = { workspace = true, optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 wcn_storage_api2 = { path = ".", features = ["rpc_client", "rpc_server"] }

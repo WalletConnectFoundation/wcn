@@ -1,7 +1,13 @@
 use {
+    futures::{
+        stream::{self, BoxStream},
+        Stream,
+        StreamExt,
+    },
     rand::{random, Rng},
     std::{
         net::{Ipv4Addr, SocketAddrV4},
+        ops::RangeInclusive,
         sync::{Arc, Mutex},
         time::Duration,
     },
@@ -14,11 +20,14 @@ use {
     },
     wcn_storage_api2::{
         operation,
+        DataFrame,
+        DataType,
         KeyspaceVersion,
         MapEntry,
         MapPage,
         Namespace,
         Operation,
+        PullDataItem,
         Record,
         RecordExpiration,
         RecordVersion,
@@ -105,6 +114,7 @@ async fn test_rpc_api<API, S>(
     };
 
     ctx.test_operations().await;
+    ctx.test_pulling().await;
 
     server_handle.abort();
 }
@@ -281,6 +291,34 @@ where
 
         self.test_operation(op, map_page()).await;
     }
+
+    async fn test_pulling(&self) {
+        let keyrange = 10..=42;
+        let keyspace_version = 1;
+        let frame = DataFrame {
+            data_type: DataType::Kv,
+            key: vec![1, 1, 1],
+            value: vec![2, 2, 2],
+        };
+        let items = [Ok(PullDataItem::Frame(frame)), Ok(PullDataItem::Done(1))];
+        let items_st = stream::iter(items.clone()).boxed();
+
+        let _ = self.storage.expect_pulling.lock().unwrap().insert((
+            keyrange.clone(),
+            keyspace_version,
+            items_st,
+        ));
+
+        let items_got: Vec<_> = self
+            .client_conn
+            .pull_data(keyrange, keyspace_version)
+            .await
+            .unwrap()
+            .collect()
+            .await;
+
+        assert_eq!(items.as_slice(), items_got.as_slice())
+    }
 }
 
 fn namespace() -> Namespace {
@@ -368,16 +406,31 @@ fn find_available_port() -> u16 {
     }
 }
 
+#[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 struct TestStorage {
-    #[allow(clippy::type_complexity)]
     expect: Arc<Mutex<Option<(Operation<'static>, Result<operation::Output>)>>>,
+    expect_pulling: Arc<Mutex<Option<(RangeInclusive<u64>, u64, DataStream)>>>,
 }
+
+type DataStream = BoxStream<'static, Result<PullDataItem>>;
 
 impl StorageApi for TestStorage {
     async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output> {
         let expected = self.expect.lock().unwrap().take().unwrap();
         assert_eq!(operation, expected.0);
         expected.1
+    }
+
+    async fn pull_data(
+        &self,
+        keyrange: RangeInclusive<u64>,
+        keyspace_version: u64,
+    ) -> Result<impl Stream<Item = Result<PullDataItem>> + Send> {
+        let expected = self.expect_pulling.lock().unwrap().take().unwrap();
+        assert_eq!(keyrange, expected.0);
+        assert_eq!(keyspace_version, expected.1);
+
+        Ok(expected.2)
     }
 }

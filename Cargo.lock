@@ -8342,6 +8342,7 @@ dependencies = [
  "futures",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "strum",
  "tap",
  "thiserror 1.0.64",

@@ -6,9 +6,19 @@ use {
         Callback,
         StorageApi,
     },
-    tap::TapFallible as _,
+    futures::{SinkExt as _, StreamExt},
+    tap::{Pipe as _, TapFallible as _},
     wcn_rpc::{
-        server2::{Connection, Error, HandleConnection, HandleUnary, Responder, Result},
+        server2::{
+            Connection,
+            Error,
+            HandleConnection,
+            HandleRpc,
+            HandleUnary,
+            Inbound,
+            Responder,
+            Result,
+        },
         BorrowedMessage,
         MessageV2,
         Request,
@@ -72,6 +82,7 @@ where
                 RpcId::HGetExp => rpc.handle::<HGetExp>(&handler).await,
                 RpcId::HCard => rpc.handle::<HCard>(&handler).await,
                 RpcId::HScan => rpc.handle::<HScan>(&handler).await,
+                RpcId::PullData => rpc.handle::<PullData>(&handler).await,
             }
         })
         .await
@@ -181,5 +192,29 @@ impl<S: StorageApi> HandleUnary<HCard> for RpcHandler<S> {
 impl<S: StorageApi> HandleUnary<HScan> for RpcHandler<S> {
     async fn handle(&self, req: Request<HScan>, resp: Responder<'_, HScan>) -> Result<()> {
         self.storage_api.execute_callback(req.into(), resp).await
+    }
+}
+
+impl<S: StorageApi> HandleRpc<PullData> for RpcHandler<S> {
+    async fn handle_rpc(&self, rpc: &mut Inbound<PullData>) -> Result<()> {
+        let req = rpc.request_stream.try_next().await?;
+
+        let res = self
+            .storage_api
+            .pull_data(req.keyrange, req.keyspace_version)
+            .await;
+
+        let mut data_stream = None;
+
+        let ack = res.map(|data| data_stream = Some(data)).map_err(Into::into);
+        rpc.response_sink.send(&PullDataResponse::Ack(ack)).await?;
+
+        if let Some(data) = data_stream {
+            data.map(|res| PullDataResponse::Item(res.map_err(Into::into)))
+                .pipe(|responses| rpc.response_sink.send_all(responses))
+                .await?;
+        }
+
+        Ok(())
     }
 }

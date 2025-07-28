@@ -3,7 +3,7 @@ use {
     derive_where::derive_where,
     futures::Stream,
     std::ops::RangeInclusive,
-    storage_api::{operation, Error, Operation, PullDataItem, Result, StorageApi},
+    storage_api::{operation, DataItem, Error, Operation, Result, StorageApi},
 };
 
 #[derive_where(Clone)]
@@ -44,7 +44,7 @@ where
         &self,
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
-    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<PullDataItem>> + Send> {
+    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
         self.database.pull_data(keyrange, keyspace_version).await
     }
 }

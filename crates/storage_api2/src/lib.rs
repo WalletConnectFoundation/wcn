@@ -1,7 +1,7 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
-    futures::Stream,
+    futures::{stream, Stream},
     serde::{Deserialize, Serialize},
     std::{borrow::Cow, future::Future, ops::RangeInclusive, str::FromStr, time::Duration},
     strum::IntoStaticStr,
@@ -99,9 +99,21 @@ pub trait StorageApi: Send + Sync + 'static {
     /// [`Operation`]s.
     fn pull_data(
         &self,
-        keyrange: RangeInclusive<u64>,
-        keyspace_version: KeyspaceVersion,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<PullDataItem>> + Send>> + Send;
+        _keyrange: RangeInclusive<u64>,
+        _keyspace_version: KeyspaceVersion,
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<DataItem>> + Send>> + Send {
+        async { Err::<stream::Empty<_>, _>(Error::unauthorized()) }
+    }
+
+    /// Pushes all data from the provided [`Stream`] into WCN Database.
+    ///
+    /// Should only be implemented for WCN Databases.
+    fn push_data(
+        &self,
+        _stream: impl Stream<Item = Result<DataItem>> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async { Err(Error::unauthorized()) }
+    }
 }
 
 /// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
@@ -114,15 +126,14 @@ pub trait Callback: Send {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// [`Stream`] item of [`StorageApi::pull_data`].
+/// [`Stream`] item of [`StorageApi::pull_data`] and [`StorageApi::push_data`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Message)]
-pub enum PullDataItem {
+pub enum DataItem {
     /// [`DataFrame`].
     Frame(DataFrame),
 
-    /// Indicates that the (data pull)[`StorageApi::pull_data`] has been
-    /// sucessfully completed and contains the number of processed
-    /// [`DataFrame`]s.
+    /// Indicates that data transfer has been sucessfully completed and contains
+    /// the number of processed [`DataFrame`]s.
     Done(u64),
 }
 
@@ -352,6 +363,9 @@ pub struct Error {
 /// [`Error`] kind.
 #[derive(Clone, Copy, Debug, IntoStaticStr, PartialEq, Eq, Ordinalize)]
 pub enum ErrorKind {
+    /// Client provided an invalid argument.
+    InvalidArgument,
+
     /// Client is not authorized to perform an [`Operation`].
     Unauthorized,
 

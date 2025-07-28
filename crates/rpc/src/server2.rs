@@ -666,7 +666,7 @@ impl<RPC: RpcV2> Stream for RequestStream<RPC> {
 }
 
 impl<RPC: RpcV2> RequestStream<RPC> {
-    /// Tries to receive the next RPC response.
+    /// Tries to receive the next RPC request.
     pub async fn try_next(&mut self) -> Result<RPC::Request> {
         self.next()
             .await

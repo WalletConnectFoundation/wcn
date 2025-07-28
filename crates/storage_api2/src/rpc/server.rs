@@ -6,7 +6,7 @@ use {
         Callback,
         StorageApi,
     },
-    futures::{SinkExt as _, StreamExt},
+    futures::{SinkExt as _, StreamExt, TryStreamExt},
     tap::{Pipe as _, TapFallible as _},
     wcn_rpc::{
         server2::{
@@ -83,6 +83,7 @@ where
                 RpcId::HCard => rpc.handle::<HCard>(&handler).await,
                 RpcId::HScan => rpc.handle::<HScan>(&handler).await,
                 RpcId::PullData => rpc.handle::<PullData>(&handler).await,
+                RpcId::PushData => rpc.handle::<PushData>(&handler).await,
             }
         })
         .await
@@ -216,5 +217,20 @@ impl<S: StorageApi> HandleRpc<PullData> for RpcHandler<S> {
         }
 
         Ok(())
+    }
+}
+
+impl<S: StorageApi> HandleRpc<PushData> for RpcHandler<S> {
+    async fn handle_rpc(&self, rpc: &mut Inbound<PushData>) -> Result<()> {
+        let data_stream =
+            (&mut rpc.request_stream).map_err(|err| crate::Error::internal().with_message(err));
+
+        let res: super::Result<()> = self
+            .storage_api
+            .push_data(data_stream)
+            .await
+            .map_err(Into::into);
+
+        rpc.response_sink.send(&res).await
     }
 }

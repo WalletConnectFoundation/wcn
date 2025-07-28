@@ -5,7 +5,7 @@ use {
     futures_concurrency::{future::Join as _, stream::Merge},
     read_repair::ReadRepair,
     std::{future, hash::BuildHasher, ops::RangeInclusive, pin::pin},
-    storage_api::{operation, Callback, Error, ErrorKind, Operation, PullDataItem, StorageApi},
+    storage_api::{operation, Callback, DataItem, Error, ErrorKind, Operation, StorageApi},
     tap::Pipe,
     tokio::sync::oneshot,
     wc::metrics,
@@ -198,7 +198,7 @@ where
         &self,
         _keyrange: RangeInclusive<u64>,
         _keyspace_version: u64,
-    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<PullDataItem>> + Send> {
+    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
         // WCN Clients are not alowed to pull data from Coordinators
         Err::<stream::Empty<_>, _>(Error::unauthorized())
     }

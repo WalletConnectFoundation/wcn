@@ -3,6 +3,7 @@ use {
         stream::{self, BoxStream},
         Stream,
         StreamExt,
+        TryStreamExt as _,
     },
     rand::{random, Rng},
     std::{
@@ -21,13 +22,13 @@ use {
     wcn_storage_api2::{
         operation,
         DataFrame,
+        DataItem,
         DataType,
         KeyspaceVersion,
         MapEntry,
         MapPage,
         Namespace,
         Operation,
-        PullDataItem,
         Record,
         RecordExpiration,
         RecordVersion,
@@ -114,7 +115,8 @@ async fn test_rpc_api<API, S>(
     };
 
     ctx.test_operations().await;
-    ctx.test_pulling().await;
+    ctx.test_pull_data().await;
+    ctx.test_push_data().await;
 
     server_handle.abort();
 }
@@ -292,7 +294,7 @@ where
         self.test_operation(op, map_page()).await;
     }
 
-    async fn test_pulling(&self) {
+    async fn test_pull_data(&self) {
         let keyrange = 10..=42;
         let keyspace_version = 1;
         let frame = DataFrame {
@@ -300,10 +302,10 @@ where
             key: vec![1, 1, 1],
             value: vec![2, 2, 2],
         };
-        let items = [Ok(PullDataItem::Frame(frame)), Ok(PullDataItem::Done(1))];
+        let items = [Ok(DataItem::Frame(frame)), Ok(DataItem::Done(1))];
         let items_st = stream::iter(items.clone()).boxed();
 
-        let _ = self.storage.expect_pulling.lock().unwrap().insert((
+        let _ = self.storage.expect_pull_data.lock().unwrap().insert((
             keyrange.clone(),
             keyspace_version,
             items_st,
@@ -318,6 +320,27 @@ where
             .await;
 
         assert_eq!(items.as_slice(), items_got.as_slice())
+    }
+
+    async fn test_push_data(&self) {
+        let frame = DataFrame {
+            data_type: DataType::Kv,
+            key: vec![1, 1, 1],
+            value: vec![2, 2, 2],
+        };
+        let items = vec![DataItem::Frame(frame), DataItem::Done(1)];
+
+        let _ = self
+            .storage
+            .expect_push_data
+            .lock()
+            .unwrap()
+            .insert(items.clone());
+
+        self.client_conn
+            .push_data(stream::iter(items.into_iter()).map(Ok))
+            .await
+            .unwrap();
     }
 }
 
@@ -410,10 +433,11 @@ fn find_available_port() -> u16 {
 #[derive(Clone, Default)]
 struct TestStorage {
     expect: Arc<Mutex<Option<(Operation<'static>, Result<operation::Output>)>>>,
-    expect_pulling: Arc<Mutex<Option<(RangeInclusive<u64>, u64, DataStream)>>>,
+    expect_pull_data: Arc<Mutex<Option<(RangeInclusive<u64>, u64, DataStream)>>>,
+    expect_push_data: Arc<Mutex<Option<Vec<DataItem>>>>,
 }
 
-type DataStream = BoxStream<'static, Result<PullDataItem>>;
+type DataStream = BoxStream<'static, Result<DataItem>>;
 
 impl StorageApi for TestStorage {
     async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output> {
@@ -426,11 +450,20 @@ impl StorageApi for TestStorage {
         &self,
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
-    ) -> Result<impl Stream<Item = Result<PullDataItem>> + Send> {
-        let expected = self.expect_pulling.lock().unwrap().take().unwrap();
+    ) -> Result<impl Stream<Item = Result<DataItem>> + Send> {
+        let expected = self.expect_pull_data.lock().unwrap().take().unwrap();
         assert_eq!(keyrange, expected.0);
         assert_eq!(keyspace_version, expected.1);
 
         Ok(expected.2)
+    }
+
+    async fn push_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+        let expected = self.expect_push_data.lock().unwrap().take().unwrap();
+
+        let got: Vec<_> = stream.try_collect().await?;
+        assert_eq!(expected, got);
+
+        Ok(())
     }
 }

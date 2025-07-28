@@ -2,7 +2,7 @@ pub use wcn_rpc::client2::Config;
 use {
     super::*,
     crate::{operation, rpc, KeyspaceVersion, Operation, Result, StorageApi},
-    futures::{SinkExt as _, Stream, StreamExt as _, TryFutureExt as _},
+    futures::{SinkExt, Stream, StreamExt as _, TryFutureExt as _},
     std::ops::RangeInclusive,
     wcn_rpc::client2::{Client, Connection, ConnectionHandler},
 };
@@ -96,7 +96,7 @@ where
         &self,
         keyrange: RangeInclusive<u64>,
         keyspace_version: KeyspaceVersion,
-    ) -> Result<impl Stream<Item = Result<PullDataItem>>> {
+    ) -> Result<impl Stream<Item = Result<DataItem>>> {
         let mut rpc = self.send::<PullData>()?;
 
         rpc.request_sink
@@ -112,8 +112,16 @@ where
 
         Ok(rpc
             .response_stream
-            .map_downcast::<rpc::Result<PullDataItem>>()
+            .map_downcast::<rpc::Result<DataItem>>()
             .map(|res| res?.map_err(Into::into)))
+    }
+
+    async fn push_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+        let rpc = self.send::<PushData>()?;
+
+        let sink = SinkExt::<DataItem>::sink_map_err(rpc.request_sink, Into::into);
+
+        stream.forward(sink).await
     }
 }
 

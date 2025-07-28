@@ -15,8 +15,8 @@ use {
     storage_api::{
         operation,
         testing::FakeStorage,
+        DataItem,
         Operation,
-        PullDataItem,
         RecordBorrowed,
         StorageApi,
     },
@@ -58,7 +58,7 @@ impl StorageApi for Replica {
         &self,
         _keyrange: RangeInclusive<u64>,
         _keyspace_version: u64,
-    ) -> storage_api::Result<stream::Empty<storage_api::Result<PullDataItem>>> {
+    ) -> storage_api::Result<stream::Empty<storage_api::Result<DataItem>>> {
         unreachable!()
     }
 }

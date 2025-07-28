@@ -2,6 +2,7 @@ use {
     crate::{
         operation,
         DataFrame,
+        DataItem,
         DataType,
         Error,
         ErrorKind,
@@ -10,14 +11,14 @@ use {
         MapPage,
         Namespace,
         Operation,
-        PullDataItem,
         Record,
         RecordExpiration,
         Result,
         StorageApi,
     },
     derive_where::derive_where,
-    futures::{stream, Stream},
+    futures::{stream, Stream, TryStreamExt},
+    serde::{Deserialize, Serialize},
     std::{
         collections::{BTreeMap, HashMap},
         hash::{BuildHasher, Hash},
@@ -100,7 +101,7 @@ impl StorageApi for FakeStorage {
         &self,
         keyrange: RangeInclusive<u64>,
         _keyspace_version: KeyspaceVersion,
-    ) -> Result<impl Stream<Item = Result<PullDataItem>> + Send> {
+    ) -> Result<impl Stream<Item = Result<DataItem>> + Send> {
         let this = self.inner.lock().unwrap();
 
         if this.broken {
@@ -114,9 +115,14 @@ impl StorageApi for FakeStorage {
             .kv
             .range(start.clone()..=end.clone())
             .map(|(key, record)| {
-                Ok(PullDataItem::Frame(DataFrame {
-                    data_type: DataType::Kv,
+                let key = KeyPayload {
                     key: key.clone(),
+                    field: vec![],
+                };
+
+                Ok(DataItem::Frame(DataFrame {
+                    data_type: DataType::Kv,
+                    key: serde_json::to_vec(&key).unwrap(),
                     value: serde_json::to_vec(record).unwrap(),
                 }))
             })
@@ -127,9 +133,14 @@ impl StorageApi for FakeStorage {
             .range(start..=end)
             .flat_map(|(key, entries)| {
                 entries.iter().map(|(field, record)| {
-                    Ok(PullDataItem::Frame(DataFrame {
+                    let key = KeyPayload {
+                        key: key.clone(),
+                        field: field.clone(),
+                    };
+
+                    Ok(DataItem::Frame(DataFrame {
                         data_type: DataType::Map,
-                        key: key.iter().chain(field.iter()).copied().collect(),
+                        key: serde_json::to_vec(&key).unwrap(),
                         value: serde_json::to_vec(record).unwrap(),
                     }))
                 })
@@ -141,10 +152,51 @@ impl StorageApi for FakeStorage {
         let iter = kv
             .into_iter()
             .chain(map.into_iter())
-            .chain(iter::once(Ok(PullDataItem::Done(count as u64))));
+            .chain(iter::once(Ok(DataItem::Done(count as u64))));
 
         Ok(stream::iter(iter))
     }
+
+    async fn push_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+        let data: Vec<_> = stream.try_collect().await?;
+
+        let mut this = self.inner.lock().unwrap();
+
+        if this.broken {
+            return Err(Error::new(ErrorKind::Internal));
+        }
+
+        let mut processed = 0;
+
+        for item in data {
+            match item {
+                DataItem::Frame(frame) => {
+                    let key: KeyPayload = serde_json::from_slice(&frame.key).unwrap();
+                    let record: Record = serde_json::from_slice(&frame.value).unwrap();
+
+                    match frame.data_type {
+                        DataType::Kv => this.kv.insert(key.key, record),
+                        DataType::Map => this
+                            .map
+                            .entry(key.key)
+                            .or_default()
+                            .insert(key.field, record),
+                    };
+
+                    processed += 1;
+                }
+                DataItem::Done(count) => assert_eq!(count, processed),
+            };
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct KeyPayload {
+    key: Vec<u8>,
+    field: Vec<u8>,
 }
 
 fn key(namespace: &Namespace, bytes: &[u8]) -> Vec<u8> {

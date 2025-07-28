@@ -1,5 +1,5 @@
 use {
-    crate::{operation, MapPage, PullDataItem, Record, RecordExpiration},
+    crate::{operation, DataItem, MapPage, Record, RecordExpiration},
     derive_more::derive::{TryFrom, TryInto},
     serde::{Deserialize, Serialize},
     std::{marker::PhantomData, ops::RangeInclusive},
@@ -30,6 +30,7 @@ pub enum Id {
     HScan = 11,
 
     PullData = 12,
+    PushData = 13,
 }
 
 impl From<Id> for u8 {
@@ -112,7 +113,16 @@ struct PullDataRequest {
 #[derive(Clone, Debug, TryInto, Serialize, Deserialize, Message)]
 enum PullDataResponse {
     Ack(Result<()>),
-    Item(Result<PullDataItem>),
+    Item(Result<DataItem>),
+}
+
+struct PushData;
+
+impl RpcV2 for PushData {
+    const ID: u8 = Id::PushData as u8;
+    type Request = DataItem;
+    type Response = Result<()>;
+    type Codec = PostcardCodec;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Message)]
@@ -143,6 +153,7 @@ enum ErrorCode {
     Internal = 0,
     Unauthorized = 1,
     KeyspaceVersionMismatch = 2,
+    WrongRequest = 3,
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -160,6 +171,7 @@ impl From<Error> for crate::Error {
             ErrorCode::Unauthorized => ErrorKind::Unauthorized,
             ErrorCode::KeyspaceVersionMismatch => ErrorKind::KeyspaceVersionMismatch,
             ErrorCode::Internal => ErrorKind::Internal,
+            ErrorCode::WrongRequest => ErrorKind::InvalidArgument,
         };
 
         Self {
@@ -176,6 +188,7 @@ impl From<crate::ErrorKind> for ErrorCode {
         match kind {
             ErrorKind::Unauthorized => ErrorCode::Unauthorized,
             ErrorKind::KeyspaceVersionMismatch => ErrorCode::KeyspaceVersionMismatch,
+            ErrorKind::InvalidArgument => ErrorCode::WrongRequest,
 
             ErrorKind::Internal
             | ErrorKind::Timeout

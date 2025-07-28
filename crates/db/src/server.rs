@@ -1,15 +1,15 @@
 use {
     crate::storage::{self, Storage},
-    futures::{Stream, StreamExt as _},
+    futures::{Stream, StreamExt as _, TryStreamExt as _},
     std::{ops::RangeInclusive, sync::Arc},
     storage_api::{
         operation::{self, Output},
         DataFrame,
+        DataItem,
         DataType,
         MapEntry,
         MapPage,
         Operation,
-        PullDataItem,
         Record,
         RecordExpiration,
         RecordVersion,
@@ -205,17 +205,30 @@ impl StorageApi for Server {
         &self,
         keyrange: RangeInclusive<u64>,
         _keyspace_version: u64,
-    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<PullDataItem>> + Send> {
+    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
         let storage = &self.inner.storage;
 
         storage
             .db()
             .export((storage.string.clone(), storage.map.clone()), keyrange)
             .map(|item| match item {
-                ExportItem::Frame(res) => data_frame(res).map(PullDataItem::Frame),
-                ExportItem::Done(count) => Ok(PullDataItem::Done(count)),
+                ExportItem::Frame(res) => data_frame(res).map(DataItem::Frame),
+                ExportItem::Done(count) => Ok(DataItem::Done(count)),
             })
             .pipe(Ok)
+    }
+
+    async fn push_data(
+        &self,
+        stream: impl Stream<Item = storage_api::Result<DataItem>>,
+    ) -> storage_api::Result<()> {
+        let storage = &self.inner.storage;
+
+        storage
+            .db()
+            .import_all(stream.map_ok(export_item))
+            .await
+            .map_err(|err| storage_api::Error::internal().with_message(err))
     }
 }
 
@@ -236,6 +249,20 @@ fn data_frame(res: Result<ExportFrame, wcn_rocks::Error>) -> storage_api::Result
         key: frame.key.into(),
         value: frame.value.into(),
     })
+}
+
+fn export_item(item: DataItem) -> ExportItem {
+    match item {
+        DataItem::Frame(frame) => ExportItem::Frame(Ok(ExportFrame {
+            cf: match frame.data_type {
+                DataType::Kv => ColumnFamilyName::GenericString,
+                DataType::Map => ColumnFamilyName::GenericMap,
+            },
+            key: frame.key.into(),
+            value: frame.value.into(),
+        })),
+        DataItem::Done(count) => ExportItem::Done(count),
+    }
 }
 
 #[inline]

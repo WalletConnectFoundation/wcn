@@ -22,13 +22,15 @@ use {
     },
     derive_where::derive_where,
     futures::future::OptionFuture,
+    itertools::Itertools,
     std::sync::Arc,
+    tap::Pipe as _,
 };
 
 /// Read-only view of a WCN cluster.
 #[derive_where(Clone)]
 pub struct View<C: Config> {
-    pub(super) node_operators: NodeOperators<NodeOperator<C::Node>>,
+    pub(super) node_operators: NodeOperators<C::Node>,
 
     pub(super) ownership: Ownership,
     pub(super) settings: Settings,
@@ -38,6 +40,31 @@ pub struct View<C: Config> {
     pub(super) maintenance: Option<Maintenance>,
 
     pub(super) cluster_version: cluster::Version,
+}
+
+impl<C: Config<KeyspaceShards = keyspace::Shards>> View<C> {
+    pub fn primary_replica_set(&self, key: u64) -> keyspace::ReplicaSet<&NodeOperator<C::Node>> {
+        // NOTE(unwrap): we use `Keyspace::validate` every time it enters the system,
+        // therefore guaranteeing that every `NodeOperatorIdx` is valid.
+        self.keyspace
+            .shard(key)
+            .replica_set()
+            .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
+    }
+
+    pub fn secondary_replica_set(
+        &self,
+        key: u64,
+    ) -> Option<keyspace::ReplicaSet<&NodeOperator<C::Node>>> {
+        // NOTE(unwrap): we use `Keyspace::validate` every time it enters the system,
+        // therefore guaranteeing that every `NodeOperatorIdx` is valid.
+        self.migration()?
+            .keyspace()
+            .shard(key)
+            .replica_set()
+            .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
+            .pipe(Some)
+    }
 }
 
 impl<C: Config> View<C> {
@@ -67,7 +94,7 @@ impl<C: Config> View<C> {
     }
 
     /// Returns [`NodeOperators`] of the WCN cluster.
-    pub fn node_operators(&self) -> &NodeOperators<NodeOperator<C::Node>> {
+    pub fn node_operators(&self) -> &NodeOperators<C::Node> {
         &self.node_operators
     }
 
@@ -134,7 +161,7 @@ impl<C: Config> View<C> {
     pub(super) async fn from_sc(
         cfg: &C,
         view: smart_contract::ClusterView,
-    ) -> Result<Self, node_operator::DataDeserializationError>
+    ) -> Result<Self, CreationError>
     where
         Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
     {
@@ -143,8 +170,22 @@ impl<C: Config> View<C> {
             OptionFuture::from(view.migration.map(Migration::calculate_keyspace))
         );
 
+        let node_operators = view
+            .node_operators
+            .into_iter()
+            .map(|slot| slot.map(|operator| operator.deserialize(cfg)).transpose())
+            .try_collect::<_, Vec<_>, _>()?
+            .pipe(NodeOperators::from_slots)?;
+
+        keyspace.validate(&node_operators)?;
+
+        migration
+            .as_ref()
+            .map(|migration| migration.keyspace().validate(&node_operators))
+            .transpose()?;
+
         Ok(View {
-            node_operators: view.node_operators.try_map(|op| op.deserialize(cfg))?,
+            node_operators,
             ownership: view.ownership,
             settings: view.settings,
             keyspace: Arc::new(keyspace),
@@ -156,13 +197,15 @@ impl<C: Config> View<C> {
 }
 
 impl migration::Started {
-    async fn apply<A: Config>(self, view: &mut View<A>) -> Result<()>
+    async fn apply<C: Config>(self, view: &mut View<C>) -> Result<()>
     where
-        Keyspace: keyspace::sealed::Calculate<A::KeyspaceShards>,
+        Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
     {
         view.require_no_migration()?;
         view.require_no_maintenance()?;
         view.keyspace().require_diff(&self.new_keyspace)?;
+
+        self.new_keyspace.validate(view.node_operators())?;
 
         let pulling: Vec<_> = self.new_keyspace.operators().collect();
 
@@ -300,6 +343,9 @@ pub enum Error {
     SameKeyspace(#[from] keyspace::SameKeyspaceError),
 
     #[error(transparent)]
+    KeyspaceUnknownOperator(#[from] keyspace::UnknownNodeOperator),
+
+    #[error(transparent)]
     NotPulling(#[from] migration::OperatorNotPullingError),
 
     #[error(transparent)]
@@ -316,6 +362,18 @@ pub enum Error {
 
     #[error(transparent)]
     NodeOperatorDataDeserialization(#[from] node_operator::DataDeserializationError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreationError {
+    #[error(transparent)]
+    DataDeserialization(#[from] node_operator::DataDeserializationError),
+
+    #[error(transparent)]
+    NodeOperators(#[from] node_operators::CreationError),
+
+    #[error(transparent)]
+    KeyspaceUnknownOperator(#[from] keyspace::UnknownNodeOperator),
 }
 
 /// Result of [`View::apply_event`].

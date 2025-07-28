@@ -14,6 +14,9 @@ pub use operation::Operation;
 
 pub mod rpc;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 /// Namespace within a WCN cluster.
 ///
 /// Namespaces are isolated and every [`StorageApi`] [`Operation`] gets executed
@@ -21,7 +24,7 @@ pub mod rpc;
 ///
 /// Currently it's represented by the node operator's Ethereum address, with an
 /// extra byte appended to support multiple namespaces per operator.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Message)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Message)]
 pub struct Namespace([u8; 21]);
 
 impl Namespace {
@@ -58,7 +61,7 @@ pub trait StorageApi: Send + Sync + 'static {
     fn execute_ref(
         &self,
         operation: &Operation<'_>,
-    ) -> impl Future<Output = Result<operation::Output>> {
+    ) -> impl Future<Output = Result<operation::Output>> + Send {
         async { self.execute(operation.clone()).await }
     }
 
@@ -78,12 +81,14 @@ pub trait StorageApi: Send + Sync + 'static {
     fn execute(
         &self,
         operation: Operation<'_>,
-    ) -> impl Future<Output = Result<operation::Output>> + Send;
+    ) -> impl Future<Output = Result<operation::Output>> + Send {
+        async move { self.execute_ref(&operation).await }
+    }
 }
 
 /// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
 pub trait Callback: Send {
-    type Error;
+    type Error: Send + 'static;
 
     fn send_result(
         self,
@@ -98,7 +103,7 @@ pub trait Callback: Send {
 ///
 /// A [`Record`] can not be overwritten by another [`Record`] with a lesser
 /// [version][`Record::version`].
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Message)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Message)]
 pub struct RecordBorrowed<'a> {
     /// Value of this [`Record`].
     pub value: &'a [u8],
@@ -108,6 +113,32 @@ pub struct RecordBorrowed<'a> {
 
     /// Version of this [`Record`].
     pub version: RecordVersion,
+}
+
+impl<'a> RecordBorrowed<'a> {
+    pub fn new(value: &'a [u8], expiration: impl Into<RecordExpiration>) -> Self {
+        Self {
+            value,
+            expiration: expiration.into(),
+            version: RecordVersion::now(),
+        }
+    }
+}
+
+impl Record {
+    pub fn borrow(&self) -> RecordBorrowed<'_> {
+        RecordBorrowed {
+            value: &self.value,
+            expiration: self.expiration,
+            version: self.version,
+        }
+    }
+}
+
+impl RecordBorrowed<'_> {
+    pub fn into_owned(&self) -> Record {
+        wcn_rpc::BorrowedMessage::into_owned(self)
+    }
 }
 
 /// Entry within a Map.
@@ -287,7 +318,7 @@ pub enum ErrorKind {
 
 impl Error {
     /// Creates a new [`Error`].
-    pub fn new(kind: ErrorKind) -> Self {
+    pub const fn new(kind: ErrorKind) -> Self {
         Self {
             kind,
             message: None,

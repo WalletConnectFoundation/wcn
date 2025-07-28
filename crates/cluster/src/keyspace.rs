@@ -1,5 +1,8 @@
 use {
-    crate::node_operator::{self},
+    crate::{
+        node_operator::{self},
+        NodeOperators,
+    },
     derivative::Derivative,
     derive_more::TryFrom,
     serde::{Deserialize, Serialize},
@@ -32,6 +35,7 @@ pub struct Keyspace<S = ()> {
 }
 
 /// All [`Shard`]s within a [`Keyspace`].
+#[derive(Clone)]
 pub struct Shards(sharding::Keyspace<node_operator::Idx, { REPLICATION_FACTOR as usize }>);
 
 /// A single [`Shard`] within a [`Keyspace`].
@@ -125,6 +129,19 @@ impl<S> Keyspace<S> {
 
         Ok(())
     }
+
+    pub(super) fn validate<N>(
+        &self,
+        node_operators: &NodeOperators<N>,
+    ) -> Result<(), UnknownNodeOperator> {
+        for &operator_idx in &self.operators {
+            if !node_operators.contains_idx(operator_idx) {
+                return Err(UnknownNodeOperator(operator_idx));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Shard {
@@ -146,6 +163,10 @@ pub enum CreationError {
 #[derive(Debug, thiserror::Error)]
 #[error("The new Keyspace doesn't differ from the old one")]
 pub struct SameKeyspaceError;
+
+#[derive(Debug, thiserror::Error)]
+#[error("The new Keyspace contains unknown NodeOperator(idx: {_0})")]
+pub struct UnknownNodeOperator(node_operator::Idx);
 
 pub(crate) mod sealed {
     use std::future::Future;

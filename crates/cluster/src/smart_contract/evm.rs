@@ -25,7 +25,6 @@ use {
         Keyspace,
         Maintenance,
         Migration,
-        NodeOperators,
         Ownership,
         Settings,
     },
@@ -111,16 +110,13 @@ impl Deployer<SmartContract<Signer>> for RpcProvider<Signer> {
     async fn deploy(
         &self,
         initial_settings: Settings,
-        initial_operators: NodeOperators<node_operator::Serialized>,
+        initial_operators: Vec<node_operator::Serialized>,
     ) -> Result<SmartContract<Signer>, DeploymentError> {
         let signer = self.signer.clone();
 
         let settings: bindings::Cluster::Settings = initial_settings.into();
-        let operators: Vec<bindings::Cluster::NodeOperator> = initial_operators
-            .into_slots()
-            .into_iter()
-            .filter_map(|op| op.map(Into::into))
-            .collect();
+        let operators: Vec<bindings::Cluster::NodeOperator> =
+            initial_operators.into_iter().map(Into::into).collect();
 
         let contract = bindings::Cluster::deploy(self.alloy.clone()).await?;
 
@@ -473,16 +469,18 @@ impl TryFrom<bindings::Cluster::ClusterView> for ClusterView {
     type Error = ReadError;
 
     fn try_from(view: bindings::Cluster::ClusterView) -> Result<Self, Self::Error> {
-        let operators = view.operators.into_iter().zip(view.operatorData);
-
-        let node_operators = NodeOperators::new(operators.map(|(addr, data)| {
-            if addr.is_zero() {
-                None
-            } else {
-                Some(bindings::Cluster::NodeOperator { addr, data }.into())
-            }
-        }))
-        .map_err(|err| ReadError::InvalidData(format!("Invalid NodeOperators: {err:?}")))?;
+        let node_operators = view
+            .operators
+            .into_iter()
+            .zip(view.operatorData)
+            .map(|(addr, data)| {
+                if addr.is_zero() {
+                    None
+                } else {
+                    Some(bindings::Cluster::NodeOperator { addr, data }.into())
+                }
+            })
+            .collect();
 
         // assert array length
         let _: &[_; 2] = &view.keyspaces;

@@ -23,6 +23,7 @@ workspace = true
 wc = { workspace = true, features = ["alloc", "future", "metrics"] }
 logging = { package = "wcn_logging", path = "../logging" }
 metrics = { workspace = true }
+xxhash-rust = { workspace = true }
 time = { workspace = true }
 wcn_rpc = { workspace = true, features = ["server"] }
 wcn_rocks = { workspace = true }
@@ -54,7 +55,6 @@ sysinfo = "0.29"
 tracing = "0.1"
 tap = "1.0"
 vergen-pretty = { version = "0.3", features = ["trace"] }
-xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 
 [dev-dependencies]
 const-hex = "1.14"

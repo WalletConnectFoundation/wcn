@@ -5,12 +5,11 @@ edition = "2021"
 publish = false
 
 [dependencies]
+derive-where = { workspace = true }
 wc = { workspace = true, features = ["metrics"] }
-storage_api = { package = "wcn_storage_api", path = "../storage_api", features = ["client"] }
-client_api = { package = "wcn_client_api", path = "../client_api", features = ["client"] }
-domain = { workspace = true }
-
-wcn_core = { path = "../core" }
+xxhash-rust = { workspace = true }
+storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["rpc_client"] }
+cluster = { package = "wcn_cluster", path = "../cluster" }
 
 futures = "0.3"
 tap = "1.0"
@@ -21,6 +20,14 @@ tracing = "0.1"
 derive_more = { version = "1.0.0", features = ["as_ref"] }
 
 thiserror = "1"
+
+futures-concurrency = "7.6"
+heapless = "0.8"
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false }
+storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["testing"] }
+cluster = { package = "wcn_cluster", path = "../cluster", features = ["testing"] }
 
 [lints]
 workspace = true

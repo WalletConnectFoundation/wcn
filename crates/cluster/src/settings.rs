@@ -17,7 +17,7 @@ pub struct Settings {
 }
 
 /// Event of [`Settings`] being updated.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Updated {
     /// Updated [`Settings`].
     pub settings: Settings,

@@ -32,7 +32,7 @@ impl Maintenance {
 }
 
 /// [`Maintenance`] has started.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Started {
     /// [`smart_contract::AccountAddress`] of the account that
     /// started the [`Maintenance`].
@@ -43,7 +43,7 @@ pub struct Started {
 }
 
 /// [`Maintenance`] has been finished.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Finished {
     /// Updated [`ClusterVersion`].
     pub cluster_version: ClusterVersion,

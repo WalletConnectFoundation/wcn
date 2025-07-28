@@ -10,16 +10,8 @@ use {
         Node,
         NodeOperator,
     },
-    futures::stream,
-    std::{collections::HashSet, ops::RangeInclusive, sync::Arc, time::Duration},
-    storage_api::{
-        operation,
-        testing::FakeStorage,
-        DataItem,
-        Operation,
-        RecordBorrowed,
-        StorageApi,
-    },
+    std::{collections::HashSet, sync::Arc, time::Duration},
+    storage_api::{operation, testing::FakeStorage, Operation, RecordBorrowed, StorageApi},
 };
 
 #[derive(Clone, Default)]
@@ -51,15 +43,6 @@ impl StorageApi for Replica {
         operation: &storage_api::Operation<'_>,
     ) -> storage_api::Result<operation::Output> {
         self.storage.execute_ref(operation).await
-    }
-
-    #[allow(refining_impl_trait_internal)]
-    async fn pull_data(
-        &self,
-        _keyrange: RangeInclusive<u64>,
-        _keyspace_version: u64,
-    ) -> storage_api::Result<stream::Empty<storage_api::Result<DataItem>>> {
-        unreachable!()
     }
 }
 

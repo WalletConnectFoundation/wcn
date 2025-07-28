@@ -153,7 +153,6 @@ enum ErrorCode {
     Internal = 0,
     Unauthorized = 1,
     KeyspaceVersionMismatch = 2,
-    WrongRequest = 3,
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -171,7 +170,6 @@ impl From<Error> for crate::Error {
             ErrorCode::Unauthorized => ErrorKind::Unauthorized,
             ErrorCode::KeyspaceVersionMismatch => ErrorKind::KeyspaceVersionMismatch,
             ErrorCode::Internal => ErrorKind::Internal,
-            ErrorCode::WrongRequest => ErrorKind::InvalidArgument,
         };
 
         Self {
@@ -188,7 +186,6 @@ impl From<crate::ErrorKind> for ErrorCode {
         match kind {
             ErrorKind::Unauthorized => ErrorCode::Unauthorized,
             ErrorKind::KeyspaceVersionMismatch => ErrorCode::KeyspaceVersionMismatch,
-            ErrorKind::InvalidArgument => ErrorCode::WrongRequest,
 
             ErrorKind::Internal
             | ErrorKind::Timeout

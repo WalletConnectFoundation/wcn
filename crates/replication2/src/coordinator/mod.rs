@@ -1,11 +1,11 @@
 use {
     cluster::{keyspace, Cluster, NodeOperator},
     derive_where::derive_where,
-    futures::{future::Either, stream, FutureExt, Stream, StreamExt},
+    futures::{future::Either, stream, FutureExt, StreamExt},
     futures_concurrency::{future::Join as _, stream::Merge},
     read_repair::ReadRepair,
-    std::{future, hash::BuildHasher, ops::RangeInclusive, pin::pin},
-    storage_api::{operation, Callback, DataItem, Error, ErrorKind, Operation, StorageApi},
+    std::{future, hash::BuildHasher, pin::pin},
+    storage_api::{operation, Callback, Error, ErrorKind, Operation, StorageApi},
     tap::Pipe,
     tokio::sync::oneshot,
     wc::metrics,
@@ -192,15 +192,6 @@ where
                 Err(Error::new(ErrorKind::Internal))
             }
         }
-    }
-
-    async fn pull_data(
-        &self,
-        _keyrange: RangeInclusive<u64>,
-        _keyspace_version: u64,
-    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
-        // WCN Clients are not alowed to pull data from Coordinators
-        Err::<stream::Empty<_>, _>(Error::unauthorized())
     }
 }
 

@@ -57,9 +57,6 @@ pub type KeyspaceVersion = u64;
 ///   servers).
 /// - Replicas use it to finally execute the operations on their local WCN
 ///   Database instances.
-///
-/// Additionally WCN Replicas use it to (pull data)[`StorageApi::pull_data`]
-/// from other replicas during data rebalancing.
 pub trait StorageApi: Send + Sync + 'static {
     /// Executes the provided [`StorageApi`] [`Operation`] using a reference.
     fn execute_ref(
@@ -363,9 +360,6 @@ pub struct Error {
 /// [`Error`] kind.
 #[derive(Clone, Copy, Debug, IntoStaticStr, PartialEq, Eq, Ordinalize)]
 pub enum ErrorKind {
-    /// Client provided an invalid argument.
-    InvalidArgument,
-
     /// Client is not authorized to perform an [`Operation`].
     Unauthorized,
 

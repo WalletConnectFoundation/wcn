@@ -129,8 +129,8 @@ pub enum DataItem {
     /// [`DataFrame`].
     Frame(DataFrame),
 
-    /// Indicates that data transfer has been sucessfully completed and contains
-    /// the number of processed [`DataFrame`]s.
+    /// Indicates that data transfer has been successfully completed and
+    /// contains the number of processed [`DataFrame`]s.
     Done(u64),
 }
 

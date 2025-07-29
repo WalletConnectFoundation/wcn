@@ -313,7 +313,7 @@ where
 
         let items_got: Vec<_> = self
             .client_conn
-            .pull_data(keyrange, keyspace_version)
+            .read_data(keyrange, keyspace_version)
             .await
             .unwrap()
             .collect()
@@ -338,7 +338,7 @@ where
             .insert(items.clone());
 
         self.client_conn
-            .push_data(stream::iter(items.into_iter()).map(Ok))
+            .write_data(stream::iter(items.into_iter()).map(Ok))
             .await
             .unwrap();
     }
@@ -446,7 +446,7 @@ impl StorageApi for TestStorage {
         expected.1
     }
 
-    async fn pull_data(
+    async fn read_data(
         &self,
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
@@ -458,7 +458,7 @@ impl StorageApi for TestStorage {
         Ok(expected.2)
     }
 
-    async fn push_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+    async fn write_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
         let expected = self.expect_push_data.lock().unwrap().take().unwrap();
 
         let got: Vec<_> = stream.try_collect().await?;

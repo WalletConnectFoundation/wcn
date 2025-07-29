@@ -40,11 +40,11 @@ where
             .map_err(|_| Error::new(storage_api::ErrorKind::Internal))
     }
 
-    async fn pull_data(
+    async fn read_data(
         &self,
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
     ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
-        self.database.pull_data(keyrange, keyspace_version).await
+        self.database.read_data(keyrange, keyspace_version).await
     }
 }

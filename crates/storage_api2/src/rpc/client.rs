@@ -92,7 +92,7 @@ where
         self.execute_ref(&operation).await
     }
 
-    async fn pull_data(
+    async fn read_data(
         &self,
         keyrange: RangeInclusive<u64>,
         keyspace_version: KeyspaceVersion,
@@ -116,7 +116,7 @@ where
             .map(|res| res?.map_err(Into::into)))
     }
 
-    async fn push_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+    async fn write_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
         let rpc = self.send::<PushData>()?;
 
         let sink = SinkExt::<DataItem>::sink_map_err(rpc.request_sink, Into::into);

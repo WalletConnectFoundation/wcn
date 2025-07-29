@@ -201,7 +201,7 @@ impl StorageApi for Server {
         res.map_err(|err| Error::new(ErrorKind::Internal).with_message(err))
     }
 
-    async fn pull_data(
+    async fn read_data(
         &self,
         keyrange: RangeInclusive<u64>,
         _keyspace_version: u64,
@@ -218,7 +218,7 @@ impl StorageApi for Server {
             .pipe(Ok)
     }
 
-    async fn push_data(
+    async fn write_data(
         &self,
         stream: impl Stream<Item = storage_api::Result<DataItem>>,
     ) -> storage_api::Result<()> {

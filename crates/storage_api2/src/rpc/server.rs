@@ -202,7 +202,7 @@ impl<S: StorageApi> HandleRpc<PullData> for RpcHandler<S> {
 
         let res = self
             .storage_api
-            .pull_data(req.keyrange, req.keyspace_version)
+            .read_data(req.keyrange, req.keyspace_version)
             .await;
 
         let mut data_stream = None;
@@ -227,7 +227,7 @@ impl<S: StorageApi> HandleRpc<PushData> for RpcHandler<S> {
 
         let res: super::Result<()> = self
             .storage_api
-            .push_data(data_stream)
+            .write_data(data_stream)
             .await
             .map_err(Into::into);
 

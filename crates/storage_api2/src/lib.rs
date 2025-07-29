@@ -86,7 +86,7 @@ pub trait StorageApi: Send + Sync + 'static {
         async move { self.execute_ref(&operation).await }
     }
 
-    /// Pulls all data stored in a WCN Database within the specified
+    /// Reads all data stored in a WCN Database within the specified
     /// `keyrange`.
     ///
     /// Intended to be implemented for WCN Databases and WCN Replicas, but
@@ -94,7 +94,7 @@ pub trait StorageApi: Send + Sync + 'static {
     ///
     /// Same [`KeyspaceVersion`] validation applies as for the regular
     /// [`Operation`]s.
-    fn pull_data(
+    fn read_data(
         &self,
         _keyrange: RangeInclusive<u64>,
         _keyspace_version: KeyspaceVersion,
@@ -102,10 +102,10 @@ pub trait StorageApi: Send + Sync + 'static {
         async { Err::<stream::Empty<_>, _>(Error::unauthorized()) }
     }
 
-    /// Pushes all data from the provided [`Stream`] into WCN Database.
+    /// Writes all data from the provided [`Stream`] into WCN Database.
     ///
     /// Should only be implemented for WCN Databases.
-    fn push_data(
+    fn write_data(
         &self,
         _stream: impl Stream<Item = Result<DataItem>> + Send,
     ) -> impl Future<Output = Result<()>> + Send {

@@ -97,7 +97,7 @@ impl StorageApi for FakeStorage {
         })
     }
 
-    async fn pull_data(
+    async fn read_data(
         &self,
         keyrange: RangeInclusive<u64>,
         _keyspace_version: KeyspaceVersion,
@@ -157,7 +157,7 @@ impl StorageApi for FakeStorage {
         Ok(stream::iter(iter))
     }
 
-    async fn push_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+    async fn write_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
         let data: Vec<_> = stream.try_collect().await?;
 
         let mut this = self.inner.lock().unwrap();

@@ -1,8 +1,12 @@
 use {
     crate::{
         operation,
+        DataFrame,
+        DataItem,
+        DataType,
         Error,
         ErrorKind,
+        KeyspaceVersion,
         MapEntry,
         MapPage,
         Namespace,
@@ -13,9 +17,13 @@ use {
         StorageApi,
     },
     derive_where::derive_where,
+    futures::{stream, Stream, TryStreamExt},
+    serde::{Deserialize, Serialize},
     std::{
         collections::{BTreeMap, HashMap},
         hash::{BuildHasher, Hash},
+        iter,
+        ops::RangeInclusive,
         sync::{Arc, Mutex},
     },
     xxhash_rust::xxh3::Xxh3Builder,
@@ -88,6 +96,107 @@ impl StorageApi for FakeStorage {
             operation::Owned::HScan(op) => this.hscan(op).into(),
         })
     }
+
+    async fn read_data(
+        &self,
+        keyrange: RangeInclusive<u64>,
+        _keyspace_version: KeyspaceVersion,
+    ) -> Result<impl Stream<Item = Result<DataItem>> + Send> {
+        let this = self.inner.lock().unwrap();
+
+        if this.broken {
+            return Err(Error::new(ErrorKind::Internal));
+        }
+
+        let start = keyrange.start().to_be_bytes().to_vec();
+        let end = keyrange.end().to_be_bytes().to_vec();
+
+        let kv: Vec<_> = this
+            .kv
+            .range(start.clone()..=end.clone())
+            .map(|(key, record)| {
+                let key = KeyPayload {
+                    key: key.clone(),
+                    field: vec![],
+                };
+
+                Ok(DataItem::Frame(DataFrame {
+                    data_type: DataType::Kv,
+                    key: serde_json::to_vec(&key).unwrap(),
+                    value: serde_json::to_vec(record).unwrap(),
+                }))
+            })
+            .collect();
+
+        let map: Vec<_> = this
+            .map
+            .range(start..=end)
+            .flat_map(|(key, entries)| {
+                entries.iter().map(|(field, record)| {
+                    let key = KeyPayload {
+                        key: key.clone(),
+                        field: field.clone(),
+                    };
+
+                    Ok(DataItem::Frame(DataFrame {
+                        data_type: DataType::Map,
+                        key: serde_json::to_vec(&key).unwrap(),
+                        value: serde_json::to_vec(record).unwrap(),
+                    }))
+                })
+            })
+            .collect();
+
+        let count = kv.len() + map.len();
+
+        let iter = kv
+            .into_iter()
+            .chain(map.into_iter())
+            .chain(iter::once(Ok(DataItem::Done(count as u64))));
+
+        Ok(stream::iter(iter))
+    }
+
+    async fn write_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+        let data: Vec<_> = stream.try_collect().await?;
+
+        let mut this = self.inner.lock().unwrap();
+
+        if this.broken {
+            return Err(Error::new(ErrorKind::Internal));
+        }
+
+        let mut processed = 0;
+
+        for item in data {
+            match item {
+                DataItem::Frame(frame) => {
+                    let key: KeyPayload = serde_json::from_slice(&frame.key).unwrap();
+                    let record: Record = serde_json::from_slice(&frame.value).unwrap();
+
+                    match frame.data_type {
+                        DataType::Kv => this.kv.insert(key.key, record),
+                        DataType::Map => this
+                            .map
+                            .entry(key.key)
+                            .or_default()
+                            .insert(key.field, record),
+                    };
+
+                    processed += 1;
+                }
+                DataItem::Done(count) => assert_eq!(count, processed),
+            };
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct KeyPayload {
+    key: Vec<u8>,
+    field: Vec<u8>,
 }
 
 fn key(namespace: &Namespace, bytes: &[u8]) -> Vec<u8> {

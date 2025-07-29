@@ -58,17 +58,6 @@ pub trait HandleConnection<API: Api>: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<()>> + Send;
 }
 
-/// Handler of [`Outbound`] RPCs.
-pub trait HandleRpc<RPC: RpcV2, Input>: Send + Sync + 'static {
-    type Output;
-
-    fn handle_rpc<'a>(
-        &'a self,
-        rpc: Outbound<RPC>,
-        input: &'a Input,
-    ) -> impl Future<Output = Result<Self::Output>> + Send + 'a;
-}
-
 /// RPC [`Client`] config.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -221,7 +210,7 @@ where
     C: CodecV2<Req> + CodecV2<Resp>,
 {
     /// Sends this unary RPC over the provided [`Connection`].
-    pub async fn send<API: Api, R>(conn: &Connection<API>, req: &R) -> Result<Resp>
+    pub async fn send<API: Api, R>(conn: &Connection<API>, req: R) -> Result<Resp>
     where
         R: BorrowedMessage<Owned = Req>,
         C: Serializer<R>,
@@ -401,37 +390,6 @@ impl<API: Api> Connection<API> {
     }
 }
 
-/// Default implementation of [`HandleRpc`].
-///
-/// Automatically implements [`HandleRpc`] for all [`UnaryRpc`]s.
-///
-/// You'll need to provide a manual implementation of [`HandleRpc`] for your
-/// custom RPCs.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RpcHandler;
-
-impl<const ID: u8, Req, Resp, C, M> HandleRpc<UnaryV2<ID, Req, Resp, C>, M> for RpcHandler
-where
-    Req: MessageV2,
-    Resp: MessageV2,
-    C: CodecV2<Req> + CodecV2<Resp> + Serializer<M>,
-    M: BorrowedMessage<Owned = Req>,
-{
-    type Output = Resp;
-
-    async fn handle_rpc<'a>(
-        &'a self,
-        rpc: Outbound<UnaryV2<ID, Req, Resp, C>>,
-        req: &'a M,
-    ) -> Result<Resp> {
-        pin!(rpc.request_sink).send(req).await?;
-        pin!(rpc.response_stream)
-            .next()
-            .await
-            .ok_or_else(|| Error::new(ErrorInner::StreamFinished))?
-    }
-}
-
 /// RPC [`Client`] error.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -580,7 +538,7 @@ pub struct RequestSink<RPC: RpcV2> {
     codec: RPC::Codec,
 }
 
-impl<RPC: RpcV2, T> Sink<&T> for RequestSink<RPC>
+impl<RPC: RpcV2, T> Sink<T> for RequestSink<RPC>
 where
     T: BorrowedMessage<Owned = RPC::Request>,
     RPC::Codec: Serializer<T>,
@@ -594,8 +552,8 @@ where
         self.project().send_stream.poll_ready(cx).map_err(Error::io)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: &T) -> Result<(), Self::Error> {
-        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, item)
+    fn start_send(mut self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
+        let bytes = tokio_serde::Serializer::serialize(self.as_mut().project().codec, &item)
             .map_err(Error::codec)?;
 
         self.as_mut()

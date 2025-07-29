@@ -1,7 +1,9 @@
 use {
     cluster::Cluster,
     derive_where::derive_where,
-    storage_api::{operation, Error, Operation, Result, StorageApi},
+    futures::Stream,
+    std::ops::RangeInclusive,
+    storage_api::{operation, DataItem, Error, Operation, Result, StorageApi},
 };
 
 #[derive_where(Clone)]
@@ -36,5 +38,13 @@ where
             .execute_ref(operation)
             .await
             .map_err(|_| Error::new(storage_api::ErrorKind::Internal))
+    }
+
+    async fn read_data(
+        &self,
+        keyrange: RangeInclusive<u64>,
+        keyspace_version: u64,
+    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
+        self.database.read_data(keyrange, keyspace_version).await
     }
 }

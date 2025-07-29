@@ -1,8 +1,9 @@
 pub use wcn_rpc::client2::Config;
 use {
     super::*,
-    crate::{operation, Operation, Result, StorageApi},
-    futures::TryFutureExt as _,
+    crate::{operation, rpc, KeyspaceVersion, Operation, Result, StorageApi},
+    futures::{SinkExt, Stream, StreamExt as _, TryFutureExt as _},
+    std::ops::RangeInclusive,
     wcn_rpc::client2::{Client, Connection, ConnectionHandler},
 };
 
@@ -89,6 +90,38 @@ where
 
     async fn execute(&self, operation: Operation<'_>) -> Result<operation::Output> {
         self.execute_ref(&operation).await
+    }
+
+    async fn read_data(
+        &self,
+        keyrange: RangeInclusive<u64>,
+        keyspace_version: KeyspaceVersion,
+    ) -> Result<impl Stream<Item = Result<DataItem>>> {
+        let mut rpc = self.send::<PullData>()?;
+
+        rpc.request_sink
+            .send(&PullDataRequest {
+                keyrange,
+                keyspace_version,
+            })
+            .await?;
+
+        rpc.response_stream
+            .try_next_downcast::<rpc::Result<()>>()
+            .await??;
+
+        Ok(rpc
+            .response_stream
+            .map_downcast::<rpc::Result<DataItem>>()
+            .map(|res| res?.map_err(Into::into)))
+    }
+
+    async fn write_data(&self, stream: impl Stream<Item = Result<DataItem>> + Send) -> Result<()> {
+        let rpc = self.send::<PushData>()?;
+
+        let sink = SinkExt::<DataItem>::sink_map_err(rpc.request_sink, Into::into);
+
+        stream.forward(sink).await
     }
 }
 

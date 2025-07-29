@@ -1,8 +1,9 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
+    futures::{stream, Stream},
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, future::Future, str::FromStr, time::Duration},
+    std::{borrow::Cow, future::Future, ops::RangeInclusive, str::FromStr, time::Duration},
     strum::IntoStaticStr,
     time::OffsetDateTime as DateTime,
     wc::metrics::{self, enum_ordinalize::Ordinalize},
@@ -84,6 +85,32 @@ pub trait StorageApi: Send + Sync + 'static {
     ) -> impl Future<Output = Result<operation::Output>> + Send {
         async move { self.execute_ref(&operation).await }
     }
+
+    /// Reads all data stored in a WCN Database within the specified
+    /// `keyrange`.
+    ///
+    /// Intended to be implemented for WCN Databases and WCN Replicas, but
+    /// not WCN Coordinators.
+    ///
+    /// Same [`KeyspaceVersion`] validation applies as for the regular
+    /// [`Operation`]s.
+    fn read_data(
+        &self,
+        _keyrange: RangeInclusive<u64>,
+        _keyspace_version: KeyspaceVersion,
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<DataItem>> + Send>> + Send {
+        async { Err::<stream::Empty<_>, _>(Error::unauthorized()) }
+    }
+
+    /// Writes all data from the provided [`Stream`] into WCN Database.
+    ///
+    /// Should only be implemented for WCN Databases.
+    fn write_data(
+        &self,
+        _stream: impl Stream<Item = Result<DataItem>> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async { Err(Error::unauthorized()) }
+    }
 }
 
 /// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
@@ -94,6 +121,42 @@ pub trait Callback: Send {
         self,
         result: &Result<operation::Output>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// [`Stream`] item of [`StorageApi::pull_data`] and [`StorageApi::push_data`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Message)]
+pub enum DataItem {
+    /// [`DataFrame`].
+    Frame(DataFrame),
+
+    /// Indicates that data transfer has been successfully completed and
+    /// contains the number of processed [`DataFrame`]s.
+    Done(u64),
+}
+
+/// Raw chunk of data taken from a WCN Database.
+///
+/// Intended to be used for data migration purposes only.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Message)]
+pub struct DataFrame {
+    /// [`DataType`] of the key-value pair this [`DataFrame`] represents.
+    pub data_type: DataType,
+
+    /// Raw key bytes as they are being stored in the WCN Database.
+    pub key: Vec<u8>,
+
+    /// Raw value bytes as they are being stored in the WCN Database.
+    pub value: Vec<u8>,
+}
+
+/// [`DataFrame`] data type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Message)]
+pub enum DataType {
+    /// Regular key-value pair.
+    Kv,
+
+    /// Key-value pair, in which the value contains a sub-map.
+    Map,
 }
 
 /// Raw bytes value with metadata related to this value.
@@ -323,6 +386,16 @@ impl Error {
             kind,
             message: None,
         }
+    }
+
+    /// Creates a new [`Error`] with [`ErrorKind::Unauthorized`].
+    pub const fn unauthorized() -> Self {
+        Self::new(ErrorKind::Unauthorized)
+    }
+
+    /// Creates a new [`Error`] with [`ErrorKind::Internal`].
+    pub const fn internal() -> Self {
+        Self::new(ErrorKind::Internal)
     }
 
     pub fn with_message(mut self, message: impl ToString) -> Self {

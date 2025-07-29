@@ -665,6 +665,15 @@ impl<RPC: RpcV2> Stream for RequestStream<RPC> {
     }
 }
 
+impl<RPC: RpcV2> RequestStream<RPC> {
+    /// Tries to receive the next RPC request.
+    pub async fn try_next(&mut self) -> Result<RPC::Request> {
+        self.next()
+            .await
+            .ok_or_else(|| Error::new(ErrorInner::StreamFinished))?
+    }
+}
+
 /// [`Sink`] for outbound RPC requests.
 #[pin_project(project = RequestSinkProj)]
 pub struct ResponseSink<RPC: RpcV2> {

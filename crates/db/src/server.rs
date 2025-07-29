@@ -1,8 +1,12 @@
 use {
     crate::storage::{self, Storage},
-    std::sync::Arc,
+    futures::{Stream, StreamExt as _, TryStreamExt as _},
+    std::{ops::RangeInclusive, sync::Arc},
     storage_api::{
         operation::{self, Output},
+        DataFrame,
+        DataItem,
+        DataType,
         MapEntry,
         MapPage,
         Operation,
@@ -14,7 +18,8 @@ use {
     tap::Pipe as _,
     wc::metrics::{future_metrics, FutureExt as _},
     wcn_rocks::db::{
-        cf::DbColumn,
+        cf::{ColumnFamilyName, DbColumn},
+        migration::{ExportFrame, ExportItem},
         schema,
         types::{common::iterators::ScanOptions, MapStorage as _, Pair, StringStorage as _},
     },
@@ -194,6 +199,69 @@ impl StorageApi for Server {
         };
 
         res.map_err(|err| Error::new(ErrorKind::Internal).with_message(err))
+    }
+
+    async fn read_data(
+        &self,
+        keyrange: RangeInclusive<u64>,
+        _keyspace_version: u64,
+    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
+        let storage = &self.inner.storage;
+
+        storage
+            .db()
+            .export((storage.string.clone(), storage.map.clone()), keyrange)
+            .map(|item| match item {
+                ExportItem::Frame(res) => data_frame(res).map(DataItem::Frame),
+                ExportItem::Done(count) => Ok(DataItem::Done(count)),
+            })
+            .pipe(Ok)
+    }
+
+    async fn write_data(
+        &self,
+        stream: impl Stream<Item = storage_api::Result<DataItem>>,
+    ) -> storage_api::Result<()> {
+        let storage = &self.inner.storage;
+
+        storage
+            .db()
+            .import_all(stream.map_ok(export_item))
+            .await
+            .map_err(|err| storage_api::Error::internal().with_message(err))
+    }
+}
+
+fn data_frame(res: Result<ExportFrame, wcn_rocks::Error>) -> storage_api::Result<DataFrame> {
+    let frame = res.map_err(|err| storage_api::Error::internal().with_message(err))?;
+
+    let data_type = match frame.cf {
+        ColumnFamilyName::GenericString => DataType::Kv,
+        ColumnFamilyName::GenericMap => DataType::Map,
+        cf => {
+            tracing::error!(%cf, "wrong column family");
+            return Err(storage_api::Error::internal());
+        }
+    };
+
+    Ok(DataFrame {
+        data_type,
+        key: frame.key.into(),
+        value: frame.value.into(),
+    })
+}
+
+fn export_item(item: DataItem) -> ExportItem {
+    match item {
+        DataItem::Frame(frame) => ExportItem::Frame(Ok(ExportFrame {
+            cf: match frame.data_type {
+                DataType::Kv => ColumnFamilyName::GenericString,
+                DataType::Map => ColumnFamilyName::GenericMap,
+            },
+            key: frame.key.into(),
+            value: frame.value.into(),
+        })),
+        DataItem::Done(count) => ExportItem::Done(count),
     }
 }
 

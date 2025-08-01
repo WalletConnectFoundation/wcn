@@ -113,6 +113,26 @@ pub trait StorageApi: Send + Sync + 'static {
     }
 }
 
+/// [`StorageApi`] factory.
+pub trait Factory<Args>: Clone + Send + Sync + 'static {
+    /// [`StorageApi`] types produced by this factory.
+    type StorageApi: StorageApi + Clone;
+
+    /// Creates a new [`StorageApi`].
+    fn new_storage_api(&self, args: Args) -> Result<Self::StorageApi>;
+}
+
+impl<Args, S> Factory<Args> for S
+where
+    S: StorageApi + Clone,
+{
+    type StorageApi = Self;
+
+    fn new_storage_api(&self, _args: Args) -> Result<Self::StorageApi> {
+        Ok(self.clone())
+    }
+}
+
 /// [`StorageApi`] callback for returning borrowed [`operation::Output`]s.
 pub trait Callback: Send {
     type Error: Send + 'static;
@@ -391,6 +411,11 @@ impl Error {
     /// Creates a new [`Error`] with [`ErrorKind::Unauthorized`].
     pub const fn unauthorized() -> Self {
         Self::new(ErrorKind::Unauthorized)
+    }
+
+    /// Creates a new [`Error`] with [`ErrorKind::KeyspaceVersionMismatch`].
+    pub const fn keyspace_version_mismatch() -> Self {
+        Self::new(ErrorKind::KeyspaceVersionMismatch)
     }
 
     /// Creates a new [`Error`] with [`ErrorKind::Internal`].

@@ -74,7 +74,7 @@ pub trait Config: Send + Sync + 'static {
     /// data/logic into it.
     ///
     /// If no additional logic is required - just specify [`Node`].
-    type Node: Clone + Send + Sync + 'static;
+    type Node: AsRef<PeerId> + Clone + Send + Sync + 'static;
 
     /// Creates a new [`Config::Node`].
     fn new_node(&self, operator_id: node_operator::Id, node: Node) -> Self::Node;
@@ -96,7 +96,9 @@ struct Inner<C: Config> {
     config: C,
     smart_contract: C::SmartContract,
     view: ArcSwap<View<C>>,
-    watch: watch::Receiver<()>,
+
+    watch_tx: watch::Sender<()>,
+    watch_rx: watch::Receiver<()>,
 }
 
 /// Version of a WCN [`Cluster`].
@@ -187,7 +189,8 @@ where
             config: cfg,
             smart_contract: contract,
             view: ArcSwap::new(Arc::new(view)),
-            watch: rx,
+            watch_tx: tx.clone(),
+            watch_rx: rx,
         });
 
         let guard = Task {
@@ -225,12 +228,54 @@ impl<C: Config> Cluster<C> {
     pub fn updates(&self) -> impl Stream<Item = ()> + Send + 'static {
         // TODO: periodically check with the SC to prevent drift
 
-        tokio_stream::wrappers::WatchStream::new(self.inner.watch.clone())
+        tokio_stream::wrappers::WatchStream::new(self.inner.watch_rx.clone())
+    }
+
+    /// Creates a new [`Watch`] of this [`Cluster`].
+    pub fn watch(&self) -> Watch {
+        let mut rx = self.inner.watch_rx.clone();
+        rx.mark_changed();
+
+        Watch {
+            inner: rx,
+            _tx: self.inner.watch_tx.clone(),
+        }
     }
 
     /// Returns reference to the underlying [`SmartContract`].
     pub fn smart_contract(&self) -> &C::SmartContract {
         &self.inner.smart_contract
+    }
+
+    /// Indicates whether this [`Cluster`] contains a [`Node`] with the provided
+    /// ID.
+    pub fn contains_node(&self, peer_id: &PeerId) -> bool
+    where
+        C::Node: AsRef<PeerId>,
+    {
+        self.using_view(|view| view.node_operators().contains_node(peer_id))
+    }
+
+    /// Checks whether the provided [`keyspace`] version is compatible with
+    /// current state of the [`Cluster`].
+    pub fn validate_keyspace_version(&self, version: u64) -> bool {
+        self.using_view(|view| view.validate_keyspace_version(version))
+    }
+}
+
+/// Handle to track [`Cluster`] updates.
+pub struct Watch {
+    inner: watch::Receiver<()>,
+    _tx: watch::Sender<()>,
+}
+
+impl Watch {
+    /// Resolves when the next [`Cluster`] update occurs.
+    ///
+    /// First time after creation resolves immediately.
+    pub async fn cluster_updated(&mut self) {
+        // NOTE(unwrap): we are holding the `Sender`, so it won't ever error.
+        self.inner.changed().await.unwrap()
     }
 }
 

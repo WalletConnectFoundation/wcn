@@ -5,7 +5,7 @@ use {
         transport2::{BiDirectionalStream, RecvStream, SendStream, Serializer},
         BorrowedMessage,
         CodecV2,
-        ConnectionStatusCode,
+        ConnectionStatus,
         MessageV2,
         RpcV2,
         UnaryV2,
@@ -178,7 +178,7 @@ impl<API: Api> Client<API> {
         params: API::ConnectionParameters,
     ) -> Connection<API> {
         let conn = self.new_connection_inner(addr, peer_id, params, None);
-        conn.reconnect();
+        conn.reconnect(self.config.reconnect_interval);
         conn
     }
 
@@ -299,7 +299,7 @@ impl<API: Api> Connection<API> {
             _ => {}
         }
 
-        self.reconnect();
+        self.reconnect(self.inner.client.config.reconnect_interval);
 
         drop(watch_rx.changed().await)
     }
@@ -308,8 +308,8 @@ impl<API: Api> Connection<API> {
     pub fn send<RPC: RpcV2>(&self) -> Result<Outbound<RPC>> {
         self.new_outbound_rpc::<RPC>()
             .tap_err(|err| {
-                if err.requires_reconnect() {
-                    self.reconnect();
+                if let Some(interval) = err.requires_reconnect(self.config().reconnect_interval) {
+                    self.reconnect(interval);
                 }
             })
             .map_err(Into::into)
@@ -347,7 +347,7 @@ impl<API: Api> Connection<API> {
         })
     }
 
-    fn reconnect(&self) {
+    fn reconnect(&self, interval: Duration) {
         // If we can't acquire the lock then reconnection is already in progress.
         let Ok(guard) = self.inner.watch_tx.clone().try_lock_owned() else {
             return;
@@ -356,7 +356,7 @@ impl<API: Api> Connection<API> {
         let this = self.inner.clone();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(this.client.config.reconnect_interval);
+            let mut interval = tokio::time::interval(interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
@@ -388,6 +388,10 @@ impl<API: Api> Connection<API> {
             }
         });
     }
+
+    fn config(&self) -> &Config {
+        &self.inner.client.config
+    }
 }
 
 /// RPC [`Client`] error.
@@ -408,11 +412,20 @@ impl Error {
     }
 
     fn io(err: io::Error) -> Self {
-        Self::new(ErrorInner::IO(err))
+        Self::new(ErrorInner::Io(err))
     }
 
     fn wrong_response(err: impl StdError) -> Self {
         Self::new(ErrorInner::WrongResponse(format!("{err:?}")))
+    }
+
+    /// If this [`Error`] represents an outbound [`Connection`] being
+    /// rejected by the server, returns the reason.
+    pub fn connection_rejection_reason(&self) -> Option<u8> {
+        match self.0 {
+            ErrorInner::ConnectionRejected { reason } => Some(reason),
+            _ => None,
+        }
     }
 }
 
@@ -462,9 +475,6 @@ enum ErrorInner {
     #[error("Codec: {0}")]
     Codec(String),
 
-    #[error("IO: {0:?}")]
-    IO(io::Error),
-
     #[error("Stream unexpectedly finished")]
     StreamFinished,
 
@@ -480,46 +490,54 @@ enum ErrorInner {
     #[error("Unknown API")]
     UnknownApi,
 
-    #[error("Unauthorized")]
-    Unauthorized,
+    #[error("Connection rejected (reason: {reason})")]
+    ConnectionRejected { reason: u8 },
 }
 
 impl ErrorInner {
-    fn requires_reconnect(&self) -> bool {
+    /// If reconnect is required returns the reconnect interval to use.
+    fn requires_reconnect(&self, configured_interval: Duration) -> Option<Duration> {
         match self {
             ErrorInner::NotConnected
             | ErrorInner::Quic(_)
-            | ErrorInner::ExtractPeerId(_)
-            | ErrorInner::WrongPeerId(_)
             | ErrorInner::Connect(_)
             | ErrorInner::Connection(_)
             | ErrorInner::Io(_)
             | ErrorInner::Write(_)
-            | ErrorInner::Timeout
-            | ErrorInner::IO(_)
+            | ErrorInner::Timeout => Some(configured_interval),
+
+            // These errors are theoretically transient, so we want to retry them.
+            // However we don't want to retry them too aggressively.
+            // So if the configured retry interval is small we override it.
+            ErrorInner::ExtractPeerId(_)
+            | ErrorInner::WrongPeerId(_)
             | ErrorInner::UnknownConnectionStatusCode(_)
             | ErrorInner::UnsupportedProtocol
             | ErrorInner::UnknownApi
-            | ErrorInner::Unauthorized => true,
+            | ErrorInner::ConnectionRejected { .. } => {
+                Some(Duration::from_secs(1).max(configured_interval))
+            }
 
+            // These errors don't break the connection.
             ErrorInner::Codec(_)
             | ErrorInner::WrongResponse(_)
             | ErrorInner::StreamFinished
             | ErrorInner::TooManyConcurrentRpcs
-            | ErrorInner::SendBufferFull => false,
+            | ErrorInner::SendBufferFull => None,
         }
     }
 }
 
 fn check_connection_status(code: i32) -> Result<(), ErrorInner> {
-    let code = ConnectionStatusCode::try_from(code)
-        .map_err(|err| ErrorInner::UnknownConnectionStatusCode(err.input))?;
+    let code = ConnectionStatus::try_from(code)
+        .ok_or_else(|| ErrorInner::UnknownConnectionStatusCode(code))?;
 
     Err(match code {
-        ConnectionStatusCode::Ok => return Ok(()),
-        ConnectionStatusCode::UnsupportedProtocol => ErrorInner::UnsupportedProtocol,
-        ConnectionStatusCode::UnknownApi => ErrorInner::UnknownApi,
-        ConnectionStatusCode::Unauthorized => ErrorInner::Unauthorized,
+        ConnectionStatus::Ok => return Ok(()),
+        ConnectionStatus::UnsupportedProtocol => ErrorInner::UnsupportedProtocol,
+        ConnectionStatus::UnknownApi => ErrorInner::UnknownApi,
+        ConnectionStatus::Unauthorized => ErrorInner::UnknownApi,
+        ConnectionStatus::Rejected { reason } => ErrorInner::ConnectionRejected { reason },
     })
 }
 

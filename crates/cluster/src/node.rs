@@ -1,6 +1,7 @@
 //! Node within a WCN cluster.
 
 use {
+    derive_more::derive::AsRef,
     libp2p::identity::PeerId,
     serde::{Deserialize, Serialize},
     std::net::SocketAddrV4,
@@ -11,12 +12,13 @@ use {
 /// The IP address is currently being encrypted using a format-preserving
 /// encryption algorithm.
 // TODO: encrypt
-#[derive(Debug, Clone, Copy)]
+#[derive(AsRef, Debug, Clone, Copy)]
 pub struct Node {
     /// [`PeerId`] of the [`Node`].
     ///
     /// Used for authentication. Multiple nodes managed by the same
     /// node operator are allowed to have the same [`PeerId`].
+    #[as_ref]
     pub peer_id: PeerId,
 
     /// [`SocketAddrV4`] of the [`Node`].

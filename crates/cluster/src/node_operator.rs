@@ -129,6 +129,13 @@ impl<N> NodeOperator<N> {
     ///
     /// [`NodeOperator`] is guaranteed to always have at least 2 nodes.
     pub fn nodes_lb_iter(&self) -> impl Iterator<Item = &N> {
+        // TODO: this is suboptimal for > 2 nodes, because in case of a node failure the
+        // next node in the list will receive all of the load of it's neighbor.
+        //
+        // Naive solution to this is to reallocate and shuffle. A better solution may be
+        // to split the `Vec` on chunks of size <=N and then iterate over the chunks and
+        // shuffle the chunks in-place.
+
         let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
         let (left, right) = self.nodes.split_at(n % self.nodes.len());
         right.iter().chain(left.iter())

@@ -636,15 +636,6 @@ impl Error {
         Self::new(ErrorInner::Io(err))
     }
 
-    /// Creates a new API level server [`Error`].
-    ///
-    /// If this error is being returned during [`Connection`] initialization
-    /// (first [`Result`] of [`HandleConnection::handle_connection`]) then it
-    /// will be sent over the wire and client will be able to see it.
-    pub fn api(error_code: u8) -> Self {
-        Self::new(ErrorInner::Api(ApiError { code: error_code }))
-    }
-
     fn is_unknown_api(&self) -> bool {
         matches!(self.0, ErrorInner::UnknownApi(_))
     }
@@ -699,15 +690,6 @@ enum ErrorInner {
 
     #[error("Unknown RPC ID: {0}")]
     UnknownRpcId(u8),
-
-    #[error("API: {0:?}")]
-    Api(ApiError),
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("error_code: {code}")]
-struct ApiError {
-    code: u8,
 }
 
 /// [`Stream`] of inbound RPC requests.

@@ -35,8 +35,7 @@ impl<C: Config> Replica<C> {
 
     /// Establishes a new [`InboundConnection`].
     ///
-    /// Returns `None` if the peer is not authorized to use this migration
-    /// [`Replica`].
+    /// Returns `None` if the peer is not authorized to use this [`Replica`].
     pub fn new_inbound_connection(&self, peer_id: PeerId) -> Option<InboundConnection<C>> {
         if !self.cluster.contains_node(&peer_id) {
             return None;

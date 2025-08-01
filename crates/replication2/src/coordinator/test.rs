@@ -9,7 +9,9 @@ use {
         Cluster,
         Node,
         NodeOperator,
+        PeerId,
     },
+    derive_more::derive::AsRef,
     std::{collections::HashSet, sync::Arc, time::Duration},
     storage_api::{operation, testing::FakeStorage, Operation, RecordBorrowed, StorageApi},
 };
@@ -20,8 +22,12 @@ struct Config {
     storage_registy: storage_api::testing::FakeRegistry<node_operator::Id>,
 }
 
-#[derive(Clone)]
+#[derive(AsRef, Clone)]
 struct Replica {
+    #[as_ref]
+    peer_id: PeerId,
+
+    #[as_ref]
     storage: storage_api::testing::FakeStorage,
 }
 
@@ -30,11 +36,16 @@ impl cluster::Config for Config {
     type KeyspaceShards = keyspace::Shards;
     type Node = Replica;
 
-    fn new_node(&self, operator_id: node_operator::Id, _node: Node) -> Replica {
+    fn new_node(&self, operator_id: node_operator::Id, node: Node) -> Replica {
         Replica {
+            peer_id: node.peer_id,
             storage: self.storage_registy.get(operator_id),
         }
     }
+}
+
+impl super::Config for Config {
+    type OutboundReplicaConnection = FakeStorage;
 }
 
 impl StorageApi for Replica {
@@ -73,9 +84,9 @@ impl Context {
         .unwrap();
 
         Self {
-            config: cfg,
+            config: cfg.clone(),
             cluster_view: cluster.view(),
-            coordinator: Coordinator::new(cluster),
+            coordinator: Coordinator::new(cfg, cluster),
         }
     }
 

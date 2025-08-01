@@ -3,6 +3,7 @@
 use {
     crate::{self as cluster, node_operator, Node, NodeOperator},
     indexmap::IndexMap,
+    libp2p::PeerId,
     std::sync::{
         atomic::{self, AtomicUsize},
         Arc,
@@ -56,6 +57,20 @@ impl<N> NodeOperators<N> {
             slots,
             // overflows and starts from `0`
             counter: Arc::new(usize::MAX.into()),
+        })
+    }
+
+    /// Indicates whether any of the [`NodeOperators`] contains a node with the
+    /// provided ID.
+    pub fn contains_node(&self, peer_id: &PeerId) -> bool
+    where
+        N: AsRef<PeerId>,
+    {
+        // TODO: Consider optimizing by building a lookup table.
+        self.slots.iter().any(|opt| {
+            opt.as_ref()
+                .map(|op| op.nodes().iter().any(|node| node.as_ref() == peer_id))
+                .unwrap_or_default()
         })
     }
 

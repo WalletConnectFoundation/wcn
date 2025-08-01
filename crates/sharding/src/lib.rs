@@ -10,7 +10,7 @@ pub mod testing;
 
 /// Identifier of a shard.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ShardId(u16);
+pub struct ShardId(pub u16);
 
 impl ShardId {
     /// Creates a [`ShardId`] identifying the shard resposible for the given

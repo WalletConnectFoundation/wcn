@@ -115,11 +115,23 @@ impl<N> NodeOperator<N> {
         &self.nodes[n % self.nodes.len()]
     }
 
-    /// List of [`Node`]s of the [`NodeOperator`].
+    /// Returns [`Node`]s of this [`NodeOperator`].
     ///
     /// [`NodeOperator`] is guaranteed to always have at least 2 nodes.
     pub fn nodes(&self) -> &[N] {
         &self.nodes
+    }
+
+    /// Returns an [`Iterator`] of [`Node`]s of this [`NodeOperator`].
+    ///
+    /// Iterates over all [`Node`]s starting from an arbitrary position.
+    /// Intended for load balancing purposes.
+    ///
+    /// [`NodeOperator`] is guaranteed to always have at least 2 nodes.
+    pub fn nodes_lb_iter(&self) -> impl Iterator<Item = &N> {
+        let n = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+        let (left, right) = self.nodes.split_at(n % self.nodes.len());
+        right.iter().chain(left.iter())
     }
 }
 

@@ -10,7 +10,7 @@ use {
         Api,
         ApiName,
         BorrowedMessage,
-        ConnectionStatusCode,
+        ConnectionStatus,
         RpcV2,
         ServerName,
         UnaryRpc,
@@ -52,7 +52,7 @@ pub trait HandleConnection: Clone + Send + Sync + 'static {
     /// Handles the provided inbound [`Connection`].
     fn handle_connection(
         &self,
-        conn: Connection<'_, Self::Api>,
+        conn: PendingConnection<'_, Self::Api>,
     ) -> impl Future<Output = Result<()>> + Send;
 }
 
@@ -216,7 +216,7 @@ mod sealed {
         fn route_connection(
             &self,
             api_name: &ApiName,
-            conn: Connection<'_>,
+            conn: PendingConnection<'_>,
         ) -> impl Future<Output = Result<()>> + Send;
     }
 }
@@ -237,7 +237,11 @@ impl<H: HandleConnection> sealed::ConnectionRouter for ApiServer<H> {
         api_name == &H::Api::NAME
     }
 
-    async fn route_connection(&self, api_name: &ApiName, conn: Connection<'_>) -> Result<()> {
+    async fn route_connection(
+        &self,
+        api_name: &ApiName,
+        conn: PendingConnection<'_>,
+    ) -> Result<()> {
         if !self.contains_api(api_name) {
             return Err(ErrorInner::UnknownApi(*api_name).into());
         }
@@ -257,7 +261,11 @@ where
         self.head.contains_api(api_name) || self.tail.contains_api(api_name)
     }
 
-    async fn route_connection(&self, api_name: &ApiName, conn: Connection<'_>) -> Result<()> {
+    async fn route_connection(
+        &self,
+        api_name: &ApiName,
+        conn: PendingConnection<'_>,
+    ) -> Result<()> {
         if self.head.contains_api(api_name) {
             self.head.route_connection(api_name, conn).await
         } else {
@@ -325,8 +333,6 @@ fn accept_connection<R: sealed::ConnectionRouter>(
     rpc_semaphore: Arc<Semaphore>,
     router: R,
 ) {
-    use ConnectionStatusCode as Status;
-
     async move {
         let (api_name, conn, mut tx) = async move {
             let conn = connecting.await?;
@@ -343,7 +349,8 @@ fn accept_connection<R: sealed::ConnectionRouter>(
                     ServerName(buf)
                 }
                 ver => {
-                    tx.write_i32(Status::UnsupportedProtocol as i32).await?;
+                    tx.write_i32(ConnectionStatus::UnsupportedProtocol.code())
+                        .await?;
                     return Err(ErrorInner::UnsupportedProtocolVersion(ver));
                 }
             };
@@ -363,23 +370,75 @@ fn accept_connection<R: sealed::ConnectionRouter>(
         .await?
         .map_err(Error::new)?;
 
-        let conn = Connection {
+        let conn = PendingConnection {
             inner: &conn,
+            status_tx: &mut tx,
             _marker: PhantomData,
         };
 
-        let status = if router.contains_api(&api_name) {
-            ConnectionStatusCode::Ok
-        } else {
-            ConnectionStatusCode::UnknownApi
-        };
-        tx.write_i32(status as i32).await.map_err(Error::new)?;
+        let res = router.route_connection(&api_name, conn).await;
 
-        router.route_connection(&api_name, conn).await
+        if res.as_ref().err().is_some_and(Error::is_unknown_api) {
+            tx.write_i32(ConnectionStatus::UnknownApi.code())
+                .await
+                .map_err(Error::new)?
+        }
+
+        res
     }
     .map_err(|err| tracing::debug!(?err, "Inbound connection handler failed"))
     .with_metrics(future_metrics!("wcn_rpc_server_inbound_connection"))
     .pipe(tokio::spawn);
+}
+
+/// Inbound connection that is not yet accepting inbound RPCs.
+pub struct PendingConnection<'a, API = ()> {
+    inner: &'a ConnectionInner,
+    status_tx: &'a mut quinn::SendStream,
+    _marker: PhantomData<API>,
+}
+
+impl<'a> PendingConnection<'a> {
+    fn specify_api<API>(self) -> PendingConnection<'a, API> {
+        PendingConnection {
+            inner: self.inner,
+            status_tx: self.status_tx,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, API> PendingConnection<'a, API> {
+    /// Returns [`PeerId`] of the remote peer.
+    pub fn remote_peer_id(&self) -> &PeerId {
+        &self.inner.remote_peer_id
+    }
+
+    /// Accept this [`PendingConnection`] notifying the client that it's now
+    /// ready to accept [`InboundRpc`]s.
+    pub async fn accept(self) -> Result<Connection<'a, API>> {
+        self.status_tx
+            .write_i32(ConnectionStatus::Ok.code())
+            .await
+            .map_err(Error::new)?;
+
+        Ok(Connection {
+            inner: self.inner,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Rejects this [`PendingConnection`] notifying the client that it won't be
+    /// accepting [`InboundRpc`]s.
+    ///
+    /// Application layer logic is expected to define its own mapping for
+    /// `reason` codes.
+    pub async fn reject(self, reason: u8) -> Result<()> {
+        self.status_tx
+            .write_i32(ConnectionStatus::Rejected { reason }.code())
+            .await
+            .map_err(Error::new)
+    }
 }
 
 /// Inbound connection.
@@ -387,15 +446,6 @@ fn accept_connection<R: sealed::ConnectionRouter>(
 pub struct Connection<'a, API = ()> {
     inner: &'a ConnectionInner,
     _marker: PhantomData<API>,
-}
-
-impl<'a> Connection<'a> {
-    fn specify_api<API>(self) -> Connection<'a, API> {
-        Connection {
-            inner: self.inner,
-            _marker: PhantomData,
-        }
-    }
 }
 
 struct ConnectionInner {
@@ -585,6 +635,19 @@ impl Error {
     fn io(err: io::Error) -> Self {
         Self::new(ErrorInner::Io(err))
     }
+
+    /// Creates a new API level server [`Error`].
+    ///
+    /// If this error is being returned during [`Connection`] initialization
+    /// (first [`Result`] of [`HandleConnection::handle_connection`]) then it
+    /// will be sent over the wire and client will be able to see it.
+    pub fn api(error_code: u8) -> Self {
+        Self::new(ErrorInner::Api(ApiError { code: error_code }))
+    }
+
+    fn is_unknown_api(&self) -> bool {
+        matches!(self.0, ErrorInner::UnknownApi(_))
+    }
 }
 
 impl From<ErrorInner> for Error {
@@ -636,6 +699,15 @@ enum ErrorInner {
 
     #[error("Unknown RPC ID: {0}")]
     UnknownRpcId(u8),
+
+    #[error("API: {0:?}")]
+    Api(ApiError),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("error_code: {code}")]
+struct ApiError {
+    code: u8,
 }
 
 /// [`Stream`] of inbound RPC requests.

@@ -51,6 +51,9 @@ mod api_kind {
     pub struct Replica;
 
     #[derive(Clone, Copy, Debug)]
+    pub struct MigrationManager;
+
+    #[derive(Clone, Copy, Debug)]
     pub struct Database;
 }
 
@@ -65,6 +68,13 @@ pub type ReplicaApi = Api<api_kind::Replica>;
 
 impl wcn_rpc::Api for ReplicaApi {
     const NAME: ApiName = ApiName::new("Replica");
+    type RpcId = Id;
+}
+
+pub type MigrationManagerApi = Api<api_kind::MigrationManager>;
+
+impl wcn_rpc::Api for MigrationManagerApi {
+    const NAME: ApiName = ApiName::new("MigrationManager");
     type RpcId = Id;
 }
 

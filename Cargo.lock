@@ -8088,6 +8088,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_migration"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "backoff",
+ "derive-where",
+ "derive_more 1.0.0",
+ "futures",
+ "futures-concurrency",
+ "tap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wc",
+ "wcn_cluster",
+ "wcn_rpc",
+ "wcn_storage_api2",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "wcn_migration_api"
 version = "0.1.0"
 dependencies = [

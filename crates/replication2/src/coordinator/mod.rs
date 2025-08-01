@@ -4,7 +4,7 @@ use {
     futures::{future::Either, stream, FutureExt, StreamExt},
     futures_concurrency::{future::Join as _, stream::Merge},
     read_repair::ReadRepair,
-    std::{future, hash::BuildHasher, pin::pin},
+    std::{future, hash::BuildHasher, pin::pin, sync::Arc},
     storage_api::{operation, Callback, Error, ErrorKind, Operation, StorageApi},
     tap::Pipe,
     tokio::sync::oneshot,
@@ -23,15 +23,27 @@ const RF: usize = keyspace::REPLICATION_FACTOR as usize;
 /// Min number of agreeing replicas required to reach a majority [`Quorum`].
 const MAJORITY_QUORUM_THRESHOLD: usize = RF / 2 + 1;
 
+/// [`Coordinator`] config.
+pub trait Config:
+    cluster::Config<KeyspaceShards = keyspace::Shards, Node: AsRef<Self::OutboundReplicaConnection>>
+{
+    /// Type of the outbound connections to the WCN Replicas.
+    type OutboundReplicaConnection: StorageApi;
+}
+
 #[derive_where(Clone)]
-pub struct Coordinator<C: cluster::Config> {
+pub struct Coordinator<C: Config> {
+    _config: Arc<C>,
     cluster: Cluster<C>,
 }
 
-impl<C: cluster::Config> Coordinator<C> {
+impl<C: Config> Coordinator<C> {
     /// Creates a new replication [`Coordinator`].
-    pub fn new(cluster: Cluster<C>) -> Self {
-        Self { cluster }
+    pub fn new(config: C, cluster: Cluster<C>) -> Self {
+        Self {
+            _config: Arc::new(config),
+            cluster,
+        }
     }
 }
 
@@ -42,16 +54,12 @@ fn hash(key: &[u8]) -> u64 {
     HASHER.hash_one(key)
 }
 
-impl<Cfg> StorageApi for Coordinator<Cfg>
-where
-    Cfg: cluster::Config<KeyspaceShards = keyspace::Shards>,
-    Cfg::Node: StorageApi,
-{
-    async fn execute_callback<C: Callback>(
+impl<C: Config> StorageApi for Coordinator<C> {
+    async fn execute_callback<Cb: Callback>(
         &self,
         operation: Operation<'_>,
-        callback: C,
-    ) -> Result<(), C::Error> {
+        callback: Cb,
+    ) -> Result<(), Cb::Error> {
         let operation = &operation;
 
         let key = hash(operation.key());
@@ -63,7 +71,7 @@ where
         let primary_replicas = primary_quorum.replica_set;
         let primary_replica_requests = primary_quorum
             .replica_set
-            .map(|operator| execute(operator, operation).map(move |resp| (operator, resp)))
+            .map(|operator| execute::<C>(operator, operation).map(move |resp| (operator, resp)))
             .map(stream::once)
             .merge();
 
@@ -83,7 +91,7 @@ where
                 return None;
             }
 
-            Some((operator, execute(operator, operation).await))
+            Some((operator, execute::<C>(operator, operation).await))
         };
 
         let secondary_replica_requests = (&secondary_quorum).pipe(|opt| {
@@ -153,7 +161,7 @@ where
 
         let callback_fut = callback.send_result(quorum_response);
 
-        let mut read_repair = ReadRepair::new(operation, &responses, &primary_quorum);
+        let mut read_repair = ReadRepair::<C>::new(operation, &responses, &primary_quorum);
 
         let complete_replication_fut = async {
             // Drive all futures to completion
@@ -195,22 +203,24 @@ where
     }
 }
 
-async fn execute<N: StorageApi>(
-    operator: &NodeOperator<N>,
+async fn execute<C: Config>(
+    operator: &NodeOperator<C::Node>,
     operation: &Operation<'_>,
 ) -> storage_api::Result<operation::Output> {
-    // NOTE: `NodeOperator::nodes` is always => 2, this is an invariant of
-    // `NodeOperator` and we check that in the constructor.
-    let mut retries_left = operator.nodes().len();
+    let mut res = Err(Error::internal());
 
     // Retry transport errors using different nodes.
-    loop {
-        retries_left -= 1;
-        match operator.next_node().execute_ref(operation).await {
-            Err(err) if err.kind() == ErrorKind::Transport && retries_left > 0 => {}
-            res => return res,
+    for node in operator.nodes_lb_iter() {
+        let conn: &C::OutboundReplicaConnection = node.as_ref();
+        res = conn.execute_ref(operation).await;
+
+        match &res {
+            Err(err) if err.kind() == ErrorKind::Transport => {}
+            _ => return res,
         }
     }
+
+    res
 }
 
 type Response = storage_api::Result<operation::Output>;

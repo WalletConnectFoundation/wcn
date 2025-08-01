@@ -10,17 +10,18 @@ use {
     tap::{Pipe as _, TapFallible as _},
     wcn_rpc::{
         server2::{
-            Connection,
             Error,
             HandleConnection,
             HandleRpc,
             HandleUnary,
             Inbound,
+            PendingConnection,
             Responder,
             Result,
         },
         BorrowedMessage,
         MessageV2,
+        PeerId,
         Request,
         Serializer,
         UnaryRpc,
@@ -28,47 +29,56 @@ use {
 };
 
 /// Creates a new [`CoordinatorApi`] RPC server.
-pub fn coordinator(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server {
+pub fn coordinator(
+    storage_api: impl storage_api::Factory<PeerId>,
+) -> impl wcn_rpc::server2::Server {
     new::<api_kind::Coordinator>(storage_api)
 }
 
 /// Creates a new [`ReplicaApi`] RPC server.
-pub fn replica(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server {
+pub fn replica(storage_api: impl storage_api::Factory<PeerId>) -> impl wcn_rpc::server2::Server {
     new::<api_kind::Replica>(storage_api)
 }
 
 /// Creates a new [`DatabaseApi`] RPC server.
-pub fn database(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server {
+pub fn database(storage_api: impl storage_api::Factory<PeerId>) -> impl wcn_rpc::server2::Server {
     new::<api_kind::Database>(storage_api)
 }
 
-fn new<Kind>(storage_api: impl StorageApi + Clone) -> impl wcn_rpc::server2::Server
+fn new<Kind>(factory: impl storage_api::Factory<PeerId>) -> impl wcn_rpc::server2::Server
 where
     Kind: Clone + Send + Sync + 'static,
     Api<Kind>: wcn_rpc::Api<RpcId = RpcId>,
 {
     wcn_rpc::server2::new(ConnectionHandler {
-        rpc_handler: RpcHandler { storage_api },
+        factory,
         _marker: PhantomData,
     })
 }
 
 #[derive(Clone)]
-struct ConnectionHandler<S: StorageApi, Kind> {
-    rpc_handler: RpcHandler<S>,
+struct ConnectionHandler<F: storage_api::Factory<PeerId>, Kind> {
+    factory: F,
     _marker: PhantomData<Kind>,
 }
 
-impl<S, Kind> HandleConnection for ConnectionHandler<S, Kind>
+impl<F, Kind> HandleConnection for ConnectionHandler<F, Kind>
 where
-    S: StorageApi + Clone,
+    F: storage_api::Factory<PeerId>,
     Kind: Clone + Send + Sync + 'static,
     Api<Kind>: wcn_rpc::Api<RpcId = RpcId>,
 {
     type Api = super::Api<Kind>;
 
-    async fn handle_connection(&self, conn: Connection<'_, Self::Api>) -> Result<()> {
-        conn.handle(&self.rpc_handler, |rpc, handler| async move {
+    async fn handle_connection(&self, conn: PendingConnection<'_, Self::Api>) -> Result<()> {
+        let (storage_api, conn) = match self.factory.new_storage_api(*conn.remote_peer_id()) {
+            Ok(api) => (api, conn.accept().await?),
+            Err(err) => return conn.reject(rpc::Error::from(err).code).await,
+        };
+
+        let rpc_handler = RpcHandler { storage_api };
+
+        conn.handle(&rpc_handler, |rpc, handler| async move {
             match rpc.id() {
                 RpcId::Get => rpc.handle::<Get>(&handler).await,
                 RpcId::Set => rpc.handle::<Set>(&handler).await,

@@ -2,7 +2,7 @@
 #![allow(clippy::manual_async_fn)]
 
 use {
-    derive_more::{derive::TryFrom, Display},
+    derive_more::Display,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
     transport::Codec,
@@ -380,15 +380,43 @@ impl Debug for PeerAddr {
     }
 }
 
-#[derive(Clone, Copy, Debug, TryFrom)]
-#[try_from(repr)]
-#[repr(i32)]
-enum ConnectionStatusCode {
-    Ok = 0,
+#[derive(Clone, Copy, Debug)]
+enum ConnectionStatus {
+    Ok,
 
-    UnsupportedProtocol = -1,
-    UnknownApi = -2,
-    Unauthorized = -3,
+    UnsupportedProtocol,
+    UnknownApi,
+    Unauthorized,
+
+    Rejected { reason: u8 },
+}
+
+impl ConnectionStatus {
+    fn try_from(code: i32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Ok,
+
+            -1 => Self::UnsupportedProtocol,
+            -2 => Self::UnknownApi,
+            -3 => Self::Unauthorized,
+
+            -1255..=-1000 => Self::Rejected {
+                reason: (-code - 1000) as u8,
+            },
+
+            _ => return None,
+        })
+    }
+
+    fn code(self) -> i32 {
+        match self {
+            Self::Ok => 0,
+            Self::UnsupportedProtocol => -1,
+            Self::UnknownApi => -2,
+            Self::Unauthorized => -2,
+            Self::Rejected { reason } => -(reason as i32) - 1000,
+        }
+    }
 }
 
 impl<T, E> BorrowedMessage for Result<T, E>

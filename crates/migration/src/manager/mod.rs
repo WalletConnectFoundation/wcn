@@ -9,13 +9,11 @@ use {
         NodeOperator,
         PeerId,
     },
-    derive_where::derive_where,
-    futures::{stream, FutureExt as _, Stream, StreamExt, TryFutureExt},
+    futures::{stream, FutureExt as _, StreamExt, TryFutureExt},
     futures_concurrency::future::Race,
     std::{
         fmt,
         future::{self, Future},
-        ops::RangeInclusive,
         pin::pin,
         sync::Arc,
         time::Duration,
@@ -63,21 +61,6 @@ impl<C: Config> Manager<C> {
         }
     }
 
-    /// Establishes a new [`InboundConnection`].
-    ///
-    /// Returns `None` if the peer is not authorized to use this migration
-    /// [`Manager`].
-    pub fn new_inbound_connection(&self, peer_id: PeerId) -> Option<InboundConnection<C>> {
-        if !self.cluster.contains_node(&peer_id) {
-            return None;
-        }
-
-        Some(InboundConnection {
-            _peer_id: peer_id,
-            manager: self.clone(),
-        })
-    }
-
     /// Runs a task managing all data migration related activities of a node
     /// operator.
     ///
@@ -92,47 +75,6 @@ impl<C: Config> Manager<C> {
             state: State::Idle,
         }
         .run()
-    }
-}
-
-impl<C: Config> storage_api::Factory<PeerId> for Manager<C> {
-    type StorageApi = InboundConnection<C>;
-
-    fn new_storage_api(&self, peer_id: PeerId) -> storage_api::Result<Self::StorageApi> {
-        self.new_inbound_connection(peer_id)
-            .ok_or_else(storage_api::Error::unauthorized)
-    }
-}
-
-/// Inbound connection to the local migration [`Manager`] from a remote peer.
-#[derive_where(Clone)]
-pub struct InboundConnection<C: Config> {
-    _peer_id: PeerId,
-    manager: Manager<C>,
-}
-
-impl<C: Config> StorageApi for InboundConnection<C> {
-    async fn execute_ref(
-        &self,
-        _operation: &storage_api::Operation<'_>,
-    ) -> storage_api::Result<storage_api::operation::Output> {
-        // Migration manager do not handle regular storage operations.
-        Err(storage_api::Error::unauthorized())
-    }
-
-    async fn read_data(
-        &self,
-        keyrange: RangeInclusive<u64>,
-        keyspace_version: u64,
-    ) -> storage_api::Result<impl Stream<Item = storage_api::Result<storage_api::DataItem>> + Send>
-    {
-        let manager = &self.manager;
-
-        if !manager.cluster.validate_keyspace_version(keyspace_version) {
-            return Err(storage_api::Error::keyspace_version_mismatch());
-        }
-
-        manager.database.read_data(keyrange, keyspace_version).await
     }
 }
 

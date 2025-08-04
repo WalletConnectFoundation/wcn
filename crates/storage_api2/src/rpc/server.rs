@@ -71,10 +71,12 @@ where
     type Api = super::Api<Kind>;
 
     async fn handle_connection(&self, conn: PendingConnection<'_, Self::Api>) -> Result<()> {
-        let (storage_api, conn) = match self.factory.new_storage_api(*conn.remote_peer_id()) {
-            Ok(api) => (api, conn.accept().await?),
+        let storage_api = match self.factory.new_storage_api(*conn.remote_peer_id()) {
+            Ok(api) => api,
             Err(err) => return conn.reject(rpc::Error::from(err).code).await,
         };
+
+        let conn = conn.accept().await?;
 
         let rpc_handler = RpcHandler { storage_api };
 

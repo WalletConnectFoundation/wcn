@@ -19,7 +19,7 @@ use {
 #[derive(Clone, Default)]
 struct Config {
     smart_contract_registry: smart_contract::testing::FakeRegistry,
-    storage_registy: storage_api::testing::FakeRegistry<node_operator::Id>,
+    storage_registry: storage_api::testing::FakeRegistry<node_operator::Id>,
 }
 
 impl cluster::Config for Config {
@@ -30,7 +30,7 @@ impl cluster::Config for Config {
     fn new_node(&self, operator_id: node_operator::Id, node: cluster::Node) -> Node {
         Node {
             peer_id: node.peer_id,
-            storage: self.storage_registy.get(operator_id),
+            storage: self.storage_registry.get(operator_id),
         }
     }
 }
@@ -134,7 +134,7 @@ async fn transfers_data_and_writes_to_smart_contract() {
         {
             // Put wrong data into shards that shouldn't be transferred and into operators
             // that are not the primary data transfer source.
-            cfg.storage_registy
+            cfg.storage_registry
                 .get(replica.id)
                 .execute(
                     operation::Owned::Set(if Some(idx) == new_operator_replica_idx {
@@ -162,7 +162,7 @@ async fn transfers_data_and_writes_to_smart_contract() {
         expect_get_ops.push((get_op, operation::Output::Record(expected_record)))
     }
 
-    let new_operator_storage = cfg.storage_registy.get(new_operator.id);
+    let new_operator_storage = cfg.storage_registry.get(new_operator.id);
     let new_operator_cluster = Cluster::connect(
         cfg.clone(),
         &cfg.smart_contract_registry

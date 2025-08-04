@@ -19,7 +19,7 @@ use {
 #[derive(Clone, Default)]
 struct Config {
     smart_contract_registry: smart_contract::testing::FakeRegistry,
-    storage_registy: storage_api::testing::FakeRegistry<node_operator::Id>,
+    storage_registry: storage_api::testing::FakeRegistry<node_operator::Id>,
 }
 
 #[derive(AsRef, Clone)]
@@ -39,7 +39,7 @@ impl cluster::Config for Config {
     fn new_node(&self, operator_id: node_operator::Id, node: Node) -> Replica {
         Replica {
             peer_id: node.peer_id,
-            storage: self.storage_registy.get(operator_id),
+            storage: self.storage_registry.get(operator_id),
         }
     }
 }
@@ -100,7 +100,7 @@ impl Context {
     }
 
     fn storage(&self, operator_id: node_operator::Id) -> FakeStorage {
-        self.config.storage_registy.get(operator_id)
+        self.config.storage_registry.get(operator_id)
     }
 
     async fn replace_all_operators(&mut self) {

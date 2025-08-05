@@ -1,40 +1,75 @@
 use {
-    cluster::Cluster,
+    cluster::{Cluster, PeerId},
     derive_where::derive_where,
     futures::Stream,
-    std::ops::RangeInclusive,
+    std::{ops::RangeInclusive, sync::Arc},
     storage_api::{operation, DataItem, Error, Operation, Result, StorageApi},
 };
 
-#[derive_where(Clone)]
-pub struct Replica<C: cluster::Config, DB: Clone> {
-    _cluster: Cluster<C>,
-    database: DB,
+/// [`Replica`] config.
+pub trait Config: cluster::Config {
+    /// Type of the outbound connection to the WCN Database.
+    type OutboundDatabaseConnection: StorageApi + Clone;
 }
 
-impl<C, DB> Replica<C, DB>
-where
-    C: cluster::Config,
-    DB: StorageApi + Clone,
-{
+#[derive_where(Clone)]
+pub struct Replica<C: Config> {
+    _config: Arc<C>,
+    cluster: Cluster<C>,
+    database: C::OutboundDatabaseConnection,
+}
+
+impl<C: Config> Replica<C> {
     /// Creates a new [`Replica`].
-    pub fn new(cluster: Cluster<C>, database: DB) -> Self {
+    pub fn new(
+        config: Arc<C>,
+        cluster: Cluster<C>,
+        database: C::OutboundDatabaseConnection,
+    ) -> Self {
         Self {
-            _cluster: cluster,
+            _config: config,
+            cluster,
             database,
         }
     }
+
+    /// Establishes a new [`InboundConnection`].
+    ///
+    /// Returns `None` if the peer is not authorized to use this [`Replica`].
+    pub fn new_inbound_connection(&self, peer_id: PeerId) -> Option<InboundConnection<C>> {
+        if !self.cluster.contains_node(&peer_id) {
+            return None;
+        }
+
+        Some(InboundConnection {
+            _peer_id: peer_id,
+            replica: self.clone(),
+        })
+    }
 }
 
-impl<C, DB> StorageApi for Replica<C, DB>
-where
-    C: cluster::Config,
-    DB: StorageApi + Clone,
-{
+/// Inbound connection to the local [`Replica`] from a remote peer.
+#[derive_where(Clone)]
+pub struct InboundConnection<C: Config> {
+    _peer_id: PeerId,
+    replica: Replica<C>,
+}
+
+impl<C: Config> storage_api::Factory<PeerId> for Replica<C> {
+    type StorageApi = InboundConnection<C>;
+
+    fn new_storage_api(&self, peer_id: PeerId) -> storage_api::Result<Self::StorageApi> {
+        self.new_inbound_connection(peer_id)
+            .ok_or_else(storage_api::Error::unauthorized)
+    }
+}
+
+impl<C: Config> StorageApi for InboundConnection<C> {
     async fn execute_ref(&self, operation: &Operation<'_>) -> Result<operation::Output> {
         // TODO: once we add signatures to write operations check them here
 
-        self.database
+        self.replica
+            .database
             .execute_ref(operation)
             .await
             .map_err(|_| Error::new(storage_api::ErrorKind::Internal))
@@ -45,6 +80,9 @@ where
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
     ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
-        self.database.read_data(keyrange, keyspace_version).await
+        self.replica
+            .database
+            .read_data(keyrange, keyspace_version)
+            .await
     }
 }

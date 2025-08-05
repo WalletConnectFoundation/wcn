@@ -1,9 +1,9 @@
 use {
-    super::{Quorum, Response, ResponseBuffer, RF},
+    super::{Config, Quorum, Response, ResponseBuffer, RF},
     cluster::NodeOperator,
     futures_concurrency::future::Join as _,
     std::array,
-    storage_api::{operation, MapEntryBorrowed, Operation, StorageApi},
+    storage_api::{operation, MapEntryBorrowed, Operation},
     tap::TapFallible,
     wc::metrics,
 };
@@ -12,21 +12,21 @@ use {
 const MAX_TARGETS: usize = RF - super::MAJORITY_QUORUM_THRESHOLD;
 
 // TODO: figure out how to repair `hscan`
-pub(super) struct ReadRepair<'a, N> {
+pub(super) struct ReadRepair<'a, C: Config> {
     operation: &'a Operation<'a>,
 
     /// Successful response to be used as the baseline for repair.
     output: &'a operation::Output,
 
     /// Replicas to be repaired.
-    targets: [Option<&'a NodeOperator<N>>; MAX_TARGETS],
+    targets: [Option<&'a NodeOperator<C::Node>>; MAX_TARGETS],
 }
 
-impl<'a, N> ReadRepair<'a, N> {
+impl<'a, C: Config> ReadRepair<'a, C> {
     pub(super) fn new(
         operation: &'a Operation<'a>,
         responses: &'a ResponseBuffer,
-        quorum: &'a Quorum<'a, N>,
+        quorum: &'a Quorum<'a, C::Node>,
     ) -> Option<Self> {
         if !is_repairable(operation) {
             return None;
@@ -61,7 +61,11 @@ impl<'a, N> ReadRepair<'a, N> {
         })
     }
 
-    pub(super) fn check_response(&mut self, operator: &'a NodeOperator<N>, response: Response) {
+    pub(super) fn check_response(
+        &mut self,
+        operator: &'a NodeOperator<C::Node>,
+        response: Response,
+    ) {
         match response {
             Ok(output) if &output != self.output => {}
 
@@ -75,10 +79,7 @@ impl<'a, N> ReadRepair<'a, N> {
             .find_map(|slot| slot.is_none().then(|| *slot = Some(operator)));
     }
 
-    pub(super) async fn run(self)
-    where
-        N: StorageApi,
-    {
+    pub(super) async fn run(self) {
         let Some(operation) = &repair_operation(self.operation, self.output) else {
             return;
         };
@@ -86,7 +87,7 @@ impl<'a, N> ReadRepair<'a, N> {
         self.targets
             .map(|opt| async move {
                 if let Some(operator) = opt {
-                    let _ = super::execute(operator, operation).await.tap_err(|_| {
+                    let _ = super::execute::<C>(operator, operation).await.tap_err(|_| {
                         metrics::counter!("wcn_replication_coordinator_read_repair_errors")
                             .increment(1);
                     });

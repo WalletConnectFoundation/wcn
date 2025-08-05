@@ -6,8 +6,7 @@ use {
     derivative::Derivative,
     derive_more::TryFrom,
     serde::{Deserialize, Serialize},
-    sharding::ShardId,
-    std::collections::HashSet,
+    std::{collections::HashSet, ops::RangeInclusive},
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
@@ -38,10 +37,18 @@ pub struct Keyspace<S = ()> {
 #[derive(Clone)]
 pub struct Shards(sharding::Keyspace<node_operator::Idx, { REPLICATION_FACTOR as usize }>);
 
+/// ID of a [`Shard`].
+pub type ShardId = u16;
+
+/// Returns the keyrange the provided shard is resposible for.
+pub fn keyrange(id: ShardId) -> RangeInclusive<u64> {
+    sharding::ShardId(id).key_range()
+}
+
 /// A single [`Shard`] within a [`Keyspace`].
 #[derive(Clone, Copy, Debug)]
-pub struct Shard {
-    replica_set: [node_operator::Idx; REPLICATION_FACTOR as usize],
+pub struct Shard<T = node_operator::Idx> {
+    pub(crate) replica_set: [T; REPLICATION_FACTOR as usize],
 }
 
 /// Strategy of distributing [`Shard`]s to [`node_operator`]s.
@@ -95,8 +102,19 @@ impl Keyspace<Shards> {
     /// Returns the [`Shard`] that contains the specified key.
     pub fn shard(&self, key: u64) -> Shard {
         Shard {
-            replica_set: *self.shards.0.shard_replicas(ShardId::from_key(key)),
+            replica_set: *self
+                .shards
+                .0
+                .shard_replicas(sharding::ShardId::from_key(key)),
         }
+    }
+
+    /// Returns all [`Shard`]s of this [`Keyspace`].
+    pub fn shards(&self) -> impl Iterator<Item = (ShardId, Shard)> + '_ {
+        self.shards
+            .0
+            .shards()
+            .map(|(id, &replica_set)| (id.0, Shard { replica_set }))
     }
 }
 
@@ -144,10 +162,10 @@ impl<S> Keyspace<S> {
     }
 }
 
-impl Shard {
+impl<T: Copy> Shard<T> {
     /// Returns [`ReplicaSet`] assigned to this [`Shard`].
-    pub fn replica_set(&self) -> ReplicaSet {
-        self.replica_set
+    pub fn replica_set(&self) -> &ReplicaSet<T> {
+        &self.replica_set
     }
 }
 

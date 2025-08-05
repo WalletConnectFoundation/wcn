@@ -48,7 +48,7 @@ impl<C: Config<KeyspaceShards = keyspace::Shards>> View<C> {
         // therefore guaranteeing that every `NodeOperatorIdx` is valid.
         self.keyspace
             .shard(key)
-            .replica_set()
+            .replica_set
             .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
     }
 
@@ -61,9 +61,53 @@ impl<C: Config<KeyspaceShards = keyspace::Shards>> View<C> {
         self.migration()?
             .keyspace()
             .shard(key)
-            .replica_set()
+            .replica_set
             .map(|idx| self.node_operators.get_by_idx(idx).unwrap())
             .pipe(Some)
+    }
+
+    /// Returns [`keyspace::Shard`]s of the primary [`Keyspace`].
+    pub fn primary_keyspace_shards(
+        &self,
+    ) -> impl Iterator<Item = (keyspace::ShardId, keyspace::Shard<&NodeOperator<C::Node>>)> {
+        // NOTE(unwrap): we use `Keyspace::validate` every time it enters the system,
+        // therefore guaranteeing that every `NodeOperatorIdx` is valid.
+        self.keyspace.shards().map(|(id, shard)| {
+            (id, keyspace::Shard {
+                replica_set: shard
+                    .replica_set
+                    .map(|idx| self.node_operators.get_by_idx(idx).unwrap()),
+            })
+        })
+    }
+
+    /// Returns [`keyspace::Shard`]s of the secondary [`Keyspace`].
+    pub fn secondary_keyspace_shards(
+        &self,
+    ) -> Option<impl Iterator<Item = (keyspace::ShardId, keyspace::Shard<&NodeOperator<C::Node>>)>>
+    {
+        // NOTE(unwrap): we use `Keyspace::validate` every time it enters the system,
+        // therefore guaranteeing that every `NodeOperatorIdx` is valid.
+        self.migration()?
+            .keyspace()
+            .shards()
+            .map(|(id, shard)| {
+                (id, keyspace::Shard {
+                    replica_set: shard
+                        .replica_set
+                        .map(|idx| self.node_operators.get_by_idx(idx).unwrap()),
+                })
+            })
+            .pipe(Some)
+    }
+
+    /// Indicates whether the specified [`node_operator`] is still in process of
+    /// pulling data as part of a data [`migration`] process.
+    pub fn is_pulling(&self, operator_id: &node_operator::Id) -> bool {
+        self.node_operators()
+            .get_idx(operator_id)
+            .and_then(|operator_idx| self.migration().map(|mig| mig.is_pulling(operator_idx)))
+            .unwrap_or_default()
     }
 }
 
@@ -96,6 +140,16 @@ impl<C: Config> View<C> {
     /// Returns [`NodeOperators`] of the WCN cluster.
     pub fn node_operators(&self) -> &NodeOperators<C::Node> {
         &self.node_operators
+    }
+
+    /// Checks whether the provided [`keyspace`] version is compatible with
+    /// current state of the cluster.
+    pub fn validate_keyspace_version(&self, version: u64) -> bool {
+        if let Some(migration) = self.migration() {
+            migration.keyspace().version() == version
+        } else {
+            self.keyspace().version() == version
+        }
     }
 
     pub(super) fn require_no_migration(&self) -> Result<(), migration::InProgressError> {

@@ -10,11 +10,11 @@ use {
         Request,
         Response,
         server2::{
-            Connection,
             HandleConnection,
             HandleRequest,
             HandleRpc,
             Inbound,
+            PendingConnection,
             Result,
             Server,
         },
@@ -38,7 +38,9 @@ where
 {
     type Api = super::ClusterApi;
 
-    async fn handle_connection(&self, conn: Connection<'_, Self::Api>) -> Result<()> {
+    async fn handle_connection(&self, conn: PendingConnection<'_, Self::Api>) -> Result<()> {
+        let conn = conn.accept().await?;
+
         conn.handle(&self.rpc_handler, |rpc, handler| async move {
             let handler = handler.as_ref();
 

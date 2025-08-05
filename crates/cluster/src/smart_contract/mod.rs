@@ -96,7 +96,8 @@ pub trait Write {
     /// [`migration::Completed`] event MUST be emitted.
     /// Otherwise the data pull MUST be marked as completed for the
     /// [`node::Operator`] and [`migration::DataPullCompleted`] MUST be emitted.
-    fn complete_migration(&self, id: migration::Id) -> impl Future<Output = WriteResult<()>>;
+    fn complete_migration(&self, id: migration::Id)
+        -> impl Future<Output = WriteResult<()>> + Send;
 
     /// Aborts the ongoing data [`migration`] process restoring the WCN cluster
     /// to the original state it had before the migration had started.

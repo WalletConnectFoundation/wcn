@@ -8,7 +8,7 @@ use {
     futures::Stream,
     itertools::Itertools,
     serde::{Deserialize, Serialize},
-    smart_contract::{Read, Write as _},
+    smart_contract::{Read, Write},
     std::{collections::HashSet, sync::Arc},
     tokio::sync::watch,
 };
@@ -287,7 +287,8 @@ where
     /// calls [`SmartContract::start_migration`].
     pub async fn start_migration(&self, plan: migration::Plan) -> Result<(), StartMigrationError> {
         let new_keyspace = self.using_view(move |view| {
-            view.ownership().require_owner(&self.inner.smart_contract)?;
+            view.ownership()
+                .require_owner(self.smart_contract_signer()?)?;
             view.require_no_migration()?;
             view.require_no_maintenance()?;
 
@@ -343,7 +344,7 @@ where
         self.using_view(|view| {
             let operator_idx = view
                 .node_operators()
-                .require_idx(self.inner.smart_contract.signer().address())?;
+                .require_idx(self.smart_contract_signer()?.address())?;
 
             view.require_migration()?
                 .require_id(id)?
@@ -360,7 +361,8 @@ where
     /// Calls [`SmartContract::abort_migration`].
     pub async fn abort_migration(&self, id: migration::Id) -> Result<(), AbortMigrationError> {
         self.using_view(|view| {
-            view.ownership().require_owner(&self.inner.smart_contract)?;
+            view.ownership()
+                .require_owner(self.smart_contract_signer()?)?;
             view.require_migration()?.require_id(id)?;
 
             Ok::<_, AbortMigrationError>(())
@@ -375,7 +377,7 @@ where
 
     /// Calls [`SmartContract::start_maintenance`].
     pub async fn start_maintenance(&self) -> Result<(), StartMaintenanceError> {
-        let signer = self.inner.smart_contract.signer().address();
+        let signer = self.smart_contract_signer()?.address();
 
         self.using_view(move |view| {
             if !(view.node_operators().contains(signer) || view.ownership().is_owner(signer)) {
@@ -395,7 +397,7 @@ where
 
     /// Calls [`SmartContract::finish_maintenance`].
     pub async fn finish_maintenance(&self) -> Result<(), FinishMaintenanceError> {
-        let signer = self.inner.smart_contract.signer().address();
+        let signer = self.smart_contract_signer()?.address();
 
         self.using_view(|view| {
             let maintenance = view.require_maintenance()?;
@@ -418,7 +420,8 @@ where
         operator: NodeOperator,
     ) -> Result<(), AddNodeOperatorError> {
         let operator = self.using_view(|view| {
-            view.ownership().require_owner(&self.inner.smart_contract)?;
+            view.ownership()
+                .require_owner(self.smart_contract_signer()?)?;
             view.node_operators().require_not_exists(&operator.id)?;
             view.node_operators().require_not_full()?;
 
@@ -441,7 +444,7 @@ where
         &self,
         operator: NodeOperator,
     ) -> Result<(), UpdateNodeOperatorError> {
-        let signer = self.inner.smart_contract.signer().address();
+        let signer = self.smart_contract_signer()?.address();
 
         let operator = self.using_view(|view| {
             if !(signer == &operator.id || view.ownership().is_owner(signer)) {
@@ -492,7 +495,12 @@ where
 
     /// Calls [`SmartContract::update_settings`].
     pub async fn update_settings(&self, new_settings: Settings) -> Result<(), UpdateSettingsError> {
-        self.using_view(move |view| view.ownership().require_owner(&self.inner.smart_contract))?;
+        self.using_view(move |view| {
+            view.ownership()
+                .require_owner(self.smart_contract_signer()?)?;
+
+            Ok::<_, UpdateSettingsError>(())
+        })?;
 
         self.inner
             .smart_contract
@@ -500,6 +508,13 @@ where
             .await?;
 
         Ok(())
+    }
+
+    fn smart_contract_signer(&self) -> Result<&smart_contract::Signer, NoSmartContractSingerError> {
+        self.inner
+            .smart_contract
+            .signer()
+            .ok_or(NoSmartContractSingerError)
     }
 }
 
@@ -565,6 +580,9 @@ pub enum StartMigrationError {
     #[error(transparent)]
     SameKeyspace(#[from] keyspace::SameKeyspaceError),
 
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
+
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
 }
@@ -584,6 +602,9 @@ pub enum CompleteMigrationError {
     #[error(transparent)]
     OperatorNotPulling(#[from] migration::OperatorNotPullingError),
 
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
+
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
 }
@@ -599,6 +620,9 @@ pub enum AbortMigrationError {
 
     #[error(transparent)]
     WrongMigrationId(#[from] migration::WrongIdError),
+
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
@@ -616,6 +640,9 @@ pub enum StartMaintenanceError {
     #[error(transparent)]
     MaintenanceInProgress(#[from] maintenance::InProgressError),
 
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
+
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
 }
@@ -628,6 +655,9 @@ pub enum FinishMaintenanceError {
 
     #[error("Signer should either be a node operator that started the maintenance or the owner")]
     Unauthorized,
+
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
@@ -651,6 +681,9 @@ pub enum AddNodeOperatorError {
     #[error(transparent)]
     DataTooLarge(#[from] node_operator::DataTooLargeError),
 
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
+
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
 }
@@ -669,6 +702,9 @@ pub enum UpdateNodeOperatorError {
 
     #[error(transparent)]
     DataTooLarge(#[from] node_operator::DataTooLargeError),
+
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
@@ -695,6 +731,9 @@ pub enum RemoveNodeOperatorError {
 pub enum UpdateSettingsError {
     #[error(transparent)]
     NotOwner(#[from] ownership::NotOwnerError),
+
+    #[error(transparent)]
+    NoSigner(#[from] NoSmartContractSingerError),
 
     #[error("Smart-contract: {0}")]
     SmartContract(#[from] smart_contract::WriteError),
@@ -726,3 +765,7 @@ impl Event {
         }
     }
 }
+
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("SmartContract call Signer is not configured")]
+pub struct NoSmartContractSingerError;

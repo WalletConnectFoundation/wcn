@@ -7937,6 +7937,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
+ "wcn_cluster",
  "xxhash-rust",
 ]
 
@@ -7948,6 +7949,7 @@ dependencies = [
  "derive-where",
  "derive_more 1.0.0",
  "futures",
+ "futures-concurrency",
  "serde",
  "tap",
  "thiserror 1.0.64",
@@ -8194,6 +8196,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_node2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.20.0",
+ "derive-where",
+ "derive_more 1.0.0",
+ "envy",
+ "futures",
+ "futures-concurrency",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "serde",
+ "sysinfo",
+ "tap",
+ "thiserror 1.0.64",
+ "tokio",
+ "tracing",
+ "vergen",
+ "vergen-pretty",
+ "wc",
+ "wcn_cluster",
+ "wcn_logging",
+ "wcn_migration",
+ "wcn_replication2",
+ "wcn_rpc",
+ "wcn_storage_api2",
+]
+
+[[package]]
 name = "wcn_pulse_api"
 version = "0.1.0"
 dependencies = [
@@ -8300,6 +8333,7 @@ dependencies = [
  "derive-where",
  "derive_more 1.0.0",
  "futures",
+ "futures-concurrency",
  "governor",
  "indexmap 2.9.0",
  "libp2p",

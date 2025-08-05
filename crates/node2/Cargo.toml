@@ -1,0 +1,51 @@
+[package]
+name = "wcn_node2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+name = "wcn_node"
+
+[[bin]]
+path = "src/main.rs"
+name = "wcn_node"
+
+[lints]
+workspace = true
+
+[dependencies]
+wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+logging = { package = "wcn_logging", path = "../logging" }
+metrics = { workspace = true }
+futures = { workspace = true }
+futures-concurrency = { workspace = true }
+tap = { workspace = true }
+thiserror = { workspace = true }
+wcn_rpc = { workspace = true, features = ["client", "server"] }
+wcn_storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["rpc_client", "rpc_server"] }
+wcn_cluster = { path = "../cluster" }
+wcn_replication = { package = "wcn_replication2", path = "../replication2" }
+wcn_migration = { path = "../migration" }
+serde = "1"
+anyhow = "1"
+envy = "0.4"
+base64 = "0.20"
+derive_more = { workspace = true, features = ["as_ref", "into"] }
+derive-where = { workspace = true }
+metrics-exporter-prometheus = "0.15"
+tracing = "0.1"
+vergen-pretty = { version = "0.3", features = ["trace"] }
+tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
+sysinfo = "0.29"
+axum = "0.8"
+
+[build-dependencies]
+vergen = { version = "8", default-features = false, features = [
+    "build",
+    "cargo",
+    "git",
+    "gitoxide",
+    "rustc",
+] }

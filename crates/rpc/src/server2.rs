@@ -17,6 +17,7 @@ use {
     },
     derive_where::derive_where,
     futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStream as _},
+    futures_concurrency::future::Race as _,
     libp2p::{identity, PeerId},
     pin_project::pin_project,
     quinn::crypto::rustls::{self, QuicServerConfig},
@@ -37,7 +38,7 @@ use {
     },
     tokio_serde::Deserializer as _,
     wc::{
-        future::{FutureExt as _, StaticFutureExt},
+        future::{CancellationToken, FutureExt as _, StaticFutureExt},
         metrics::{self, future_metrics, Enum as _, EnumLabel, FutureExt as _, StringLabel},
     },
 };
@@ -119,6 +120,7 @@ where
 }
 
 /// RPC server config.
+#[derive(Clone, Debug)]
 pub struct Config {
     /// Name of the server. For metrics purposes only.
     pub name: &'static str,
@@ -146,6 +148,9 @@ pub struct Config {
 
     /// [`transport::Priority`] of the server.
     pub priority: transport::Priority,
+
+    /// [`ShutdownSignal`] to use.
+    pub shutdown_signal: ShutdownSignal,
 }
 
 /// Creates a new RPC [`Api`] server.
@@ -196,13 +201,54 @@ where
 
         tracing::info!(port = cfg.port, server_name = cfg.name, "Serving");
 
-        Ok(accept_connections(
-            cfg,
-            endpoint,
+        let accept_conn_fut = accept_connections(
+            cfg.clone(),
+            endpoint.clone(),
             connection_filter,
             rpc_semaphore,
             self,
-        ))
+        );
+
+        Ok(async move {
+            (accept_conn_fut, cfg.shutdown_signal.wait()).race().await;
+
+            tracing::info!(port = cfg.port, server_name = cfg.name, "Shutting down");
+
+            endpoint.wait_idle().await;
+
+            tracing::info!(port = cfg.port, server_name = cfg.name, "Shut down");
+        })
+    }
+}
+
+/// Handle for managing graceful shutdown of [`Server`]s.
+#[derive(Clone, Debug, Default)]
+pub struct ShutdownSignal {
+    token: CancellationToken,
+}
+
+impl ShutdownSignal {
+    /// Creates a new [`ShutdownSignal`].
+    pub fn new() -> Self {
+        Self {
+            token: CancellationToken::new(),
+        }
+    }
+
+    /// Emits this [`ShutdownSignal`].
+    pub fn emit(&self) {
+        self.token.cancel();
+    }
+
+    /// Waits for this [`ShutdownSignal`] to be [emitted][`Self::emit`].
+    pub async fn wait(&self) {
+        self.token.cancelled().await
+    }
+
+    /// Indicates whether this [`ShutdownSignal`] has been
+    /// [emitted][`Self::emit`].
+    pub fn is_emitted(&self) -> bool {
+        self.token.is_cancelled()
     }
 }
 
@@ -293,6 +339,7 @@ async fn accept_connections<R: sealed::ConnectionRouter>(
                     permit,
                     rpc_semaphore.clone(),
                     router.clone(),
+                    config.shutdown_signal.clone(),
                 ),
 
                 Err(err) => tracing::warn!(?err, "failed to accept incoming connection"),
@@ -332,6 +379,7 @@ fn accept_connection<R: sealed::ConnectionRouter>(
     permit: filter::Permit,
     rpc_semaphore: Arc<Semaphore>,
     router: R,
+    shutdown_signal: ShutdownSignal,
 ) {
     async move {
         let (api_name, conn, mut tx) = async move {
@@ -361,6 +409,7 @@ fn accept_connection<R: sealed::ConnectionRouter>(
                 remote_peer_id,
                 rpc_semaphore,
                 quic: conn,
+                shutdown_signal: shutdown_signal.clone(),
             };
 
             Ok((api_name, conn, tx))
@@ -457,6 +506,8 @@ struct ConnectionInner {
     rpc_semaphore: Arc<Semaphore>,
 
     quic: quinn::Connection,
+
+    shutdown_signal: ShutdownSignal,
 }
 
 impl<'a, API: Api> From<&'a mut ConnectionInner> for Connection<'a, API> {
@@ -473,6 +524,7 @@ pub struct InboundRpc<API: Api> {
     id: API::RpcId,
     stream: BiDirectionalStream,
     permit: OwnedSemaphorePermit,
+    shutdown_signal: ShutdownSignal,
 }
 
 impl<API: Api> InboundRpc<API> {
@@ -504,6 +556,7 @@ impl<API: Api> InboundRpc<API> {
                 codec: Default::default(),
             },
             _permit: self.permit,
+            shutdown_signal: self.shutdown_signal,
         }
     }
 }
@@ -519,6 +572,9 @@ impl<API: super::Api> InboundRpc<API> {
 pub struct Inbound<RPC: RpcV2> {
     pub request_stream: RequestStream<RPC>,
     pub response_sink: ResponseSink<RPC>,
+
+    /// [`ShutdownSignal`] of the RPC [`Server`].
+    pub shutdown_signal: ShutdownSignal,
 
     _permit: OwnedSemaphorePermit,
 }
@@ -559,12 +615,19 @@ impl<API: Api> Connection<'_, API> {
         H: Clone + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
-        loop {
-            let rpc = self.accept_rpc().await?;
-            let handler = rpc_handler.clone();
+        let fut = async {
+            loop {
+                let rpc = self.accept_rpc().await?;
+                let handler = rpc_handler.clone();
 
-            async move { handler_fn(rpc, handler).await }.spawn();
-        }
+                async move { handler_fn(rpc, handler).await }.spawn();
+            }
+        };
+
+        // Stop accepting new inbound RPCs when server is shutting down.
+        (fut, self.inner.shutdown_signal.wait().map(Ok))
+            .race()
+            .await
     }
 
     /// Handles the next [`InboundRpc`] using the provided `handler_fn`.
@@ -603,6 +666,7 @@ impl<API: Api> Connection<'_, API> {
                 id,
                 stream: BiDirectionalStream::new(tx, rx),
                 permit,
+                shutdown_signal: self.inner.shutdown_signal.clone(),
             });
         }
     }

@@ -212,8 +212,8 @@ impl Inner {
 }
 
 impl super::Write for FakeSmartContract {
-    fn signer(&self) -> &Signer {
-        &self.signer
+    fn signer(&self) -> Option<&Signer> {
+        Some(&self.signer)
     }
 
     async fn start_migration(&self, new_keyspace: Keyspace) -> WriteResult<()> {

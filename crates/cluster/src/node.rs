@@ -4,7 +4,7 @@ use {
     derive_more::derive::AsRef,
     libp2p::identity::PeerId,
     serde::{Deserialize, Serialize},
-    std::net::SocketAddrV4,
+    std::net::{Ipv4Addr, SocketAddrV4},
 };
 
 /// Node within a WCN cluster.
@@ -21,14 +21,27 @@ pub struct Node {
     #[as_ref]
     pub peer_id: PeerId,
 
-    /// [`SocketAddrV4`] of the [`Node`].
-    pub addr: SocketAddrV4,
+    /// [`Ipv4Addr`] of the [`Node`].
+    pub ipv4_addr: Ipv4Addr,
+
+    /// Primary RPC server port.
+    pub primary_port: u16,
+
+    /// Secondary RPC server port.
+    pub secondary_port: u16,
 }
 
 impl Node {
-    /// Creates a new [`Node`].
-    pub fn new(addr: SocketAddrV4, peer_id: PeerId) -> Self {
-        Self { peer_id, addr }
+    /// Builds [`SocketAddrV4`] using [`Node::ipv4_addr`] and
+    /// [`Node::primary_port`].
+    pub fn primary_socket_addr(&self) -> SocketAddrV4 {
+        SocketAddrV4::new(self.ipv4_addr, self.primary_port)
+    }
+
+    /// Builds [`SocketAddrV4`] using [`Node::ipv4_addr`] and
+    /// [`Node::secondary_port`].
+    pub fn secondary_socket_addr(&self) -> SocketAddrV4 {
+        SocketAddrV4::new(self.ipv4_addr, self.secondary_port)
     }
 }
 
@@ -37,21 +50,19 @@ impl Node {
 // be created instead.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub(crate) struct V0 {
-    /// [`PeerId`] of this [`Node`].
-    ///
-    /// Used for authentication. Multiple nodes managed by the same
-    /// [`NodeOperator`] are allowed to have the same [`PeerId`].
     pub peer_id: PeerId,
-
-    /// [`SocketAddrV4`] of this [`Node`].
-    pub addr: SocketAddrV4,
+    pub ipv4_addr: Ipv4Addr,
+    pub primary_port: u16,
+    pub secondary_port: u16,
 }
 
 impl From<Node> for V0 {
     fn from(node: Node) -> Self {
         Self {
             peer_id: node.peer_id,
-            addr: node.addr,
+            ipv4_addr: node.ipv4_addr,
+            primary_port: node.primary_port,
+            secondary_port: node.secondary_port,
         }
     }
 }
@@ -60,7 +71,9 @@ impl From<V0> for Node {
     fn from(node: V0) -> Self {
         Self {
             peer_id: node.peer_id,
-            addr: node.addr,
+            ipv4_addr: node.ipv4_addr,
+            primary_port: node.primary_port,
+            secondary_port: node.secondary_port,
         }
     }
 }

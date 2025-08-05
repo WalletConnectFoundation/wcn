@@ -17,6 +17,7 @@ use {
     wcn_rpc::{
         client2::{Api, Client, Connection},
         identity::Keypair,
+        server2::ShutdownSignal,
         transport,
     },
     wcn_storage_api2::{
@@ -89,6 +90,7 @@ async fn test_rpc_api<API, S>(
         max_connection_rate_per_ip: 1,
         max_concurrent_rpcs: 10,
         priority: transport::Priority::High,
+        shutdown_signal: ShutdownSignal::new(),
     };
 
     let server_handle = server(storage.clone()).serve(server_cfg).unwrap().spawn();

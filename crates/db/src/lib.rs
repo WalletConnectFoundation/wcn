@@ -2,8 +2,7 @@ use {
     crate::{config::Config, storage::Storage},
     metrics_exporter_prometheus::BuildError as PrometheusBuildError,
     std::{future::Future, io},
-    tokio::sync::oneshot,
-    wcn_rpc::server2::Server,
+    wcn_rpc::server2::{Server, ShutdownSignal},
 };
 
 pub mod metrics;
@@ -28,7 +27,7 @@ pub enum Error {
 }
 
 pub fn run(
-    shutdown_rx: oneshot::Receiver<()>,
+    shutdown_signal: ShutdownSignal,
     cfg: Config,
 ) -> Result<impl Future<Output = ()> + Send, Error> {
     let id = cfg.id();
@@ -53,20 +52,12 @@ pub fn run(
             max_connection_rate_per_ip: cfg.max_connection_rate_per_ip,
             max_concurrent_rpcs: cfg.max_concurrent_rpcs,
             priority: wcn_rpc::transport::Priority::High,
+            shutdown_signal,
         },
     )?;
 
     Ok(async move {
         let _metrics_guard = metrics_guard;
-
-        tokio::select! {
-            _ = shutdown_rx => {
-                tracing::info!("shutdown signal received");
-            }
-
-            _ = db_srv_fut => {
-                tracing::info!("database server stopped");
-            }
-        }
+        db_srv_fut.await
     })
 }

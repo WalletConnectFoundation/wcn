@@ -52,6 +52,7 @@ arc-swap = "1.7"
 indexmap = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
+wcn_cluster = { path = ".", features = ["testing"] }
 alloy = { version = "1.0", default-features = false, features = [
     "provider-anvil-node",
     "node-bindings",

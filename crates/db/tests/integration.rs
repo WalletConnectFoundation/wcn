@@ -18,16 +18,14 @@ use {
         StorageApi,
     },
     tap::Pipe,
-    tokio::sync::oneshot,
     wc::future::FutureExt,
-    wcn_rpc::{client2::Connection, identity::Keypair},
+    wcn_rpc::{client2::Connection, identity::Keypair, server2::ShutdownSignal},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e() {
     let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
-
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_signal = ShutdownSignal::new();
 
     let db_port = find_available_port();
     let keypair = Keypair::generate_ed25519();
@@ -49,7 +47,9 @@ async fn test_e2e() {
         rocksdb: Default::default(),
     };
 
-    let db_handle = wcn_db::run(shutdown_rx, cfg).unwrap().pipe(tokio::spawn);
+    let db_handle = wcn_db::run(shutdown_signal.clone(), cfg)
+        .unwrap()
+        .pipe(tokio::spawn);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -75,7 +75,7 @@ async fn test_e2e() {
     test_map_ops(&client_conn).await;
     test_namespaces(&client_conn).await;
 
-    drop(shutdown_tx);
+    shutdown_signal.emit();
 
     db_handle
         .with_timeout(Duration::from_secs(30))

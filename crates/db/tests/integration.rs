@@ -36,8 +36,9 @@ async fn test_e2e() {
 
     let cfg = wcn_db::config::Config {
         keypair,
-        db_port,
-        metrics_port: 0,
+        primary_rpc_server_port: db_port,
+        secondary_rpc_server_port: find_available_port(),
+        metrics_server_port: 0,
         connection_timeout: Duration::from_secs(10),
         max_connections: 50,
         max_concurrent_rpcs: 500,

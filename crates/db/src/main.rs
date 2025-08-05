@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
             let mut shutdown_fut = pin::pin!(tokio::signal::ctrl_c().fuse());
 
             let metrics_srv_fut =
-                wcn_db::metrics::serve(([0, 0, 0, 0], cfg.metrics_port).into(), prometheus);
+                wcn_db::metrics::serve(([0, 0, 0, 0], cfg.metrics_server_port).into(), prometheus);
             let mut metrics_srv_fut = pin::pin!(tokio::spawn(metrics_srv_fut).fuse());
 
             let db_srv_fut = wcn_db::run(shutdown_signal.clone(), cfg)?;

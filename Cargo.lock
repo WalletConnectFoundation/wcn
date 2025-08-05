@@ -8024,6 +8024,7 @@ dependencies = [
  "derive_more 1.0.0",
  "envy",
  "futures",
+ "futures-concurrency",
  "metrics",
  "metrics-exporter-prometheus",
  "proc-mounts",

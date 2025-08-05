@@ -19,8 +19,9 @@ pub enum Error {
 pub struct Config {
     pub keypair: Keypair,
 
-    pub db_port: u16,
-    pub metrics_port: u16,
+    pub primary_rpc_server_port: u16,
+    pub secondary_rpc_server_port: u16,
+    pub metrics_server_port: u16,
 
     pub connection_timeout: Duration,
     pub max_connections: u32,
@@ -47,8 +48,9 @@ impl Config {
 
         Ok(Self {
             keypair: raw.keypair,
-            db_port: raw.db_port.unwrap_or(3010),
-            metrics_port: raw.metrics_port.unwrap_or(3011),
+            primary_rpc_server_port: raw.primary_rpc_server_port,
+            secondary_rpc_server_port: raw.secondary_rpc_server_port,
+            metrics_server_port: raw.metrics_server_port,
             connection_timeout: raw
                 .db_connection_timeout_ms
                 .unwrap_or(10_000)
@@ -69,8 +71,9 @@ struct RawConfig {
     #[serde(rename = "secret_key")]
     keypair: Keypair,
 
-    db_port: Option<u16>,
-    metrics_port: Option<u16>,
+    primary_rpc_server_port: u16,
+    secondary_rpc_server_port: u16,
+    metrics_server_port: u16,
 
     db_connection_timeout_ms: Option<u64>,
     db_max_connections: Option<u32>,

@@ -44,6 +44,7 @@ derive_more = { workspace = true, features = [
 derivative = "2"
 envy = "0.4"
 futures = "0.3"
+futures-concurrency = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tokio-stream = "0.1"

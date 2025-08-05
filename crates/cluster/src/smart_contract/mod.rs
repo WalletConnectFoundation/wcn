@@ -207,6 +207,7 @@ pub struct Address(evm::Address);
 
 /// Account address on the chain hosting WCN cluster [`SmartContract`].
 #[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[from(forward)]
 pub struct AccountAddress(evm::Address);
 
 /// Transaction signer.

@@ -7931,6 +7931,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sharding",
+ "smallvec",
  "tap",
  "thiserror 1.0.64",
  "tokio",

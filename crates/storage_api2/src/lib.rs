@@ -3,7 +3,7 @@
 use {
     futures::{stream, Stream},
     serde::{Deserialize, Serialize},
-    std::{borrow::Cow, future::Future, ops::RangeInclusive, str::FromStr, time::Duration},
+    std::{array, borrow::Cow, future::Future, ops::RangeInclusive, str::FromStr, time::Duration},
     strum::IntoStaticStr,
     time::OffsetDateTime as DateTime,
     wc::metrics::{self, enum_ordinalize::Ordinalize},
@@ -29,8 +29,21 @@ pub mod testing;
 pub struct Namespace([u8; 21]);
 
 impl Namespace {
+    /// Returns the inner byte representation of this [`Namespace`].
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Returns ID of the node operator this [`Namespace`] belongs to.
+    pub fn node_operator_id(&self) -> [u8; 20] {
+        array::from_fn(|idx| self.0[idx])
+    }
+
+    /// Returns index of this [`Namespace`] within the scope of the node
+    /// operator.
+    pub fn idx(&self) -> u8 {
+        // NOTE(unwrap): it's a non-empty array
+        *self.0.last().unwrap()
     }
 }
 

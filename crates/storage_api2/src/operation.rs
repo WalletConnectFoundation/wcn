@@ -41,6 +41,14 @@ impl Operation<'_> {
         }
     }
 
+    /// Returns [`Namespace`] of this [`Operation`].
+    pub fn namespace(&self) -> &Namespace {
+        match self {
+            Self::Owned(owned) => owned.namespace(),
+            Self::Borrowed(borrowed) => borrowed.namespace(),
+        }
+    }
+
     /// Returns the key of a KV pair of this [`Operation`].
     pub fn key(&self) -> &[u8] {
         match self {
@@ -76,6 +84,24 @@ pub enum Owned {
 }
 
 impl Owned {
+    /// Returns [`Namespace`] of this [`Owned`] [`Operation`].
+    pub fn namespace(&self) -> &Namespace {
+        match self {
+            Self::Get(op) => &op.namespace,
+            Self::Set(op) => &op.namespace,
+            Self::Del(op) => &op.namespace,
+            Self::GetExp(op) => &op.namespace,
+            Self::SetExp(op) => &op.namespace,
+            Self::HGet(op) => &op.namespace,
+            Self::HSet(op) => &op.namespace,
+            Self::HDel(op) => &op.namespace,
+            Self::HGetExp(op) => &op.namespace,
+            Self::HSetExp(op) => &op.namespace,
+            Self::HCard(op) => &op.namespace,
+            Self::HScan(op) => &op.namespace,
+        }
+    }
+
     /// Returns the key of a KV pair of this [`Owned`] [`Operation`].
     pub fn key(&self) -> &[u8] {
         match self {
@@ -131,6 +157,24 @@ pub enum Borrowed<'a> {
 }
 
 impl Borrowed<'_> {
+    /// Returns [`Namespace`] of this [`Borrowed`] [`Operation`].
+    pub fn namespace(&self) -> &Namespace {
+        match self {
+            Self::Get(op) => &op.namespace,
+            Self::Set(op) => &op.namespace,
+            Self::Del(op) => &op.namespace,
+            Self::GetExp(op) => &op.namespace,
+            Self::SetExp(op) => &op.namespace,
+            Self::HGet(op) => &op.namespace,
+            Self::HSet(op) => &op.namespace,
+            Self::HDel(op) => &op.namespace,
+            Self::HGetExp(op) => &op.namespace,
+            Self::HSetExp(op) => &op.namespace,
+            Self::HCard(op) => &op.namespace,
+            Self::HScan(op) => &op.namespace,
+        }
+    }
+
     /// Converts this [`Borrowed`] [`Operation`] into [`Owned`] by
     /// re-allocating.
     pub fn into_owned(self) -> Owned {

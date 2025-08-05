@@ -1,5 +1,5 @@
 use {
-    cluster::{keyspace, Cluster, NodeOperator},
+    cluster::{keyspace, Cluster, NodeOperator, PeerId},
     derive_where::derive_where,
     futures::{future::Either, stream, FutureExt, StreamExt},
     futures_concurrency::{future::Join as _, stream::Merge},
@@ -45,6 +45,41 @@ impl<C: Config> Coordinator<C> {
             cluster,
         }
     }
+
+    /// Establishes a new [`InboundConnection`].
+    ///
+    /// Returns `None` if the peer is not authorized to use this
+    /// [`Coordinator`].
+    pub fn new_inbound_connection(&self, peer_id: PeerId) -> Option<InboundConnection<C>> {
+        let is_authorized = self
+            .cluster
+            .using_view(|view| view.node_operators().contains_client(&peer_id));
+
+        if !is_authorized {
+            return None;
+        }
+
+        Some(InboundConnection {
+            peer_id,
+            coordinator: self.clone(),
+        })
+    }
+}
+
+/// Inbound connection to the local [`Coordinator`] from a remote peer.
+#[derive_where(Clone)]
+pub struct InboundConnection<C: Config> {
+    peer_id: PeerId,
+    coordinator: Coordinator<C>,
+}
+
+impl<C: Config> storage_api::Factory<PeerId> for Coordinator<C> {
+    type StorageApi = InboundConnection<C>;
+
+    fn new_storage_api(&self, peer_id: PeerId) -> storage_api::Result<Self::StorageApi> {
+        self.new_inbound_connection(peer_id)
+            .ok_or_else(storage_api::Error::unauthorized)
+    }
 }
 
 // WARNING: WCN DB MUST use the same hashing algorithm, and it MUST hash the
@@ -54,18 +89,31 @@ fn hash(key: &[u8]) -> u64 {
     HASHER.hash_one(key)
 }
 
-impl<C: Config> StorageApi for Coordinator<C> {
+impl<C: Config> StorageApi for InboundConnection<C> {
     async fn execute_callback<Cb: Callback>(
         &self,
         operation: Operation<'_>,
         callback: Cb,
     ) -> Result<(), Cb::Error> {
         let operation = &operation;
+        let namespace = operation.namespace();
+
+        let is_authorized = self.coordinator.cluster.using_view(|view| {
+            view.node_operators().is_authorized_client(
+                &self.peer_id,
+                &namespace.node_operator_id().into(),
+                namespace.idx(),
+            )
+        });
+
+        if !is_authorized {
+            return callback.send_result(&Err(Error::unauthorized())).await;
+        }
 
         let key = hash(operation.key());
         let is_write = operation.is_write();
 
-        let cluster_view = &self.cluster.view();
+        let cluster_view = &self.coordinator.cluster.view();
 
         let mut primary_quorum = Quorum::new(cluster_view.primary_replica_set(key));
         let primary_replicas = primary_quorum.replica_set;

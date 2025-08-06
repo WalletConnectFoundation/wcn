@@ -168,7 +168,7 @@ impl Database {
 
         self.thread_handle = Some(thread::spawn(move || {
             let _guard = tracing::info_span!("database").entered();
-            tokio::runtime::Builder::new_current_thread()
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .unwrap()
@@ -194,7 +194,7 @@ impl Node {
 
         self.thread_handle = Some(thread::spawn(move || {
             let _guard = tracing::info_span!("node", %operator_id).entered();
-            tokio::runtime::Builder::new_current_thread()
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .unwrap()

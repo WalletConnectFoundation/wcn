@@ -1,10 +1,11 @@
 use {
     derive_more::AsRef,
     derive_where::derive_where,
-    futures::future::OptionFuture,
+    futures::{future::OptionFuture, FutureExt as _},
     futures_concurrency::future::Join as _,
     metrics_exporter_prometheus::PrometheusHandle,
     std::{
+        future::Future,
         io,
         net::{Ipv4Addr, SocketAddrV4},
         sync::Arc,
@@ -141,7 +142,7 @@ impl Config {
     fn database_primary_socket_addr(&self) -> SocketAddrV4 {
         SocketAddrV4::new(
             self.database_rpc_server_address,
-            self.primary_rpc_server_port,
+            self.database_primary_rpc_server_port,
         )
     }
 
@@ -219,11 +220,11 @@ impl wcn_migration::manager::Config for AppConfig {
     }
 }
 
-pub async fn run(config: Config) -> Result<()> {
+pub async fn run(config: Config) -> Result<impl Future<Output = ()>> {
     run_(config).await.map_err(Into::into)
 }
 
-async fn run_(config: Config) -> Result<(), ErrorInner> {
+async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
     let app_cfg = config.clone().try_into_app()?;
 
     let rpc_provider = if let Some(signer) = config.smart_contract_signer.clone() {
@@ -290,7 +291,7 @@ async fn run_(config: Config) -> Result<(), ErrorInner> {
     let metrics_server_fut = metrics::serve(&config).await?;
 
     let migration_manager_fut = migration_manager
-        .map(|manager| manager.run(async { config.shutdown_signal.wait().await }))
+        .map(|manager| manager.run(async move { config.shutdown_signal.wait().await }))
         .pipe(OptionFuture::from);
 
     (
@@ -300,9 +301,8 @@ async fn run_(config: Config) -> Result<(), ErrorInner> {
         migration_manager_fut,
     )
         .join()
-        .await;
-
-    Ok(())
+        .map(drop)
+        .pipe(Ok)
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -41,6 +41,22 @@ tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
 sysinfo = "0.29"
 axum = "0.8"
 
+[dev-dependencies]
+wcn_cluster = { path = "../cluster", features = ["testing"] }
+wcn_db = { path = "../db" }
+alloy = { version = "1.0", default-features = false, features = [
+    "provider-anvil-node",
+    "node-bindings",
+] }
+tokio = { version = "1", default-features = false }
+
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "parking_lot",
+    "json",
+] }
+const-hex = "1.14"
+
 [build-dependencies]
 vergen = { version = "8", default-features = false, features = [
     "build",

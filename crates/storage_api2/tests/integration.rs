@@ -430,7 +430,6 @@ fn find_available_port() -> u16 {
         }
     }
 }
-
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
 struct TestStorage {

@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
         .block_on(async move {
             enum FutureOutput {
                 CtrlC,
-                Node(wcn_node::Result<()>),
+                Node,
             }
 
             let shutdown_signal = cfg.shutdown_signal.clone();
@@ -71,12 +71,12 @@ fn main() -> anyhow::Result<()> {
             let mut shutdown_fut =
                 pin!(tokio::signal::ctrl_c().map(|_| FutureOutput::CtrlC).fuse());
 
-            let mut node_fut = pin!(wcn_node::run(cfg).map(FutureOutput::Node));
+            let mut node_fut = pin!(wcn_node::run(cfg).await?.map(|_| FutureOutput::Node));
 
             loop {
                 match (&mut shutdown_fut, &mut node_fut).race().await {
                     FutureOutput::CtrlC => shutdown_signal.emit(),
-                    FutureOutput::Node(res) => return res.context("wcn_node::run"),
+                    FutureOutput::Node => return Ok(()),
                 }
             }
         })

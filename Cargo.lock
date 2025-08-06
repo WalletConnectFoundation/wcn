@@ -8201,9 +8201,11 @@ dependencies = [
 name = "wcn_node2"
 version = "0.1.0"
 dependencies = [
+ "alloy",
  "anyhow",
  "axum",
  "base64 0.20.0",
+ "const-hex",
  "derive-where",
  "derive_more 1.0.0",
  "envy",
@@ -8217,10 +8219,12 @@ dependencies = [
  "thiserror 1.0.64",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "vergen",
  "vergen-pretty",
  "wc",
  "wcn_cluster",
+ "wcn_db",
  "wcn_logging",
  "wcn_migration",
  "wcn_replication2",

@@ -1,5 +1,6 @@
+pub use config::Config;
 use {
-    crate::{config::Config, storage::Storage},
+    crate::storage::Storage,
     futures_concurrency::future::Join as _,
     metrics_exporter_prometheus::BuildError as PrometheusBuildError,
     std::{future::Future, io},

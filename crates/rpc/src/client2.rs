@@ -25,12 +25,13 @@ use {
         time::Duration,
     },
     strum::{EnumDiscriminants, IntoDiscriminant, IntoStaticStr},
-    tap::TapFallible as _,
+    tap::{Pipe as _, TapFallible as _},
     tokio::{
         io::{AsyncReadExt as _, AsyncWriteExt},
         sync::{watch, Mutex},
     },
     tokio_serde::Deserializer,
+    tracing::Instrument,
     wc::{
         future::FutureExt as _,
         metrics::{self, enum_ordinalize::Ordinalize, EnumLabel, StringLabel},
@@ -355,7 +356,7 @@ impl<API: Api> Connection<API> {
 
         let this = self.inner.clone();
 
-        tokio::spawn(async move {
+        async move {
             let mut interval = tokio::time::interval(interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -386,7 +387,9 @@ impl<API: Api> Connection<API> {
                     }
                 }
             }
-        });
+        }
+        .instrument(tracing::debug_span!("reconnect", api = %API::NAME))
+        .pipe(tokio::spawn);
     }
 
     fn config(&self) -> &Config {

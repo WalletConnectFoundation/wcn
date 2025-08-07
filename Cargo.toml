@@ -63,6 +63,7 @@ strum = "0.27"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
 thiserror = "1"
 anyhow = "1"
+const-hex = "1.14"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

@@ -30,6 +30,7 @@ struct EnvConfig {
 
     smart_contract_address: String,
     smart_contract_signer_private_key: Option<String>,
+    smart_contract_encryption_key: String,
     rpc_provider_url: String,
 }
 
@@ -99,6 +100,11 @@ fn new_config(env: &EnvConfig, prometheus_handle: PrometheusHandle) -> anyhow::R
         .transpose()
         .context("SMART_CONTRACT_SIGNER_PRIVATE_KEY")?;
 
+    let smart_contract_encryption_key = env
+        .smart_contract_encryption_key
+        .parse()
+        .context("SMART_CONTRACT_ENCRYPTION_KEY")?;
+
     let rpc_provider_url = env.rpc_provider_url.parse().context("RPC_PROVIDER_URL")?;
 
     let database_rpc_server_address = env
@@ -115,6 +121,7 @@ fn new_config(env: &EnvConfig, prometheus_handle: PrometheusHandle) -> anyhow::R
         metrics_server_port: env.metrics_server_port,
         smart_contract_address,
         smart_contract_signer,
+        smart_contract_encryption_key,
         rpc_provider_url,
         database_rpc_server_address,
         database_peer_id,

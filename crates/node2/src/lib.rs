@@ -17,6 +17,7 @@ use {
         node_operator,
         smart_contract::{self, evm},
         Cluster,
+        EncryptionKey,
     },
     wcn_rpc::{
         client2::{self as rpc_client},
@@ -73,6 +74,12 @@ pub struct Config {
     /// this set.
     pub smart_contract_signer: Option<smart_contract::Signer>,
 
+    /// [`EncryptioKey`] used to encrypt/decrypt on-chain data.
+    ///
+    /// It's a symmetric key that's meant to be shared across all node
+    /// operators.
+    pub smart_contract_encryption_key: EncryptionKey,
+
     /// URL of the Optimism RPC provider.
     pub rpc_provider_url: smart_contract::RpcUrl,
 
@@ -122,6 +129,8 @@ impl Config {
         let database_low_prio_client = storage_api_client::database(database_low_prio_client_cfg)?;
 
         Ok(AppConfig {
+            encryption_key: self.smart_contract_encryption_key,
+
             replica_client: storage_api_client::replica(replica_client_cfg)?,
             replica_low_prio_client: storage_api_client::replica(replica_low_prio_client_cfg)?,
 
@@ -154,8 +163,11 @@ impl Config {
     }
 }
 
-#[derive(Clone)]
+#[derive(AsRef, Clone)]
 struct AppConfig {
+    #[as_ref]
+    encryption_key: EncryptionKey,
+
     replica_client: storage_api_client::Replica,
     replica_low_prio_client: storage_api_client::Replica,
 

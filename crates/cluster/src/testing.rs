@@ -1,5 +1,5 @@
 use {
-    crate::{node_operator, smart_contract, Node, NodeOperator},
+    crate::{node_operator, smart_contract, EncryptionKey, Node, NodeOperator},
     libp2p::{identity::Keypair, PeerId},
     std::net::Ipv4Addr,
 };
@@ -35,4 +35,8 @@ pub fn node_operator(id: u8) -> NodeOperator {
         vec![],
     )
     .unwrap()
+}
+
+pub fn encryption_key() -> EncryptionKey {
+    EncryptionKey(std::array::from_fn(|idx| idx as u8))
 }

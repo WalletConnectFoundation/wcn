@@ -8,6 +8,7 @@ use {
         smart_contract,
         Client,
         Config,
+        EncryptionKey,
         Node,
         Version as ClusterVersion,
     },
@@ -17,6 +18,7 @@ use {
         atomic::{self, AtomicUsize},
         Arc,
     },
+    tap::Tap,
 };
 
 /// Minimum number of [`Node`]s each [`NodeOperator`] is required to have.
@@ -188,14 +190,21 @@ pub struct Removed {
 }
 
 impl NodeOperator {
-    pub(super) fn serialize(self) -> Result<Serialized, DataSerializationError> {
+    pub(super) fn serialize(
+        self,
+        key: &EncryptionKey,
+    ) -> Result<Serialized, DataSerializationError> {
         use DataSerializationError as Error;
 
-        // TODO: encrypt
+        let nodes = self
+            .nodes
+            .into_iter()
+            .map(|node| node.tap_mut(|n| n.encrypt(key)).into())
+            .collect();
 
         let data = DataV0 {
             name: self.name,
-            nodes: self.nodes.into_iter().map(Into::into).collect(),
+            nodes,
             clients: self.clients.into_iter().map(Into::into).collect(),
         };
 
@@ -237,7 +246,8 @@ impl Serialized {
         let nodes = data
             .nodes
             .into_iter()
-            .map(|node| cfg.new_node(self.id, node.into()))
+            .map(|v0| Node::from(v0).tap_mut(|node| node.decrypt(cfg.as_ref())))
+            .map(|node| cfg.new_node(self.id, node))
             .collect();
 
         let clients = data.clients.into_iter().map(Into::into).collect();

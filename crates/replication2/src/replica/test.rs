@@ -5,9 +5,11 @@ use {
         smart_contract::{self, testing::FakeSmartContract},
         testing::node_peer_id,
         Cluster,
+        EncryptionKey,
         Node,
         PeerId,
     },
+    derive_more::derive::AsRef,
     futures::TryStreamExt as _,
     std::{sync::Arc, time::Duration},
     storage_api::{
@@ -22,8 +24,10 @@ use {
     },
 };
 
-#[derive(Clone, Default)]
+#[derive(AsRef, Clone)]
 struct Config {
+    #[as_ref]
+    encryption_key: EncryptionKey,
     smart_contract_registry: smart_contract::testing::FakeRegistry,
     database: FakeStorage,
 }
@@ -51,7 +55,11 @@ struct Context {
 
 impl Context {
     async fn new() -> Self {
-        let cfg = Config::default();
+        let cfg = Config {
+            encryption_key: cluster::testing::encryption_key(),
+            smart_contract_registry: Default::default(),
+            database: Default::default(),
+        };
 
         let cluster = Cluster::deploy(
             cfg.clone(),

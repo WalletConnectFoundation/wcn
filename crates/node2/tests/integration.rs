@@ -3,6 +3,7 @@ use {
         node_bindings::{Anvil, AnvilInstance},
         signers::local::PrivateKeySigner,
     },
+    derive_more::derive::AsRef,
     futures::{stream, StreamExt},
     metrics_exporter_prometheus::PrometheusRecorder,
     std::{
@@ -21,14 +22,18 @@ use {
             Signer,
         },
         Cluster,
+        EncryptionKey,
         Settings,
     },
     wcn_rpc::{identity::Keypair, server2::ShutdownSignal, transport},
     wcn_storage_api::{operation, Record, RecordVersion, StorageApi as _},
 };
 
-#[derive(Clone, Copy)]
-struct DeploymentConfig;
+#[derive(AsRef, Clone, Copy)]
+struct DeploymentConfig {
+    #[as_ref]
+    encryption_key: EncryptionKey,
+}
 
 impl wcn_cluster::Config for DeploymentConfig {
     type SmartContract = evm::SmartContract;
@@ -69,7 +74,11 @@ async fn test_suite() {
     let mut operators: Vec<_> = (1..=5).map(|n| NodeOperator::new(n, &anvil)).collect();
     let operators_on_chain = operators.iter().map(NodeOperator::on_chain).collect();
 
-    let cluster = Cluster::deploy(DeploymentConfig, &provider, settings, operators_on_chain)
+    let cfg = DeploymentConfig {
+        encryption_key: wcn_cluster::testing::encryption_key(),
+    };
+
+    let cluster = Cluster::deploy(cfg, &provider, settings, operators_on_chain)
         .await
         .unwrap();
 
@@ -284,6 +293,7 @@ impl NodeOperator {
                     database_secondary_rpc_server_port: db_config.secondary_rpc_server_port,
                     smart_contract_address,
                     smart_contract_signer: (n == 0).then_some(smart_contract_signer.clone()),
+                    smart_contract_encryption_key: wcn_cluster::testing::encryption_key(),
                     rpc_provider_url: rpc_provider_url.to_string().parse().unwrap(),
                     shutdown_signal: shutdown_signal.clone(),
                     prometheus_handle: prometheus_recorder.handle(),

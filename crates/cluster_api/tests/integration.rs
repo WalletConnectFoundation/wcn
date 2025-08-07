@@ -3,11 +3,13 @@ use {
         node_bindings::{Anvil, AnvilInstance},
         signers::local::PrivateKeySigner,
     },
+    derive_more::derive::AsRef,
     futures::{StreamExt as _, TryStreamExt},
     std::{net::Ipv4Addr, time::Duration},
     tap::{Pipe, Tap as _},
     wcn_cluster::{
         Cluster,
+        EncryptionKey,
         Event,
         Node,
         NodeOperator,
@@ -38,7 +40,9 @@ async fn test_rpc() {
         .try_spawn()
         .unwrap();
 
-    let cfg = Config;
+    let cfg = Config {
+        encryption_key: wcn_cluster::testing::encryption_key(),
+    };
 
     let settings = wcn_cluster::Settings {
         max_node_operator_data_bytes: 4096,
@@ -138,8 +142,11 @@ fn find_available_port() -> u16 {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Config;
+#[derive(AsRef, Clone, Copy)]
+struct Config {
+    #[as_ref]
+    encryption_key: EncryptionKey,
+}
 
 impl wcn_cluster::Config for Config {
     type SmartContract = evm::SmartContract;

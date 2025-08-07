@@ -8,6 +8,7 @@ use {
         smart_contract::{self, testing::FakeSmartContract},
         Client,
         Cluster,
+        EncryptionKey,
         Node,
         NodeOperator,
         PeerId,
@@ -27,8 +28,10 @@ use {
     tap::Tap,
 };
 
-#[derive(Clone, Default)]
+#[derive(AsRef, Clone)]
 struct Config {
+    #[as_ref]
+    encryption_key: EncryptionKey,
     smart_contract_registry: smart_contract::testing::FakeRegistry,
     storage_registry: storage_api::testing::FakeRegistry<node_operator::Id>,
 }
@@ -79,7 +82,11 @@ struct Context {
 
 impl Context {
     async fn new() -> Self {
-        let cfg = Config::default();
+        let cfg = Config {
+            encryption_key: cluster::testing::encryption_key(),
+            smart_contract_registry: Default::default(),
+            storage_registry: Default::default(),
+        };
 
         let client_peer_id = PeerId::random();
 

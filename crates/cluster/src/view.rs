@@ -142,14 +142,19 @@ impl<C: Config> View<C> {
         &self.node_operators
     }
 
+    /// Returns the highest [`keyspace`] version of this [`Cluster`].
+    pub fn keyspace_version(&self) -> u64 {
+        if let Some(migration) = self.migration() {
+            migration.keyspace().version()
+        } else {
+            self.keyspace().version()
+        }
+    }
+
     /// Checks whether the provided [`keyspace`] version is compatible with
     /// current state of the cluster.
     pub fn validate_keyspace_version(&self, version: u64) -> bool {
-        if let Some(migration) = self.migration() {
-            migration.keyspace().version() == version
-        } else {
-            self.keyspace().version() == version
-        }
+        self.keyspace_version() == version
     }
 
     pub(super) fn require_no_migration(&self) -> Result<(), migration::InProgressError> {

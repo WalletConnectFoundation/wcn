@@ -62,15 +62,6 @@ impl super::Config for Config {
     type OutboundReplicaConnection = FakeStorage;
 }
 
-impl StorageApi for Replica {
-    async fn execute_ref(
-        &self,
-        operation: &storage_api::Operation<'_>,
-    ) -> storage_api::Result<operation::Output> {
-        self.storage.execute_ref(operation).await
-    }
-}
-
 struct Context {
     config: Config,
 
@@ -259,6 +250,24 @@ async fn operations_not_authorized_for_unauthorized_namespaces() {
 
     let res = ctx.conn.execute(operation::Borrowed::Get(get).into()).await;
     assert_eq!(res, Err(Error::unauthorized()));
+}
+
+#[tokio::test]
+async fn sets_operation_keyspace_version() {
+    let ctx = Context::new().await;
+
+    ctx.config
+        .storage_registry
+        .for_each(|_, storage| storage.expect_keyspace_version(0));
+
+    let get = operation::GetBorrowed {
+        namespace: namespace(0, 0),
+        key: b"test",
+        keyspace_version: None,
+    };
+
+    let res = ctx.conn.execute(operation::Borrowed::Get(get).into()).await;
+    assert_eq!(res, Ok(operation::Output::Record(None)));
 }
 
 #[tokio::test]

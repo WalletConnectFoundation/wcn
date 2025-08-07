@@ -92,19 +92,20 @@ fn hash(key: &[u8]) -> u64 {
 impl<C: Config> StorageApi for InboundConnection<C> {
     async fn execute_callback<Cb: Callback>(
         &self,
-        operation: Operation<'_>,
+        mut operation: Operation<'_>,
         callback: Cb,
     ) -> Result<(), Cb::Error> {
+        let cluster_view = &self.coordinator.cluster.view();
+
+        operation.set_keyspace_version(cluster_view.keyspace_version());
         let operation = &operation;
         let namespace = operation.namespace();
 
-        let is_authorized = self.coordinator.cluster.using_view(|view| {
-            view.node_operators().is_authorized_client(
-                &self.peer_id,
-                &namespace.node_operator_id().into(),
-                namespace.idx(),
-            )
-        });
+        let is_authorized = cluster_view.node_operators().is_authorized_client(
+            &self.peer_id,
+            &namespace.node_operator_id().into(),
+            namespace.idx(),
+        );
 
         if !is_authorized {
             return callback.send_result(&Err(Error::unauthorized())).await;
@@ -112,8 +113,6 @@ impl<C: Config> StorageApi for InboundConnection<C> {
 
         let key = hash(operation.key());
         let is_write = operation.is_write();
-
-        let cluster_view = &self.coordinator.cluster.view();
 
         let mut primary_quorum = Quorum::new(cluster_view.primary_replica_set(key));
         let primary_replicas = primary_quorum.replica_set;

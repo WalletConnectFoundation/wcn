@@ -6,6 +6,9 @@ use {
     storage_api::{operation, DataItem, Error, Operation, Result, StorageApi},
 };
 
+#[cfg(test)]
+pub mod test;
+
 /// [`Replica`] config.
 pub trait Config: cluster::Config {
     /// Type of the outbound connection to the WCN Database.
@@ -68,6 +71,13 @@ impl<C: Config> StorageApi for InboundConnection<C> {
     async fn execute_ref(&self, operation: &Operation<'_>) -> Result<operation::Output> {
         // TODO: once we add signatures to write operations check them here
 
+        self.replica.cluster.using_view(|view| {
+            operation
+                .keyspace_version()
+                .filter(|&version| view.validate_keyspace_version(version))
+                .ok_or_else(Error::keyspace_version_mismatch)
+        })?;
+
         self.replica
             .database
             .execute_ref(operation)
@@ -80,6 +90,14 @@ impl<C: Config> StorageApi for InboundConnection<C> {
         keyrange: RangeInclusive<u64>,
         keyspace_version: u64,
     ) -> storage_api::Result<impl Stream<Item = storage_api::Result<DataItem>> + Send> {
+        self.replica.cluster.using_view(|view| {
+            if !view.validate_keyspace_version(keyspace_version) {
+                return Err(Error::keyspace_version_mismatch());
+            }
+
+            Ok(())
+        })?;
+
         self.replica
             .database
             .read_data(keyrange, keyspace_version)

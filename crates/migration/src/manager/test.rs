@@ -181,7 +181,7 @@ async fn transfers_data_and_writes_to_smart_contract() {
         cfg.clone(),
         &cfg.smart_contract_registry
             .connector(smart_contract::testing::signer(10)),
-        cluster.smart_contract().address(),
+        cluster.smart_contract().address().unwrap(),
     )
     .await
     .unwrap();

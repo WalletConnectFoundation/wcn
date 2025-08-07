@@ -26,7 +26,7 @@ use crate::{
 };
 
 /// Snapshot of [`cluster::View`] fetched from a [`SmartContract`] state.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterView {
     pub node_operators: Vec<Option<node_operator::Serialized>>,
 
@@ -190,7 +190,7 @@ pub trait Write {
 /// Read [`SmartContract`] calls.
 pub trait Read: Sized + Send + Sync + 'static {
     /// Returns [`Address`] of this [`SmartContract`].
-    fn address(&self) -> Address;
+    fn address(&self) -> ReadResult<Address>;
 
     /// Returns the current [`cluster::View`].
     fn cluster_view(&self) -> impl Future<Output = ReadResult<ClusterView>> + Send;
@@ -198,7 +198,9 @@ pub trait Read: Sized + Send + Sync + 'static {
     /// Subscribes to WCN Cluster [`Events`].
     fn events(
         &self,
-    ) -> impl Future<Output = ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static>> + Send;
+    ) -> impl Future<
+        Output = ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static + use<Self>>,
+    > + Send;
 }
 
 /// [`SmartContract`] address.

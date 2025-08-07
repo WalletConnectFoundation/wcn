@@ -13,6 +13,7 @@ use {
     },
     tap::Pipe as _,
     tracing_subscriber::EnvFilter,
+    wcn_client::{ClientBuilder, PeerAddr},
     wcn_cluster::{
         node_operator,
         smart_contract::{
@@ -25,8 +26,7 @@ use {
         EncryptionKey,
         Settings,
     },
-    wcn_rpc::{identity::Keypair, server2::ShutdownSignal, transport},
-    wcn_storage_api::{operation, Record, RecordVersion, StorageApi as _},
+    wcn_rpc::{identity::Keypair, server2::ShutdownSignal},
 };
 
 #[derive(AsRef, Clone, Copy)]
@@ -82,7 +82,7 @@ async fn test_suite() {
         .await
         .unwrap();
 
-    let contract_address = cluster.smart_contract().address();
+    let contract_address = cluster.smart_contract().address().unwrap();
 
     operators
         .iter_mut()
@@ -93,54 +93,39 @@ async fn test_suite() {
         .for_each_concurrent(5, NodeOperator::deploy)
         .await;
 
-    // TODO: use client lib instead, once it's ready
-    let client_config = wcn_storage_api::rpc::client::Config {
-        keypair: operators[0].clients[0].keypair.clone(),
-        connection_timeout: Duration::from_secs(1),
-        reconnect_interval: Duration::from_millis(100),
-        max_concurrent_rpcs: 100,
-        priority: transport::Priority::High,
+    let bootstrap_node = &operators[1].nodes[0];
+    let bootstrap_node = PeerAddr {
+        id: bootstrap_node.config.keypair.public().to_peer_id(),
+        addr: SocketAddrV4::new(
+            Ipv4Addr::LOCALHOST,
+            bootstrap_node.config.primary_rpc_server_port,
+        ),
     };
 
-    let rpc_client = wcn_storage_api::rpc::client::coordinator(client_config).unwrap();
-    let coordinator = &operators[1].nodes[0];
-    let coordinator_addr = SocketAddrV4::new(
-        Ipv4Addr::LOCALHOST,
-        coordinator.config.primary_rpc_server_port,
-    );
-    let coordinator_peer_id = coordinator.config.keypair.public().to_peer_id();
-
-    let conn = rpc_client
-        .connect(coordinator_addr, &coordinator_peer_id, ())
-        .await
-        .unwrap();
+    let client = wcn_client::Client::new(wcn_client::Config {
+        keypair: operators[0].clients[0].keypair.clone(),
+        connection_timeout: Duration::from_secs(1),
+        operation_timeout: Duration::from_secs(2),
+        reconnect_interval: Duration::from_millis(100),
+        max_concurrent_rpcs: 5000,
+        nodes: vec![bootstrap_node],
+        metrics_tag: "mainnet",
+    })
+    .await
+    .unwrap()
+    .build();
 
     let namespace = format!("{}/0", operators[0].signer.address())
         .parse()
         .unwrap();
 
-    let set = operation::Set {
-        namespace,
-        key: b"foo".into(),
-        record: Record {
-            value: b"bar".into(),
-            expiration: Duration::from_secs(60).into(),
-            version: RecordVersion::now(),
-        },
-        keyspace_version: None,
-    };
+    client
+        .set(namespace, b"foo", b"bar", Duration::from_secs(60))
+        .await
+        .unwrap();
 
-    let res = conn.execute(set.clone().into()).await;
-    assert_eq!(res, Ok(operation::Output::None(())));
-
-    let get = operation::Get {
-        namespace,
-        key: b"foo".into(),
-        keyspace_version: None,
-    };
-
-    let res = conn.execute(get.into()).await;
-    assert_eq!(res, Ok(operation::Output::Record(Some(set.record))));
+    let res = client.get(namespace, b"foo").await.unwrap();
+    assert_eq!(res, Some(b"bar".into()));
 }
 
 struct NodeOperator {
@@ -294,7 +279,7 @@ impl NodeOperator {
                     smart_contract_address,
                     smart_contract_signer: (n == 0).then_some(smart_contract_signer.clone()),
                     smart_contract_encryption_key: wcn_cluster::testing::encryption_key(),
-                    rpc_provider_url: rpc_provider_url.to_string().parse().unwrap(),
+                    rpc_provider_url: rpc_provider_url.clone().parse().unwrap(),
                     shutdown_signal: shutdown_signal.clone(),
                     prometheus_handle: prometheus_recorder.handle(),
                 };

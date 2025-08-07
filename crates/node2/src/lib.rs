@@ -19,6 +19,7 @@ use {
         Cluster,
         EncryptionKey,
     },
+    wcn_cluster_api::rpc::server as cluster_api_server,
     wcn_rpc::{
         client2::{self as rpc_client},
         identity::Keypair,
@@ -252,6 +253,8 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
     )
     .await?;
 
+    let cluster_api_sc = cluster.smart_contract().clone();
+
     let coordinator = wcn_replication::Coordinator::new(app_cfg.clone(), cluster.clone());
 
     let replica = wcn_replication::Replica::new(
@@ -294,6 +297,7 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
 
     let primary_rpc_server_fut = storage_api_server::coordinator(coordinator.clone())
         .multiplex(storage_api_server::replica(replica.clone()))
+        .multiplex(cluster_api_server::new(cluster_api_sc))
         .serve(primary_rpc_server_cfg)?;
 
     let secondary_rpc_server_fut = storage_api_server::coordinator(coordinator)

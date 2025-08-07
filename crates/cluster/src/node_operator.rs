@@ -117,6 +117,33 @@ impl<N> NodeOperator<N> {
         &self.nodes[n % self.nodes.len()]
     }
 
+    /// Iterates over all of this [`NodeOperator`]'s [`Node`]s to find the one
+    /// matching a predicate.
+    ///
+    /// This is similar to [`NodeOperator::next_node`] in using a counter for a
+    /// round-robin load-balancing.
+    pub fn find_next_node<F, R>(&self, cb: F) -> Option<R>
+    where
+        F: Fn(&N) -> Option<R>,
+    {
+        // we've checked this in the constructor
+        debug_assert!(!self.nodes.is_empty());
+
+        let num_nodes = self.nodes.len();
+        let offset = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+
+        for idx in 0..num_nodes {
+            let idx = idx.wrapping_add(offset) % num_nodes;
+            let res = cb(&self.nodes[idx]);
+
+            if res.is_some() {
+                return res;
+            }
+        }
+
+        None
+    }
+
     /// Returns [`Node`]s of this [`NodeOperator`].
     ///
     /// [`NodeOperator`] is guaranteed to always have at least 2 nodes.

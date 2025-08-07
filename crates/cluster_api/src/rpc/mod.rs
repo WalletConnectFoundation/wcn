@@ -72,6 +72,7 @@ impl Error {
         }
     }
 
+    #[cfg(feature = "rpc_server")]
     fn internal(err: impl ToString) -> Self {
         Self::new(ErrorCode::Internal, Some(err.to_string()))
     }

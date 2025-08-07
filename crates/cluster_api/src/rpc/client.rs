@@ -12,8 +12,8 @@ pub type Cluster = Client<ClusterApi>;
 pub type ClusterConnection = Connection<ClusterApi>;
 
 /// Creates a new [`ClusterApi`] RPC client.
-pub fn new(config: Config) -> wcn_rpc::client2::Result<Cluster> {
-    Client::new(config, ConnectionHandler)
+pub fn new(config: Config) -> crate::Result<Cluster> {
+    Client::new(config, ConnectionHandler).map_err(Into::into)
 }
 
 impl wcn_rpc::client2::Api for ClusterApi {
@@ -32,7 +32,7 @@ impl crate::ClusterApi for Connection<ClusterApi> {
 
     async fn events(
         &self,
-    ) -> crate::Result<impl Stream<Item = crate::Result<wcn_cluster::Event>> + Send + 'static> {
+    ) -> crate::Result<impl Stream<Item = crate::Result<wcn_cluster::Event>> + Send + use<>> {
         let mut stream = self.send::<GetEventStream>()?.response_stream;
 
         stream.try_next_downcast::<Result<()>>().await??;

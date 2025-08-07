@@ -62,7 +62,10 @@ struct RpcHandler<S: smart_contract::Read> {
 
 impl<S: Read> HandleRequest<GetAddress> for RpcHandler<S> {
     async fn handle_request(&self, _: Request<GetAddress>) -> Response<GetAddress> {
-        Ok(MessageWrapper(self.smart_contract.address()))
+        self.smart_contract
+            .address()
+            .map(MessageWrapper)
+            .map_err(Error::internal)
     }
 }
 

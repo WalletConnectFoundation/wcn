@@ -231,15 +231,17 @@ where
 }
 
 impl smart_contract::Read for SmartContract {
-    fn address(&self) -> smart_contract::Address {
-        smart_contract::Address(*self.alloy.address())
+    fn address(&self) -> ReadResult<smart_contract::Address> {
+        Ok(smart_contract::Address(*self.alloy.address()))
     }
 
     async fn cluster_view(&self) -> ReadResult<ClusterView> {
         self.alloy.getView().call().await?.try_into()
     }
 
-    async fn events(&self) -> ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static> {
+    async fn events(
+        &self,
+    ) -> ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static + use<>> {
         let filter = Filter::new().address(*self.alloy.address());
 
         Ok(self

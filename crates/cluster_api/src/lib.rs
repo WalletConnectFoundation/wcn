@@ -14,7 +14,7 @@ pub trait ClusterApi: Clone + Send + Sync + 'static {
 
     fn events(
         &self,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<Event>> + Send + 'static>> + Send;
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<Event>> + Send + use<Self>>> + Send;
 }
 
 /// [`ClusterApi`] result.

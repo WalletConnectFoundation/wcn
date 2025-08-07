@@ -307,8 +307,8 @@ impl super::Write for FakeSmartContract {
 }
 
 impl super::Read for FakeSmartContract {
-    fn address(&self) -> Address {
-        self.inner().address
+    fn address(&self) -> ReadResult<Address> {
+        Ok(self.inner().address)
     }
 
     async fn cluster_view(&self) -> ReadResult<ClusterView> {
@@ -332,7 +332,9 @@ impl super::Read for FakeSmartContract {
         })
     }
 
-    async fn events(&self) -> ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static> {
+    async fn events(
+        &self,
+    ) -> ReadResult<impl Stream<Item = ReadResult<Event>> + Send + 'static + use<>> {
         BroadcastStream::new(self.inner().events.subscribe())
             .map_err(|err| ReadError::Other(err.to_string()))
             .pipe(Ok)

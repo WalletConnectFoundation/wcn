@@ -93,7 +93,7 @@ async fn test_suite() {
         .unwrap();
 
     for idx in 1..=7 {
-        connect(idx + 1, cluster.smart_contract().address(), &anvil)
+        connect(idx + 1, cluster.smart_contract().address().unwrap(), &anvil)
             .await
             .complete_migration(1)
             .await

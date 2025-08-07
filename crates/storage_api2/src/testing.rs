@@ -52,6 +52,15 @@ where
             .or_default()
             .clone()
     }
+
+    pub fn for_each(&self, f: impl Fn(&K, &FakeStorage)) {
+        self.inner
+            .lock()
+            .unwrap()
+            .storages
+            .iter()
+            .for_each(|(k, v)| f(k, v))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -63,11 +72,17 @@ impl FakeStorage {
     pub fn break_(&self) {
         self.inner.lock().unwrap().broken = true;
     }
+
+    pub fn expect_keyspace_version(&self, version: u64) {
+        self.inner.lock().unwrap().expected_keyspace_version = Some(version);
+    }
 }
 
 #[derive(Default)]
 struct Inner {
     broken: bool,
+    expected_keyspace_version: Option<u64>,
+
     kv: BTreeMap<Vec<u8>, Record>,
     map: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Record>>,
 }
@@ -78,6 +93,12 @@ impl StorageApi for FakeStorage {
 
         if this.broken {
             return Err(Error::new(ErrorKind::Internal));
+        }
+
+        if let Some(version) = this.expected_keyspace_version {
+            if operation.keyspace_version() != Some(version) {
+                return Err(Error::keyspace_version_mismatch());
+            }
         }
 
         #[allow(clippy::unit_arg)]

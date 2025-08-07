@@ -64,6 +64,22 @@ impl Operation<'_> {
             Self::Borrowed(borrowed) => borrowed.is_write(),
         }
     }
+
+    /// Returns [`KeyspaceVersion`] of this [`Operation`]
+    pub fn keyspace_version(&self) -> Option<KeyspaceVersion> {
+        match self {
+            Operation::Owned(owned) => owned.keyspace_version(),
+            Operation::Borrowed(borrowed) => borrowed.keyspace_version(),
+        }
+    }
+
+    /// Sets [`KeyspaceVersion`] of this [`Operation`].
+    pub fn set_keyspace_version(&mut self, version: KeyspaceVersion) {
+        match self {
+            Self::Owned(owned) => owned.set_keyspace_version(version),
+            Self::Borrowed(borrowed) => borrowed.set_keyspace_version(version),
+        }
+    }
 }
 
 #[derive(Clone, Debug, From, PartialEq, Eq)]
@@ -136,6 +152,42 @@ impl Owned {
             | Self::HCard(_)
             | Self::HScan(_) => false,
         }
+    }
+
+    /// Returns [`KeyspaceVersion`] of this [`Owned`] [`Operation`]
+    pub fn keyspace_version(&self) -> Option<KeyspaceVersion> {
+        match self {
+            Self::Get(get) => get.keyspace_version,
+            Self::Set(set) => set.keyspace_version,
+            Self::Del(del) => del.keyspace_version,
+            Self::GetExp(get_exp) => get_exp.keyspace_version,
+            Self::SetExp(set_exp) => set_exp.keyspace_version,
+            Self::HGet(hget) => hget.keyspace_version,
+            Self::HSet(hset) => hset.keyspace_version,
+            Self::HDel(hdel) => hdel.keyspace_version,
+            Self::HGetExp(hget_exp) => hget_exp.keyspace_version,
+            Self::HSetExp(hset_exp) => hset_exp.keyspace_version,
+            Self::HCard(hcard) => hcard.keyspace_version,
+            Self::HScan(hscan) => hscan.keyspace_version,
+        }
+    }
+
+    /// Sets [`KeyspaceVersion`] of this [`Owned`] [`Operation`].
+    pub fn set_keyspace_version(&mut self, version: KeyspaceVersion) {
+        *match self {
+            Self::Get(get) => &mut get.keyspace_version,
+            Self::Set(set) => &mut set.keyspace_version,
+            Self::Del(del) => &mut del.keyspace_version,
+            Self::GetExp(get_exp) => &mut get_exp.keyspace_version,
+            Self::SetExp(set_exp) => &mut set_exp.keyspace_version,
+            Self::HGet(hget) => &mut hget.keyspace_version,
+            Self::HSet(hset) => &mut hset.keyspace_version,
+            Self::HDel(hdel) => &mut hdel.keyspace_version,
+            Self::HGetExp(hget_exp) => &mut hget_exp.keyspace_version,
+            Self::HSetExp(hset_exp) => &mut hset_exp.keyspace_version,
+            Self::HCard(hcard) => &mut hcard.keyspace_version,
+            Self::HScan(hscan) => &mut hscan.keyspace_version,
+        } = Some(version);
     }
 }
 
@@ -228,6 +280,42 @@ impl Borrowed<'_> {
             | Self::HCard(_)
             | Self::HScan(_) => false,
         }
+    }
+
+    /// Returns [`KeyspaceVersion`] of this [`Borrowed`] [`Operation`]
+    pub fn keyspace_version(&self) -> Option<KeyspaceVersion> {
+        match self {
+            Self::Get(get) => get.keyspace_version,
+            Self::Set(set) => set.keyspace_version,
+            Self::Del(del) => del.keyspace_version,
+            Self::GetExp(get_exp) => get_exp.keyspace_version,
+            Self::SetExp(set_exp) => set_exp.keyspace_version,
+            Self::HGet(hget) => hget.keyspace_version,
+            Self::HSet(hset) => hset.keyspace_version,
+            Self::HDel(hdel) => hdel.keyspace_version,
+            Self::HGetExp(hget_exp) => hget_exp.keyspace_version,
+            Self::HSetExp(hset_exp) => hset_exp.keyspace_version,
+            Self::HCard(hcard) => hcard.keyspace_version,
+            Self::HScan(hscan) => hscan.keyspace_version,
+        }
+    }
+
+    /// Sets [`KeyspaceVersion`] of this [`Borrowed`] [`Operation`].
+    pub fn set_keyspace_version(&mut self, version: KeyspaceVersion) {
+        *match self {
+            Borrowed::Get(get) => &mut get.keyspace_version,
+            Borrowed::Set(set) => &mut set.keyspace_version,
+            Borrowed::Del(del) => &mut del.keyspace_version,
+            Borrowed::GetExp(get_exp) => &mut get_exp.keyspace_version,
+            Borrowed::SetExp(set_exp) => &mut set_exp.keyspace_version,
+            Borrowed::HGet(hget) => &mut hget.keyspace_version,
+            Borrowed::HSet(hset) => &mut hset.keyspace_version,
+            Borrowed::HDel(hdel) => &mut hdel.keyspace_version,
+            Borrowed::HGetExp(hget_exp) => &mut hget_exp.keyspace_version,
+            Borrowed::HSetExp(hset_exp) => &mut hset_exp.keyspace_version,
+            Borrowed::HCard(hcard) => &mut hcard.keyspace_version,
+            Borrowed::HScan(hscan) => &mut hscan.keyspace_version,
+        } = Some(version);
     }
 }
 

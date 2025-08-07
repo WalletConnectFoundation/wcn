@@ -3,8 +3,8 @@ use {
     futures::{future::FusedFuture as _, FutureExt as _},
     metrics_exporter_prometheus::PrometheusBuilder,
     std::pin,
-    tokio::sync::oneshot,
     wcn_db::{config, Error},
+    wcn_rpc::server2::ShutdownSignal,
 };
 
 #[global_allocator]
@@ -37,17 +37,14 @@ fn main() -> anyhow::Result<()> {
         .build()
         .unwrap()
         .block_on(async move {
-            let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-
-            #[allow(clippy::collection_is_never_read)]
-            let mut shutdown_tx = Some(shutdown_tx);
+            let shutdown_signal = ShutdownSignal::new();
             let mut shutdown_fut = pin::pin!(tokio::signal::ctrl_c().fuse());
 
             let metrics_srv_fut =
-                wcn_db::metrics::serve(([0, 0, 0, 0], cfg.metrics_port).into(), prometheus);
+                wcn_db::metrics::serve(([0, 0, 0, 0], cfg.metrics_server_port).into(), prometheus);
             let mut metrics_srv_fut = pin::pin!(tokio::spawn(metrics_srv_fut).fuse());
 
-            let db_srv_fut = wcn_db::run(shutdown_rx, cfg)?;
+            let db_srv_fut = wcn_db::run(shutdown_signal.clone(), cfg)?;
             let mut db_srv_fut = pin::pin!(db_srv_fut.fuse());
 
             loop {
@@ -55,7 +52,7 @@ fn main() -> anyhow::Result<()> {
                     biased;
 
                     _ = &mut shutdown_fut, if !shutdown_fut.is_terminated() => {
-                        shutdown_tx.take();
+                        shutdown_signal.emit();
                     }
 
                     _ = &mut metrics_srv_fut, if !metrics_srv_fut.is_terminated() => {

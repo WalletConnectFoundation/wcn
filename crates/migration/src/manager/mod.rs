@@ -4,10 +4,12 @@ use {
     cluster::{
         keyspace,
         migration,
+        node_operator,
         smart_contract::{self, Write},
         Cluster,
         NodeOperator,
         PeerId,
+        SmartContract,
     },
     futures::{stream, FutureExt as _, StreamExt, TryFutureExt},
     futures_concurrency::future::Race,
@@ -27,13 +29,24 @@ mod test;
 
 /// Migration [`Manager`] config.
 pub trait Config:
-    cluster::Config<Node: AsRef<Self::OutboundReplicaConnection> + AsRef<PeerId>> + Clone
+    cluster::Config<
+        SmartContract: SmartContract,
+        KeyspaceShards = keyspace::Shards,
+        Node: AsRef<PeerId>,
+    > + Clone
 {
     /// Type of the outbound connections to WCN Replicas.
     type OutboundReplicaConnection: StorageApi;
 
     /// Type of the outbound connection to the WCN Database.
     type OutboundDatabaseConnection: StorageApi + Clone;
+
+    /// Extracts [`Config::OutboundReplicaConnection`] from the provided
+    /// node.
+    fn get_replica_connection<'a>(
+        &self,
+        node: &'a Self::Node,
+    ) -> &'a Self::OutboundReplicaConnection;
 
     /// Specifies how many shards migration [`Manager`] is allowed to transfer
     /// at the same time.
@@ -46,19 +59,33 @@ pub trait Config:
 /// Cluster.
 #[derive(Clone)]
 pub struct Manager<C: Config> {
+    node_operator_id: node_operator::Id,
+
     config: Arc<C>,
     cluster: Cluster<C>,
     database: C::OutboundDatabaseConnection,
 }
 
 impl<C: Config> Manager<C> {
-    /// Creates a new migration [`Manager`].
-    pub fn new(config: C, cluster: Cluster<C>, database: C::OutboundDatabaseConnection) -> Self {
-        Self {
+    /// Tries to creates a new migration [`Manager`].
+    ///
+    /// Returns `None` if [`smart_contract`] doesn't have a configured signer.
+    pub fn new(
+        config: C,
+        cluster: Cluster<C>,
+        database: C::OutboundDatabaseConnection,
+    ) -> Option<Self> {
+        let node_operator_id = cluster
+            .smart_contract()
+            .signer()
+            .map(|signer| *signer.address())?;
+
+        Some(Self {
+            node_operator_id,
             config: Arc::new(config),
             cluster,
             database,
-        }
+        })
     }
 
     /// Runs a task managing all data migration related activities of a node
@@ -66,15 +93,15 @@ impl<C: Config> Manager<C> {
     ///
     /// There should only be a single such task running at any point in time
     /// across all node operator nodes / infrastructure services.
-    pub fn run(&self) -> impl Future<Output = ()> + Send
-    where
-        C: Config<KeyspaceShards = keyspace::Shards, SmartContract: smart_contract::Write>,
-    {
+    pub fn run(
+        &self,
+        shutdown_fut: impl Future<Output = ()> + Send,
+    ) -> impl Future<Output = ()> + Send {
         Task {
             manager: self.clone(),
             state: State::Idle,
         }
-        .run()
+        .run(shutdown_fut)
     }
 }
 
@@ -87,20 +114,43 @@ impl<C> Task<C>
 where
     C: Config<SmartContract: smart_contract::Write, KeyspaceShards = keyspace::Shards>,
 {
-    async fn run(self) {
+    async fn run(self, shutdown_fut: impl Future) {
+        let mut shutdown_fut = pin!(shutdown_fut.map(|_| Event::Shutdown).fuse());
+        let mut is_shutting_down = false;
+
         let mut watch = self.cluster().watch();
-        let mut state_fut = pin!(self.state_future(State::Idle));
+
+        let mut state = State::Idle;
+        let mut state_fut = pin!(self.state_future(state));
 
         loop {
             let cluster_update_fut = watch.cluster_updated().map(|_| Event::ClusterUpdate);
 
-            let new_state = match (cluster_update_fut, &mut state_fut).race().await {
+            let new_state = match (cluster_update_fut, &mut state_fut, &mut shutdown_fut)
+                .race()
+                .await
+            {
                 Event::ClusterUpdate => self.sync_state(),
                 Event::StateTransition(state) => Some(state),
+
+                // OK to shutdown right now.
+                Event::Shutdown if state.can_shutdown() => return,
+
+                // We are not ready to shutdown yet.
+                Event::Shutdown => {
+                    is_shutting_down = true;
+                    continue;
+                }
             };
 
-            if let Some(state) = new_state {
-                tracing::info!(" -> {state:?}");
+            if let Some(new_state) = new_state {
+                tracing::info!(" -> {new_state:?}");
+
+                if is_shutting_down && state.can_shutdown() {
+                    return;
+                }
+
+                state = new_state;
                 state_fut.set(self.state_future(state));
             }
         }
@@ -161,13 +211,11 @@ where
             .secondary_keyspace_shards()
             .ok_or_else(|| anyhow!("Missing secondary keyspace shards"))?;
 
-        let operator_id = self.cluster().smart_contract().signer().address();
-
         let replica_idx = |shard: &keyspace::Shard<&NodeOperator<_>>| {
             shard
                 .replica_set()
                 .iter()
-                .position(|op| &op.id == operator_id)
+                .position(|op| op.id == self.manager.node_operator_id)
         };
 
         primary_shards
@@ -218,7 +266,7 @@ where
 
         // Retry transport errors using different nodes.
         for node in source_operator.nodes_lb_iter() {
-            let conn: &C::OutboundReplicaConnection = node.as_ref();
+            let conn = self.manager.config.get_replica_connection(node);
             res = conn.read_data(keyrange.clone(), keyspace_version).await;
 
             if matches!(&res, Err(err) if err.kind() == ErrorKind::Transport) {
@@ -245,18 +293,17 @@ where
                 err @ (Error::UnknownOperator(_)
                 | Error::NoMigration(_)
                 | Error::WrongMigrationId(_)
+                | Error::NoSigner(_)
                 | Error::SmartContract(_)),
             ) => return Err(err.into()),
         };
-
-        let operator_id = self.cluster().smart_contract().signer().address();
 
         // Wait until our commit to SC is observable.
         tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 if !self
                     .cluster()
-                    .using_view(|view| view.is_pulling(operator_id))
+                    .using_view(|view| view.is_pulling(&self.manager.node_operator_id))
                 {
                     return State::AwaitingMigrationCompletion(migration_id);
                 }
@@ -269,8 +316,6 @@ where
     }
 
     async fn await_migration_completion(&self, migration_id: migration::Id) -> Result<State> {
-        let operator_id = self.cluster().smart_contract().signer().address();
-
         loop {
             // We have completed the migration already, but somehow the cluster shows again
             // that we are pulling.
@@ -280,7 +325,7 @@ where
             // Go back to `CompletingMigration` state.
             if self
                 .cluster()
-                .using_view(|view| view.is_pulling(operator_id))
+                .using_view(|view| view.is_pulling(&self.manager.node_operator_id))
             {
                 tracing::warn!("Going back to `State::CompletingMigration`");
                 return Ok(State::CompletingMigration(migration_id));
@@ -306,6 +351,7 @@ where
 enum Event {
     ClusterUpdate,
     StateTransition(State),
+    Shutdown,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -324,6 +370,13 @@ impl State {
             State::AwaitingMigrationCompletion(migration_id) => migration_id,
             State::Idle => return None,
         })
+    }
+
+    fn can_shutdown(&self) -> bool {
+        match self {
+            State::TransferringData(_) | State::CompletingMigration(_) => false,
+            State::AwaitingMigrationCompletion(_) | State::Idle => true,
+        }
     }
 }
 

@@ -2,7 +2,8 @@ use {
     super::{Error, GetEventStreamItem},
     crate::rpc::{GetAddress, GetClusterView, GetEventStream, Id as RpcId, MessageWrapper},
     derive_where::derive_where,
-    futures::{SinkExt as _, StreamExt as _},
+    futures::{FutureExt as _, SinkExt as _, StreamExt as _},
+    futures_concurrency::future::Race as _,
     std::sync::Arc,
     tap::Pipe as _,
     wcn_cluster::smart_contract::{self, Read},
@@ -89,10 +90,12 @@ impl<S: Read> HandleRpc<GetEventStream> for RpcHandler<S> {
             .await?;
 
         if let Some(events) = events {
-            events
+            let fut = events
                 .map(|res| GetEventStreamItem::Event(res.map_err(Error::internal)))
-                .pipe(|responses| rpc.response_sink.send_all(responses))
-                .await?;
+                .pipe(|responses| rpc.response_sink.send_all(responses));
+
+            // Make sure that we won't block server shutdown.
+            (fut, rpc.shutdown_signal.wait().map(Ok)).race().await?;
         }
 
         Ok(())

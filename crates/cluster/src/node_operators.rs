@@ -74,6 +74,39 @@ impl<N> NodeOperators<N> {
         })
     }
 
+    /// Indicates whether any of the [`NodeOperators`] contains a client with
+    /// the provided ID.
+    pub fn contains_client(&self, peer_id: &PeerId) -> bool
+    where
+        N: AsRef<PeerId>,
+    {
+        // TODO: Consider optimizing by building a lookup table.
+        self.slots.iter().any(|opt| {
+            opt.as_ref()
+                .map(|op| op.clients.iter().any(|client| &client.peer_id == peer_id))
+                .unwrap_or_default()
+        })
+    }
+
+    /// Indicates whether the client with the specified [`PeerId`] is authorized
+    /// to use the specified namespace of the [`node_operator`].
+    pub fn is_authorized_client(
+        &self,
+        peer_id: &PeerId,
+        operator_id: &node_operator::Id,
+        namespace_idx: u8,
+    ) -> bool {
+        // TODO: Consider optimizing by building a lookup table.
+        self.get(operator_id)
+            .map(|operator| {
+                operator.clients.iter().any(|client| {
+                    &client.peer_id == peer_id
+                        && client.authorized_namespaces.contains(&namespace_idx)
+                })
+            })
+            .unwrap_or_default()
+    }
+
     /// Returns a [`NodeOperator`] responsible for the next request.
     ///
     /// [`NodeOperator`]s are being iterated in round-robin fashion for

@@ -1,7 +1,7 @@
 //! Ownership of a WCN cluster.
 
 use {
-    crate::{smart_contract, SmartContract},
+    crate::smart_contract,
     serde::{Deserialize, Serialize},
 };
 
@@ -25,9 +25,9 @@ impl Ownership {
 
     pub(super) fn require_owner(
         &self,
-        smart_contract: &impl SmartContract,
+        smart_contract_signer: &smart_contract::Signer,
     ) -> Result<(), NotOwnerError> {
-        if !self.is_owner(smart_contract.signer().address()) {
+        if !self.is_owner(smart_contract_signer.address()) {
             return Err(NotOwnerError);
         }
 

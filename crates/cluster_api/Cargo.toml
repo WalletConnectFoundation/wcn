@@ -23,8 +23,10 @@ serde = "1"
 thiserror = "1"
 tracing = "0.1"
 futures = "0.3"
+futures-concurrency = { workspace = true }
 
 [dev-dependencies]
+wcn_cluster = { path = "../cluster", features = ["testing"] }
 wcn_cluster_api = { path = ".", features = ["rpc_client", "rpc_server"] }
 logging = { package = "wcn_logging", path = "../logging" }
 alloy = { version = "1.0", default-features = false, features = [

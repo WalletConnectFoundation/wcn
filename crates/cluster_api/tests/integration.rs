@@ -4,21 +4,26 @@ use {
         signers::local::PrivateKeySigner,
     },
     futures::{StreamExt as _, TryStreamExt},
-    std::{
-        net::{Ipv4Addr, SocketAddrV4},
-        time::Duration,
-    },
-    tap::Pipe,
+    std::{net::Ipv4Addr, time::Duration},
+    tap::{Pipe, Tap as _},
     wcn_cluster::{
         Cluster,
         Event,
         Node,
         NodeOperator,
         node_operator,
-        smart_contract::{self, Signer, evm::RpcProvider},
+        smart_contract::{
+            self,
+            Signer,
+            evm::{self, RpcProvider},
+        },
+        testing,
     },
     wcn_cluster_api::{ClusterApi, Read},
-    wcn_rpc::{PeerId, identity::Keypair, server2::Server},
+    wcn_rpc::{
+        identity::Keypair,
+        server2::{Server, ShutdownSignal},
+    },
 };
 
 #[tokio::test]
@@ -66,6 +71,7 @@ async fn test_rpc() {
             max_connection_rate_per_ip: 100,
             max_concurrent_rpcs: 500,
             priority: wcn_rpc::transport::Priority::High,
+            shutdown_signal: ShutdownSignal::new(),
         })
         .unwrap()
         .pipe(tokio::spawn);
@@ -136,7 +142,7 @@ fn find_available_port() -> u16 {
 struct Config;
 
 impl wcn_cluster::Config for Config {
-    type SmartContract = smart_contract::evm::SmartContract<smart_contract::Signer>;
+    type SmartContract = evm::SmartContract;
     type KeyspaceShards = ();
     type Node = Node;
 
@@ -146,22 +152,7 @@ impl wcn_cluster::Config for Config {
 }
 
 fn new_node_operator(n: u8, anvil: &AnvilInstance) -> NodeOperator {
-    NodeOperator::new(
-        operator_id(n, anvil),
-        node_operator::Name::new(format!("Operator{n}")).unwrap(),
-        vec![
-            Node {
-                peer_id: PeerId::random(),
-                addr: SocketAddrV4::new([127, 0, 0, 1].into(), 40000 + n as u16),
-            },
-            Node {
-                peer_id: PeerId::random(),
-                addr: SocketAddrV4::new([127, 0, 0, 1].into(), 50000 + n as u16),
-            },
-        ],
-        vec![],
-    )
-    .unwrap()
+    testing::node_operator(0).tap_mut(|op| op.id = operator_id(n, anvil))
 }
 
 fn operator_id(n: u8, anvil: &AnvilInstance) -> node_operator::Id {
@@ -174,7 +165,7 @@ fn new_signer(n: u8, anvil: &AnvilInstance) -> Signer {
     Signer::try_from_private_key(private_key).unwrap()
 }
 
-async fn provider(signer: Signer, anvil: &AnvilInstance) -> RpcProvider<Signer> {
+async fn provider(signer: Signer, anvil: &AnvilInstance) -> RpcProvider {
     let ws_url = anvil.endpoint_url().to_string().replace("http://", "ws://");
     RpcProvider::new(ws_url.parse().unwrap(), signer)
         .await

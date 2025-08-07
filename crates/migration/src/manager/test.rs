@@ -9,7 +9,7 @@ use {
     },
     derive_more::derive::AsRef,
     futures::{stream, FutureExt as _, StreamExt},
-    std::{collections::HashSet, hash::BuildHasher as _, time::Duration},
+    std::{collections::HashSet, future, hash::BuildHasher as _, time::Duration},
     storage_api::{operation, testing::FakeStorage, Operation, Record, RecordVersion, StorageApi},
     tracing_subscriber::EnvFilter,
     wcn_rpc::PeerId,
@@ -38,6 +38,13 @@ impl cluster::Config for Config {
 impl super::Config for Config {
     type OutboundReplicaConnection = FakeStorage;
     type OutboundDatabaseConnection = FakeStorage;
+
+    fn get_replica_connection<'a>(
+        &self,
+        node: &'a Self::Node,
+    ) -> &'a Self::OutboundReplicaConnection {
+        &node.storage
+    }
 
     fn concurrency(&self) -> usize {
         100
@@ -176,9 +183,10 @@ async fn transfers_data_and_writes_to_smart_contract() {
         cfg.clone(),
         new_operator_cluster,
         new_operator_storage.clone(),
-    );
+    )
+    .unwrap();
 
-    tokio::spawn(manager.run());
+    tokio::spawn(manager.run(future::pending()));
 
     tokio::time::sleep(Duration::from_secs(5)).await;
 

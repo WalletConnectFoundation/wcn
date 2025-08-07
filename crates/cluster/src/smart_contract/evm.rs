@@ -60,17 +60,14 @@ pub(crate) type Address = alloy::primitives::Address;
 type AlloyContract = bindings::Cluster::ClusterInstance<DynProvider, alloy::network::Ethereum>;
 
 /// RPC provider for EVM chains.
-pub struct RpcProvider<S = ()> {
-    signer: S,
+pub struct RpcProvider {
+    signer: Option<Signer>,
     alloy: DynProvider,
 }
 
 impl RpcProvider {
     /// Creates a new [`RpcProvider`].
-    pub async fn new(
-        url: RpcUrl,
-        signer: Signer,
-    ) -> Result<RpcProvider<Signer>, RpcProviderCreationError> {
+    pub async fn new(url: RpcUrl, signer: Signer) -> Result<Self, RpcProviderCreationError> {
         let wallet: EthereumWallet = match &signer.kind {
             SignerKind::PrivateKey(key) => key.clone().into(),
         };
@@ -81,19 +78,19 @@ impl RpcProvider {
             .await?;
 
         Ok(RpcProvider {
-            signer,
+            signer: Some(signer),
             alloy: DynProvider::new(provider),
         })
     }
 
     /// Creates a new read-only [`RpcProvider`].
-    pub async fn new_ro(self, url: RpcUrl) -> Result<RpcProvider<()>, RpcProviderCreationError> {
+    pub async fn new_ro(url: RpcUrl) -> Result<RpcProvider, RpcProviderCreationError> {
         let provider = ProviderBuilder::new()
             .connect_ws(WsConnect::new(url.0))
             .await?;
 
         Ok(RpcProvider {
-            signer: (),
+            signer: None,
             alloy: DynProvider::new(provider),
         })
     }
@@ -101,19 +98,17 @@ impl RpcProvider {
 
 /// EVM implementation of WCN Cluster smart contract.
 #[derive(Clone)]
-pub struct SmartContract<S = ()> {
-    signer: S,
+pub struct SmartContract {
+    signer: Option<Signer>,
     alloy: AlloyContract,
 }
 
-impl Deployer<SmartContract<Signer>> for RpcProvider<Signer> {
+impl Deployer<SmartContract> for RpcProvider {
     async fn deploy(
         &self,
         initial_settings: Settings,
         initial_operators: Vec<node_operator::Serialized>,
-    ) -> Result<SmartContract<Signer>, DeploymentError> {
-        let signer = self.signer.clone();
-
+    ) -> Result<SmartContract, DeploymentError> {
         let settings: bindings::Cluster::Settings = initial_settings.into();
         let operators: Vec<bindings::Cluster::NodeOperator> =
             initial_operators.into_iter().map(Into::into).collect();
@@ -130,17 +125,17 @@ impl Deployer<SmartContract<Signer>> for RpcProvider<Signer> {
         .await?;
 
         Ok(SmartContract {
-            signer,
+            signer: self.signer.clone(),
             alloy: bindings::Cluster::new(*proxy.address(), self.alloy.clone()),
         })
     }
 }
 
-impl<S: Clone> Connector<SmartContract<S>> for RpcProvider<S> {
+impl Connector<SmartContract> for RpcProvider {
     async fn connect(
         &self,
         address: smart_contract::Address,
-    ) -> Result<SmartContract<S>, ConnectionError> {
+    ) -> Result<SmartContract, ConnectionError> {
         let signer = self.signer.clone();
 
         let code = self
@@ -165,9 +160,9 @@ impl<S: Clone> Connector<SmartContract<S>> for RpcProvider<S> {
     }
 }
 
-impl smart_contract::Write for SmartContract<Signer> {
-    fn signer(&self) -> &Signer {
-        &self.signer
+impl smart_contract::Write for SmartContract {
+    fn signer(&self) -> Option<&Signer> {
+        self.signer.as_ref()
     }
 
     async fn start_migration(&self, new_keyspace: Keyspace) -> WriteResult<()> {
@@ -235,7 +230,7 @@ where
     Ok(())
 }
 
-impl<S: Send + Sync + 'static> smart_contract::Read for SmartContract<S> {
+impl smart_contract::Read for SmartContract {
     fn address(&self) -> smart_contract::Address {
         smart_contract::Address(*self.alloy.address())
     }

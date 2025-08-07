@@ -237,12 +237,7 @@ impl Serialized {
         let nodes = data
             .nodes
             .into_iter()
-            .map(|node| {
-                cfg.new_node(self.id, Node {
-                    peer_id: node.peer_id,
-                    addr: node.addr,
-                })
-            })
+            .map(|node| cfg.new_node(self.id, node.into()))
             .collect();
 
         let clients = data.clients.into_iter().map(Into::into).collect();

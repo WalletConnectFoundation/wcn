@@ -7,6 +7,7 @@ use {
     crate::{self as cluster, migration, node_operator, Event, Keyspace, Ownership, Settings},
     alloy::{signers::local::PrivateKeySigner, transports::http::reqwest},
     derive_more::derive::{Display, From},
+    derive_where::derive_where,
     futures::Stream,
     serde::{Deserialize, Serialize},
     std::{future::Future, str::FromStr},
@@ -64,7 +65,7 @@ pub trait SmartContract: Read + Write {}
 /// implemented inside the on-chain implementation of the smart-contract itself.
 pub trait Write {
     /// Returns the [`Signer`] being used to sign transactions.
-    fn signer(&self) -> &Signer;
+    fn signer(&self) -> Option<&Signer>;
 
     /// Starts a new data [`migration`] process using the provided
     /// [`migration::Plan`].
@@ -206,16 +207,21 @@ pub struct Address(evm::Address);
 
 /// Account address on the chain hosting WCN cluster [`SmartContract`].
 #[derive(Clone, Copy, Debug, Display, From, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[from(forward)]
 pub struct AccountAddress(evm::Address);
 
 /// Transaction signer.
 #[derive(Clone)]
+#[derive_where(Debug)]
 pub struct Signer {
     address: AccountAddress,
+
+    #[derive_where(skip)]
     kind: SignerKind,
 }
 
 /// RPC provider URL.
+#[derive(Clone, Debug)]
 pub struct RpcUrl(reqwest::Url);
 
 /// Error of [`Deployer::deploy`].

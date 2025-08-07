@@ -1,11 +1,12 @@
 use {
     super::{hash, Response},
-    crate::coordinator::Coordinator,
+    crate::{coordinator, Coordinator},
     cluster::{
         keyspace::{self, ReplicaSet},
         migration,
         node_operator,
         smart_contract::{self, testing::FakeSmartContract},
+        Client,
         Cluster,
         Node,
         NodeOperator,
@@ -13,7 +14,17 @@ use {
     },
     derive_more::derive::AsRef,
     std::{collections::HashSet, sync::Arc, time::Duration},
-    storage_api::{operation, testing::FakeStorage, Operation, RecordBorrowed, StorageApi},
+    storage_api::{
+        operation,
+        testing::FakeStorage,
+        Error,
+        Factory,
+        Namespace,
+        Operation,
+        RecordBorrowed,
+        StorageApi,
+    },
+    tap::Tap,
 };
 
 #[derive(Clone, Default)]
@@ -63,11 +74,14 @@ struct Context {
     cluster_view: Arc<cluster::View<Config>>,
 
     coordinator: Coordinator<Config>,
+    conn: coordinator::InboundConnection<Config>,
 }
 
 impl Context {
     async fn new() -> Self {
         let cfg = Config::default();
+
+        let client_peer_id = PeerId::random();
 
         let cluster = Cluster::deploy(
             cfg.clone(),
@@ -77,16 +91,29 @@ impl Context {
                 max_node_operator_data_bytes: 1024,
             },
             (0..8)
-                .map(|idx| cluster::testing::node_operator(idx as u8))
+                .map(|idx| {
+                    cluster::testing::node_operator(idx as u8).tap_mut(|operator| {
+                        if idx == 0 {
+                            operator.clients = vec![Client {
+                                peer_id: client_peer_id,
+                                authorized_namespaces: [0].into_iter().collect(),
+                            }]
+                        }
+                    })
+                })
                 .collect(),
         )
         .await
         .unwrap();
 
+        let cluster_view = cluster.view();
+        let coordinator = Coordinator::new(cfg.clone(), cluster);
+
         Self {
-            config: cfg.clone(),
-            cluster_view: cluster.view(),
-            coordinator: Coordinator::new(cfg, cluster),
+            config: cfg,
+            cluster_view,
+            conn: coordinator.new_inbound_connection(client_peer_id).unwrap(),
+            coordinator,
         }
     }
 
@@ -160,12 +187,15 @@ struct ReadTestCase<'a> {
     expected_response: Response,
 }
 
-fn set_test_case<'a>(key: &'a str, value: &'a str) -> WriteTestCase<'a> {
-    let namespace = "0x14Cb1e6fb683A83455cA283e10f4959740A49ed7/0"
-        .parse()
-        .unwrap();
+fn namespace(operator_id: u8, idx: u8) -> Namespace {
+    let operator_id = cluster::testing::node_operator(operator_id).id;
+    format!("{operator_id}/{idx}").parse().unwrap()
+}
 
+fn set_test_case<'a>(key: &'a str, value: &'a str) -> WriteTestCase<'a> {
     let record = RecordBorrowed::new(value.as_bytes(), Duration::from_secs(60));
+
+    let namespace = namespace(0, 0);
 
     let set = operation::SetBorrowed {
         namespace,
@@ -191,15 +221,49 @@ fn set_test_case<'a>(key: &'a str, value: &'a str) -> WriteTestCase<'a> {
 }
 
 #[tokio::test]
+async fn inbound_connections_not_authorized_for_clients_not_in_cluster() {
+    let ctx = Context::new().await;
+    let err = ctx
+        .coordinator
+        .new_storage_api(PeerId::random())
+        .err()
+        .unwrap();
+
+    assert_eq!(err, Error::unauthorized())
+}
+
+#[tokio::test]
+async fn operations_not_authorized_for_unauthorized_namespaces() {
+    let ctx = Context::new().await;
+
+    let mut get = operation::GetBorrowed {
+        namespace: namespace(0, 1),
+        key: b"test",
+        keyspace_version: None,
+    };
+
+    let res = ctx
+        .conn
+        .execute(operation::Borrowed::Get(get.clone()).into())
+        .await;
+    assert_eq!(res, Err(Error::unauthorized()));
+
+    get.namespace = namespace(1, 0);
+
+    let res = ctx.conn.execute(operation::Borrowed::Get(get).into()).await;
+    assert_eq!(res, Err(Error::unauthorized()));
+}
+
+#[tokio::test]
 async fn replicates_only_to_replica_set() {
     let ctx = Context::new().await;
 
     let set = set_test_case("a", "1");
 
-    let resp = ctx.coordinator.execute_ref(&set.operation).await;
+    let resp = ctx.conn.execute_ref(&set.operation).await;
     assert_eq!(resp, set.expected_response);
 
-    let resp = ctx.coordinator.execute_ref(&set.validate.operation).await;
+    let resp = ctx.conn.execute_ref(&set.validate.operation).await;
     assert_eq!(&resp, &set.validate.expected_response);
 
     let replica_set = ctx.primary_replica_set("a");
@@ -227,10 +291,10 @@ async fn tolerates_up_to_2_broken_replicas() {
         let replica_set = ctx.primary_replica_set("a");
         ctx.storage(replica_set[0].id).break_();
 
-        let resp = ctx.coordinator.execute_ref(&set.operation).await;
+        let resp = ctx.conn.execute_ref(&set.operation).await;
         assert_eq!(resp, set.expected_response);
 
-        let resp = ctx.coordinator.execute_ref(&set.validate.operation).await;
+        let resp = ctx.conn.execute_ref(&set.validate.operation).await;
         assert_eq!(&resp, &set.validate.expected_response);
     }
 
@@ -241,10 +305,10 @@ async fn tolerates_up_to_2_broken_replicas() {
         ctx.storage(replica_set[0].id).break_();
         ctx.storage(replica_set[1].id).break_();
 
-        let resp = ctx.coordinator.execute_ref(&set.operation).await;
+        let resp = ctx.conn.execute_ref(&set.operation).await;
         assert_eq!(resp, set.expected_response);
 
-        let resp = ctx.coordinator.execute_ref(&set.validate.operation).await;
+        let resp = ctx.conn.execute_ref(&set.validate.operation).await;
         assert_eq!(&resp, &set.validate.expected_response);
     }
 
@@ -255,12 +319,12 @@ async fn tolerates_up_to_2_broken_replicas() {
         ctx.storage(replica_set[0].id).break_();
         ctx.storage(replica_set[1].id).break_();
 
-        let resp = ctx.coordinator.execute_ref(&set.operation).await;
+        let resp = ctx.conn.execute_ref(&set.operation).await;
         assert_eq!(resp, set.expected_response);
 
         ctx.storage(replica_set[2].id).break_();
 
-        let resp = ctx.coordinator.execute_ref(&set.validate.operation).await;
+        let resp = ctx.conn.execute_ref(&set.validate.operation).await;
         assert!(resp.is_err());
     }
 
@@ -272,7 +336,7 @@ async fn tolerates_up_to_2_broken_replicas() {
         ctx.storage(replica_set[1].id).break_();
         ctx.storage(replica_set[2].id).break_();
 
-        let resp = ctx.coordinator.execute_ref(&set.operation).await;
+        let resp = ctx.conn.execute_ref(&set.operation).await;
         assert!(resp.is_err());
     }
 }
@@ -289,7 +353,7 @@ async fn tolerates_up_to_2_inconsistent_responses() {
 
         let replica_set = ctx.primary_replica_set("a");
 
-        let resp = ctx.coordinator.execute_ref(&set1.operation).await;
+        let resp = ctx.conn.execute_ref(&set1.operation).await;
         assert_eq!(resp, set1.expected_response);
 
         let resp = ctx
@@ -298,7 +362,7 @@ async fn tolerates_up_to_2_inconsistent_responses() {
             .await;
         assert_eq!(resp, set2.expected_response);
 
-        let resp = ctx.coordinator.execute_ref(&set1.validate.operation).await;
+        let resp = ctx.conn.execute_ref(&set1.validate.operation).await;
         assert_eq!(&resp, &set1.validate.expected_response);
     }
 
@@ -307,7 +371,7 @@ async fn tolerates_up_to_2_inconsistent_responses() {
 
         let replica_set = ctx.primary_replica_set("a");
 
-        let resp = ctx.coordinator.execute_ref(&set1.operation).await;
+        let resp = ctx.conn.execute_ref(&set1.operation).await;
         assert_eq!(resp, set1.expected_response);
 
         let resp = ctx
@@ -322,7 +386,7 @@ async fn tolerates_up_to_2_inconsistent_responses() {
             .await;
         assert_eq!(resp, set3.expected_response);
 
-        let resp = ctx.coordinator.execute_ref(&set1.validate.operation).await;
+        let resp = ctx.conn.execute_ref(&set1.validate.operation).await;
         assert_eq!(&resp, &set1.validate.expected_response);
     }
 
@@ -331,7 +395,7 @@ async fn tolerates_up_to_2_inconsistent_responses() {
 
         let replica_set = ctx.primary_replica_set("a");
 
-        let resp = ctx.coordinator.execute_ref(&set1.operation).await;
+        let resp = ctx.conn.execute_ref(&set1.operation).await;
         assert_eq!(resp, set1.expected_response);
 
         let resp = ctx
@@ -352,7 +416,7 @@ async fn tolerates_up_to_2_inconsistent_responses() {
             .await;
         assert_eq!(resp, set4.expected_response);
 
-        let resp = ctx.coordinator.execute_ref(&set1.validate.operation).await;
+        let resp = ctx.conn.execute_ref(&set1.validate.operation).await;
         assert!(resp.is_err());
     }
 }
@@ -364,10 +428,10 @@ async fn replicates_to_both_replica_sets_during_migrations() {
 
     let set = set_test_case("a", "1");
 
-    let resp = ctx.coordinator.execute_ref(&set.operation).await;
+    let resp = ctx.conn.execute_ref(&set.operation).await;
     assert_eq!(resp, set.expected_response);
 
-    let resp = ctx.coordinator.execute_ref(&set.validate.operation).await;
+    let resp = ctx.conn.execute_ref(&set.validate.operation).await;
     assert_eq!(&resp, &set.validate.expected_response);
 
     let primary_replica_set = ctx.primary_replica_set("a");
@@ -404,12 +468,12 @@ async fn tolerates_up_to_2_broken_replicas_in_each_replica_set() {
     ctx.storage(secondary_replica_set[0].id).break_();
     ctx.storage(secondary_replica_set[1].id).break_();
 
-    let resp = ctx.coordinator.execute_ref(&set.operation).await;
+    let resp = ctx.conn.execute_ref(&set.operation).await;
     assert_eq!(resp, set.expected_response);
 
     ctx.storage(secondary_replica_set[2].id).break_();
 
-    let resp = ctx.coordinator.execute_ref(&set2.operation).await;
+    let resp = ctx.conn.execute_ref(&set2.operation).await;
     assert!(resp.is_err());
 }
 
@@ -423,10 +487,10 @@ async fn repairs_replicas_with_inconsistent_responses() {
 
     let replica_set = ctx.primary_replica_set("a");
 
-    let resp = ctx.coordinator.execute_ref(&set1.operation).await;
+    let resp = ctx.conn.execute_ref(&set1.operation).await;
     assert_eq!(resp, set1.expected_response);
 
-    let resp = ctx.coordinator.execute_ref(&set1.validate.operation).await;
+    let resp = ctx.conn.execute_ref(&set1.validate.operation).await;
     assert_eq!(&resp, &set1.validate.expected_response);
 
     let resp = ctx
@@ -453,7 +517,7 @@ async fn repairs_replicas_with_inconsistent_responses() {
         .await;
     assert_eq!(resp, set3.validate.expected_response);
 
-    let resp = ctx.coordinator.execute_ref(&set1.validate.operation).await;
+    let resp = ctx.conn.execute_ref(&set1.validate.operation).await;
     assert_eq!(&resp, &set1.validate.expected_response);
 
     let resp = ctx

@@ -18,16 +18,14 @@ use {
         StorageApi,
     },
     tap::Pipe,
-    tokio::sync::oneshot,
     wc::future::FutureExt,
-    wcn_rpc::{client2::Connection, identity::Keypair},
+    wcn_rpc::{client2::Connection, identity::Keypair, server2::ShutdownSignal},
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e() {
     let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
-
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_signal = ShutdownSignal::new();
 
     let db_port = find_available_port();
     let keypair = Keypair::generate_ed25519();
@@ -38,8 +36,9 @@ async fn test_e2e() {
 
     let cfg = wcn_db::config::Config {
         keypair,
-        db_port,
-        metrics_port: 0,
+        primary_rpc_server_port: db_port,
+        secondary_rpc_server_port: find_available_port(),
+        metrics_server_port: 0,
         connection_timeout: Duration::from_secs(10),
         max_connections: 50,
         max_concurrent_rpcs: 500,
@@ -49,7 +48,9 @@ async fn test_e2e() {
         rocksdb: Default::default(),
     };
 
-    let db_handle = wcn_db::run(shutdown_rx, cfg).unwrap().pipe(tokio::spawn);
+    let db_handle = wcn_db::run(shutdown_signal.clone(), cfg)
+        .unwrap()
+        .pipe(tokio::spawn);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -75,7 +76,7 @@ async fn test_e2e() {
     test_map_ops(&client_conn).await;
     test_namespaces(&client_conn).await;
 
-    drop(shutdown_tx);
+    shutdown_signal.emit();
 
     db_handle
         .with_timeout(Duration::from_secs(30))

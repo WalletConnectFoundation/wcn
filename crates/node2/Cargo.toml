@@ -24,7 +24,11 @@ futures-concurrency = { workspace = true }
 tap = { workspace = true }
 thiserror = { workspace = true }
 wcn_rpc = { workspace = true, features = ["client", "server"] }
-wcn_storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["rpc_client", "rpc_server"] }
+wcn_storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = [
+    "rpc_client",
+    "rpc_server",
+] }
+wcn_cluster_api = { path = "../cluster_api", features = ["rpc_server"] }
 wcn_cluster = { path = "../cluster" }
 wcn_replication = { package = "wcn_replication2", path = "../replication2" }
 wcn_migration = { path = "../migration" }
@@ -42,6 +46,7 @@ sysinfo = "0.29"
 axum = "0.8"
 
 [dev-dependencies]
+wcn_client = { path = "../client" }
 wcn_cluster = { path = "../cluster", features = ["testing"] }
 wcn_db = { path = "../db" }
 alloy = { version = "1.0", default-features = false, features = [

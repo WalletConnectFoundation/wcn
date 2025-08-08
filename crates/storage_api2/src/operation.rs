@@ -454,7 +454,7 @@ impl Output {
     /// output type.
     pub fn downcast_result<T>(operation_result: Result<Self>) -> Result<T>
     where
-        Self: TryInto<T, Error = derive_more::TryIntoError<Self>>,
+        Self: DowncastOutput<T>,
     {
         operation_result?
             .try_into()
@@ -462,3 +462,7 @@ impl Output {
             .map_err(|err| Error::new(ErrorKind::Internal).with_message(err))
     }
 }
+
+pub trait DowncastOutput<T>: TryInto<T, Error = derive_more::TryIntoError<Output>> {}
+
+impl<T, U> DowncastOutput<U> for T where T: TryInto<U, Error = derive_more::TryIntoError<Output>> {}

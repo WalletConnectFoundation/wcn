@@ -177,7 +177,9 @@ where
         Self::new(cfg, contract).await
     }
 
-    async fn new<E>(cfg: C, contract: C::SmartContract) -> Result<Self, E>
+    /// Connects to an existing WCN [`Cluster`] using an already initialized
+    /// smart contract.
+    pub async fn new<E>(cfg: C, contract: C::SmartContract) -> Result<Self, E>
     where
         E: From<view::CreationError> + From<smart_contract::ReadError>,
     {

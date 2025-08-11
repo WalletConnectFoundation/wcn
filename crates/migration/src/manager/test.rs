@@ -6,6 +6,7 @@ use {
         node_operator,
         smart_contract::{self, testing::FakeSmartContract, Read},
         Cluster,
+        EncryptionKey,
     },
     derive_more::derive::AsRef,
     futures::{stream, FutureExt as _, StreamExt},
@@ -16,8 +17,10 @@ use {
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
-#[derive(Clone, Default)]
+#[derive(AsRef, Clone)]
 struct Config {
+    #[as_ref]
+    encryption_key: EncryptionKey,
     smart_contract_registry: smart_contract::testing::FakeRegistry,
     storage_registry: storage_api::testing::FakeRegistry<node_operator::Id>,
 }
@@ -72,7 +75,11 @@ async fn transfers_data_and_writes_to_smart_contract() {
         .parse()
         .unwrap();
 
-    let cfg = Config::default();
+    let cfg = Config {
+        encryption_key: cluster::testing::encryption_key(),
+        smart_contract_registry: Default::default(),
+        storage_registry: Default::default(),
+    };
 
     let cluster = Cluster::deploy(
         cfg.clone(),

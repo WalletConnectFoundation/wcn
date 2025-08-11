@@ -18,6 +18,7 @@ use {
         migration,
         node_operator,
         settings,
+        EncryptionKey,
         Event,
         Keyspace,
         Node,
@@ -25,6 +26,7 @@ use {
         Settings,
         View,
     },
+    derive_more::derive::AsRef,
     futures::{Stream, TryStreamExt as _},
     std::{
         collections::HashMap,
@@ -86,6 +88,12 @@ impl super::Deployer<FakeSmartContract> for Deployer {
         )
         .map_err(|err| DeploymentError(err.to_string()))?;
 
+        let node_operators = initial_operators
+            .clone()
+            .into_iter()
+            .map(|op| (op.id, op))
+            .collect();
+
         let view = ClusterView {
             node_operators: initial_operators.into_iter().map(Some).collect(),
             ownership: Ownership::new(self.signer.address),
@@ -96,7 +104,7 @@ impl super::Deployer<FakeSmartContract> for Deployer {
             cluster_version: 0,
         };
 
-        let view = View::from_sc(&Config, view)
+        let view = View::from_sc(&Config::dummy(), view)
             .await
             .map_err(|err| DeploymentError(err.to_string()))?;
 
@@ -107,6 +115,7 @@ impl super::Deployer<FakeSmartContract> for Deployer {
 
         let contract = Arc::new(Mutex::new(Inner {
             address: contract_address,
+            node_operators,
             view,
             next_migration_id: 1,
             events: broadcast::channel(100).0,
@@ -145,7 +154,19 @@ impl super::Connector<FakeSmartContract> for Connector {
     }
 }
 
-struct Config;
+#[derive(AsRef)]
+struct Config {
+    #[as_ref]
+    encryption_key: EncryptionKey,
+}
+
+impl Config {
+    fn dummy() -> Self {
+        Self {
+            encryption_key: crate::testing::encryption_key(),
+        }
+    }
+}
 
 impl crate::Config for Config {
     type SmartContract = FakeSmartContract;
@@ -180,7 +201,7 @@ impl FakeSmartContract {
         };
 
         view = view
-            .apply_event(&Config, event.clone())
+            .apply_event(&Config::dummy(), event.clone())
             .await
             .map_err(|err| WriteError::Other(err.to_string()))?;
 
@@ -191,10 +212,25 @@ impl FakeSmartContract {
 
         Ok(())
     }
+
+    fn insert_node_operator(&self, operator: node_operator::Serialized) {
+        let _ = self
+            .inner
+            .lock()
+            .unwrap()
+            .node_operators
+            .insert(operator.id, operator);
+    }
+
+    fn remove_node_operator(&self, id: node_operator::Id) {
+        let _ = self.inner.lock().unwrap().node_operators.remove(&id);
+    }
 }
 
 struct Inner {
     address: Address,
+
+    node_operators: HashMap<node_operator::Id, node_operator::Serialized>,
 
     view: View<Config>,
 
@@ -272,6 +308,8 @@ impl super::Write for FakeSmartContract {
     }
 
     async fn add_node_operator(&self, operator: node_operator::Serialized) -> WriteResult<()> {
+        self.insert_node_operator(operator.clone());
+
         self.write(|this| node_operator::Added {
             idx: this.view.node_operators().free_idx().unwrap(),
             operator,
@@ -281,6 +319,8 @@ impl super::Write for FakeSmartContract {
     }
 
     async fn update_node_operator(&self, operator: node_operator::Serialized) -> WriteResult<()> {
+        self.insert_node_operator(operator.clone());
+
         self.write(|this| node_operator::Added {
             idx: this.view.node_operators().get_idx(&operator.id).unwrap(),
             operator,
@@ -290,6 +330,8 @@ impl super::Write for FakeSmartContract {
     }
 
     async fn remove_node_operator(&self, id: node_operator::Id) -> WriteResult<()> {
+        self.remove_node_operator(id);
+
         self.write(|this| node_operator::Removed {
             id,
             cluster_version: this.view.cluster_version + 1,
@@ -317,11 +359,13 @@ impl super::Read for FakeSmartContract {
         Ok(ClusterView {
             node_operators: this
                 .view
-                .node_operators()
-                .clone()
-                .into_slots()
-                .into_iter()
-                .map(|opt| opt.map(|operator| operator.serialize().unwrap()))
+                .node_operators
+                .slots()
+                .iter()
+                .map(|slot| {
+                    slot.as_ref()
+                        .map(|op| this.node_operators.get(&op.id).unwrap().clone())
+                })
                 .collect(),
             ownership: this.view.ownership.clone(),
             settings: this.view.settings.clone(),

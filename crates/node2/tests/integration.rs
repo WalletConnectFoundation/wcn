@@ -74,9 +74,8 @@ async fn test_suite() {
     let mut operators: Vec<_> = (1..=5).map(|n| NodeOperator::new(n, &anvil)).collect();
     let operators_on_chain = operators.iter().map(NodeOperator::on_chain).collect();
 
-    let cfg = DeploymentConfig {
-        encryption_key: wcn_cluster::testing::encryption_key(),
-    };
+    let encryption_key = wcn_cluster::testing::encryption_key();
+    let cfg = DeploymentConfig { encryption_key };
 
     let cluster = Cluster::deploy(cfg, &provider, settings, operators_on_chain)
         .await
@@ -104,6 +103,7 @@ async fn test_suite() {
 
     let client = wcn_client::Client::new(wcn_client::Config {
         keypair: operators[0].clients[0].keypair.clone(),
+        cluster_encryption_key: encryption_key,
         connection_timeout: Duration::from_secs(1),
         operation_timeout: Duration::from_secs(2),
         reconnect_interval: Duration::from_millis(100),
@@ -114,6 +114,9 @@ async fn test_suite() {
     .await
     .unwrap()
     .build();
+
+    // Give some time for the client to open connections to the nodes.
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let namespace = format!("{}/0", operators[0].signer.address())
         .parse()

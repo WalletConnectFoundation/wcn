@@ -1,11 +1,13 @@
 use {
     crate::{Error, PeerAddr},
     arc_swap::ArcSwap,
+    derive_more::derive::AsRef,
     futures::{Stream, StreamExt as _, TryStreamExt as _, future::Either, stream},
     std::{sync::Arc, time::Duration},
     tokio::sync::oneshot,
     wc::future::FutureExt,
     wcn_cluster::{
+        EncryptionKey,
         node_operator,
         smart_contract::{ReadError, ReadResult},
     },
@@ -34,8 +36,10 @@ impl AsRef<PeerId> for Node {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, AsRef)]
 pub(crate) struct Config {
+    #[as_ref]
+    pub(crate) encryption_key: EncryptionKey,
     pub(crate) cluster_api: ClusterClient,
     pub(crate) coordinator_api: CoordinatorClient,
 }

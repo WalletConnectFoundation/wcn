@@ -34,6 +34,7 @@ use {
     },
 };
 pub use {
+    wcn_cluster::EncryptionKey,
     wcn_rpc::{PeerId, identity::Keypair},
     wcn_storage_api2::{ErrorKind as CoordinatorErrorKind, MapPage},
 };
@@ -76,6 +77,9 @@ impl Error {
 pub struct Config {
     /// [`Keypair`] to be used for RPC clients.
     pub keypair: Keypair,
+
+    /// Symmetrical encryption key used for accessing the on-chain data.
+    pub cluster_encryption_key: EncryptionKey,
 
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
@@ -141,6 +145,7 @@ impl Client {
         let initial_cluster_view = cluster::fetch_cluster_view(&cluster_api, &config.nodes).await?;
 
         let cluster_cfg = cluster::Config {
+            encryption_key: config.cluster_encryption_key,
             cluster_api,
             coordinator_api,
         };

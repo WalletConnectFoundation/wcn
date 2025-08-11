@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  RUST_STABLE: 1.85.0
-  RUST_NIGHTLY: nightly-2025-02-23
+  RUST_STABLE: 1.89.0
+  RUST_NIGHTLY: nightly-2025-08-07
 
 jobs:
   changed-files:

@@ -100,11 +100,16 @@ async fn test_suite() {
         .unwrap();
 
     for idx in 1..=7 {
-        connect(&cfg, idx + 1, cluster.smart_contract().address(), &anvil)
-            .await
-            .complete_migration(1)
-            .await
-            .unwrap();
+        connect(
+            &cfg,
+            idx + 1,
+            cluster.smart_contract().address().unwrap(),
+            &anvil,
+        )
+        .await
+        .complete_migration(1)
+        .await
+        .unwrap();
     }
 
     tokio::time::sleep(Duration::from_secs(1)).await;

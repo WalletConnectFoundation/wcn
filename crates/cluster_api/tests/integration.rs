@@ -100,7 +100,7 @@ async fn test_rpc() {
         .unwrap();
 
     let address = client_conn.address().await.unwrap();
-    assert_eq!(address, smart_contract.address());
+    assert_eq!(address, smart_contract.address().unwrap());
 
     let cluster_view = client_conn.cluster_view().await.unwrap();
     assert_eq!(cluster_view.cluster_version, 1);

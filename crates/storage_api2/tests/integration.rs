@@ -22,6 +22,7 @@ use {
     },
     wcn_storage_api2::{
         operation,
+        rpc::client::ApiConfig,
         DataFrame,
         DataItem,
         DataType,
@@ -69,9 +70,9 @@ async fn test_rpc() {
 
 async fn test_rpc_api<API, S>(
     server: impl FnOnce(TestStorage) -> S,
-    client: impl FnOnce(wcn_rpc::client2::Config) -> wcn_rpc::client2::Result<Client<API>>,
+    client: impl FnOnce(wcn_rpc::client2::Config<API>) -> wcn_rpc::client2::Result<Client<API>>,
 ) where
-    API: Api<ConnectionParameters = ()>,
+    API: Api<ConnectionParameters = (), Config = ApiConfig>,
     S: wcn_rpc::server2::Server,
     Connection<API>: StorageApi,
 {
@@ -101,6 +102,9 @@ async fn test_rpc_api<API, S>(
         reconnect_interval: Duration::from_secs(1),
         max_concurrent_rpcs: 10,
         priority: transport::Priority::High,
+        api: ApiConfig {
+            rpc_timeout: Duration::from_secs(2),
+        },
     };
 
     let client = client(client_config).unwrap();

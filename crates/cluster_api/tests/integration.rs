@@ -19,7 +19,7 @@ use {
         },
         testing,
     },
-    wcn_cluster_api::{ClusterApi, Read},
+    wcn_cluster_api::{ClusterApi, Read, rpc::client::ApiConfig},
     wcn_rpc::{
         identity::Keypair,
         server2::{Server, ShutdownSignal},
@@ -83,6 +83,9 @@ async fn test_rpc() {
         reconnect_interval: Duration::from_secs(1),
         max_concurrent_rpcs: 500,
         priority: wcn_rpc::transport::Priority::High,
+        api: ApiConfig {
+            rpc_timeout: Duration::from_secs(5),
+        },
     })
     .unwrap();
 

@@ -38,8 +38,6 @@ use {
     },
 };
 
-// TODO: metrics, timeouts
-
 /// Client-specific part of an RPC [Api][`super::Api`].
 pub trait Api: super::Api + Sized {
     /// Outbound [`Connection`] parameters.
@@ -47,6 +45,9 @@ pub trait Api: super::Api + Sized {
 
     /// Implementor of [`HandleConnection`] of this RPC [`Api`].
     type ConnectionHandler: HandleConnection<Self>;
+
+    /// [`Api`] config.
+    type Config: Clone + Send + Sync + 'static;
 }
 
 /// Handler of newly established outbound [`Connection`]s.
@@ -61,7 +62,7 @@ pub trait HandleConnection<API: Api>: Clone + Send + Sync + 'static {
 
 /// RPC [`Client`] config.
 #[derive(Clone, Debug)]
-pub struct Config {
+pub struct Config<API: Api> {
     /// [`identity::Keypair`] of the client.
     pub keypair: identity::Keypair,
 
@@ -76,13 +77,16 @@ pub struct Config {
 
     /// [`transport::Priority`] of the client.
     pub priority: transport::Priority,
+
+    /// [`Api`] config.
+    pub api: API::Config,
 }
 
 /// RPC client responsible for establishing outbound [`Connection`]s to remote
 /// peers.
 #[derive_where(Clone)]
 pub struct Client<API: Api> {
-    config: Arc<Config>,
+    config: Arc<Config<API>>,
     endpoint: quinn::Endpoint,
 
     connection_handler: API::ConnectionHandler,
@@ -90,7 +94,10 @@ pub struct Client<API: Api> {
 
 impl<API: Api> Client<API> {
     /// Creates a new RPC [`Client`].
-    pub fn new(cfg: Config, connection_handler: API::ConnectionHandler) -> Result<Self, Error> {
+    pub fn new(
+        cfg: Config<API>,
+        connection_handler: API::ConnectionHandler,
+    ) -> Result<Self, Error> {
         let transport_config = quic::new_quinn_transport_config(cfg.max_concurrent_rpcs);
         let socket_addr = SocketAddr::new(std::net::Ipv4Addr::new(0, 0, 0, 0).into(), 0);
         let endpoint = quic::new_quinn_endpoint(
@@ -392,7 +399,8 @@ impl<API: Api> Connection<API> {
         .pipe(tokio::spawn);
     }
 
-    fn config(&self) -> &Config {
+    /// Returns RPC [`Client`] [`Config`].
+    pub fn config(&self) -> &Config<API> {
         &self.inner.client.config
     }
 }

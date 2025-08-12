@@ -48,6 +48,7 @@ jobs:
               - 'deny.toml'
             dockerfile:
               - 'Dockerfile'
+              - 'infra/Dockerfile.*'
             version:
               - 'VERSION'
     outputs:
@@ -236,21 +237,6 @@ jobs:
       - id: read-version
         run: echo VERSION=$(cat VERSION) >> $GITHUB_ENV
 
-     # - id: docker-meta ${{ matrix.image }}
-     #   uses: docker/metadata-action@v4
-     #   with:
-     #     images: |
-     #       ghcr.io/walletconnectfoundation/wcn-node-legacy
-     #       ghcr.io/walletconnectfoundation/wcn-node
-     #       ghcr.io/walletconnectfoundation/wcn-db
-     #     flavor: |
-     #       latest=auto
-     #     tags: |
-     #       type=ref,event=branch
-     #       type=ref,event=pr
-     #       type=sha
-     #       ${{ github.ref_name == 'main' && env.VERSION || '' }}
-
       - id: meta
         name: Docker metadata ${{ matrix.name }}
         uses: docker/metadata-action@v5
@@ -262,15 +248,6 @@ jobs:
             type=ref,event=pr
             type=sha
             ${{ github.ref_name == 'main' && env.VERSION || '' }}
-
-      # - uses: docker/build-push-action@v6
-      #   with:
-      #     context: .
-      #     file: ./Dockerfile
-      #     cache-from: type=gha
-      #     cache-to: type=gha,mode=max
-      #     tags: ${{ steps.docker-meta.outputs.tags }}
-      #     push: true
 
       - name: Build & publish ${{ matrix.image }}
         uses: docker/build-push-action@v6

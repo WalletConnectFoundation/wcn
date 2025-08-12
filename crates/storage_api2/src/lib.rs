@@ -426,11 +426,6 @@ impl Error {
         Self::new(ErrorKind::Unauthorized)
     }
 
-    /// Creates a new [`Error`] with [`ErrorKind::Timeout`].
-    pub const fn timeout() -> Self {
-        Self::new(ErrorKind::Timeout)
-    }
-
     /// Creates a new [`Error`] with [`ErrorKind::KeyspaceVersionMismatch`].
     pub const fn keyspace_version_mismatch() -> Self {
         Self::new(ErrorKind::KeyspaceVersionMismatch)

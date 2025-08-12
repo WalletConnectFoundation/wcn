@@ -16,9 +16,7 @@ use {
     },
     derive_more::derive::{From, TryInto},
     serde::Serialize,
-    strum::{EnumDiscriminants, IntoStaticStr},
     tap::TapFallible as _,
-    wc::metrics::{self, enum_ordinalize::Ordinalize},
     wcn_rpc::{BorrowedMessage, Message},
 };
 
@@ -40,14 +38,6 @@ impl Operation<'_> {
         match self {
             Self::Owned(owned) => owned,
             Self::Borrowed(borrowed) => borrowed.into_owned(),
-        }
-    }
-
-    /// Returns [`Name`] of this [`Operation`].
-    pub fn name(&self) -> Name {
-        match self {
-            Self::Owned(owned) => owned.name(),
-            Self::Borrowed(borrowed) => borrowed.name(),
         }
     }
 
@@ -92,15 +82,7 @@ impl Operation<'_> {
     }
 }
 
-impl metrics::Enum for Name {
-    fn as_str(&self) -> &'static str {
-        self.into()
-    }
-}
-
-#[derive(Clone, Debug, From, PartialEq, Eq, EnumDiscriminants)]
-#[strum_discriminants(name(Name))]
-#[strum_discriminants(derive(Ordinalize, IntoStaticStr))]
+#[derive(Clone, Debug, From, PartialEq, Eq)]
 pub enum Owned {
     Get(Get),
     Set(Set),
@@ -118,24 +100,6 @@ pub enum Owned {
 }
 
 impl Owned {
-    /// Returns [`Name`] of this [`Owned`] [`Operation`].
-    pub fn name(&self) -> Name {
-        match self {
-            Owned::Get(_) => Name::Get,
-            Owned::Set(_) => Name::Set,
-            Owned::Del(_) => Name::Del,
-            Owned::GetExp(_) => Name::GetExp,
-            Owned::SetExp(_) => Name::SetExp,
-            Owned::HGet(_) => Name::HGet,
-            Owned::HSet(_) => Name::HSet,
-            Owned::HDel(_) => Name::HDel,
-            Owned::HGetExp(_) => Name::HGetExp,
-            Owned::HSetExp(_) => Name::HSetExp,
-            Owned::HCard(_) => Name::HCard,
-            Owned::HScan(_) => Name::HScan,
-        }
-    }
-
     /// Returns [`Namespace`] of this [`Owned`] [`Operation`].
     pub fn namespace(&self) -> &Namespace {
         match self {
@@ -245,24 +209,6 @@ pub enum Borrowed<'a> {
 }
 
 impl Borrowed<'_> {
-    /// Returns [`Name`] of this [`Borrowed`] [`Operation`].
-    pub fn name(&self) -> Name {
-        match self {
-            Borrowed::Get(_) => Name::Get,
-            Borrowed::Set(_) => Name::Set,
-            Borrowed::Del(_) => Name::Del,
-            Borrowed::GetExp(_) => Name::GetExp,
-            Borrowed::SetExp(_) => Name::SetExp,
-            Borrowed::HGet(_) => Name::HGet,
-            Borrowed::HSet(_) => Name::HSet,
-            Borrowed::HDel(_) => Name::HDel,
-            Borrowed::HGetExp(_) => Name::HGetExp,
-            Borrowed::HSetExp(_) => Name::HSetExp,
-            Borrowed::HCard(_) => Name::HCard,
-            Borrowed::HScan(_) => Name::HScan,
-        }
-    }
-
     /// Returns [`Namespace`] of this [`Borrowed`] [`Operation`].
     pub fn namespace(&self) -> &Namespace {
         match self {

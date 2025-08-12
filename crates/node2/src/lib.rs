@@ -92,9 +92,6 @@ impl Config {
             reconnect_interval: Duration::from_millis(100),
             max_concurrent_rpcs: 10000,
             priority: wcn_rpc::transport::Priority::High,
-            api: wcn_storage_api::rpc::client::ApiConfig {
-                rpc_timeout: Duration::from_secs(2),
-            },
         };
 
         let replica_low_prio_client_cfg = rpc_client::Config {
@@ -103,9 +100,6 @@ impl Config {
             reconnect_interval: Duration::from_secs(1),
             max_concurrent_rpcs: 200,
             priority: wcn_rpc::transport::Priority::Low,
-            api: wcn_storage_api::rpc::client::ApiConfig {
-                rpc_timeout: Duration::from_secs(2),
-            },
         };
 
         let database_client_cfg = rpc_client::Config {
@@ -114,9 +108,6 @@ impl Config {
             reconnect_interval: Duration::from_millis(100),
             max_concurrent_rpcs: 5000,
             priority: wcn_rpc::transport::Priority::High,
-            api: wcn_storage_api::rpc::client::ApiConfig {
-                rpc_timeout: Duration::from_millis(500),
-            },
         };
 
         let database_low_prio_client_cfg = rpc_client::Config {
@@ -125,9 +116,6 @@ impl Config {
             reconnect_interval: Duration::from_millis(100),
             max_concurrent_rpcs: 200,
             priority: wcn_rpc::transport::Priority::Low,
-            api: wcn_storage_api::rpc::client::ApiConfig {
-                rpc_timeout: Duration::from_millis(500),
-            },
         };
 
         let database_client = storage_api_client::database(database_client_cfg)?;

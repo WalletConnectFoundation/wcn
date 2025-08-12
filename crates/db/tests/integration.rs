@@ -8,7 +8,7 @@ use {
     },
     storage_api::{
         operation::*,
-        rpc::{client::ApiConfig, DatabaseApi},
+        rpc::DatabaseApi,
         MapEntry,
         MapPage,
         Namespace,
@@ -60,9 +60,6 @@ async fn test_e2e() {
         reconnect_interval: Duration::from_secs(1),
         max_concurrent_rpcs: 100,
         priority: wcn_rpc::transport::Priority::High,
-        api: ApiConfig {
-            rpc_timeout: Duration::from_secs(2),
-        },
     })
     .unwrap();
 

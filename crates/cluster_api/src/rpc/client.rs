@@ -2,7 +2,6 @@ pub use wcn_rpc::client2::Config;
 use {
     super::*,
     futures::{Stream, StreamExt},
-    std::time::Duration,
     wcn_rpc::client2::{Client, Connection, ConnectionHandler},
 };
 
@@ -12,22 +11,14 @@ pub type Cluster = Client<ClusterApi>;
 /// Outbound [`Connection`] to [`ClusterApi`].
 pub type ClusterConnection = Connection<ClusterApi>;
 
-/// [`ClusterApi`] config.
-#[derive(Clone)]
-pub struct ApiConfig {
-    /// Outbound RPC timeout.
-    pub rpc_timeout: Duration,
-}
-
 /// Creates a new [`ClusterApi`] RPC client.
-pub fn new(config: Config<ClusterApi>) -> wcn_rpc::client2::Result<Cluster> {
+pub fn new(config: Config) -> wcn_rpc::client2::Result<Cluster> {
     Client::new(config, ConnectionHandler)
 }
 
 impl wcn_rpc::client2::Api for ClusterApi {
     type ConnectionParameters = ();
     type ConnectionHandler = ConnectionHandler;
-    type Config = ApiConfig;
 }
 
 impl crate::ClusterApi for Connection<ClusterApi> {

@@ -91,9 +91,6 @@ async fn test_suite() {
         reconnect_interval: Duration::from_millis(100),
         max_concurrent_rpcs: 100,
         priority: transport::Priority::High,
-        api: wcn_storage_api::rpc::client::ApiConfig {
-            rpc_timeout: Duration::from_secs(2),
-        },
     };
 
     let rpc_client = wcn_storage_api::rpc::client::coordinator(client_config).unwrap();

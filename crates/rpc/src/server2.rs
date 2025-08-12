@@ -26,7 +26,6 @@ use {
         future::Future,
         io,
         marker::PhantomData,
-        net::SocketAddr,
         pin::{pin, Pin},
         sync::Arc,
         task::{self, ready, Poll},
@@ -603,11 +602,6 @@ impl<API: Api> Connection<'_, API> {
     /// Returns [`PeerId`] of the remote peer.
     pub fn remote_peer_id(&self) -> &PeerId {
         &self.inner.remote_peer_id
-    }
-
-    /// Returns [`SocketAddr`] of the remote peer.
-    pub fn remote_peer_addr(&self) -> SocketAddr {
-        self.inner.quic.remote_address()
     }
 
     /// Handles this [`Connection`] by handling all [`InboundRpc`] using the

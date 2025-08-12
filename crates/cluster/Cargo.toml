@@ -46,6 +46,7 @@ fpe = "0.6"
 aes = "0.8"
 hex = "0.4"
 serde_json = "1"
+const-hex = { workspace = true }
 
 tokio = { version = "1", features = ["full"] }
 arc-swap = "1.7"
@@ -53,6 +54,7 @@ indexmap = { version = "2", features = ["serde"] }
 smallvec = { version = "1.11", features = ["serde"] }
 
 [dev-dependencies]
+proptest = "1"
 wcn_cluster = { path = ".", features = ["testing"] }
 alloy = { version = "1.0", default-features = false, features = [
     "provider-anvil-node",

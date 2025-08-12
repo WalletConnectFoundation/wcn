@@ -8,6 +8,7 @@ use {
         smart_contract,
         Client,
         Config,
+        EncryptionKey,
         Node,
         Version as ClusterVersion,
     },
@@ -17,6 +18,7 @@ use {
         atomic::{self, AtomicUsize},
         Arc,
     },
+    tap::Tap,
 };
 
 /// Minimum number of [`Node`]s each [`NodeOperator`] is required to have.
@@ -115,6 +117,33 @@ impl<N> NodeOperator<N> {
         &self.nodes[n % self.nodes.len()]
     }
 
+    /// Iterates over all of this [`NodeOperator`]'s [`Node`]s to find the one
+    /// matching a predicate.
+    ///
+    /// This is similar to [`NodeOperator::next_node`] in using a counter for a
+    /// round-robin load-balancing.
+    pub fn find_next_node<F, R>(&self, cb: F) -> Option<R>
+    where
+        F: Fn(&N) -> Option<R>,
+    {
+        // we've checked this in the constructor
+        debug_assert!(!self.nodes.is_empty());
+
+        let num_nodes = self.nodes.len();
+        let offset = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+
+        for idx in 0..num_nodes {
+            let idx = idx.wrapping_add(offset) % num_nodes;
+            let res = cb(&self.nodes[idx]);
+
+            if res.is_some() {
+                return res;
+            }
+        }
+
+        None
+    }
+
     /// Returns [`Node`]s of this [`NodeOperator`].
     ///
     /// [`NodeOperator`] is guaranteed to always have at least 2 nodes.
@@ -188,14 +217,21 @@ pub struct Removed {
 }
 
 impl NodeOperator {
-    pub(super) fn serialize(self) -> Result<Serialized, DataSerializationError> {
+    pub(super) fn serialize(
+        self,
+        key: &EncryptionKey,
+    ) -> Result<Serialized, DataSerializationError> {
         use DataSerializationError as Error;
 
-        // TODO: encrypt
+        let nodes = self
+            .nodes
+            .into_iter()
+            .map(|node| node.tap_mut(|n| n.encrypt(key)).into())
+            .collect();
 
         let data = DataV0 {
             name: self.name,
-            nodes: self.nodes.into_iter().map(Into::into).collect(),
+            nodes,
             clients: self.clients.into_iter().map(Into::into).collect(),
         };
 
@@ -237,7 +273,8 @@ impl Serialized {
         let nodes = data
             .nodes
             .into_iter()
-            .map(|node| cfg.new_node(self.id, node.into()))
+            .map(|v0| Node::from(v0).tap_mut(|node| node.decrypt(cfg.as_ref())))
+            .map(|node| cfg.new_node(self.id, node))
             .collect();
 
         let clients = data.clients.into_iter().map(Into::into).collect();

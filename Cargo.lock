@@ -410,7 +410,7 @@ dependencies = [
  "keccak-asm",
  "paste",
  "proptest",
- "rand 0.9.1",
+ "rand 0.9.2",
  "ruint",
  "rustc-hash 2.1.1",
  "serde",
@@ -2614,7 +2614,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27cea6e7f512d43b098939ff4d5a5d6fe3db07971e1d05176fe26c642d33f5b8"
 dependencies = [
  "getrandom 0.3.3",
- "rand 0.9.1",
+ "rand 0.9.2",
  "siphasher",
  "wide",
 ]
@@ -5564,7 +5564,7 @@ dependencies = [
  "fastbloom",
  "getrandom 0.3.3",
  "lru-slab",
- "rand 0.9.1",
+ "rand 0.9.2",
  "ring 0.17.8",
  "rustc-hash 2.1.1",
  "rustls",
@@ -5656,9 +5656,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fbfd9d094a40bf3ae768db9361049ace4c0e04a4fd6b359518bd7b73a73dd97"
+checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -6030,7 +6030,7 @@ dependencies = [
  "primitive-types",
  "proptest",
  "rand 0.8.5",
- "rand 0.9.1",
+ "rand 0.9.2",
  "rlp",
  "ruint-macro",
  "serde",
@@ -7450,7 +7450,7 @@ dependencies = [
  "http 1.1.0",
  "httparse",
  "log",
- "rand 0.9.1",
+ "rand 0.9.2",
  "rustls",
  "rustls-pki-types",
  "sha1",
@@ -7889,6 +7889,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wcn_client"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "derive_more 1.0.0",
+ "futures",
+ "rand 0.9.2",
+ "tap",
+ "thiserror 1.0.64",
+ "tokio",
+ "tracing",
+ "wc",
+ "wcn_cluster",
+ "wcn_cluster_api",
+ "wcn_rpc",
+ "wcn_storage_api2",
+]
+
+[[package]]
 name = "wcn_client_api"
 version = "0.1.0"
 dependencies = [
@@ -7918,6 +7937,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "backoff",
+ "const-hex",
  "derivative",
  "derive-where",
  "derive_more 1.0.0",
@@ -7928,6 +7948,7 @@ dependencies = [
  "itertools 0.12.1",
  "libp2p",
  "postcard",
+ "proptest",
  "serde",
  "serde_json",
  "sharding",
@@ -8029,7 +8050,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "proc-mounts",
- "rand 0.9.1",
+ "rand 0.9.2",
  "rand_chacha 0.9.0",
  "serde",
  "sysinfo",
@@ -8223,7 +8244,9 @@ dependencies = [
  "vergen",
  "vergen-pretty",
  "wc",
+ "wcn_client",
  "wcn_cluster",
+ "wcn_cluster_api",
  "wcn_db",
  "wcn_logging",
  "wcn_migration",

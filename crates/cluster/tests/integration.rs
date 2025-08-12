@@ -3,6 +3,7 @@ use {
         node_bindings::{Anvil, AnvilInstance},
         signers::local::PrivateKeySigner,
     },
+    derive_more::derive::AsRef,
     std::{collections::HashSet, time::Duration},
     tap::Tap,
     tracing_subscriber::EnvFilter,
@@ -17,14 +18,18 @@ use {
         },
         testing,
         Cluster,
+        EncryptionKey,
         Node,
         NodeOperator,
         Settings,
     },
 };
 
-#[derive(Clone, Copy)]
-struct Config;
+#[derive(AsRef, Clone, Copy)]
+struct Config {
+    #[as_ref]
+    encryption_key: EncryptionKey,
+}
 
 impl wcn_cluster::Config for Config {
     type SmartContract = evm::SmartContract;
@@ -51,7 +56,9 @@ async fn test_suite() {
         .try_spawn()
         .unwrap();
 
-    let cfg = Config;
+    let cfg = Config {
+        encryption_key: wcn_cluster::testing::encryption_key(),
+    };
 
     let settings = Settings {
         max_node_operator_data_bytes: 4096,
@@ -93,11 +100,16 @@ async fn test_suite() {
         .unwrap();
 
     for idx in 1..=7 {
-        connect(idx + 1, cluster.smart_contract().address(), &anvil)
-            .await
-            .complete_migration(1)
-            .await
-            .unwrap();
+        connect(
+            &cfg,
+            idx + 1,
+            cluster.smart_contract().address().unwrap(),
+            &anvil,
+        )
+        .await
+        .complete_migration(1)
+        .await
+        .unwrap();
     }
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -155,10 +167,11 @@ async fn provider(signer: Signer, anvil: &AnvilInstance) -> RpcProvider {
 }
 
 async fn connect(
+    cfg: &Config,
     operator: u8,
     address: smart_contract::Address,
     anvil: &AnvilInstance,
 ) -> Cluster<Config> {
     let provider = provider(new_signer(operator, anvil), anvil).await;
-    Cluster::connect(Config, &provider, address).await.unwrap()
+    Cluster::connect(*cfg, &provider, address).await.unwrap()
 }

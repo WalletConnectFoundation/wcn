@@ -9,7 +9,7 @@ use {
     itertools::Itertools,
     serde::{Deserialize, Serialize},
     smart_contract::{Read, Write},
-    std::{collections::HashSet, sync::Arc},
+    std::{collections::HashSet, str::FromStr, sync::Arc},
     tokio::sync::watch,
 };
 
@@ -59,7 +59,7 @@ pub const MAX_OPERATORS: usize = keyspace::MAX_OPERATORS;
 pub const MIN_OPERATORS: u8 = keyspace::REPLICATION_FACTOR;
 
 /// [`Cluster`] config.
-pub trait Config: Send + Sync + 'static {
+pub trait Config: AsRef<EncryptionKey> + Send + Sync + 'static {
     /// [`SmartContract`] implementation being used.
     type SmartContract: smart_contract::Read;
 
@@ -143,6 +143,12 @@ pub enum Event {
     SettingsUpdated(settings::Updated),
 }
 
+/// Symmetrical encryption key used for encryption/decryption of on-chain
+/// [`node_operator`] data.
+#[derive(Clone, Copy)]
+#[derive_where(Debug)]
+pub struct EncryptionKey(#[derive_where(skip)] pub [u8; 32]);
+
 impl<C: Config> Cluster<C>
 where
     Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,
@@ -159,12 +165,12 @@ where
         let operators = NodeOperators::from_slots(initial_operators.into_iter().map(Some))?
             .into_slots()
             .into_iter()
-            .filter_map(|slot| slot.map(|operator| operator.serialize()))
+            .filter_map(|slot| slot.map(|operator| operator.serialize(cfg.as_ref())))
             .try_collect()?;
 
         let contract = deployer.deploy(initial_settings, operators).await?;
 
-        Self::new(cfg, contract).await
+        Ok(Self::new(cfg, contract).await?)
     }
 
     /// Connects to an existing WCN [`Cluster`].
@@ -174,13 +180,12 @@ where
         contract_address: smart_contract::Address,
     ) -> Result<Self, ConnectionError> {
         let contract = connector.connect(contract_address).await?;
-        Self::new(cfg, contract).await
+        Ok(Self::new(cfg, contract).await?)
     }
 
-    async fn new<E>(cfg: C, contract: C::SmartContract) -> Result<Self, E>
-    where
-        E: From<view::CreationError> + From<smart_contract::ReadError>,
-    {
+    /// Connects to an existing WCN [`Cluster`] using an already initialized
+    /// smart contract.
+    pub async fn new(cfg: C, contract: C::SmartContract) -> Result<Self, CreationError> {
         let events = contract.events().await?;
         let view = View::from_sc(&cfg, contract.cluster_view().await?).await?;
 
@@ -425,7 +430,7 @@ where
             view.node_operators().require_not_exists(&operator.id)?;
             view.node_operators().require_not_full()?;
 
-            let operator = operator.serialize()?;
+            let operator = operator.serialize(self.inner.config.as_ref())?;
             operator.data.validate(view.settings())?;
 
             Ok::<_, AddNodeOperatorError>(operator)
@@ -453,7 +458,7 @@ where
 
             let _idx = view.node_operators().require_idx(&operator.id)?;
 
-            let operator = operator.serialize()?;
+            let operator = operator.serialize(self.inner.config.as_ref())?;
             operator.data.validate(view.settings())?;
 
             Ok::<_, UpdateNodeOperatorError>(operator)
@@ -518,6 +523,16 @@ where
     }
 }
 
+/// [`Cluster::new`] error.
+#[derive(Debug, thiserror::Error)]
+pub enum CreationError {
+    #[error(transparent)]
+    View(#[from] view::CreationError),
+
+    #[error("Smart-contract: {0}")]
+    SmartContractRead(#[from] smart_contract::ReadError),
+}
+
 /// [`Cluster::deploy`] error.
 #[derive(Debug, thiserror::Error)]
 pub enum DeploymentError {
@@ -540,6 +555,15 @@ pub enum DeploymentError {
     SmartContract(#[from] smart_contract::DeploymentError),
 }
 
+impl From<CreationError> for DeploymentError {
+    fn from(err: CreationError) -> Self {
+        match err {
+            CreationError::View(err) => Self::View(err),
+            CreationError::SmartContractRead(err) => Self::SmartContractRead(err),
+        }
+    }
+}
+
 /// [`Cluster::connect`] error.
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {
@@ -551,6 +575,15 @@ pub enum ConnectionError {
 
     #[error(transparent)]
     View(#[from] view::CreationError),
+}
+
+impl From<CreationError> for ConnectionError {
+    fn from(err: CreationError) -> Self {
+        match err {
+            CreationError::View(err) => Self::View(err),
+            CreationError::SmartContractRead(err) => Self::SmartContractRead(err),
+        }
+    }
 }
 
 /// [`Cluster::start_migration`] error.
@@ -769,3 +802,11 @@ impl Event {
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("SmartContract call Signer is not configured")]
 pub struct NoSmartContractSingerError;
+
+impl FromStr for EncryptionKey {
+    type Err = const_hex::FromHexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        const_hex::decode_to_array(s).map(Self)
+    }
+}

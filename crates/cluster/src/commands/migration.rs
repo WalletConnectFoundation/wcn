@@ -14,18 +14,16 @@ pub struct MigrationCmd {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum MigrationSub {
-    Start(StartCmd),
-    Complete(CompleteCmd),
-    Abort(AbortCmd),
+    Start(start::StartCmd),
+    Complete(complete::CompleteCmd),
+    Abort(abort::AbortCmd),
 }
 
 pub async fn exec(cmd: MigrationCmd) -> anyhow::Result<()> {
     let client = cmd.shared_args.new_client().await?;
 
     match cmd.commands {
-        MigrationSub::Start(_) => {
-            todo!()
-        }
+        MigrationSub::Start(cmd) => start::exec(cmd, client).await,
         MigrationSub::Complete(_) => {
             todo!()
         }
@@ -35,11 +33,47 @@ pub async fn exec(cmd: MigrationCmd) -> anyhow::Result<()> {
     }
 }
 
-#[derive(Debug, clap::Args)]
-pub struct StartCmd {}
+mod start {
+    use wcn_cluster::{keyspace::ReplicationStrategy, smart_contract::Write, Keyspace};
 
-#[derive(Debug, clap::Args)]
-pub struct CompleteCmd {}
+    use crate::commands::SmartContractClient;
 
-#[derive(Debug, clap::Args)]
-pub struct AbortCmd {}
+    #[derive(Debug, clap::Args)]
+    pub struct StartCmd {
+        // TOOD: operators list
+    }
+
+    pub async fn exec(cmd: StartCmd, client: SmartContractClient) -> anyhow::Result<()> {
+        // Implementation for starting a migration
+
+        let operators = todo!();
+        let strategy = ReplicationStrategy::default();
+        let version = 0; // grab from contract then increment
+        let new_keyspace = Keyspace::new(operators, strategy, version)?;
+
+        // pub struct Keyspace<S = ()> {
+        //     operators: HashSet<node_operator::Idx>,
+        //
+        //     #[derivative(Debug = "ignore")]
+        //     shards: S,
+        //
+        //     replication_strategy: ReplicationStrategy,
+        //
+        //     version: u64,
+        // }
+        //
+        client.start_migration(new_keyspace).await?;
+
+        Ok(())
+    }
+}
+
+mod complete {
+    #[derive(Debug, clap::Args)]
+    pub struct CompleteCmd {}
+}
+
+mod abort {
+    #[derive(Debug, clap::Args)]
+    pub struct AbortCmd {}
+}

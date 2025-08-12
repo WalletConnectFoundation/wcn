@@ -218,6 +218,8 @@ pub async fn cli_test_suite() {
     file.write_all(&key_bytes).unwrap();
 
     test_migration_start(&anvil, &tempdir, sc).unwrap();
+
+    panic!();
 }
 
 fn test_migration_start(
@@ -231,7 +233,7 @@ fn test_migration_start(
         .arg("--key-file")
         .arg(dir.display().to_string())
         .arg("--provider-url")
-        .arg(anvil.endpoint_url().to_string())
+        .arg(anvil.ws_endpoint_url().to_string())
         .arg("--contract-address")
         .arg(sc.address().to_string())
         .arg("start")

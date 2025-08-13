@@ -3,7 +3,7 @@
 # Build args
 #
 ################################################################################
-ARG                 BASE="rust:1.87-bullseye"
+ARG                 BASE="rust:1.89-bullseye"
 ARG                 RUNTIME="debian:bullseye-slim"
 ARG                 VERSION="unknown"
 ARG                 SHA="unknown"
@@ -18,7 +18,7 @@ ARG                 TARGET_BIN="wcn_db"
 # Parameters for release builds
 #
 ################################################################################
-FROM                ${BASE} as build-release
+FROM                ${BASE} AS build-release
 ENV                 BUILD_SHARED_ARGS="--profile release-debug"
 ENV                 BUILD_PROFILE_DIR="release-debug"
 
@@ -27,7 +27,7 @@ ENV                 BUILD_PROFILE_DIR="release-debug"
 # Parameters for debug builds
 #
 ################################################################################
-FROM                ${BASE} as build-debug
+FROM                ${BASE} AS build-debug
 ENV                 BUILD_SHARED_ARGS=""
 ENV                 BUILD_PROFILE_DIR="debug"
 

@@ -3,8 +3,8 @@ use {
     crate::storage::Storage,
     futures_concurrency::future::Join as _,
     metrics_exporter_prometheus::BuildError as PrometheusBuildError,
-    std::{future::Future, io},
-    wcn_rpc::server2::{Server, ShutdownSignal},
+    std::{future::Future, io, time::Duration},
+    wcn_rpc::server2::{Api as _, Server, ShutdownSignal},
 };
 
 pub mod metrics;
@@ -69,12 +69,16 @@ pub fn run(
         shutdown_signal,
     };
 
-    let primary_rpc_server_fut =
-        storage_api::rpc::server::database(server::Server::new(storage.clone()))
-            .serve(primary_rpc_server_cfg)?;
+    let database_api = storage_api::rpc::DatabaseApi::new()
+        .with_rpc_timeout(Duration::from_millis(500))
+        .with_state(server::Server::new(storage));
 
-    let secondary_rpc_server_fut = storage_api::rpc::server::database(server::Server::new(storage))
-        .serve(secondary_rpc_server_cfg)?;
+    let primary_rpc_server_fut = database_api
+        .clone()
+        .into_server()
+        .serve(primary_rpc_server_cfg)?;
+
+    let secondary_rpc_server_fut = database_api.into_server().serve(secondary_rpc_server_cfg)?;
 
     Ok(async move {
         let _metrics_guard = metrics_guard;

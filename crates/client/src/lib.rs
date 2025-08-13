@@ -115,22 +115,33 @@ pub struct Client {
 
 impl Client {
     pub async fn new(config: Config) -> Result<Self, Error> {
-        let cluster_api = wcn_cluster_api::rpc::client::new(wcn_rpc::client2::Config {
+        let cluster_api =
+            wcn_cluster_api::rpc::ClusterApi::new().with_rpc_timeout(Duration::from_secs(5));
+
+        let cluster_api_client_cfg = wcn_rpc::client2::Config {
             keypair: config.keypair.clone(),
             connection_timeout: config.connection_timeout,
             reconnect_interval: config.reconnect_interval,
             max_concurrent_rpcs: 50,
             priority: wcn_rpc::transport::Priority::High,
-        })?;
+        };
+
+        let cluster_api_client =
+            wcn_rpc::client2::Client::new(cluster_api_client_cfg, cluster_api)?;
 
         let coordinator_api =
-            wcn_storage_api2::rpc::client::coordinator(wcn_rpc::client2::Config {
-                keypair: config.keypair,
-                connection_timeout: config.connection_timeout,
-                reconnect_interval: config.reconnect_interval,
-                max_concurrent_rpcs: config.max_concurrent_rpcs,
-                priority: wcn_rpc::transport::Priority::High,
-            })?;
+            wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2));
+
+        let coordinator_api_client_cfg = wcn_rpc::client2::Config {
+            keypair: config.keypair,
+            connection_timeout: config.connection_timeout,
+            reconnect_interval: config.reconnect_interval,
+            max_concurrent_rpcs: config.max_concurrent_rpcs,
+            priority: wcn_rpc::transport::Priority::High,
+        };
+
+        let coordinator_api_client =
+            wcn_rpc::client2::Client::new(coordinator_api_client_cfg, coordinator_api)?;
 
         // Initialize the client using one or more bootstrap nodes:
         // - fetch the current version of the cluster view;
@@ -142,12 +153,13 @@ impl Client {
         //   cluster API;
         // - spawn a task to monitor cluster updates and send an up-to-date version of
         //   the cluster view to the smart contract.
-        let initial_cluster_view = cluster::fetch_cluster_view(&cluster_api, &config.nodes).await?;
+        let initial_cluster_view =
+            cluster::fetch_cluster_view(&cluster_api_client, &config.nodes).await?;
 
         let cluster_cfg = cluster::Config {
             encryption_key: config.cluster_encryption_key,
-            cluster_api,
-            coordinator_api,
+            cluster_api: cluster_api_client,
+            coordinator_api: coordinator_api_client,
         };
 
         let bootstrap_sc = cluster::SmartContract::Static(initial_cluster_view);

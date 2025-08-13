@@ -4,7 +4,14 @@
 use {
     derive_more::Display,
     serde::{de::DeserializeOwned, Deserialize, Serialize},
-    std::{borrow::Cow, fmt::Debug, marker::PhantomData, net::SocketAddr, str::FromStr},
+    std::{
+        borrow::Cow,
+        fmt::Debug,
+        marker::PhantomData,
+        net::SocketAddr,
+        str::FromStr,
+        time::Duration,
+    },
     transport::Codec,
 };
 pub use {
@@ -28,6 +35,7 @@ pub mod server2;
 #[cfg(feature = "server")]
 pub use server::{IntoServer, Server};
 
+pub mod metrics;
 pub mod middleware;
 
 pub mod quic;
@@ -45,7 +53,18 @@ pub trait Api: Clone + Send + Sync + 'static {
     const NAME: ApiName;
 
     /// `enum` representation of all RPC IDs of this [`Api`].
-    type RpcId: Copy + Into<u8> + TryFrom<u8> + Send + Sync + 'static;
+    type RpcId: IdV2;
+
+    /// Returns the timeout to use for the specified RPC.
+    fn rpc_timeout(&self, rpc_id: Self::RpcId) -> Option<Duration>;
+}
+
+/// [`Rpc`] ID.
+pub trait IdV2: Copy + Into<u8> + TryFrom<u8> + Into<&'static str> + Send + Sync + 'static {}
+
+impl<ID> IdV2 for ID where
+    ID: Copy + Into<u8> + TryFrom<u8> + Into<&'static str> + Send + Sync + 'static
+{
 }
 
 /// [`Api`] name.
@@ -60,7 +79,7 @@ pub trait RpcV2: Sized + Send + Sync + 'static {
     type Request: MessageV2;
 
     /// Response type of this [`Rpc`].
-    type Response: MessageV2;
+    type Response: MessageV2 + metrics::FallibleResponse;
 
     /// Serialization codec of this [`Rpc`].
     type Codec: CodecV2<Self::Request> + CodecV2<Self::Response>;
@@ -72,32 +91,21 @@ pub type Request<RPC> = <RPC as RpcV2>::Request;
 /// [`RpcV2::Response`].
 pub type Response<RPC> = <RPC as RpcV2>::Response;
 
-/// Request-response RPC.
-pub trait UnaryRpc: RpcV2 {}
-
 /// Default implementation of [`UnaryRpc`].
-pub struct UnaryV2<const ID: u8, Req: MessageV2, Resp: MessageV2, C: CodecV2<Req> + CodecV2<Resp>> {
+pub struct RpcImpl<const ID: u8, Req: MessageV2, Resp: MessageV2, C: CodecV2<Req> + CodecV2<Resp>> {
     _marker: PhantomData<(Req, Resp, C)>,
 }
 
-impl<const ID: u8, Req, Resp, C> RpcV2 for UnaryV2<ID, Req, Resp, C>
+impl<const ID: u8, Req, Resp, C> RpcV2 for RpcImpl<ID, Req, Resp, C>
 where
     Req: MessageV2,
-    Resp: MessageV2,
+    Resp: MessageV2 + metrics::FallibleResponse,
     C: CodecV2<Req> + CodecV2<Resp>,
 {
     const ID: u8 = ID;
     type Request = Req;
     type Response = Resp;
     type Codec = C;
-}
-
-impl<const ID: u8, Req, Resp, C> UnaryRpc for UnaryV2<ID, Req, Resp, C>
-where
-    Req: MessageV2,
-    Resp: MessageV2,
-    C: CodecV2<Req> + CodecV2<Resp>,
-{
 }
 
 /// RPC message.

@@ -15,13 +15,14 @@ use {
     tracing_subscriber::EnvFilter,
     wc::future::StaticFutureExt,
     wcn_rpc::{
-        client2::{Api, Client, Connection},
+        client2::{self as wcn_rpc_client, Api as _, Connection},
         identity::Keypair,
-        server2::ShutdownSignal,
+        server2::{self as wcn_rpc_server, Api as _, Server as _, ShutdownSignal},
         transport,
     },
     wcn_storage_api2::{
         operation,
+        rpc::Api,
         DataFrame,
         DataItem,
         DataType,
@@ -48,32 +49,27 @@ async fn test_rpc() {
 
     for _ in 0..10 {
         test_rpc_api(
-            wcn_storage_api2::rpc::server::coordinator,
-            wcn_storage_api2::rpc::client::coordinator,
+            wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2)),
         )
         .await;
 
         test_rpc_api(
-            wcn_storage_api2::rpc::server::replica,
-            wcn_storage_api2::rpc::client::replica,
+            wcn_storage_api2::rpc::ReplicaApi::new().with_rpc_timeout(Duration::from_secs(2)),
         )
         .await;
 
         test_rpc_api(
-            wcn_storage_api2::rpc::server::database,
-            wcn_storage_api2::rpc::client::database,
+            wcn_storage_api2::rpc::DatabaseApi::new().with_rpc_timeout(Duration::from_secs(2)),
         )
         .await;
     }
 }
 
-async fn test_rpc_api<API, S>(
-    server: impl FnOnce(TestStorage) -> S,
-    client: impl FnOnce(wcn_rpc::client2::Config) -> wcn_rpc::client2::Result<Client<API>>,
-) where
-    API: Api<ConnectionParameters = ()>,
-    S: wcn_rpc::server2::Server,
-    Connection<API>: StorageApi,
+async fn test_rpc_api<Kind>(api: wcn_storage_api2::rpc::Api<Kind>)
+where
+    Api<Kind>: wcn_rpc_client::Api<ConnectionParameters = (), RpcId = wcn_storage_api2::rpc::Id>,
+    Api<Kind, TestStorage>: wcn_rpc_server::Api<RpcId = wcn_storage_api2::rpc::Id>,
+    Connection<wcn_storage_api2::rpc::Api<Kind>>: StorageApi,
 {
     let storage = TestStorage::default();
 
@@ -93,7 +89,13 @@ async fn test_rpc_api<API, S>(
         shutdown_signal: ShutdownSignal::new(),
     };
 
-    let server_handle = server(storage.clone()).serve(server_cfg).unwrap().spawn();
+    let server_handle = api
+        .clone()
+        .with_state(storage.clone())
+        .into_server()
+        .serve(server_cfg)
+        .unwrap()
+        .spawn();
 
     let client_config = wcn_rpc::client2::Config {
         keypair: Keypair::generate_ed25519(),
@@ -103,7 +105,7 @@ async fn test_rpc_api<API, S>(
         priority: transport::Priority::High,
     };
 
-    let client = client(client_config).unwrap();
+    let client = api.try_into_client(client_config).unwrap();
 
     let server_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, server_port);
     let client_conn = client
@@ -123,12 +125,12 @@ async fn test_rpc_api<API, S>(
     server_handle.abort();
 }
 
-struct TestContext<API: Api> {
+struct TestContext<API: wcn_rpc_client::Api> {
     storage: TestStorage,
     client_conn: Connection<API>,
 }
 
-impl<API: Api> TestContext<API>
+impl<API: wcn_rpc_client::Api> TestContext<API>
 where
     Connection<API>: StorageApi,
 {

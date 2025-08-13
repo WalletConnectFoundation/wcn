@@ -1,87 +1,63 @@
 use {
-    super::{Error, GetEventStreamItem},
+    super::{ClusterApi, Error, GetEventStreamItem},
     crate::rpc::{GetAddress, GetClusterView, GetEventStream, Id as RpcId, MessageWrapper},
-    derive_where::derive_where,
     futures::{FutureExt as _, SinkExt as _, StreamExt as _},
     futures_concurrency::future::Race as _,
-    std::sync::Arc,
     tap::Pipe as _,
-    wcn_cluster::smart_contract::{self, Read},
+    wcn_cluster::smart_contract,
     wcn_rpc::{
         Request,
         Response,
-        server2::{
-            HandleConnection,
-            HandleRequest,
-            HandleRpc,
-            Inbound,
-            PendingConnection,
-            Result,
-            Server,
-        },
+        server2::{Inbound, PendingConnection, Result},
     },
 };
 
-pub fn new(smart_contract: impl Read) -> impl Server {
-    wcn_rpc::server2::new(ConnectionHandler {
-        rpc_handler: Arc::new(RpcHandler { smart_contract }),
-    })
-}
-
-#[derive_where(Clone)]
-struct ConnectionHandler<S: Read> {
-    rpc_handler: Arc<RpcHandler<S>>,
-}
-
-impl<S> HandleConnection for ConnectionHandler<S>
+impl<S> wcn_rpc::server2::Api for ClusterApi<S>
 where
-    S: Read,
+    S: smart_contract::Read + Clone,
 {
-    type Api = super::ClusterApi;
+    type RpcHandler = Self;
 
-    async fn handle_connection(&self, conn: PendingConnection<'_, Self::Api>) -> Result<()> {
-        let conn = conn.accept().await?;
+    async fn handle_connection(conn: PendingConnection<'_, Self>) -> Result<()> {
+        let rpc_handler = conn.api().clone();
+        let conn = conn.accept(rpc_handler).await?;
 
-        conn.handle(&self.rpc_handler, |rpc, handler| async move {
-            let handler = handler.as_ref();
-
+        conn.handle(|rpc| async move {
             match rpc.id() {
-                RpcId::GetAddress => rpc.handle::<GetAddress>(handler).await,
-                RpcId::GetClusterView => rpc.handle::<GetClusterView>(handler).await,
-                RpcId::GetEventStream => rpc.handle::<GetEventStream>(handler).await,
+                RpcId::GetAddress => rpc.handle_request::<GetAddress>(Self::get_address).await,
+                RpcId::GetClusterView => {
+                    rpc.handle_request::<GetClusterView>(Self::get_cluster_view)
+                        .await
+                }
+                RpcId::GetEventStream => rpc.handle::<GetEventStream>(Self::get_event_stream).await,
             }
         })
         .await
     }
 }
 
-#[derive(Clone)]
-struct RpcHandler<S: smart_contract::Read> {
-    smart_contract: S,
-}
+impl<S: smart_contract::Read> ClusterApi<S> {
+    fn smart_contract(&self) -> &S {
+        &self.state
+    }
 
-impl<S: Read> HandleRequest<GetAddress> for RpcHandler<S> {
-    async fn handle_request(&self, _: Request<GetAddress>) -> Response<GetAddress> {
-        self.smart_contract
+    async fn get_address(self, _: Request<GetAddress>) -> Response<GetAddress> {
+        self.smart_contract()
             .address()
             .map(MessageWrapper)
             .map_err(Error::internal)
     }
-}
 
-impl<S: Read> HandleRequest<GetClusterView> for RpcHandler<S> {
-    async fn handle_request(&self, _: Request<GetClusterView>) -> Response<GetClusterView> {
-        self.smart_contract
+    async fn get_cluster_view(self, _: Request<GetClusterView>) -> Response<GetClusterView> {
+        self.smart_contract()
             .cluster_view()
             .await
             .map(MessageWrapper)
             .map_err(Error::internal)
     }
-}
 
-impl<S: Read> HandleRpc<GetEventStream> for RpcHandler<S> {
-    async fn handle_rpc(&self, rpc: &mut Inbound<GetEventStream>) -> Result<()> {
-        let res = self.smart_contract.events().await;
+    async fn get_event_stream(self, mut rpc: Inbound<GetEventStream>) -> Result<()> {
+        let res = self.smart_contract().events().await;
 
         let (events, ack) = match res {
             Ok(events) => (Some(events), Ok(())),

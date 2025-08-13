@@ -7973,6 +7973,7 @@ dependencies = [
  "futures",
  "futures-concurrency",
  "serde",
+ "strum",
  "tap",
  "thiserror 1.0.64",
  "tokio",

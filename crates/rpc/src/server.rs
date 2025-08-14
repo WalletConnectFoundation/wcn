@@ -1,6 +1,7 @@
 use {
     crate::{
         self as rpc,
+        connection_filter::{self, Filter, RejectionReason},
         metrics::FallibleResponse,
         quic::{self},
         transport::{self, BiDirectionalStream, RecvStream, SendStream, Serializer},
@@ -10,7 +11,6 @@ use {
         Rpc,
     },
     derive_where::derive_where,
-    filter::{Filter, RejectionReason},
     futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStream as _},
     futures_concurrency::future::Race as _,
     libp2p_identity::PeerId,
@@ -46,8 +46,6 @@ use {
         },
     },
 };
-
-mod filter;
 
 /// Server-specific part of an RPC [Api][`super::Api`].
 pub trait Api: super::Api {
@@ -142,7 +140,7 @@ where
         )
         .map_err(Error::new)?;
 
-        let connection_filter = Filter::new(&filter::Config {
+        let connection_filter = Filter::new(&connection_filter::Config {
             max_connections: cfg.max_connections,
             max_connections_per_ip: cfg.max_connections_per_ip,
             max_connection_rate_per_ip: cfg.max_connection_rate_per_ip,
@@ -301,7 +299,7 @@ async fn accept_connections<R: sealed::ConnectionRouter>(
             },
 
             Err(err) => {
-                if err == filter::RejectionReason::AddressNotValidated {
+                if err == connection_filter::RejectionReason::AddressNotValidated {
                     // Signal the client to retry with validated address.
                     let _ = incoming.retry();
                 } else {
@@ -331,7 +329,7 @@ fn accept_connection<R: sealed::ConnectionRouter>(
     timeout: Duration,
     server_name: &'static str,
     connecting: quinn::Connecting,
-    permit: filter::Permit,
+    permit: connection_filter::Permit,
     rpc_semaphore: Arc<Semaphore>,
     router: R,
     shutdown_signal: ShutdownSignal,

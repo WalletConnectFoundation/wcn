@@ -12,6 +12,8 @@ pub mod client;
 pub use client::Client;
 
 #[cfg(feature = "server")]
+mod connection_filter;
+#[cfg(feature = "server")]
 pub mod server;
 
 pub mod metrics;

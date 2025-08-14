@@ -1,11 +1,13 @@
 use {
     derive_more::derive::{TryFrom, TryInto},
     serde::{Deserialize, Serialize, de::DeserializeOwned},
+    std::time::Duration,
+    strum::IntoStaticStr,
     wcn_cluster::{
         Event,
         smart_contract::{Address, ClusterView},
     },
-    wcn_rpc::{ApiName, BorrowedMessage, JsonCodec, Message, RpcV2},
+    wcn_rpc::{ApiName, BorrowedMessage, JsonCodec, Message, RpcImpl, metrics::FallibleResponse},
 };
 
 #[cfg(feature = "rpc_client")]
@@ -13,7 +15,7 @@ pub mod client;
 #[cfg(feature = "rpc_server")]
 pub mod server;
 
-#[derive(Clone, Copy, Debug, TryFrom)]
+#[derive(Clone, Copy, Debug, TryFrom, IntoStaticStr)]
 #[try_from(repr)]
 #[repr(u8)]
 pub enum Id {
@@ -28,33 +30,69 @@ impl From<Id> for u8 {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct ClusterApi;
+#[derive(Clone, Copy, Default)]
+pub struct ClusterApi<S = ()> {
+    rpc_timeout: Option<Duration>,
+    state: S,
+}
 
-impl wcn_rpc::Api for ClusterApi {
+impl ClusterApi {
+    /// Creates a new [`ClusterApi`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds RPC timeout to this [`ClusterApi`].
+    pub fn with_rpc_timeout(mut self, timeout: Duration) -> Self {
+        self.rpc_timeout = Some(timeout);
+        self
+    }
+
+    /// Adds `state` to this [`ClusterApi`].
+    pub fn with_state<S>(self, state: S) -> ClusterApi<S> {
+        ClusterApi {
+            rpc_timeout: self.rpc_timeout,
+            state,
+        }
+    }
+}
+
+impl<S> wcn_rpc::Api for ClusterApi<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     const NAME: ApiName = ApiName::new("Cluster");
     type RpcId = Id;
+
+    fn rpc_timeout(&self, rpc_id: Id) -> Option<Duration> {
+        match rpc_id {
+            Id::GetAddress | Id::GetClusterView => self.rpc_timeout,
+            Id::GetEventStream => None,
+        }
+    }
 }
 
-type UnaryRpc<const ID: u8, Req, Resp> = wcn_rpc::UnaryV2<ID, Req, Resp, JsonCodec>;
+type Rpc<const ID: u8, Req, Resp> = RpcImpl<ID, Req, Resp, JsonCodec>;
 
-type GetAddress = UnaryRpc<{ Id::GetAddress as u8 }, (), Result<MessageWrapper<Address>>>;
-type GetClusterView =
-    UnaryRpc<{ Id::GetClusterView as u8 }, (), Result<MessageWrapper<ClusterView>>>;
+type GetAddress = Rpc<{ Id::GetAddress as u8 }, (), Result<MessageWrapper<Address>>>;
 
-struct GetEventStream;
+type GetClusterView = Rpc<{ Id::GetClusterView as u8 }, (), Result<MessageWrapper<ClusterView>>>;
 
-impl RpcV2 for GetEventStream {
-    const ID: u8 = Id::GetEventStream as u8;
-    type Request = ();
-    type Response = GetEventStreamItem;
-    type Codec = JsonCodec;
-}
+type GetEventStream = Rpc<{ Id::GetEventStream as u8 }, (), GetEventStreamItem>;
 
 #[derive(Debug, TryInto, Serialize, Deserialize, Message)]
 enum GetEventStreamItem {
     Ack(Result<()>),
     Event(Result<Event>),
+}
+
+impl FallibleResponse for GetEventStreamItem {
+    fn error_kind(&self) -> Option<&'static str> {
+        match self {
+            Self::Ack(resp) => resp.error_kind(),
+            Self::Event(resp) => resp.error_kind(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Message, thiserror::Error)]
@@ -84,7 +122,7 @@ impl From<ErrorCode> for Error {
     }
 }
 
-#[derive(TryFrom)]
+#[derive(TryFrom, IntoStaticStr)]
 #[try_from(repr)]
 #[repr(u8)]
 enum ErrorCode {
@@ -129,6 +167,14 @@ impl From<crate::Error> for Error {
         };
 
         Error::new(code, err.message)
+    }
+}
+
+impl wcn_rpc::metrics::ErrorResponse for Error {
+    fn kind(&self) -> &'static str {
+        ErrorCode::try_from(self.code)
+            .map(Into::into)
+            .unwrap_or("Unknown")
     }
 }
 

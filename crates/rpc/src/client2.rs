@@ -1,14 +1,16 @@
 use {
     crate::{
+        metrics::{rpc_id_label, FallibleResponse},
         quic::{self},
         transport,
         transport2::{BiDirectionalStream, RecvStream, SendStream, Serializer},
+        ApiName,
         BorrowedMessage,
         CodecV2,
         ConnectionStatus,
         MessageV2,
+        RpcImpl,
         RpcV2,
-        UnaryV2,
     },
     derive_where::derive_where,
     futures::{FutureExt, Sink, SinkExt, Stream, StreamExt as _, TryStream as _},
@@ -18,6 +20,7 @@ use {
         error::Error as StdError,
         future::Future,
         io,
+        marker::PhantomData,
         net::{SocketAddr, SocketAddrV4},
         pin::{pin, Pin},
         sync::Arc,
@@ -34,29 +37,34 @@ use {
     tracing::Instrument,
     wc::{
         future::FutureExt as _,
-        metrics::{self, enum_ordinalize::Ordinalize, EnumLabel, StringLabel},
+        metrics::{
+            self,
+            enum_ordinalize::Ordinalize,
+            future_metrics,
+            EnumLabel,
+            FutureExt as _,
+            StringLabel,
+        },
     },
 };
-
-// TODO: metrics, timeouts
 
 /// Client-specific part of an RPC [Api][`super::Api`].
 pub trait Api: super::Api + Sized {
     /// Outbound [`Connection`] parameters.
     type ConnectionParameters: Clone + Send + Sync + 'static;
 
-    /// Implementor of [`HandleConnection`] of this RPC [`Api`].
-    type ConnectionHandler: HandleConnection<Self>;
-}
-
-/// Handler of newly established outbound [`Connection`]s.
-pub trait HandleConnection<API: Api>: Clone + Send + Sync + 'static {
     /// Handles the provided outbound [`Connection`].
     fn handle_connection(
-        &self,
-        conn: &Connection<API>,
-        params: &API::ConnectionParameters,
-    ) -> impl Future<Output = Result<()>> + Send;
+        _conn: &Connection<Self>,
+        _params: &Self::ConnectionParameters,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
+
+    /// Tries to convert this [`Api`] into [`Client`].
+    fn try_into_client(self, config: Config) -> Result<Client<Self>, Error> {
+        Client::new(config, self)
+    }
 }
 
 /// RPC [`Client`] config.
@@ -85,12 +93,12 @@ pub struct Client<API: Api> {
     config: Arc<Config>,
     endpoint: quinn::Endpoint,
 
-    connection_handler: API::ConnectionHandler,
+    api: API,
 }
 
 impl<API: Api> Client<API> {
     /// Creates a new RPC [`Client`].
-    pub fn new(cfg: Config, connection_handler: API::ConnectionHandler) -> Result<Self, Error> {
+    pub fn new(cfg: Config, api: API) -> Result<Self, Error> {
         let transport_config = quic::new_quinn_transport_config(cfg.max_concurrent_rpcs);
         let socket_addr = SocketAddr::new(std::net::Ipv4Addr::new(0, 0, 0, 0).into(), 0);
         let endpoint = quic::new_quinn_endpoint(
@@ -105,7 +113,7 @@ impl<API: Api> Client<API> {
         Ok(Client {
             config: Arc::new(cfg),
             endpoint,
-            connection_handler,
+            api,
         })
     }
 
@@ -148,8 +156,7 @@ impl<API: Api> Client<API> {
             let guard = conn.inner.watch_tx.try_lock().unwrap();
             let params = &guard.1;
 
-            self.connection_handler
-                .handle_connection(&conn, params)
+            API::handle_connection(&conn, params)
                 .await
                 .map_err(|err| err.0)?;
 
@@ -204,47 +211,35 @@ impl<API: Api> Client<API> {
     }
 }
 
-impl<const ID: u8, Req, Resp, C> UnaryV2<ID, Req, Resp, C>
+impl<const ID: u8, Req, Resp, C> RpcImpl<ID, Req, Resp, C>
 where
     Req: MessageV2,
-    Resp: MessageV2,
+    Resp: MessageV2 + FallibleResponse,
     C: CodecV2<Req> + CodecV2<Resp>,
 {
-    /// Sends this unary RPC over the provided [`Connection`].
-    pub async fn send<API: Api, R>(conn: &Connection<API>, req: R) -> Result<Resp>
+    /// Sends the request over the provided [`Connection`] and waits for a
+    /// response.
+    pub async fn send_request<API: Api, R>(conn: &Connection<API>, req: R) -> Result<Resp>
     where
         R: BorrowedMessage<Owned = Req>,
         C: Serializer<R>,
     {
-        let rpc = conn.send::<Self>()?;
-
-        pin!(rpc.request_sink).send(req).await?;
-        pin!(rpc.response_stream)
-            .next()
-            .await
-            .ok_or_else(|| Error::new(ErrorInner::StreamFinished))?
+        conn.send_request::<Self, _>(req).await
     }
-}
 
-/// Default implementation of [`ConnectionHandler`].
-///
-/// No-op, doesn't do anything with the [`Connection`].
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ConnectionHandler;
-
-impl<API> HandleConnection<API> for ConnectionHandler
-where
-    API: Api<ConnectionParameters = (), ConnectionHandler = Self>,
-{
-    async fn handle_connection(&self, _conn: &Connection<API>, _params: &()) -> Result<()> {
-        Ok(())
+    /// Sends this RPC over the provided [`Connection`].
+    pub async fn send<API: Api, Out>(
+        conn: &Connection<API>,
+        f: impl AsyncFnOnce(Outbound<API, Self>) -> Result<Out>,
+    ) -> Result<Out> {
+        conn.send::<Self, _>(f).await
     }
 }
 
 /// Outbound RPC of a specific type.
-pub struct Outbound<RPC: RpcV2> {
-    pub request_sink: RequestSink<RPC>,
-    pub response_stream: ResponseStream<RPC>,
+pub struct Outbound<API: Api, RPC: RpcV2> {
+    pub request_sink: RequestSink<API, RPC>,
+    pub response_stream: ResponseStream<API, RPC>,
 }
 
 /// Outbound connection.
@@ -305,8 +300,67 @@ impl<API: Api> Connection<API> {
         drop(watch_rx.changed().await)
     }
 
+    /// Sends the request over this [`Connection`] and waits for a
+    /// response.
+    pub async fn send_request<RPC: RpcV2, R>(&self, req: R) -> Result<RPC::Response>
+    where
+        R: BorrowedMessage<Owned = RPC::Request>,
+        RPC::Codec: Serializer<R>,
+    {
+        self.send::<RPC, _>(|rpc: Outbound<API, _>| async {
+            pin!(rpc.request_sink).send(req).await?;
+            pin!(rpc.response_stream)
+                .next()
+                .await
+                .ok_or_else(|| Error::new(ErrorInner::StreamFinished))?
+        })
+        .await
+    }
+
     /// Sends the provided RPC over this [`Connection`].
-    pub fn send<RPC: RpcV2>(&self) -> Result<Outbound<RPC>> {
+    pub async fn send<RPC: RpcV2, Out>(
+        &self,
+        f: impl AsyncFnOnce(Outbound<API, RPC>) -> Result<Out>,
+    ) -> Result<Out> {
+        let future_metrics = future_metrics!("wcn_rpc_client_outbound_rpc",
+            StringLabel<"remote_addr", SocketAddrV4> => self.remote_peer_addr(),
+            StringLabel<"api", ApiName> => &API::NAME,
+            StringLabel<"rpc"> => rpc_id_label::<API>(RPC::ID)
+        );
+
+        let err_counter = |err: &Error| {
+            metrics::counter!(
+                "wcn_rpc_client_outbound_rpc_errors",
+                EnumLabel<"kind", ErrorKind> => err.0.discriminant(),
+                StringLabel<"remote_addr", SocketAddrV4> => self.remote_peer_addr(),
+                StringLabel<"api", ApiName> => &API::NAME,
+                StringLabel<"rpc"> => rpc_id_label::<API>(RPC::ID)
+            )
+        };
+
+        async {
+            let rpc_id = RPC::ID
+                .try_into()
+                .map_err(|_| Error::new(ErrorInner::InvalidRpcId(RPC::ID)))?;
+
+            let rpc = self.send_::<RPC>()?;
+            let fut = f(rpc);
+
+            if let Some(timeout) = self.inner.client.api.rpc_timeout(rpc_id) {
+                fut.with_timeout(timeout)
+                    .await
+                    .map_err(|_| Error::new(ErrorInner::Timeout))?
+            } else {
+                fut.await
+            }
+        }
+        .with_metrics(future_metrics)
+        .await
+        .tap_err(|err| err_counter(err).increment(1))
+    }
+
+    /// Sends the provided RPC over this [`Connection`].
+    fn send_<RPC: RpcV2>(&self) -> Result<Outbound<API, RPC>> {
         self.new_outbound_rpc::<RPC>()
             .tap_err(|err| {
                 if let Some(interval) = err.requires_reconnect(self.config().reconnect_interval) {
@@ -316,7 +370,7 @@ impl<API: Api> Connection<API> {
             .map_err(Into::into)
     }
 
-    fn new_outbound_rpc<RPC: RpcV2>(&self) -> Result<Outbound<RPC>, ErrorInner> {
+    fn new_outbound_rpc<RPC: RpcV2>(&self) -> Result<Outbound<API, RPC>, ErrorInner> {
         let quic = self.inner.watch_rx.borrow();
         let Some(conn) = quic.as_ref() else {
             return Err(ErrorInner::NotConnected);
@@ -340,10 +394,12 @@ impl<API: Api> Connection<API> {
             request_sink: RequestSink {
                 send_stream: stream.tx,
                 codec: Default::default(),
+                _marker: PhantomData,
             },
             response_stream: ResponseStream {
                 recv_stream: stream.rx,
                 codec: Default::default(),
+                conn: self.clone(),
             },
         })
     }
@@ -493,6 +549,9 @@ enum ErrorInner {
     #[error("Unknown API")]
     UnknownApi,
 
+    #[error("Invalid RPC ID: {0}")]
+    InvalidRpcId(u8),
+
     #[error("Connection rejected (reason: {reason})")]
     ConnectionRejected { reason: u8 },
 }
@@ -526,6 +585,7 @@ impl ErrorInner {
             | ErrorInner::WrongResponse(_)
             | ErrorInner::StreamFinished
             | ErrorInner::TooManyConcurrentRpcs
+            | ErrorInner::InvalidRpcId(_)
             | ErrorInner::SendBufferFull => None,
         }
     }
@@ -552,14 +612,16 @@ impl metrics::Enum for ErrorKind {
 
 /// [`Sink`] for outbound RPC requests.
 #[pin_project(project = RequestSinkProj)]
-pub struct RequestSink<RPC: RpcV2> {
+pub struct RequestSink<API: Api, RPC: RpcV2> {
     #[pin]
     send_stream: SendStream,
     #[pin]
     codec: RPC::Codec,
+
+    _marker: PhantomData<API>,
 }
 
-impl<RPC: RpcV2, T> Sink<T> for RequestSink<RPC>
+impl<API: Api, RPC: RpcV2, T> Sink<T> for RequestSink<API, RPC>
 where
     T: BorrowedMessage<Owned = RPC::Request>,
     RPC::Codec: Serializer<T>,
@@ -602,14 +664,16 @@ where
 
 /// [`Stream`] of inbound RPC responses.
 #[pin_project(project = ResponseStreamProj)]
-pub struct ResponseStream<RPC: RpcV2> {
+pub struct ResponseStream<API: Api, RPC: RpcV2> {
     #[pin]
     recv_stream: RecvStream,
     #[pin]
     codec: RPC::Codec,
+
+    conn: Connection<API>,
 }
 
-impl<RPC: RpcV2> Stream for ResponseStream<RPC> {
+impl<API: Api, RPC: RpcV2> Stream for ResponseStream<API, RPC> {
     type Item = Result<RPC::Response>;
 
     fn poll_next(
@@ -623,11 +687,23 @@ impl<RPC: RpcV2> Stream for ResponseStream<RPC> {
 
         let codec = self.as_mut().project().codec;
 
-        Poll::Ready(Some(codec.deserialize(&bytes).map_err(Error::codec)))
+        let res: Result<RPC::Response> = codec.deserialize(&bytes).map_err(Error::codec);
+
+        if let Some(kind) = res.as_ref().ok().and_then(|res| res.error_kind()) {
+            metrics::counter!("wcn_rpc_client_error_responses",
+                StringLabel<"remote_addr", SocketAddrV4> => self.conn.remote_peer_addr(),
+                StringLabel<"api", ApiName> => &API::NAME,
+                StringLabel<"rpc"> => rpc_id_label::<API>(RPC::ID),
+                StringLabel<"kind"> => kind
+            )
+            .increment(1);
+        }
+
+        Poll::Ready(Some(res))
     }
 }
 
-impl<RPC: RpcV2> ResponseStream<RPC> {
+impl<API: Api, RPC: RpcV2> ResponseStream<API, RPC> {
     /// Tries to receive the next RPC response and downcasts it to the specified
     /// type `T`.
     pub async fn try_next_downcast<T>(&mut self) -> Result<T>

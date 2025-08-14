@@ -19,14 +19,13 @@ use {
         Cluster,
         EncryptionKey,
     },
-    wcn_cluster_api::rpc::server as cluster_api_server,
     wcn_rpc::{
-        client2::{self as rpc_client},
+        client2::{self as rpc_client, Api as _},
         identity::Keypair,
-        server2::{self as rpc_server, Server as _, ShutdownSignal},
+        server2::{self as rpc_server, Api as _, Server as _, ShutdownSignal},
         PeerId,
     },
-    wcn_storage_api2::rpc::{client as storage_api_client, server as storage_api_server},
+    wcn_storage_api2::rpc::client as storage_api_client,
 };
 
 mod metrics;
@@ -93,7 +92,23 @@ pub struct Config {
 }
 
 impl Config {
-    fn try_into_app(self) -> Result<AppConfig, ErrorInner> {
+    fn coordinator_api(&self) -> wcn_storage_api2::rpc::CoordinatorApi {
+        wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2))
+    }
+
+    fn replica_api(&self) -> wcn_storage_api2::rpc::ReplicaApi {
+        wcn_storage_api2::rpc::ReplicaApi::new().with_rpc_timeout(Duration::from_secs(2))
+    }
+
+    fn database_api(&self) -> wcn_storage_api2::rpc::DatabaseApi {
+        wcn_storage_api2::rpc::DatabaseApi::new().with_rpc_timeout(Duration::from_millis(500))
+    }
+
+    fn cluster_api(&self) -> wcn_cluster_api::rpc::ClusterApi {
+        wcn_cluster_api::rpc::ClusterApi::new().with_rpc_timeout(Duration::from_secs(5))
+    }
+
+    fn try_into_app(&self) -> Result<AppConfig, ErrorInner> {
         let replica_client_cfg = rpc_client::Config {
             keypair: self.keypair.clone(),
             connection_timeout: Duration::from_secs(2),
@@ -126,14 +141,18 @@ impl Config {
             priority: wcn_rpc::transport::Priority::Low,
         };
 
-        let database_client = storage_api_client::database(database_client_cfg)?;
-        let database_low_prio_client = storage_api_client::database(database_low_prio_client_cfg)?;
+        let database_client = self.database_api().try_into_client(database_client_cfg)?;
+        let database_low_prio_client = self
+            .database_api()
+            .try_into_client(database_low_prio_client_cfg)?;
 
         Ok(AppConfig {
             encryption_key: self.smart_contract_encryption_key,
 
-            replica_client: storage_api_client::replica(replica_client_cfg)?,
-            replica_low_prio_client: storage_api_client::replica(replica_low_prio_client_cfg)?,
+            replica_client: self.replica_api().try_into_client(replica_client_cfg)?,
+            replica_low_prio_client: self
+                .replica_api()
+                .try_into_client(replica_low_prio_client_cfg)?,
 
             database_connection: database_client.new_connection(
                 self.database_primary_socket_addr(),
@@ -253,8 +272,6 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
     )
     .await?;
 
-    let cluster_api_sc = cluster.smart_contract().clone();
-
     let coordinator = wcn_replication2::Coordinator::new(app_cfg.clone(), cluster.clone());
 
     let replica = wcn_replication2::Replica::new(
@@ -265,7 +282,7 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
 
     let migration_manager = wcn_migration::Manager::new(
         app_cfg.clone(),
-        cluster,
+        cluster.clone(),
         app_cfg.database_low_prio_connection,
     );
 
@@ -295,13 +312,26 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
         shutdown_signal: config.shutdown_signal.clone(),
     };
 
-    let primary_rpc_server_fut = storage_api_server::coordinator(coordinator.clone())
-        .multiplex(storage_api_server::replica(replica.clone()))
-        .multiplex(cluster_api_server::new(cluster_api_sc))
+    // Set higher RPC timeout as replication tasks are being handled within RPC
+    // lifecycle.
+    let coordinator_api = config
+        .coordinator_api()
+        .with_rpc_timeout(Duration::from_secs(10))
+        .with_state(coordinator);
+
+    let replica_api = config.replica_api().with_state(replica);
+    let cluster_api = config
+        .cluster_api()
+        .with_state(cluster.smart_contract().clone());
+
+    let primary_rpc_server_fut = coordinator_api
+        .clone()
+        .multiplex(replica_api.clone())
+        .multiplex(cluster_api)
         .serve(primary_rpc_server_cfg)?;
 
-    let secondary_rpc_server_fut = storage_api_server::coordinator(coordinator)
-        .multiplex(storage_api_server::replica(replica))
+    let secondary_rpc_server_fut = coordinator_api
+        .multiplex(replica_api)
         .serve(secondary_rcp_server_cfg)?;
 
     let metrics_server_fut = metrics::serve(&config).await?;

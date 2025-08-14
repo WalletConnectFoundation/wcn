@@ -64,7 +64,9 @@ async fn test_rpc() {
     let server_keypair = Keypair::generate_ed25519();
     let server_peer_id = server_keypair.public().to_peer_id();
 
-    let server = wcn_cluster_api::rpc::server::new(smart_contract.clone())
+    let api = wcn_cluster_api::rpc::ClusterApi::new().with_rpc_timeout(Duration::from_secs(2));
+
+    let server = wcn_rpc::server2::new(api.with_state(smart_contract.clone()))
         .serve(wcn_rpc::server2::Config {
             name: "test_cluster_api",
             port,
@@ -81,14 +83,14 @@ async fn test_rpc() {
         .pipe(tokio::spawn);
 
     let client_keypair = Keypair::generate_ed25519();
-    let client = wcn_cluster_api::rpc::client::new(wcn_rpc::client2::Config {
+    let client_cfg = wcn_rpc::client2::Config {
         keypair: client_keypair,
         connection_timeout: Duration::from_secs(10),
         reconnect_interval: Duration::from_secs(1),
         max_concurrent_rpcs: 500,
         priority: wcn_rpc::transport::Priority::High,
-    })
-    .unwrap();
+    };
+    let client = wcn_rpc::client2::Client::new(client_cfg, api).unwrap();
 
     let client_conn = client
         .connect(

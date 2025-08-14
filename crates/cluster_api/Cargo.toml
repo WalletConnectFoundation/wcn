@@ -24,6 +24,7 @@ wc = { workspace = true, features = ["future", "metrics"] }
 derive_more = { workspace = true, features = ["from", "try_into"] }
 derive-where = { workspace = true }
 thiserror = { workspace = true }
+strum = { workspace = true }
 
 # General purpose
 tap = { workspace = true }

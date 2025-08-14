@@ -9,93 +9,54 @@ use {
     futures::{SinkExt as _, StreamExt, TryStreamExt},
     tap::{Pipe as _, TapFallible as _},
     wcn_rpc::{
-        server2::{
-            Error,
-            HandleConnection,
-            HandleRpc,
-            HandleUnary,
-            Inbound,
-            PendingConnection,
-            Responder,
-            Result,
-        },
+        server2::{Api, Error, Inbound, PendingConnection, Responder, Result},
         BorrowedMessage,
         MessageV2,
         PeerId,
         Request,
         Serializer,
-        UnaryRpc,
     },
 };
 
-/// Creates a new [`CoordinatorApi`] RPC server.
-pub fn coordinator(
-    storage_api: impl storage_api::Factory<PeerId>,
-) -> impl wcn_rpc::server2::Server {
-    new::<api_kind::Coordinator>(storage_api)
-}
-
-/// Creates a new [`ReplicaApi`] RPC server.
-pub fn replica(storage_api: impl storage_api::Factory<PeerId>) -> impl wcn_rpc::server2::Server {
-    new::<api_kind::Replica>(storage_api)
-}
-
-/// Creates a new [`DatabaseApi`] RPC server.
-pub fn database(storage_api: impl storage_api::Factory<PeerId>) -> impl wcn_rpc::server2::Server {
-    new::<api_kind::Database>(storage_api)
-}
-
-fn new<Kind>(factory: impl storage_api::Factory<PeerId>) -> impl wcn_rpc::server2::Server
+impl<Kind, S> Api for super::Api<Kind, S>
 where
     Kind: Clone + Send + Sync + 'static,
-    Api<Kind>: wcn_rpc::Api<RpcId = RpcId>,
+    S: storage_api::Factory<PeerId>,
+    super::Api<Kind, S>: wcn_rpc::Api<RpcId = RpcId>,
 {
-    wcn_rpc::server2::new(ConnectionHandler {
-        factory,
-        _marker: PhantomData,
-    })
-}
+    type RpcHandler = RpcHandler<S::StorageApi>;
 
-#[derive(Clone)]
-struct ConnectionHandler<F: storage_api::Factory<PeerId>, Kind> {
-    factory: F,
-    _marker: PhantomData<Kind>,
-}
-
-impl<F, Kind> HandleConnection for ConnectionHandler<F, Kind>
-where
-    F: storage_api::Factory<PeerId>,
-    Kind: Clone + Send + Sync + 'static,
-    Api<Kind>: wcn_rpc::Api<RpcId = RpcId>,
-{
-    type Api = super::Api<Kind>;
-
-    async fn handle_connection(&self, conn: PendingConnection<'_, Self::Api>) -> Result<()> {
-        let storage_api = match self.factory.new_storage_api(*conn.remote_peer_id()) {
+    async fn handle_connection(conn: PendingConnection<'_, Self>) -> Result<()> {
+        let storage_api = match conn.api().state.new_storage_api(*conn.remote_peer_id()) {
             Ok(api) => api,
             Err(err) => return conn.reject(rpc::Error::from(err).code).await,
         };
 
-        let conn = conn.accept().await?;
-
         let rpc_handler = RpcHandler { storage_api };
 
-        conn.handle(&rpc_handler, |rpc, handler| async move {
+        let conn = conn.accept(rpc_handler).await?;
+
+        conn.handle(|rpc| async move {
             match rpc.id() {
-                RpcId::Get => rpc.handle::<Get>(&handler).await,
-                RpcId::Set => rpc.handle::<Set>(&handler).await,
-                RpcId::Del => rpc.handle::<Del>(&handler).await,
-                RpcId::SetExp => rpc.handle::<SetExp>(&handler).await,
-                RpcId::GetExp => rpc.handle::<GetExp>(&handler).await,
-                RpcId::HGet => rpc.handle::<HGet>(&handler).await,
-                RpcId::HSet => rpc.handle::<HSet>(&handler).await,
-                RpcId::HDel => rpc.handle::<HDel>(&handler).await,
-                RpcId::HSetExp => rpc.handle::<HSetExp>(&handler).await,
-                RpcId::HGetExp => rpc.handle::<HGetExp>(&handler).await,
-                RpcId::HCard => rpc.handle::<HCard>(&handler).await,
-                RpcId::HScan => rpc.handle::<HScan>(&handler).await,
-                RpcId::PullData => rpc.handle::<PullData>(&handler).await,
-                RpcId::PushData => rpc.handle::<PushData>(&handler).await,
+                RpcId::Get => rpc.handle_unary::<Get>(RpcHandler::get).await,
+                RpcId::Set => rpc.handle_unary::<Set>(RpcHandler::set).await,
+                RpcId::Del => rpc.handle_unary::<Del>(RpcHandler::del).await,
+
+                RpcId::GetExp => rpc.handle_unary::<GetExp>(RpcHandler::get_exp).await,
+                RpcId::SetExp => rpc.handle_unary::<SetExp>(RpcHandler::set_exp).await,
+
+                RpcId::HGet => rpc.handle_unary::<HGet>(RpcHandler::hget).await,
+                RpcId::HSet => rpc.handle_unary::<HSet>(RpcHandler::hset).await,
+                RpcId::HDel => rpc.handle_unary::<HDel>(RpcHandler::hdel).await,
+
+                RpcId::HGetExp => rpc.handle_unary::<HGetExp>(RpcHandler::hget_exp).await,
+                RpcId::HSetExp => rpc.handle_unary::<HSetExp>(RpcHandler::hset_exp).await,
+
+                RpcId::HCard => rpc.handle_unary::<HCard>(RpcHandler::hcard).await,
+                RpcId::HScan => rpc.handle_unary::<HScan>(RpcHandler::hscan).await,
+
+                RpcId::ReadData => rpc.handle::<ReadData>(RpcHandler::read_data).await,
+                RpcId::WriteData => rpc.handle::<WriteData>(RpcHandler::write_data).await,
             }
         })
         .await
@@ -103,11 +64,11 @@ where
 }
 
 #[derive(Clone)]
-struct RpcHandler<S: StorageApi> {
+pub struct RpcHandler<S: StorageApi> {
     storage_api: S,
 }
 
-impl<T, RPC: UnaryRpc<Response = rpc::Result<T>>> Callback for Responder<'_, RPC>
+impl<T, RPC: RpcV2<Response = rpc::Result<T>>> Callback for Responder<RPC>
 where
     T: MessageV2,
     for<'a, 'b> Result<&'a T, ErrorBorrowed<'b>>: BorrowedMessage<Owned = RPC::Response>,
@@ -136,80 +97,80 @@ where
     }
 }
 
-impl<S: StorageApi> HandleUnary<Get> for RpcHandler<S> {
-    async fn handle(&self, req: Request<Get>, resp: Responder<'_, Get>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+impl<S: StorageApi> RpcHandler<S> {
+    async fn get(self, req: Request<Get>, responder: Responder<Get>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<Set> for RpcHandler<S> {
-    async fn handle(&self, req: Request<Set>, resp: Responder<'_, Set>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn set(self, req: Request<Set>, responder: Responder<Set>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<Del> for RpcHandler<S> {
-    async fn handle(&self, req: Request<Del>, resp: Responder<'_, Del>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn del(self, req: Request<Del>, responder: Responder<Del>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<GetExp> for RpcHandler<S> {
-    async fn handle(&self, req: Request<GetExp>, resp: Responder<'_, GetExp>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn get_exp(self, req: Request<GetExp>, responder: Responder<GetExp>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<SetExp> for RpcHandler<S> {
-    async fn handle(&self, req: Request<SetExp>, resp: Responder<'_, SetExp>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn set_exp(self, req: Request<SetExp>, responder: Responder<SetExp>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HGet> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HGet>, resp: Responder<'_, HGet>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hget(self, req: Request<HGet>, responder: Responder<HGet>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HSet> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HSet>, resp: Responder<'_, HSet>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hset(self, req: Request<HSet>, responder: Responder<HSet>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HDel> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HDel>, resp: Responder<'_, HDel>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hdel(self, req: Request<HDel>, responder: Responder<HDel>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HGetExp> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HGetExp>, resp: Responder<'_, HGetExp>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hget_exp(self, req: Request<HGetExp>, responder: Responder<HGetExp>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HSetExp> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HSetExp>, resp: Responder<'_, HSetExp>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hset_exp(self, req: Request<HSetExp>, responder: Responder<HSetExp>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HCard> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HCard>, resp: Responder<'_, HCard>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hcard(self, req: Request<HCard>, responder: Responder<HCard>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleUnary<HScan> for RpcHandler<S> {
-    async fn handle(&self, req: Request<HScan>, resp: Responder<'_, HScan>) -> Result<()> {
-        self.storage_api.execute_callback(req.into(), resp).await
+    async fn hscan(self, req: Request<HScan>, responder: Responder<HScan>) -> Result<()> {
+        self.storage_api
+            .execute_callback(req.into(), responder)
+            .await
     }
-}
 
-impl<S: StorageApi> HandleRpc<PullData> for RpcHandler<S> {
-    async fn handle_rpc(&self, rpc: &mut Inbound<PullData>) -> Result<()> {
+    async fn read_data(self, mut rpc: Inbound<ReadData>) -> Result<()> {
         let req = rpc.request_stream.try_next().await?;
 
         let res = self
@@ -220,20 +181,18 @@ impl<S: StorageApi> HandleRpc<PullData> for RpcHandler<S> {
         let mut data_stream = None;
 
         let ack = res.map(|data| data_stream = Some(data)).map_err(Into::into);
-        rpc.response_sink.send(&PullDataResponse::Ack(ack)).await?;
+        rpc.response_sink.send(&ReadDataResponse::Ack(ack)).await?;
 
         if let Some(data) = data_stream {
-            data.map(|res| PullDataResponse::Item(res.map_err(Into::into)))
+            data.map(|res| ReadDataResponse::Item(res.map_err(Into::into)))
                 .pipe(|responses| rpc.response_sink.send_all(responses))
                 .await?;
         }
 
         Ok(())
     }
-}
 
-impl<S: StorageApi> HandleRpc<PushData> for RpcHandler<S> {
-    async fn handle_rpc(&self, rpc: &mut Inbound<PushData>) -> Result<()> {
+    async fn write_data(self, mut rpc: Inbound<WriteData>) -> Result<()> {
         let data_stream =
             (&mut rpc.request_stream).map_err(|err| crate::Error::internal().with_message(err));
 

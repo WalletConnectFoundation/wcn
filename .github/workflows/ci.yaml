@@ -219,8 +219,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-            - name: wcn-node-legacy
-              dockerfile: Dockerfile
             - name: wcn-node
               dockerfile: infra/Dockerfile.node
             - name: wcn-db

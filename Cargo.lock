@@ -5246,7 +5246,8 @@ dependencies = [
 [[package]]
 name = "tokio-serde"
 version = "0.9.0"
-source = "git+https://github.com/xDarksome/tokio-serde.git?rev=6df9ff9#6df9ff9ca8896dfa2b83347bbeb2bb00e9b294a0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caf600e7036b17782571dd44fa0a5cea3c82f60db5137f774a325a76a0d6852b"
 dependencies = [
  "bytes",
  "educe",
@@ -5255,17 +5256,6 @@ dependencies = [
  "pin-project",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "tokio-serde-postcard"
-version = "0.1.0"
-source = "git+https://github.com/xDarksome/tokio-serde-postcard.git?rev=5e1b77a#5e1b77a687eb80e3c37b9038025e4897d71f720d"
-dependencies = [
- "bytes",
- "postcard",
- "serde",
- "tokio-serde",
 ]
 
 [[package]]
@@ -6027,7 +6017,6 @@ dependencies = [
 name = "wcn_rpc"
 version = "0.1.0"
 dependencies = [
- "backoff",
  "bytes",
  "derive-where",
  "derive_more",
@@ -6052,11 +6041,8 @@ dependencies = [
  "thiserror 2.0.14",
  "tokio",
  "tokio-serde",
- "tokio-serde-postcard",
- "tokio-stream",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
  "wc",
  "wcn_rpc_derive",
 ]

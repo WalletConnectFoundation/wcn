@@ -95,6 +95,7 @@ async fn select_open_connection(cluster: &ArcSwap<View>) -> ClusterConnection {
 // The reason why we're using the same [`wcn_cluster::Config`] for both clusters
 // is that [`wcn_cluster::View`] is also parametrized over this config, and we
 // need them to be compatible.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SmartContract {
     Static(ClusterView),
     Dynamic(Arc<ArcSwap<View>>),

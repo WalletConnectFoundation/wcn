@@ -598,15 +598,12 @@ pub struct Responder<RPC: Rpc> {
 
 impl<RPC: Rpc> Responder<RPC> {
     /// Sends a response.
-    pub fn respond<'a, T>(
-        mut self,
-        response: &'a T,
-    ) -> impl Future<Output = Result<()>> + Send + use<'a, T, RPC>
+    pub async fn respond<T>(mut self, response: &T) -> Result<()>
     where
         T: BorrowedMessage<Owned = RPC::Response> + FallibleResponse,
         RPC::Codec: Serializer<T>,
     {
-        async move { self.rpc.response_sink.send(response).await }
+        self.rpc.response_sink.send(response).await
     }
 }
 

@@ -15,10 +15,7 @@ allow = [
     "Zlib",
     "CDLA-Permissive-2.0",
     "Unicode-3.0",
-    "MPL-2.0",
 ]
-
-exceptions = [{ name = "unicode-ident", allow = ["Unicode-DFS-2016"] }]
 
 [licenses.private]
 ignore = true

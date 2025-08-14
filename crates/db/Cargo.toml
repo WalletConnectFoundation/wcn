@@ -52,7 +52,7 @@ tokio = { version = "1", default-features = false, features = ["signal"] }
 tracing = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-sysinfo = { workspace = true }
+sysinfo = { workspace = true, features = ["system", "network", "disk"] }
 proc-mounts = { version = "0.3", default-features = false }
 
 # Other

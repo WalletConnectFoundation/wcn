@@ -2,7 +2,6 @@
 resolver = "2"
 members = ["crates/*"]
 
-
 [profile.release]
 lto = "fat"
 
@@ -32,10 +31,10 @@ wcn_db = { path = "crates/db", default-features = false }
 wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.14.1", default-features = false }
 
 # Derives
-derive_more = { version = "1.0", default-features = false, features = ["std"] }
+derive_more = { version = "2.0", default-features = false, features = ["std"] }
 derivative = { version = "2.0", default-features = false }
 derive-where = { version = "1.5", default-features = false }
-thiserror = { version = "1", default-features = false }
+thiserror = { version = "2", default-features = false }
 strum = { version = "0.27", default-features = false }
 
 # General purpose
@@ -46,7 +45,7 @@ tap = { version = "1.0", default-features = false }
 time = { version = "0.3", default-features = false }
 bytes = { version = "1.0", default-features = false }
 pin-project = { version = "1.0", default-features = false }
-itertools = { version = "0.12", default-features = false, features = ["use_std"] }
+itertools = { version = "0.14", default-features = false, features = ["use_std"] }
 rand = { version = "0.9", default-features = false, features = ["thread_rng"] }
 
 # Collections
@@ -54,7 +53,7 @@ indexmap = { version = "2", default-features = false, features = ["std"] }
 smallvec = { version = "1.11", default-features = false }
 
 # Encoding
-base64 = { version = "0.20", default-features = false, features = ["std"] }
+base64 = { version = "0.22", default-features = false, features = ["std"] }
 const-hex = { version = "1.14", default-features = false, features = ["alloc"] }
 
 # Serialization
@@ -74,9 +73,9 @@ tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcar
 # O11y
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
-metrics = { version = "0.23", default-features = false }
-metrics-exporter-prometheus = { version = "0.15", default-features = false }
-sysinfo = { version = "0.29", default-features = false }
+metrics = { version = "0.24", default-features = false }
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+sysinfo = { version = "0.37", default-features = false }
 
 # Other
 alloy = { version = "1.0",  default-features = false }
@@ -84,14 +83,8 @@ libp2p-identity = { version = "0.2", default-features = false, features = ["peer
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3", "const_xxh3"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
 envy = { version = "0.4", default-features = false }
-vergen-pretty = { version = "0.3", default-features = false, features = ["trace"] }
-vergen = { version = "8", default-features = false, features = [
-    "build",
-    "cargo",
-    "git",
-    "gitoxide",
-    "rustc",
-] }
+vergen-pretty = { version = "1.0", default-features = false, features = ["trace"] }
+vergen = { version = "9", default-features = false, features = ["build", "cargo", "rustc", "si"] }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

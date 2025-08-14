@@ -1,7 +1,7 @@
 use {
     crate::Config,
     std::{future::Future, io, net::SocketAddr, time::Duration},
-    sysinfo::{NetworkExt, NetworksExt},
+    sysinfo::Networks,
 };
 
 pub(super) async fn serve(cfg: &Config) -> io::Result<impl Future<Output = ()>> {
@@ -27,8 +27,6 @@ pub(super) async fn serve(cfg: &Config) -> io::Result<impl Future<Output = ()>> 
 }
 
 fn update_loop(config: Config) {
-    use sysinfo::{CpuExt as _, SystemExt as _};
-
     let mut sys = sysinfo::System::new_all();
 
     loop {
@@ -42,7 +40,7 @@ fn update_loop(config: Config) {
 
         update_cgroup_stats();
 
-        sys.refresh_cpu();
+        sys.refresh_cpu_usage();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
             metrics::gauge!("wcn_cpu_usage_percent_per_core_gauge", "n_core" => n.to_string())
@@ -56,9 +54,8 @@ fn update_loop(config: Config) {
         metrics::gauge!("wcn_available_memory").set(sys.available_memory() as f64);
         metrics::gauge!("wcn_used_memory").set(sys.used_memory() as f64);
 
-        sys.refresh_networks();
-
-        for (name, net) in sys.networks().iter() {
+        let networks = Networks::new_with_refreshed_list();
+        for (name, net) in networks.list() {
             metrics::gauge!("wcn_network_tx_bytes_total", "network" => name.to_owned())
                 .set(net.total_transmitted() as f64);
             metrics::gauge!("wcn_network_rx_bytes_total", "network" => name.to_owned())

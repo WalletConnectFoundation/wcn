@@ -48,13 +48,13 @@ serde_json = { workspace = true }
 postcard = { workspace = true, features = ["alloc"] }
 
 # Other 
-libp2p = { version = "0.55", default-features = false } # TODO: switch to `libp2p-identity`
-libp2p-tls = { version = "0.5", default-features = false }
+libp2p = { version = "0.56", default-features = false } # TODO: switch to `libp2p-identity`
+libp2p-tls = { version = "0.6", default-features = false }
 quinn = { version = "0.11.8", default-features = false, features = ["rustls", "runtime-tokio"] }
 quinn-proto = { version = "0.11", default-features = false }
-socket2 = { version = "0.5.5", default-features = false }
-nix = { version = "0.28", default-features = false, features = ["socket", "net"] }
-governor = { version = "0.8", default-features = false, features = ["std"] }
+socket2 = { version = "0.6.0", default-features = false }
+nix = { version = "0.30", default-features = false, features = ["socket", "net"] }
+governor = { version = "0.10", default-features = false, features = ["std"] }
 mini-moka = { version = "0.10", default-features = false, features = ["sync"] }
 
 # TODO: remove

@@ -1,5 +1,6 @@
 use {
     anyhow::Context,
+    base64::Engine as _,
     futures::FutureExt as _,
     futures_concurrency::future::Race as _,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
@@ -84,7 +85,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn new_config(env: &EnvConfig, prometheus_handle: PrometheusHandle) -> anyhow::Result<Config> {
-    let secret_key = base64::decode(&env.secret_key).context("SECRET_KEY")?;
+    let secret_key = base64::engine::general_purpose::STANDARD
+        .decode(&env.secret_key)
+        .context("SECRET_KEY")?;
 
     let keypair = Keypair::ed25519_from_bytes(secret_key).context("SECRET_KEY")?;
 

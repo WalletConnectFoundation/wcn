@@ -53,7 +53,7 @@ tokio = { version = "1", default-features = false, features = ["signal"] }
 tracing = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-sysinfo = { workspace = true }
+sysinfo = { workspace = true, features = ["system", "network"] }
 
 # Other
 xxhash-rust = { workspace = true }

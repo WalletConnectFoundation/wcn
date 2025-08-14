@@ -1,19 +1,18 @@
 use {
     crate::{
         self as rpc,
+        metrics::FallibleResponse,
         quic::{
             self,
             server::filter::{self, Filter, RejectionReason},
         },
         transport,
         transport2::{BiDirectionalStream, RecvStream, SendStream, Serializer},
-        Api,
         ApiName,
         BorrowedMessage,
         ConnectionStatus,
         RpcV2,
         ServerName,
-        UnaryRpc,
     },
     derive_where::derive_where,
     futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStream as _},
@@ -25,13 +24,14 @@ use {
         error::Error as StdError,
         future::Future,
         io,
-        marker::PhantomData,
+        net::IpAddr,
         pin::{pin, Pin},
         sync::Arc,
         task::{self, ready, Poll},
         time::Duration,
     },
-    tap::Pipe as _,
+    strum::{EnumDiscriminants, IntoDiscriminant as _, IntoStaticStr},
+    tap::{Pipe as _, TapFallible as _},
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         sync::{OwnedSemaphorePermit, Semaphore},
@@ -39,83 +39,37 @@ use {
     tokio_serde::Deserializer as _,
     wc::{
         future::{CancellationToken, FutureExt as _, StaticFutureExt},
-        metrics::{self, future_metrics, Enum as _, EnumLabel, FutureExt as _, StringLabel},
+        metrics::{
+            self,
+            enum_ordinalize::Ordinalize,
+            future_metrics,
+            Enum as _,
+            EnumLabel,
+            FutureExt as _,
+            StringLabel,
+        },
     },
 };
 
-// TODO: Authorization, metrics, timeouts
+/// Server-specific part of an RPC [Api][`super::Api`].
+pub trait Api: super::Api {
+    /// [`Inbound`] RPC handler.
+    type RpcHandler: Clone + Send + Sync + 'static;
 
-/// Handler of newly established inbound [`Connection`]s.
-pub trait HandleConnection: Clone + Send + Sync + 'static {
-    /// RPC [`Api`] the connections of which are being handled.
-    type Api: Api;
-
-    /// Handles the provided inbound [`Connection`].
+    /// Handles the provided inbound [`PendingConnection`].
     fn handle_connection(
-        &self,
-        conn: PendingConnection<'_, Self::Api>,
+        conn: PendingConnection<'_, Self>,
     ) -> impl Future<Output = Result<()>> + Send;
-}
 
-/// Handler of [`Inbound`] RPCs.
-pub trait HandleRpc<RPC: RpcV2>: Send + Sync {
-    /// Handles the provided [`Inbound`] RPC.
-    fn handle_rpc<'a>(
-        &'a self,
-        rpc: &'a mut Inbound<RPC>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a;
-}
-
-/// [`HandleRpc`] specialization for [`UnaryRpc`]s.
-pub trait HandleUnary<RPC: UnaryRpc>: Send + Sync {
-    /// Handles the provided RPC request.
-    fn handle(
-        &self,
-        request: RPC::Request,
-        responder: Responder<'_, RPC>,
-    ) -> impl Future<Output = Result<()>> + Send;
-}
-
-impl<RPC, H> HandleRpc<RPC> for H
-where
-    RPC: UnaryRpc,
-    H: HandleUnary<RPC>,
-{
-    fn handle_rpc<'a>(
-        &'a self,
-        rpc: &'a mut Inbound<RPC>,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        async {
-            let req = StreamExt::next(&mut pin!(&mut rpc.request_stream))
-                .await
-                .ok_or_else(|| Error::new(ErrorInner::StreamFinished))??;
-
-            let responder = Responder { rpc };
-
-            self.handle(req, responder).await
-        }
+    /// Converts this [`Api`] into [`Server`].
+    fn into_server(self) -> impl Server {
+        new(self)
     }
-}
 
-/// [`HandleUnary`] specialization for cases when the response is an owned
-/// value.
-pub trait HandleRequest<RPC: UnaryRpc>: Send + Sync {
-    /// Handles the provided RPC request.
-    fn handle_request(
-        &self,
-        request: RPC::Request,
-    ) -> impl Future<Output = RPC::Response> + Send + '_;
-}
-
-impl<RPC, H> HandleUnary<RPC> for H
-where
-    RPC: UnaryRpc,
-    H: HandleRequest<RPC>,
-{
-    async fn handle(&self, request: RPC::Request, responder: Responder<'_, RPC>) -> Result<()> {
-        let resp = self.handle_request(request).await;
-        responder.respond(&resp).await?;
-        Ok(())
+    /// Converts this [`Api`] into [`Server`] and multiplexes it with another
+    /// [`Api`].
+    fn multiplex(self, api: impl Api) -> impl Server {
+        self.into_server().multiplex(api)
     }
 }
 
@@ -154,8 +108,8 @@ pub struct Config {
 }
 
 /// Creates a new RPC [`Api`] server.
-pub fn new(connection_handler: impl HandleConnection) -> impl Server {
-    ApiServer { connection_handler }
+pub fn new(api: impl Api) -> impl Server {
+    ApiServer { api }
 }
 
 /// RPC server.
@@ -163,10 +117,10 @@ pub trait Server: Sized + Send + Sync + 'static
 where
     Self: sealed::ConnectionRouter,
 {
-    /// Multiplexes `self` with another [`Server`].
-    fn multiplex(self, api_server: impl Server) -> impl Server {
+    /// Multiplexes `self` with another [`Api`].
+    fn multiplex(self, api_server: impl Api) -> impl Server {
         Multiplexer {
-            head: api_server,
+            head: api_server.into_server(),
             tail: self,
         }
     }
@@ -268,8 +222,8 @@ mod sealed {
 }
 
 #[derive_where(Clone)]
-struct ApiServer<H: HandleConnection> {
-    connection_handler: H,
+struct ApiServer<API: Api> {
+    api: API,
 }
 
 #[derive(Clone)]
@@ -278,9 +232,9 @@ struct Multiplexer<A, B> {
     tail: B,
 }
 
-impl<H: HandleConnection> sealed::ConnectionRouter for ApiServer<H> {
+impl<API: Api> sealed::ConnectionRouter for ApiServer<API> {
     fn contains_api(&self, api_name: &ApiName) -> bool {
-        api_name == &H::Api::NAME
+        api_name == &API::NAME
     }
 
     async fn route_connection(
@@ -292,9 +246,12 @@ impl<H: HandleConnection> sealed::ConnectionRouter for ApiServer<H> {
             return Err(ErrorInner::UnknownApi(*api_name).into());
         }
 
-        self.connection_handler
-            .handle_connection(conn.specify_api())
-            .await
+        API::handle_connection(PendingConnection {
+            api: self.api.clone(),
+            inner: conn.inner,
+            status_tx: conn.status_tx,
+        })
+        .await
     }
 }
 
@@ -404,6 +361,7 @@ fn accept_connection<R: sealed::ConnectionRouter>(
             };
 
             let conn = ConnectionInner {
+                api_name,
                 server_name,
                 _permit: permit,
                 remote_peer_id,
@@ -420,9 +378,9 @@ fn accept_connection<R: sealed::ConnectionRouter>(
         .map_err(Error::new)?;
 
         let conn = PendingConnection {
-            inner: &conn,
+            api: (),
+            inner: Arc::new(conn),
             status_tx: &mut tx,
-            _marker: PhantomData,
         };
 
         let res = router.route_connection(&api_name, conn).await;
@@ -442,22 +400,17 @@ fn accept_connection<R: sealed::ConnectionRouter>(
 
 /// Inbound connection that is not yet accepting inbound RPCs.
 pub struct PendingConnection<'a, API = ()> {
-    inner: &'a ConnectionInner,
+    api: API,
+    inner: Arc<ConnectionInner>,
     status_tx: &'a mut quinn::SendStream,
-    _marker: PhantomData<API>,
 }
 
-impl<'a> PendingConnection<'a> {
-    fn specify_api<API>(self) -> PendingConnection<'a, API> {
-        PendingConnection {
-            inner: self.inner,
-            status_tx: self.status_tx,
-            _marker: PhantomData,
-        }
+impl<API: Api> PendingConnection<'_, API> {
+    /// Returns [`Api`] of this [`PendingConnection`].
+    pub fn api(&self) -> &API {
+        &self.api
     }
-}
 
-impl<'a, API> PendingConnection<'a, API> {
     /// Returns [`PeerId`] of the remote peer.
     pub fn remote_peer_id(&self) -> &PeerId {
         &self.inner.remote_peer_id
@@ -465,15 +418,16 @@ impl<'a, API> PendingConnection<'a, API> {
 
     /// Accept this [`PendingConnection`] notifying the client that it's now
     /// ready to accept [`InboundRpc`]s.
-    pub async fn accept(self) -> Result<Connection<'a, API>> {
+    pub async fn accept(self, rpc_handler: API::RpcHandler) -> Result<Connection<API>> {
         self.status_tx
             .write_i32(ConnectionStatus::Ok.code())
             .await
             .map_err(Error::new)?;
 
         Ok(Connection {
+            api: self.api,
+            rpc_handler,
             inner: self.inner,
-            _marker: PhantomData,
         })
     }
 
@@ -491,14 +445,16 @@ impl<'a, API> PendingConnection<'a, API> {
 }
 
 /// Inbound connection.
-#[derive(Clone, Copy)]
-pub struct Connection<'a, API = ()> {
-    inner: &'a ConnectionInner,
-    _marker: PhantomData<API>,
+#[derive(Clone)]
+pub struct Connection<API: Api> {
+    api: API,
+    rpc_handler: API::RpcHandler,
+    inner: Arc<ConnectionInner>,
 }
 
 struct ConnectionInner {
     server_name: &'static str,
+    api_name: ApiName,
 
     remote_peer_id: PeerId,
 
@@ -510,43 +466,99 @@ struct ConnectionInner {
     shutdown_signal: ShutdownSignal,
 }
 
-impl<'a, API: Api> From<&'a mut ConnectionInner> for Connection<'a, API> {
-    fn from(inner: &'a mut ConnectionInner) -> Self {
-        Self {
-            inner,
-            _marker: PhantomData,
-        }
-    }
-}
-
 /// Inbound RPC with yet undefined type.
 pub struct InboundRpc<API: Api> {
     id: API::RpcId,
     stream: BiDirectionalStream,
     permit: OwnedSemaphorePermit,
     shutdown_signal: ShutdownSignal,
+    conn: Connection<API>,
 }
 
 impl<API: Api> InboundRpc<API> {
-    /// Handles this RPC using the provided handler.
-    pub fn handle<RPC: RpcV2>(
+    /// Handles this RPC using the provided request handler.
+    pub async fn handle_request<RPC: RpcV2>(
         self,
-        handler: &impl HandleRpc<RPC>,
-    ) -> impl Future<Output = Result<()>> + Send + '_ {
-        async move { handler.handle_rpc(&mut self.upgrade()).await }
-            .with_metrics(future_metrics!("wcn_rpc_server_rpc"))
+        handler: impl AsyncFnOnce(API::RpcHandler, RPC::Request) -> RPC::Response,
+    ) -> Result<()> {
+        self.handle_unary::<RPC>(|api, req, responder: Responder<_>| async {
+            let resp = handler(api, req).await;
+            responder.respond(&resp).await
+        })
+        .await
+    }
+
+    /// Handles this RPC using the provided Unary RPC handler.
+    pub async fn handle_unary<RPC: RpcV2>(
+        self,
+        handler: impl AsyncFnOnce(API::RpcHandler, RPC::Request, Responder<RPC>) -> Result<()>,
+    ) -> Result<()> {
+        self.handle::<RPC>(|api, mut rpc: Inbound<RPC>| async {
+            let req = StreamExt::next(&mut pin!(&mut rpc.request_stream))
+                .await
+                .ok_or_else(|| Error::new(ErrorInner::StreamFinished))??;
+
+            let responder = Responder { rpc };
+
+            handler(api, req, responder).await
+        })
+        .await
+    }
+
+    /// Handles this RPC using the provided handler.
+    pub async fn handle<RPC: RpcV2>(
+        self,
+        handler: impl AsyncFnOnce(API::RpcHandler, Inbound<RPC>) -> Result<()>,
+    ) -> Result<()> {
+        let id = self.id;
+        let server_name = self.conn.inner.server_name;
+        let remote_addr = self.conn.remote_peer_addr();
+
+        let future_metrics = future_metrics!("wcn_rpc_server_inbound_rpc",
+            StringLabel<"server_name"> => server_name,
+            StringLabel<"remote_addr", IpAddr> => &remote_addr,
+            StringLabel<"api", ApiName> => &API::NAME,
+            StringLabel<"rpc"> => id.into()
+        );
+
+        let err_counter = |err: &Error| {
+            metrics::counter!(
+                "wcn_rpc_server_inbound_rpc_errors",
+                EnumLabel<"kind", ErrorKind> => err.0.discriminant(),
+                StringLabel<"server_name"> => server_name,
+                StringLabel<"remote_addr", IpAddr> => &remote_addr,
+                StringLabel<"api", ApiName> => &API::NAME,
+                StringLabel<"rpc"> => id.into()
+            )
+        };
+
+        let (api, rpc_handler, rpc) = self.upgrade();
+
+        async {
+            if let Some(timeout) = api.rpc_timeout(id) {
+                handler(rpc_handler, rpc)
+                    .with_timeout(timeout)
+                    .await
+                    .map_err(|_| Error::timeout())?
+            } else {
+                handler(rpc_handler, rpc).await
+            }
+        }
+        .with_metrics(future_metrics)
+        .await
+        .tap_err(|err| err_counter(err).increment(1))
     }
 
     /// Upgrades this untyped [`InboundRpc`] into a typed one.
     ///
     /// Caller is expected to ensure that the [`InboundRpc::id()`] is correct.
-    fn upgrade<RPC: RpcV2>(self) -> Inbound<RPC> {
+    fn upgrade<RPC: RpcV2>(self) -> (API, API::RpcHandler, Inbound<RPC>) {
         if cfg!(debug_assertions) {
             let id: u8 = self.id.into();
             assert_eq!(id, RPC::ID);
         }
 
-        Inbound {
+        let rpc = Inbound {
             request_stream: RequestStream {
                 recv_stream: self.stream.rx,
                 codec: Default::default(),
@@ -554,14 +566,18 @@ impl<API: Api> InboundRpc<API> {
             response_sink: ResponseSink {
                 send_stream: self.stream.tx,
                 codec: Default::default(),
+                conn: self.conn.inner,
+                rpc_name: self.id.into(),
             },
             _permit: self.permit,
             shutdown_signal: self.shutdown_signal,
-        }
+        };
+
+        (self.conn.api, self.conn.rpc_handler, rpc)
     }
 }
 
-impl<API: super::Api> InboundRpc<API> {
+impl<API: Api> InboundRpc<API> {
     /// Returns ID of this [`InboundRpc`].
     pub fn id(&self) -> API::RpcId {
         self.id
@@ -579,48 +595,51 @@ pub struct Inbound<RPC: RpcV2> {
     _permit: OwnedSemaphorePermit,
 }
 
-/// [`UnaryRpc`] responder.
-pub struct Responder<'a, RPC: UnaryRpc> {
-    rpc: &'a mut Inbound<RPC>,
+/// Unary RPC responder.
+pub struct Responder<RPC: RpcV2> {
+    rpc: Inbound<RPC>,
 }
 
-impl<'s, RPC: UnaryRpc> Responder<'s, RPC> {
+impl<RPC: RpcV2> Responder<RPC> {
     /// Sends a response.
     pub fn respond<'a, T>(
-        self,
+        mut self,
         response: &'a T,
-    ) -> impl Future<Output = Result<()>> + Send + use<'s, 'a, T, RPC>
+    ) -> impl Future<Output = Result<()>> + Send + use<'a, T, RPC>
     where
-        T: BorrowedMessage<Owned = RPC::Response>,
+        T: BorrowedMessage<Owned = RPC::Response> + FallibleResponse,
         RPC::Codec: Serializer<T>,
     {
-        self.rpc.response_sink.send(response)
+        async move { self.rpc.response_sink.send(response).await }
     }
 }
 
-impl<API: Api> Connection<'_, API> {
+impl<API: Api> Connection<API> {
+    /// Returns [`Api`] of this [`Connection`].
+    pub fn api(&self) -> &API {
+        &self.api
+    }
+
     /// Returns [`PeerId`] of the remote peer.
     pub fn remote_peer_id(&self) -> &PeerId {
         &self.inner.remote_peer_id
     }
 
+    /// Returns [`IpAddr`] of the remote peer.
+    pub fn remote_peer_addr(&self) -> IpAddr {
+        self.inner.quic.remote_address().ip()
+    }
+
     /// Handles this [`Connection`] by handling all [`InboundRpc`] using the
     /// provided `handler_fn`.
-    pub async fn handle<H, Fut>(
-        &self,
-        rpc_handler: &H,
-        handler_fn: fn(InboundRpc<API>, H) -> Fut,
-    ) -> Result<()>
+    pub async fn handle<Fut>(&self, handler_fn: fn(InboundRpc<API>) -> Fut) -> Result<()>
     where
-        H: Clone + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
         let fut = async {
             loop {
                 let rpc = self.accept_rpc().await?;
-                let handler = rpc_handler.clone();
-
-                async move { handler_fn(rpc, handler).await }.spawn();
+                async move { handler_fn(rpc).await }.spawn();
             }
         };
 
@@ -667,6 +686,7 @@ impl<API: Api> Connection<'_, API> {
                 stream: BiDirectionalStream::new(tx, rx),
                 permit,
                 shutdown_signal: self.inner.shutdown_signal.clone(),
+                conn: self.clone(),
             });
         }
     }
@@ -700,6 +720,10 @@ impl Error {
         Self::new(ErrorInner::Io(err))
     }
 
+    fn timeout() -> Self {
+        Self::new(ErrorInner::Timeout)
+    }
+
     fn is_unknown_api(&self) -> bool {
         matches!(self.0, ErrorInner::UnknownApi(_))
     }
@@ -711,7 +735,9 @@ impl From<ErrorInner> for Error {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, EnumDiscriminants)]
+#[strum_discriminants(name(ErrorKind))]
+#[strum_discriminants(derive(Ordinalize, IntoStaticStr))]
 enum ErrorInner {
     #[error("Failed to generate TLS certificate: {0:?}")]
     GenCertificate(#[from] libp2p_tls::certificate::GenError),
@@ -754,6 +780,15 @@ enum ErrorInner {
 
     #[error("Unknown RPC ID: {0}")]
     UnknownRpcId(u8),
+
+    #[error("Timeout")]
+    Timeout,
+}
+
+impl metrics::Enum for ErrorKind {
+    fn as_str(&self) -> &'static str {
+        self.into()
+    }
 }
 
 /// [`Stream`] of inbound RPC requests.
@@ -799,11 +834,14 @@ pub struct ResponseSink<RPC: RpcV2> {
     send_stream: SendStream,
     #[pin]
     codec: RPC::Codec,
+
+    conn: Arc<ConnectionInner>,
+    rpc_name: &'static str,
 }
 
 impl<RPC: RpcV2, T> Sink<&T> for ResponseSink<RPC>
 where
-    T: BorrowedMessage<Owned = RPC::Response>,
+    T: BorrowedMessage<Owned = RPC::Response> + FallibleResponse,
     RPC::Codec: Serializer<T>,
 {
     type Error = Error;
@@ -824,6 +862,17 @@ where
             .send_stream
             .start_send(bytes)
             .map_err(Error::io)?;
+
+        if let Some(kind) = item.error_kind() {
+            metrics::counter!("wcn_rpc_server_error_responses",
+                StringLabel<"remote_addr", IpAddr> => &self.conn.quic.remote_address().ip(),
+                StringLabel<"server_name"> => self.conn.server_name,
+                StringLabel<"api", ApiName> => &self.conn.api_name,
+                StringLabel<"rpc"> => self.rpc_name,
+                StringLabel<"kind"> => kind
+            )
+            .increment(1);
+        }
 
         Ok(())
     }

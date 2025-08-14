@@ -19,7 +19,11 @@ use {
     },
     tap::Pipe,
     wc::future::FutureExt,
-    wcn_rpc::{client2::Connection, identity::Keypair, server2::ShutdownSignal},
+    wcn_rpc::{
+        client2::{Api as _, Connection},
+        identity::Keypair,
+        server2::ShutdownSignal,
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -54,14 +58,16 @@ async fn test_e2e() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let client = storage_api::rpc::client::database(wcn_rpc::client2::Config {
-        keypair: Keypair::generate_ed25519(),
-        connection_timeout: Duration::from_secs(10),
-        reconnect_interval: Duration::from_secs(1),
-        max_concurrent_rpcs: 100,
-        priority: wcn_rpc::transport::Priority::High,
-    })
-    .unwrap();
+    let client = storage_api::rpc::DatabaseApi::new()
+        .with_rpc_timeout(Duration::from_millis(500))
+        .try_into_client(wcn_rpc::client2::Config {
+            keypair: Keypair::generate_ed25519(),
+            connection_timeout: Duration::from_secs(10),
+            reconnect_interval: Duration::from_secs(1),
+            max_concurrent_rpcs: 100,
+            priority: wcn_rpc::transport::Priority::High,
+        })
+        .unwrap();
 
     let client_conn = client
         .connect(

@@ -2,8 +2,15 @@ use {
     crate::{operation, DataItem, MapPage, Record, RecordExpiration},
     derive_more::derive::{TryFrom, TryInto},
     serde::{Deserialize, Serialize},
-    std::{marker::PhantomData, ops::RangeInclusive},
-    wcn_rpc::{ApiName, Message, PostcardCodec, RpcV2},
+    std::{marker::PhantomData, ops::RangeInclusive, time::Duration},
+    strum::IntoStaticStr,
+    wcn_rpc::{
+        metrics::{ErrorResponse, FallibleResponse},
+        ApiName,
+        Message,
+        PostcardCodec,
+        RpcV2,
+    },
 };
 
 #[cfg(feature = "rpc_client")]
@@ -11,7 +18,7 @@ pub mod client;
 #[cfg(feature = "rpc_server")]
 pub mod server;
 
-#[derive(Clone, Copy, Debug, TryFrom)]
+#[derive(Clone, Copy, Debug, TryFrom, IntoStaticStr)]
 #[try_from(repr)]
 #[repr(u8)]
 pub enum Id {
@@ -29,8 +36,8 @@ pub enum Id {
     HCard = 10,
     HScan = 11,
 
-    PullData = 12,
-    PushData = 13,
+    ReadData = 12,
+    WriteData = 13,
 }
 
 impl From<Id> for u8 {
@@ -40,8 +47,58 @@ impl From<Id> for u8 {
 }
 
 /// `wcn_rpc` implementation of [`StorageApi`](super::StorageApi).
-#[derive(Clone, Copy, Debug)]
-pub struct Api<Kind>(PhantomData<Kind>);
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Api<Kind, S = ()> {
+    rpc_timeout: Option<Duration>,
+    kind: PhantomData<Kind>,
+    state: S,
+}
+
+impl<Kind> Api<Kind> {
+    /// Creates a new [`Api`].
+    pub fn new() -> Self {
+        Self {
+            rpc_timeout: None,
+            kind: PhantomData,
+            state: (),
+        }
+    }
+
+    /// Adds RPC timeout to this [`Api`].
+    pub fn with_rpc_timeout(mut self, timeout: Duration) -> Self {
+        self.rpc_timeout = Some(timeout);
+        self
+    }
+
+    /// Adds `state` to this [`Api`].
+    pub fn with_state<S>(self, state: S) -> Api<Kind, S> {
+        Api {
+            rpc_timeout: self.rpc_timeout,
+            kind: PhantomData,
+            state,
+        }
+    }
+}
+
+impl<Kind, S> Api<Kind, S> {
+    fn rpc_timeout_(&self, id: Id) -> Option<Duration> {
+        match id {
+            Id::Get
+            | Id::Set
+            | Id::Del
+            | Id::SetExp
+            | Id::GetExp
+            | Id::HGet
+            | Id::HSet
+            | Id::HDel
+            | Id::HSetExp
+            | Id::HGetExp
+            | Id::HCard
+            | Id::HScan => self.rpc_timeout,
+            Id::ReadData | Id::WriteData => None,
+        }
+    }
+}
 
 mod api_kind {
     #[derive(Clone, Copy, Debug)]
@@ -54,75 +111,89 @@ mod api_kind {
     pub struct Database;
 }
 
-pub type CoordinatorApi = Api<api_kind::Coordinator>;
+pub type CoordinatorApi<S = ()> = Api<api_kind::Coordinator, S>;
 
-impl wcn_rpc::Api for CoordinatorApi {
+impl<S> wcn_rpc::Api for CoordinatorApi<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     const NAME: ApiName = ApiName::new("Coordinator");
     type RpcId = Id;
+
+    fn rpc_timeout(&self, rpc_id: Id) -> Option<Duration> {
+        self.rpc_timeout_(rpc_id)
+    }
 }
 
-pub type ReplicaApi = Api<api_kind::Replica>;
+pub type ReplicaApi<S = ()> = Api<api_kind::Replica, S>;
 
-impl wcn_rpc::Api for ReplicaApi {
+impl<S> wcn_rpc::Api for ReplicaApi<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     const NAME: ApiName = ApiName::new("Replica");
     type RpcId = Id;
+
+    fn rpc_timeout(&self, rpc_id: Id) -> Option<Duration> {
+        self.rpc_timeout_(rpc_id)
+    }
 }
 
-pub type DatabaseApi = Api<api_kind::Database>;
+pub type DatabaseApi<S = ()> = Api<api_kind::Database, S>;
 
-impl wcn_rpc::Api for DatabaseApi {
+impl<S> wcn_rpc::Api for DatabaseApi<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     const NAME: ApiName = ApiName::new("Database");
     type RpcId = Id;
+
+    fn rpc_timeout(&self, rpc_id: Id) -> Option<Duration> {
+        self.rpc_timeout_(rpc_id)
+    }
 }
 
-type UnaryRpc<const ID: u8, Req, Resp> = wcn_rpc::UnaryV2<ID, Req, Resp, PostcardCodec>;
+type Rpc<const ID: u8, Req, Resp> = wcn_rpc::RpcImpl<ID, Req, Resp, PostcardCodec>;
 
-type Get = UnaryRpc<{ Id::Get as u8 }, operation::Get, Result<Option<Record>>>;
-type Set = UnaryRpc<{ Id::Set as u8 }, operation::Set, Result<()>>;
-type Del = UnaryRpc<{ Id::Del as u8 }, operation::Del, Result<()>>;
+type Get = Rpc<{ Id::Get as u8 }, operation::Get, Result<Option<Record>>>;
+type Set = Rpc<{ Id::Set as u8 }, operation::Set, Result<()>>;
+type Del = Rpc<{ Id::Del as u8 }, operation::Del, Result<()>>;
 
-type GetExp = UnaryRpc<{ Id::GetExp as u8 }, operation::GetExp, Result<Option<RecordExpiration>>>;
-type SetExp = UnaryRpc<{ Id::SetExp as u8 }, operation::SetExp, Result<()>>;
+type GetExp = Rpc<{ Id::GetExp as u8 }, operation::GetExp, Result<Option<RecordExpiration>>>;
+type SetExp = Rpc<{ Id::SetExp as u8 }, operation::SetExp, Result<()>>;
 
-type HGet = UnaryRpc<{ Id::HGet as u8 }, operation::HGet, Result<Option<Record>>>;
-type HSet = UnaryRpc<{ Id::HSet as u8 }, operation::HSet, Result<()>>;
-type HDel = UnaryRpc<{ Id::HDel as u8 }, operation::HDel, Result<()>>;
+type HGet = Rpc<{ Id::HGet as u8 }, operation::HGet, Result<Option<Record>>>;
+type HSet = Rpc<{ Id::HSet as u8 }, operation::HSet, Result<()>>;
+type HDel = Rpc<{ Id::HDel as u8 }, operation::HDel, Result<()>>;
 
-type HGetExp =
-    UnaryRpc<{ Id::HGetExp as u8 }, operation::HGetExp, Result<Option<RecordExpiration>>>;
-type HSetExp = UnaryRpc<{ Id::HSetExp as u8 }, operation::HSetExp, Result<()>>;
+type HGetExp = Rpc<{ Id::HGetExp as u8 }, operation::HGetExp, Result<Option<RecordExpiration>>>;
+type HSetExp = Rpc<{ Id::HSetExp as u8 }, operation::HSetExp, Result<()>>;
 
-type HCard = UnaryRpc<{ Id::HCard as u8 }, operation::HCard, Result<u64>>;
-type HScan = UnaryRpc<{ Id::HScan as u8 }, operation::HScan, Result<MapPage>>;
+type HCard = Rpc<{ Id::HCard as u8 }, operation::HCard, Result<u64>>;
+type HScan = Rpc<{ Id::HScan as u8 }, operation::HScan, Result<MapPage>>;
 
-struct PullData;
-
-impl RpcV2 for PullData {
-    const ID: u8 = Id::PullData as u8;
-    type Request = PullDataRequest;
-    type Response = PullDataResponse;
-    type Codec = PostcardCodec;
-}
+type ReadData = Rpc<{ Id::ReadData as u8 }, ReadDataRequest, ReadDataResponse>;
+type WriteData = Rpc<{ Id::WriteData as u8 }, DataItem, Result<()>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Message)]
-struct PullDataRequest {
+struct ReadDataRequest {
     keyrange: RangeInclusive<u64>,
     keyspace_version: u64,
 }
 
 #[derive(Clone, Debug, TryInto, Serialize, Deserialize, Message)]
-enum PullDataResponse {
+enum ReadDataResponse {
     Ack(Result<()>),
     Item(Result<DataItem>),
 }
 
-struct PushData;
-
-impl RpcV2 for PushData {
-    const ID: u8 = Id::PushData as u8;
-    type Request = DataItem;
-    type Response = Result<()>;
-    type Codec = PostcardCodec;
+impl FallibleResponse for ReadDataResponse {
+    fn error_kind(&self) -> Option<&'static str> {
+        match self {
+            ReadDataResponse::Ack(res) => res.error_kind(),
+            ReadDataResponse::Item(res) => res.error_kind(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Message)]
@@ -146,7 +217,23 @@ impl From<ErrorCode> for Error {
     }
 }
 
-#[derive(TryFrom)]
+impl ErrorResponse for Error {
+    fn kind(&self) -> &'static str {
+        ErrorCode::try_from(self.code)
+            .map(Into::into)
+            .unwrap_or("Unknown")
+    }
+}
+
+impl ErrorResponse for ErrorBorrowed<'_> {
+    fn kind(&self) -> &'static str {
+        ErrorCode::try_from(self.code)
+            .map(Into::into)
+            .unwrap_or("Unknown")
+    }
+}
+
+#[derive(TryFrom, IntoStaticStr)]
 #[try_from(repr)]
 #[repr(u8)]
 enum ErrorCode {

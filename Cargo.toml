@@ -2,7 +2,6 @@
 resolver = "2"
 members = ["crates/*"]
 
-
 [profile.release]
 lto = "fat"
 
@@ -16,54 +15,76 @@ lto = "thin"
 debug = 1
 
 [workspace.dependencies]
+# Local
+wcn_cluster = { path = "crates/cluster", default-features = false }
+wcn_cluster_api = { path = "crates/cluster_api", default-features = false }
+wcn_logging = { path = "crates/logging", default-features = false }
+wcn_rocks = { path = "crates/rocks", default-features = false }
+wcn_rpc = { path = "crates/rpc", default-features = false }
+wcn_storage_api2 = { path = "crates/storage_api2", default-features = false }
+wcn_migration = { path = "crates/migration", default-features = false }
+wcn_replication2 = { path = "crates/replication2", default-features = false }
+wcn_client = { path = "crates/client", default-features = false }
+wcn_db = { path = "crates/db", default-features = false }
+
+# Org
 wc = { git = "https://github.com/WalletConnect/utils-rs.git", tag = "v0.14.1", default-features = false }
-derive_more = { version = "1.0.0", features = [
-    "display",
-    "from",
-    "as_ref",
-    "display",
-    "from",
-    "try_into",
-    "deref",
-] }
-derivative = "2"
-derive-where = "1.5"
-tap = "1.0"
-core = { package = "wcn_core", path = "crates/core" }
-auth = { package = "wcn_auth", path = "crates/auth" }
-domain = { package = "wcn_domain", path = "crates/domain" }
-raft_api = { package = "wcn_raft_api", path = "crates/raft_api", features = [
-    "server",
-] }
-storage_api = { package = "wcn_storage_api", path = "crates/storage_api", features = [
-    "server",
-] }
-admin_api = { package = "wcn_admin_api", path = "crates/admin_api" }
-client_api = { package = "wcn_client_api", path = "crates/client_api" }
-migration_api = { package = "wcn_migration_api", path = "crates/migration_api" }
-echo_api = { package = "wcn_echo_api", path = "crates/echo_api" }
-pulse_api = { package = "wcn_pulse_api", path = "crates/pulse_api" }
-pulse_monitor = { path = "crates/pulse_monitor" }
-raft = { path = "crates/raft" }
-wcn_rpc = { path = "crates/rpc" }
-wcn_rocks = { path = "crates/rocks" }
-metrics = "0.23"
-time = "0.3"
-libp2p = { version = "0.55", default-features = false, features = ["serde"] }
+
+# Derives
+derive_more = { version = "2.0", default-features = false, features = ["std"] }
+derivative = { version = "2.0", default-features = false }
+derive-where = { version = "1.5", default-features = false }
+thiserror = { version = "2", default-features = false }
+strum = { version = "0.27", default-features = false }
+
+# General purpose
+arc-swap = { version = "1.7", default-features = false }
+anyhow = { version = "1.0", default-features = false, features = ["std"] }
+backoff = { version = "0.4", default-features = false, features = ["tokio"] }
+tap = { version = "1.0", default-features = false }
+time = { version = "0.3", default-features = false }
+bytes = { version = "1.0", default-features = false }
+pin-project = { version = "1.0", default-features = false }
+itertools = { version = "0.14", default-features = false, features = ["use_std"] }
+rand = { version = "0.9", default-features = false, features = ["thread_rng"] }
+
+# Collections
+indexmap = { version = "2", default-features = false, features = ["std"] }
+smallvec = { version = "1.11", default-features = false }
+
+# Encoding
+base64 = { version = "0.22", default-features = false, features = ["std"] }
+const-hex = { version = "1.14", default-features = false, features = ["alloc"] }
+
+# Serialization
+serde = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+postcard = { version = "1.0", default-features = false }
+
+# Async
+futures = { version = "0.3", default-features = false }
+futures-concurrency = { version = "7.6", default-features = false }
+tokio = { version = "1.0", default-features = false }
+tokio-stream = { version = "0.1", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
 tokio-serde = { git = "https://github.com/xDarksome/tokio-serde.git", rev = "6df9ff9" }
 tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcard.git", rev = "5e1b77a" }
-postcard = { version = "1.0", default-features = false }
-itertools = "0.12"
-futures = "0.3"
-futures-concurrency = "7.6"
-backoff = { version = "0.4", features = ["tokio"] }
-tracing = "0.1"
-tokio-stream = "0.1"
-strum = "0.27"
-xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
-thiserror = "1"
-anyhow = "1"
-const-hex = "1.14"
+
+# O11y
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false }
+metrics = { version = "0.24", default-features = false }
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+sysinfo = { version = "0.37", default-features = false }
+
+# Other
+alloy = { version = "1.0",  default-features = false }
+libp2p-identity = { version = "0.2", default-features = false, features = ["peerid", "ed25519"] }
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh3", "const_xxh3"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+envy = { version = "0.4", default-features = false }
+vergen-pretty = { version = "1.0", default-features = false, features = ["trace"] }
+vergen = { version = "9", default-features = false, features = ["build", "cargo", "rustc", "si"] }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

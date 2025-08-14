@@ -213,7 +213,7 @@ fn test_keyspace() {
 
     // scale cluster down to RF
     loop {
-        let i: usize = rand::random::<usize>() % nodes_vec.len();
+        let i: usize = rand::random::<u64>() as usize % nodes_vec.len();
         nodes_vec.swap_remove(i);
         nodes = nodes_vec.iter().copied().collect();
 

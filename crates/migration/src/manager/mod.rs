@@ -1,16 +1,6 @@
 use {
     anyhow::{anyhow, Context, Result},
     backoff::ExponentialBackoffBuilder,
-    cluster::{
-        keyspace,
-        migration,
-        node_operator,
-        smart_contract::{self, Write},
-        Cluster,
-        NodeOperator,
-        PeerId,
-        SmartContract,
-    },
     futures::{stream, FutureExt as _, StreamExt, TryFutureExt},
     futures_concurrency::future::Race,
     std::{
@@ -20,8 +10,19 @@ use {
         sync::Arc,
         time::Duration,
     },
-    storage_api::StorageApi,
     tap::{Pipe as _, TapFallible},
+    wcn_cluster::{
+        self as cluster,
+        keyspace,
+        migration,
+        node_operator,
+        smart_contract::{self, Write},
+        Cluster,
+        NodeOperator,
+        PeerId,
+        SmartContract,
+    },
+    wcn_storage_api2::{self as storage_api, StorageApi},
 };
 
 #[cfg(test)]

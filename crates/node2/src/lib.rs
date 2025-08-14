@@ -25,7 +25,7 @@ use {
         server2::{self as rpc_server, Api as _, Server as _, ShutdownSignal},
         PeerId,
     },
-    wcn_storage_api::rpc::client as storage_api_client,
+    wcn_storage_api2::rpc::client as storage_api_client,
 };
 
 mod metrics;
@@ -92,16 +92,16 @@ pub struct Config {
 }
 
 impl Config {
-    fn coordinator_api(&self) -> wcn_storage_api::rpc::CoordinatorApi {
-        wcn_storage_api::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2))
+    fn coordinator_api(&self) -> wcn_storage_api2::rpc::CoordinatorApi {
+        wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2))
     }
 
-    fn replica_api(&self) -> wcn_storage_api::rpc::ReplicaApi {
-        wcn_storage_api::rpc::ReplicaApi::new().with_rpc_timeout(Duration::from_secs(2))
+    fn replica_api(&self) -> wcn_storage_api2::rpc::ReplicaApi {
+        wcn_storage_api2::rpc::ReplicaApi::new().with_rpc_timeout(Duration::from_secs(2))
     }
 
-    fn database_api(&self) -> wcn_storage_api::rpc::DatabaseApi {
-        wcn_storage_api::rpc::DatabaseApi::new().with_rpc_timeout(Duration::from_millis(500))
+    fn database_api(&self) -> wcn_storage_api2::rpc::DatabaseApi {
+        wcn_storage_api2::rpc::DatabaseApi::new().with_rpc_timeout(Duration::from_millis(500))
     }
 
     fn cluster_api(&self) -> wcn_cluster_api::rpc::ClusterApi {
@@ -228,11 +228,11 @@ impl wcn_cluster::Config for AppConfig {
     }
 }
 
-impl wcn_replication::coordinator::Config for AppConfig {
+impl wcn_replication2::coordinator::Config for AppConfig {
     type OutboundReplicaConnection = storage_api_client::ReplicaConnection;
 }
 
-impl wcn_replication::replica::Config for AppConfig {
+impl wcn_replication2::replica::Config for AppConfig {
     type OutboundDatabaseConnection = storage_api_client::DatabaseConnection;
 }
 
@@ -272,9 +272,9 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
     )
     .await?;
 
-    let coordinator = wcn_replication::Coordinator::new(app_cfg.clone(), cluster.clone());
+    let coordinator = wcn_replication2::Coordinator::new(app_cfg.clone(), cluster.clone());
 
-    let replica = wcn_replication::Replica::new(
+    let replica = wcn_replication2::Replica::new(
         Arc::new(app_cfg.clone()),
         cluster.clone(),
         app_cfg.database_connection.clone(),

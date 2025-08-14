@@ -1,4 +1,5 @@
 use {
+    base64::Engine as _,
     serde::{Deserialize, Deserializer},
     std::{path::PathBuf, time::Duration},
     tap::{Pipe as _, TapOptional as _},
@@ -102,9 +103,12 @@ where
     D: Deserializer<'de>,
 {
     use serde::de::Error as _;
-
     String::deserialize(deserializer)
-        .and_then(|s| base64::decode(s).map_err(D::Error::custom))
+        .and_then(|s| {
+            base64::engine::general_purpose::STANDARD
+                .decode(s)
+                .map_err(D::Error::custom)
+        })
         .and_then(|bytes| Keypair::ed25519_from_bytes(bytes).map_err(D::Error::custom))
 }
 

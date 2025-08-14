@@ -2,7 +2,16 @@ use {
     crate::storage::{self, Storage},
     futures::{Stream, StreamExt as _, TryStreamExt as _},
     std::{ops::RangeInclusive, sync::Arc},
-    storage_api::{
+    tap::Pipe as _,
+    wc::metrics::{future_metrics, FutureExt as _},
+    wcn_rocks::db::{
+        cf::{ColumnFamilyName, DbColumn},
+        migration::{ExportFrame, ExportItem},
+        schema,
+        types::{common::iterators::ScanOptions, MapStorage as _, Pair, StringStorage as _},
+    },
+    wcn_storage_api2::{
+        self as storage_api,
         operation::{self, Output},
         DataFrame,
         DataItem,
@@ -14,14 +23,6 @@ use {
         RecordExpiration,
         RecordVersion,
         StorageApi,
-    },
-    tap::Pipe as _,
-    wc::metrics::{future_metrics, FutureExt as _},
-    wcn_rocks::db::{
-        cf::{ColumnFamilyName, DbColumn},
-        migration::{ExportFrame, ExportItem},
-        schema,
-        types::{common::iterators::ScanOptions, MapStorage as _, Pair, StringStorage as _},
     },
 };
 

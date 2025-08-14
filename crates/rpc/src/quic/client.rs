@@ -460,9 +460,8 @@ impl<H: Handshake> Client<H> {
 
         let handlers = self.connection_handlers.read().await.clone();
         let len = handlers.len();
-        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::thread_rng())
-            .map_err(|_| EstablishStreamError::Rng)?;
-        let mut n: usize = rng.gen();
+        let mut rng = rand::rngs::SmallRng::from_rng(&mut rand::rng());
+        let mut n = rng.random::<u64>() as usize;
 
         // fast run, skipping broken connections
         for _ in 0..len {

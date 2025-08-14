@@ -16,57 +16,70 @@ name = "wcn_node"
 workspace = true
 
 [dependencies]
-wc = { workspace = true, features = ["alloc", "future", "metrics"] }
-logging = { package = "wcn_logging", path = "../logging" }
-metrics = { workspace = true }
+# Local
+wcn_logging = { workspace = true }
+wcn_rpc = { workspace = true, features = ["client", "server"] }
+wcn_cluster = { workspace = true }
+wcn_storage_api2 = { workspace = true, features = ["rpc_client", "rpc_server"] }
+wcn_cluster_api = { workspace = true, features = ["rpc_server"] }
+wcn_migration = { workspace = true }
+wcn_replication2 = { workspace = true }
+
+# Org
+wc = { workspace = true, features = ["alloc"] }
+
+# Derives
+derive_more = { workspace = true, features = ["as_ref"] }
+derive-where = { workspace = true }
+thiserror = { workspace = true}
+
+# General purpose
+anyhow = { workspace = true }
+tap = { workspace = true }
+time = { workspace = true }
+
+# Encoding
+base64 = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+
+# Async
 futures = { workspace = true }
 futures-concurrency = { workspace = true }
-tap = { workspace = true }
-thiserror = { workspace = true }
-wcn_rpc = { workspace = true, features = ["client", "server"] }
-wcn_storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = [
-    "rpc_client",
-    "rpc_server",
-] }
-wcn_cluster_api = { path = "../cluster_api", features = ["rpc_server"] }
-wcn_cluster = { path = "../cluster" }
-wcn_replication = { package = "wcn_replication2", path = "../replication2" }
-wcn_migration = { path = "../migration" }
-serde = "1"
-anyhow = "1"
-envy = "0.4"
-base64 = "0.20"
-derive_more = { workspace = true, features = ["as_ref", "into"] }
-derive-where = { workspace = true }
-metrics-exporter-prometheus = "0.15"
-tracing = "0.1"
-vergen-pretty = { version = "0.3", features = ["trace"] }
-tokio = { version = "1", default-features = false, features = ["fs", "signal"] }
-sysinfo = "0.29"
-axum = "0.8"
+tokio = { version = "1", default-features = false, features = ["signal"] }
+
+# O11y
+tracing = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+sysinfo = { workspace = true, features = ["system", "network"] }
+
+# Other
+xxhash-rust = { workspace = true }
+axum = { workspace = true }
+envy = { workspace = true }
+vergen-pretty = { workspace = true }
 
 [dev-dependencies]
-wcn_client = { path = "../client" }
-wcn_cluster = { path = "../cluster", features = ["testing"] }
-wcn_db = { path = "../db" }
-alloy = { version = "1.0", default-features = false, features = [
-    "provider-anvil-node",
-    "node-bindings",
-] }
-tokio = { version = "1", default-features = false }
+wcn_client = { workspace = true }
+wcn_cluster = { workspace = true, features = ["testing"] }
+wcn_db = { workspace = true }
 
-tracing-subscriber = { version = "0.3", features = [
+const-hex = { workspace = true }
+
+tokio = { workspace = true }
+
+tracing-subscriber = { workspace = true, features = [
     "env-filter",
     "parking_lot",
     "json",
 ] }
-const-hex = "1.14"
+
+alloy = { workspace = true, features = [
+    "provider-anvil-node",
+    "node-bindings",
+] }
 
 [build-dependencies]
-vergen = { version = "8", default-features = false, features = [
-    "build",
-    "cargo",
-    "git",
-    "gitoxide",
-    "rustc",
-] }
+vergen = { workspace = true }

@@ -1,5 +1,6 @@
 use {
     anyhow::Context,
+    base64::Engine as _,
     futures::FutureExt as _,
     futures_concurrency::future::Race as _,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
@@ -35,7 +36,7 @@ struct EnvConfig {
 }
 
 fn main() -> anyhow::Result<()> {
-    let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
+    let _logger = wcn_logging::Logger::init(wcn_logging::LogFormat::Json, None, None);
 
     let prometheus_handle = PrometheusBuilder::new()
         .install_recorder()
@@ -84,7 +85,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn new_config(env: &EnvConfig, prometheus_handle: PrometheusHandle) -> anyhow::Result<Config> {
-    let secret_key = base64::decode(&env.secret_key).context("SECRET_KEY")?;
+    let secret_key = base64::engine::general_purpose::STANDARD
+        .decode(&env.secret_key)
+        .context("SECRET_KEY")?;
 
     let keypair = Keypair::ed25519_from_bytes(secret_key).context("SECRET_KEY")?;
 

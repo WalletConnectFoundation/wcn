@@ -113,6 +113,7 @@ jobs:
       group: ubuntu-runners
     steps:
       - uses: actions/checkout@v4
+      - run: bash .github/install-deps.sh 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
@@ -131,6 +132,7 @@ jobs:
         test: [doc, unit, integration]
     steps:
       - uses: actions/checkout@v4
+      - run: bash .github/install-deps.sh 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
@@ -144,9 +146,9 @@ jobs:
           if [[ $TEST_KIND == 'doc' ]] ; then
             cargo test --workspace --doc --all-features
           elif [[ $TEST_KIND == 'unit' ]]; then
-            RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
+            RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node2
           elif [[ $TEST_KIND == 'integration' ]]; then
-            RUST_LOG=info,openraft=error,relay_rocks=warn cargo test -p wcn_node --all-features --release
+            RUST_LOG=info,relay_rocks=warn cargo test -p wcn_node2 --all-features
           else
             echo Unexpected test kind $TEST_KIND
             exit 1
@@ -173,6 +175,7 @@ jobs:
       group: ubuntu-runners
     steps:
       - uses: actions/checkout@v4
+      - run: bash .github/install-deps.sh 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_NIGHTLY }}
@@ -216,8 +219,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-            - name: wcn-node-legacy
-              dockerfile: Dockerfile
             - name: wcn-node
               dockerfile: infra/Dockerfile.node
             - name: wcn-db

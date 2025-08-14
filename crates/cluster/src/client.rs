@@ -1,7 +1,7 @@
 //! Client of a WCN cluster.
 
 use {
-    libp2p::identity::PeerId,
+    libp2p_identity::PeerId,
     serde::{Deserialize, Serialize},
     smallvec::SmallVec,
 };

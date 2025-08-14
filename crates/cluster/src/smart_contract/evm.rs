@@ -569,7 +569,7 @@ fn try_decode_error(
 
     let data: String = serde_json::from_str(data.get()).ok()?;
     let data = data.strip_prefix("0x")?;
-    let bytes = hex::decode(data).ok()?;
+    let bytes = const_hex::decode(data).ok()?;
 
     bindings::Cluster::ClusterErrors::abi_decode_validate(&bytes).ok()
 }

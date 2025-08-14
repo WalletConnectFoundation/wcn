@@ -1,16 +1,24 @@
 use {
-    cluster::{Cluster, PeerId},
     derive_where::derive_where,
     futures::Stream,
     std::{ops::RangeInclusive, sync::Arc},
-    storage_api::{operation, DataItem, Error, Operation, Result, StorageApi},
+    wcn_cluster::{Cluster, PeerId},
+    wcn_storage_api2::{
+        self as storage_api,
+        operation,
+        DataItem,
+        Error,
+        Operation,
+        Result,
+        StorageApi,
+    },
 };
 
 #[cfg(test)]
 pub mod test;
 
 /// [`Replica`] config.
-pub trait Config: cluster::Config {
+pub trait Config: wcn_cluster::Config {
     /// Type of the outbound connection to the WCN Database.
     type OutboundDatabaseConnection: StorageApi + Clone;
 }

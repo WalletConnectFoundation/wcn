@@ -5,27 +5,37 @@ edition = "2021"
 publish = false
 
 [dependencies]
-derive-where = { workspace = true }
-derive_more = { workspace = true }
-anyhow = { workspace = true }
-wc = { workspace = true, features = ["metrics"] }
-wcn_rpc = { workspace = true }
-storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["rpc_client"] }
-cluster = { package = "wcn_cluster", path = "../cluster" }
-futures-concurrency = { workspace = true }
-backoff = { workspace = true }
+# Local
+wcn_cluster = { workspace = true }
+wcn_storage_api2 = { workspace = true }
 
-futures = "0.3"
-tap = "1.0"
-tokio = { version = "1", default-features = false }
-tracing = "0.1"
+# Derives
+derive_more = { workspace = true }
+derive-where = { workspace = true }
+
+# General purpose
+anyhow = { workspace = true }
+backoff = { workspace = true }
+tap = { workspace = true }
+
+# Async
+futures = { workspace = true }
+futures-concurrency = { workspace = true }
+tokio = { workspace = true }
+
+# O11y
+tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", default-features = false }
-storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["testing"] }
-cluster = { package = "wcn_cluster", path = "../cluster", features = ["testing"] }
+wcn_storage_api2 = { workspace = true, features = ["testing"] }
+wcn_cluster = { workspace = true, features = ["testing"] }
+
+tokio = { workspace = true }
+
+tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter"] }
+
+libp2p-identity = { workspace = true }
 xxhash-rust = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints]
 workspace = true

@@ -380,9 +380,9 @@ fn map_entry() -> MapEntry {
 }
 
 fn map_page() -> MapPage {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
-    let len = rng.gen_range(1..=1000);
+    let len = rng.random_range(1..=1000);
     let mut buf = Vec::with_capacity(len);
     for _ in 0..len {
         buf.push(map_entry());
@@ -403,15 +403,15 @@ fn opt<T>(f: fn() -> T) -> Option<T> {
 }
 
 fn bytes() -> Vec<u8> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
-    let mut buf = vec![0u8; rng.gen_range(1..=4096)];
+    let mut buf = vec![0u8; rng.random_range(1..=4096)];
     rng.fill(&mut buf[..]);
     buf
 }
 
 fn record_expiration() -> RecordExpiration {
-    let secs = rand::thread_rng().gen_range(30..=60 * 60 * 24 * 30);
+    let secs = rand::rng().random_range(30..=60 * 60 * 24 * 30);
     Duration::from_secs(secs).into()
 }
 

@@ -7,7 +7,7 @@ use {
         path::{Path, PathBuf},
         time::Duration,
     },
-    sysinfo::{NetworkExt, NetworksExt},
+    sysinfo::{Disks, Networks},
     tap::{TapFallible, TapOptional},
     tokio::sync::oneshot,
     wcn_rocks::RocksBackend,
@@ -57,8 +57,6 @@ fn prometheus_upkeep_loop(mut cancel: oneshot::Receiver<()>, prometheus: Prometh
 }
 
 async fn update_loop(cancel: oneshot::Receiver<()>, cfg: Config) {
-    use sysinfo::{CpuExt as _, DiskExt as _, SystemExt as _};
-
     let mut sys = sysinfo::System::new_all();
     let mut cancel_fut = std::pin::pin!(cancel.fuse());
 
@@ -80,7 +78,7 @@ async fn update_loop(cancel: oneshot::Receiver<()>, cfg: Config) {
 
         update_cgroup_stats();
 
-        sys.refresh_cpu();
+        sys.refresh_cpu_usage();
 
         for (n, cpu) in sys.cpus().iter().enumerate() {
             metrics::gauge!("wcn_cpu_usage_percent_per_core_gauge", "n_core" => n.to_string())
@@ -94,9 +92,8 @@ async fn update_loop(cancel: oneshot::Receiver<()>, cfg: Config) {
         metrics::gauge!("wcn_available_memory").set(sys.available_memory() as f64);
         metrics::gauge!("wcn_used_memory").set(sys.used_memory() as f64);
 
-        sys.refresh_disks();
-
-        for disk in sys.disks() {
+        let disks = Disks::new_with_refreshed_list();
+        for disk in disks.list() {
             if disk.mount_point() == storage_mount_point {
                 metrics::gauge!("wcn_disk_total_space").set(disk.total_space() as f64);
                 metrics::gauge!("wcn_disk_available_space").set(disk.available_space() as f64);
@@ -104,9 +101,8 @@ async fn update_loop(cancel: oneshot::Receiver<()>, cfg: Config) {
             }
         }
 
-        sys.refresh_networks();
-
-        for (name, net) in sys.networks().iter() {
+        let networks = Networks::new_with_refreshed_list();
+        for (name, net) in networks.list() {
             metrics::gauge!("wcn_network_tx_bytes_total", "network" => name.to_owned())
                 .set(net.total_transmitted() as f64);
             metrics::gauge!("wcn_network_rx_bytes_total", "network" => name.to_owned())

@@ -1,12 +1,18 @@
 use {
     rand::prelude::*,
-    rand_chacha::ChaCha8Rng,
     std::{
         net::{Ipv4Addr, SocketAddrV4},
         path::PathBuf,
         time::Duration,
     },
-    storage_api::{
+    tap::Pipe,
+    wc::future::FutureExt,
+    wcn_rpc::{
+        client2::{Api as _, Connection},
+        identity::Keypair,
+        server2::ShutdownSignal,
+    },
+    wcn_storage_api2::{
         operation::*,
         rpc::DatabaseApi,
         MapEntry,
@@ -17,18 +23,11 @@ use {
         RecordVersion,
         StorageApi,
     },
-    tap::Pipe,
-    wc::future::FutureExt,
-    wcn_rpc::{
-        client2::{Api as _, Connection},
-        identity::Keypair,
-        server2::ShutdownSignal,
-    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e() {
-    let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
+    let _logger = wcn_logging::Logger::init(wcn_logging::LogFormat::Json, None, None);
     let shutdown_signal = ShutdownSignal::new();
 
     let db_port = find_available_port();
@@ -58,7 +57,7 @@ async fn test_e2e() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let client = storage_api::rpc::DatabaseApi::new()
+    let client = wcn_storage_api2::rpc::DatabaseApi::new()
         .with_rpc_timeout(Duration::from_millis(500))
         .try_into_client(wcn_rpc::client2::Config {
             keypair: Keypair::generate_ed25519(),
@@ -406,7 +405,7 @@ fn ver(version: u64) -> RecordVersion {
 }
 
 fn gen_ns() -> Namespace {
-    let mut rng = ChaCha8Rng::from_os_rng();
+    let mut rng = rand::rng();
 
     let mut bytes = [0; 21];
     rng.fill_bytes(&mut bytes);
@@ -417,7 +416,7 @@ fn gen_ns() -> Namespace {
 }
 
 fn gen_data() -> Vec<u8> {
-    let mut rng = ChaCha8Rng::from_os_rng();
+    let mut rng = rand::rng();
     let mut data = vec![0; 32];
     rng.fill_bytes(&mut data);
     data

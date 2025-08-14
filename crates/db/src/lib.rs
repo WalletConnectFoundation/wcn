@@ -69,7 +69,7 @@ pub fn run(
         shutdown_signal,
     };
 
-    let database_api = storage_api::rpc::DatabaseApi::new()
+    let database_api = wcn_storage_api2::rpc::DatabaseApi::new()
         .with_rpc_timeout(Duration::from_millis(500))
         .with_state(server::Server::new(storage));
 

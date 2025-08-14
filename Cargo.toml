@@ -59,7 +59,7 @@ const-hex = { version = "1.14", default-features = false, features = ["alloc"] }
 # Serialization
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
-postcard = { version = "1.0", default-features = false }
+postcard = { version = "1.0", default-features = false, features = ["use-std"] }
 
 # Async
 futures = { version = "0.3", default-features = false }

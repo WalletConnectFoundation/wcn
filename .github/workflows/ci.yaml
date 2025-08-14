@@ -112,8 +112,8 @@ jobs:
     runs-on:
       group: ubuntu-runners
     steps:
-      - run: bash .github/install-deps.sh 
       - uses: actions/checkout@v4
+      - run: bash .github/install-deps.sh 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
@@ -131,8 +131,8 @@ jobs:
       matrix:
         test: [doc, unit, integration]
     steps:
-      - run: bash .github/install-deps.sh 
       - uses: actions/checkout@v4
+      - run: bash .github/install-deps.sh 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_STABLE }}
@@ -174,8 +174,8 @@ jobs:
     runs-on:
       group: ubuntu-runners
     steps:
-      - run: bash .github/install-deps.sh 
       - uses: actions/checkout@v4
+      - run: bash .github/install-deps.sh 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_NIGHTLY }}

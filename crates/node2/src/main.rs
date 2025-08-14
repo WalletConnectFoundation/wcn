@@ -35,7 +35,7 @@ struct EnvConfig {
 }
 
 fn main() -> anyhow::Result<()> {
-    let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
+    let _logger = wcn_logging::Logger::init(wcn_logging::LogFormat::Json, None, None);
 
     let prometheus_handle = PrometheusBuilder::new()
         .install_recorder()

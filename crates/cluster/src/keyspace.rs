@@ -3,8 +3,8 @@ use {
         node_operator::{self},
         NodeOperators,
     },
-    derivative::Derivative,
     derive_more::TryFrom,
+    derive_where::derive_where,
     serde::{Deserialize, Serialize},
     std::{collections::HashSet, ops::RangeInclusive},
     xxhash_rust::xxh3::Xxh3Builder,
@@ -20,12 +20,12 @@ pub const REPLICATION_FACTOR: u8 = 5;
 ///
 /// [`Keyspace`] is being split into a set of equally sized [`Shards`],
 /// and each [`Shard`] is being assigned to a set of [`node_operator`]s.
-#[derive(Clone, Derivative, Serialize, Deserialize)]
-#[derivative(Debug)]
+#[derive(Clone, Serialize, Deserialize)]
+#[derive_where(Debug)]
 pub struct Keyspace<S = ()> {
     operators: HashSet<node_operator::Idx>,
 
-    #[derivative(Debug = "ignore")]
+    #[derive_where(skip)]
     shards: S,
 
     replication_strategy: ReplicationStrategy,

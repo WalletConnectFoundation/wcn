@@ -30,7 +30,7 @@ use {
 
 #[tokio::test]
 async fn test_rpc() {
-    let _logger = logging::Logger::init(logging::LogFormat::Json, None, None);
+    let _logger = wcn_logging::Logger::init(wcn_logging::LogFormat::Json, None, None);
     let port = find_available_port();
 
     // Spin up a local Anvil instance automatically

@@ -1,6 +1,9 @@
 use {
     crate::{replica, Replica},
-    cluster::{
+    derive_more::derive::AsRef,
+    futures::TryStreamExt as _,
+    std::{sync::Arc, time::Duration},
+    wcn_cluster::{
         node_operator,
         smart_contract::{self, testing::FakeSmartContract},
         testing::node_peer_id,
@@ -9,10 +12,7 @@ use {
         Node,
         PeerId,
     },
-    derive_more::derive::AsRef,
-    futures::TryStreamExt as _,
-    std::{sync::Arc, time::Duration},
-    storage_api::{
+    wcn_storage_api2::{
         operation,
         testing::FakeStorage,
         Error,
@@ -32,7 +32,7 @@ struct Config {
     database: FakeStorage,
 }
 
-impl cluster::Config for Config {
+impl wcn_cluster::Config for Config {
     type SmartContract = FakeSmartContract;
     type KeyspaceShards = ();
     type Node = Node;
@@ -56,7 +56,7 @@ struct Context {
 impl Context {
     async fn new() -> Self {
         let cfg = Config {
-            encryption_key: cluster::testing::encryption_key(),
+            encryption_key: wcn_cluster::testing::encryption_key(),
             smart_contract_registry: Default::default(),
             database: Default::default(),
         };
@@ -65,11 +65,11 @@ impl Context {
             cfg.clone(),
             &cfg.smart_contract_registry
                 .deployer(smart_contract::testing::signer(42)),
-            cluster::Settings {
+            wcn_cluster::Settings {
                 max_node_operator_data_bytes: 1024,
             },
             (0..8)
-                .map(|idx| cluster::testing::node_operator(idx as u8))
+                .map(|idx| wcn_cluster::testing::node_operator(idx as u8))
                 .collect(),
         )
         .await
@@ -86,7 +86,7 @@ impl Context {
 }
 
 fn namespace(operator_id: u8, idx: u8) -> Namespace {
-    let operator_id = cluster::testing::node_operator(operator_id).id;
+    let operator_id = wcn_cluster::testing::node_operator(operator_id).id;
     format!("{operator_id}/{idx}").parse().unwrap()
 }
 

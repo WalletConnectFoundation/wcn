@@ -11,7 +11,7 @@ use {
         Error,
     },
     cf::ColumnFamilyName,
-    futures_util::{FutureExt, TryFutureExt},
+    futures::{FutureExt, TryFutureExt},
     serde::de::DeserializeOwned,
     std::{
         collections::HashMap,

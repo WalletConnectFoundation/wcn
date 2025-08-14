@@ -5,29 +5,39 @@ edition = "2021"
 publish = false
 
 [dependencies]
-derive-where = { workspace = true }
+# Local 
+wcn_storage_api2 = { workspace = true }
+wcn_cluster = { workspace = true }
+
+# Org
 wc = { workspace = true, features = ["metrics"] }
-xxhash-rust = { workspace = true }
+
+# Derives
+derive-where = { workspace = true }
+thiserror = { workspace = true }
+
+# General purpose
+tap = { workspace = true }
+
+# Collections
+smallvec = { workspace = true }
+
+# Async
+futures = { workspace = true }
 futures-concurrency = { workspace = true }
-storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["rpc_client"] }
-cluster = { package = "wcn_cluster", path = "../cluster" }
+tokio = { workspace = true }
 
-futures = "0.3"
-tap = "1.0"
-smallvec = { version = "1.11" }
-tokio = { version = "1", default-features = false }
-tracing = "0.1"
+# O11y
+tracing = { workspace = true }
 
-derive_more = { version = "1.0.0", features = ["as_ref"] }
-
-thiserror = "1"
-
-heapless = "0.8"
+# Other
+xxhash-rust = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1", default-features = false }
-storage_api = { package = "wcn_storage_api2", path = "../storage_api2", features = ["testing"] }
-cluster = { package = "wcn_cluster", path = "../cluster", features = ["testing"] }
+wcn_storage_api2 = { workspace = true, features = ["testing"] }
+wcn_cluster = { workspace = true, features = ["testing"] }
+
+derive_more = { workspace = true, features = ["as_ref"] }
 
 [lints]
 workspace = true

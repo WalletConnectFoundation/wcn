@@ -389,7 +389,7 @@ pub fn signer(n: u8) -> Signer {
     let mut buf = [1; 32];
     buf[31] = n;
 
-    Signer::try_from_private_key(&hex::encode(buf)).unwrap()
+    Signer::try_from_private_key(&const_hex::encode(buf)).unwrap()
 }
 
 pub fn account_address(n: u8) -> AccountAddress {

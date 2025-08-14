@@ -12,48 +12,53 @@ default = []
 testing = []
 
 [dependencies]
-derive_more = { workspace = true, features = ["try_from", "into"] }
-derive-where = { workspace = true }
-derivative = { workspace = true }
-libp2p = { workspace = true }
-itertools = { workspace = true }
-futures = { workspace = true }
-backoff = { workspace = true }
-tracing = { workspace = true }
-tokio-stream = { workspace = true }
-
+# Local
 sharding = { path = "../sharding" }
 
-alloy = { version = "1.0", default-features = false, features = [
-    "sol-types",
+# Derives
+derive_more = { workspace = true, features = ["as_ref", "display", "from", "into", "try_from"] }
+derive-where = { workspace = true }
+thiserror = { workspace = true }
+
+# General purpose
+arc-swap = { workspace = true }
+const-hex = { workspace = true }
+tap = { workspace = true}
+itertools = { workspace = true }
+tracing = { workspace = true }
+
+# Collections
+indexmap = { workspace = true }
+smallvec = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# Encryption
+fpe = { version = "0.6", default-features = false, features = ["alloc"] }
+aes = { version = "0.8", default-features = false }
+
+# Async
+futures = { workspace = true }
+tokio = { workspace = true, features = ["time", "rt"] }
+tokio-stream = { workspace = true }
+
+# Domain specific
+libp2p-identity = { workspace = true, features = ["serde"] }
+xxhash-rust = { workspace = true }
+multihash = { version = "0.19", default-features = false }
+alloy = { workspace = true, features = [
     "contract",
     "signer-local",
-    "network",
     "reqwest",
     "provider-ws",
     "rpc-types",
 ] }
 
-anyhow = "1"
-thiserror = "1"
-
-tap = "1.0"
-serde = { version = "1", features = ["derive"] }
-postcard = { version = "1.0", default-features = false, features = ["alloc"] }
-
-xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
-fpe = "0.6"
-aes = "0.8"
-hex = "0.4"
-serde_json = "1"
-const-hex = { workspace = true }
-
-tokio = { version = "1", features = ["full"] }
-arc-swap = "1.7"
-indexmap = { version = "2", features = ["serde"] }
-smallvec = { version = "1.11", features = ["serde"] }
-
 [dev-dependencies]
+libp2p-identity = { workspace = true, features = ["rand"] }
 proptest = "1"
 wcn_cluster = { path = ".", features = ["testing"] }
 alloy = { version = "1.0", default-features = false, features = [

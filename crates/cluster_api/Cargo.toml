@@ -13,24 +13,37 @@ rpc_client = ["wcn_rpc/client"]
 rpc_server = ["wcn_rpc/server"]
 
 [dependencies]
-wcn_cluster = { path = "../cluster" }
+# Local
+wcn_cluster = { workspace = true }
+wcn_rpc = { workspace = true }
+
+# Org
 wc = { workspace = true, features = ["future", "metrics"] }
+
+# Derives
 derive_more = { workspace = true, features = ["from", "try_into"] }
 derive-where = { workspace = true }
+thiserror = { workspace = true }
+
+# General purpose
 tap = { workspace = true }
-wcn_rpc = { workspace = true }
-serde = "1"
-thiserror = "1"
 tracing = "0.1"
+
+# Serialization
+serde = "1"
+
+# Async 
 futures = "0.3"
 futures-concurrency = { workspace = true }
 
 [dev-dependencies]
-wcn_cluster = { path = "../cluster", features = ["testing"] }
-wcn_cluster_api = { path = ".", features = ["rpc_client", "rpc_server"] }
-logging = { package = "wcn_logging", path = "../logging" }
+wcn_cluster = { workspace = true, features = ["testing"] }
+wcn_cluster_api = { workspace = true, features = ["rpc_client", "rpc_server"] }
+wcn_logging = { workspace = true }
+
+tokio = { workspace = true, default-features = false }
+
 alloy = { version = "1.0", default-features = false, features = [
     "provider-anvil-node",
     "node-bindings",
 ] }
-tokio = { version = "1", default-features = false }

@@ -1,7 +1,6 @@
 pub use wcn_rocks::StorageError as Error;
 use {
     crate::config::Config,
-    storage_api::Namespace,
     wcn_rocks::{
         db::{
             cf::DbColumn,
@@ -12,6 +11,7 @@ use {
         StorageError,
         StorageResult,
     },
+    wcn_storage_api2::Namespace,
     xxhash_rust::xxh3::Xxh3Builder,
 };
 

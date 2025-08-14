@@ -26,7 +26,7 @@ use {
         server2::{self as rpc_server, Server as _, ShutdownSignal},
         PeerId,
     },
-    wcn_storage_api::rpc::{client as storage_api_client, server as storage_api_server},
+    wcn_storage_api2::rpc::{client as storage_api_client, server as storage_api_server},
 };
 
 mod metrics;
@@ -209,11 +209,11 @@ impl wcn_cluster::Config for AppConfig {
     }
 }
 
-impl wcn_replication::coordinator::Config for AppConfig {
+impl wcn_replication2::coordinator::Config for AppConfig {
     type OutboundReplicaConnection = storage_api_client::ReplicaConnection;
 }
 
-impl wcn_replication::replica::Config for AppConfig {
+impl wcn_replication2::replica::Config for AppConfig {
     type OutboundDatabaseConnection = storage_api_client::DatabaseConnection;
 }
 
@@ -255,9 +255,9 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
 
     let cluster_api_sc = cluster.smart_contract().clone();
 
-    let coordinator = wcn_replication::Coordinator::new(app_cfg.clone(), cluster.clone());
+    let coordinator = wcn_replication2::Coordinator::new(app_cfg.clone(), cluster.clone());
 
-    let replica = wcn_replication::Replica::new(
+    let replica = wcn_replication2::Replica::new(
         Arc::new(app_cfg.clone()),
         cluster.clone(),
         app_cfg.database_connection.clone(),

@@ -1,7 +1,7 @@
 use {
     super::{Response, MAJORITY_QUORUM_THRESHOLD},
     std::collections::HashMap,
-    storage_api::{operation, MapPage, Operation},
+    wcn_storage_api2::{operation, MapPage, Operation},
 };
 
 pub(super) fn reconcile(
@@ -120,7 +120,14 @@ mod test {
     use {
         super::*,
         std::array,
-        storage_api::{Error, MapEntry, Record, RecordExpiration, RecordVersion},
+        wcn_storage_api2::{
+            self as storage_api,
+            Error,
+            MapEntry,
+            Record,
+            RecordExpiration,
+            RecordVersion,
+        },
     };
 
     #[test]

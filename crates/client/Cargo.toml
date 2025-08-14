@@ -5,19 +5,30 @@ edition = "2024"
 publish = false
 
 [dependencies]
+# Local
+wcn_cluster = { workspace = true }
+wcn_cluster_api = { workspace = true, features = ["rpc_client"] }
+wcn_rpc = { workspace = true, features = ["client"] }
+wcn_storage_api2 = { workspace = true, features = ["rpc_client"] }
+
+# Org
 wc = { workspace = true, features = ["metrics"] }
-wcn_cluster_api = { path = "../cluster_api", features = ["rpc_client"] }
-wcn_storage_api2 = { path = "../storage_api2", features = ["rpc_client"] }
-wcn_cluster = { path = "../cluster" }
-wcn_rpc = { workspace = true }
-arc-swap = "1.7"
-derive_more = { workspace = true, features = ["from", "try_into"] }
-futures = "0.3"
-rand = "0.9"
-tap = "1.0"
-thiserror = "1"
-tokio = { version = "1", default-features = false, features = ["sync"] }
-tracing = "0.1"
+
+# Dervies
+derive_more = { workspace = true }
+thiserror = { workspace = true }
+
+# General purpose
+arc-swap = { workspace = true }
+tap = { workspace = true }
+rand = { workspace = true }
+
+# Async 
+futures = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+
+# O11y
+tracing = { workspace = true }
 
 [lints]
 workspace = true

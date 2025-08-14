@@ -1,11 +1,11 @@
 use {
     super::{Config, Quorum, Response, ResponseBuffer, RF},
-    cluster::NodeOperator,
     futures_concurrency::future::Join as _,
     std::array,
-    storage_api::{operation, MapEntryBorrowed, Operation},
     tap::TapFallible,
     wc::metrics,
+    wcn_cluster::NodeOperator,
+    wcn_storage_api2::{operation, MapEntryBorrowed, Operation},
 };
 
 /// Max number of [`ReadRepair`] tagrets.

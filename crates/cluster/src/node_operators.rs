@@ -3,7 +3,7 @@
 use {
     crate::{self as cluster, node_operator, Node, NodeOperator},
     indexmap::IndexMap,
-    libp2p::PeerId,
+    libp2p_identity::PeerId,
     std::sync::{
         atomic::{self, AtomicUsize},
         Arc,

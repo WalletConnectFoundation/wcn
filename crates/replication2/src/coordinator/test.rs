@@ -1,7 +1,10 @@
 use {
     super::{hash, Response},
     crate::{coordinator, Coordinator},
-    cluster::{
+    derive_more::derive::AsRef,
+    std::{collections::HashSet, sync::Arc, time::Duration},
+    tap::Tap,
+    wcn_cluster::{
         keyspace::{self, ReplicaSet},
         migration,
         node_operator,
@@ -13,9 +16,8 @@ use {
         NodeOperator,
         PeerId,
     },
-    derive_more::derive::AsRef,
-    std::{collections::HashSet, sync::Arc, time::Duration},
-    storage_api::{
+    wcn_storage_api2::{
+        self as storage_api,
         operation,
         testing::FakeStorage,
         Error,
@@ -25,7 +27,6 @@ use {
         RecordBorrowed,
         StorageApi,
     },
-    tap::Tap,
 };
 
 #[derive(AsRef, Clone)]
@@ -45,7 +46,7 @@ struct Replica {
     storage: storage_api::testing::FakeStorage,
 }
 
-impl cluster::Config for Config {
+impl wcn_cluster::Config for Config {
     type SmartContract = FakeSmartContract;
     type KeyspaceShards = keyspace::Shards;
     type Node = Replica;
@@ -65,7 +66,7 @@ impl super::Config for Config {
 struct Context {
     config: Config,
 
-    cluster_view: Arc<cluster::View<Config>>,
+    cluster_view: Arc<wcn_cluster::View<Config>>,
 
     coordinator: Coordinator<Config>,
     conn: coordinator::InboundConnection<Config>,
@@ -74,7 +75,7 @@ struct Context {
 impl Context {
     async fn new() -> Self {
         let cfg = Config {
-            encryption_key: cluster::testing::encryption_key(),
+            encryption_key: wcn_cluster::testing::encryption_key(),
             smart_contract_registry: Default::default(),
             storage_registry: Default::default(),
         };
@@ -85,12 +86,12 @@ impl Context {
             cfg.clone(),
             &cfg.smart_contract_registry
                 .deployer(smart_contract::testing::signer(42)),
-            cluster::Settings {
+            wcn_cluster::Settings {
                 max_node_operator_data_bytes: 1024,
             },
             (0..8)
                 .map(|idx| {
-                    cluster::testing::node_operator(idx as u8).tap_mut(|operator| {
+                    wcn_cluster::testing::node_operator(idx as u8).tap_mut(|operator| {
                         if idx == 0 {
                             operator.clients = vec![Client {
                                 peer_id: client_peer_id,
@@ -140,7 +141,7 @@ impl Context {
         let mut new_operators = HashSet::new();
 
         for n in 0..current_operators.len() {
-            let operator = cluster::testing::node_operator(100 + n as u8);
+            let operator = wcn_cluster::testing::node_operator(100 + n as u8);
             new_operators.insert(operator.id);
 
             self.coordinator
@@ -186,7 +187,7 @@ struct ReadTestCase<'a> {
 }
 
 fn namespace(operator_id: u8, idx: u8) -> Namespace {
-    let operator_id = cluster::testing::node_operator(operator_id).id;
+    let operator_id = wcn_cluster::testing::node_operator(operator_id).id;
     format!("{operator_id}/{idx}").parse().unwrap()
 }
 

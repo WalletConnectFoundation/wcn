@@ -12,44 +12,54 @@ client = []
 server = []
 
 [dependencies]
+# Local
 wcn_rpc_derive = { path = "./derive" }
-derive_more = { workspace = true, features = ["display", "try_from"] }
+
+# Org
+wc = { workspace = true, features = ["collections", "future", "metrics"] }
+
+# Derives
+derive_more = { workspace = true, features = ["display", "try_from", "deref", "from"] }
 derive-where = { workspace = true }
+thiserror = { workspace = true }
 strum = { workspace = true , features = ["derive"] }
-derivative = "2.2"
-futures = "0.3"
+
+# General purpose
+backoff = { workspace = true }
+tap = { workspace = true }
+tracing = { workspace = true }
+metrics = { workspace = true }
+bytes = { workspace = true }
+pin-project = { workspace = true }
+rand = { workspace = true, features = ["small_rng"] }
+
+# Async
+futures = { workspace = true }
 futures-concurrency = { workspace = true }
-indexmap = "2"
-tracing = { version = "0.1" }
-tokio = { version = "1", default-features = false, features = [
-    "sync",
-    "time",
-    "io-util",
-] }
-tokio-stream = "0.1"
+tokio = { workspace = true, features = ["io-util"] }
+tokio-stream = { workspace = true }
 tokio-util = { version = "0.7", features = ["compat", "codec"] }
 tokio-serde = { workspace = true, features = ["json"] }
 tokio-serde-postcard = { workspace = true }
-postcard = { workspace = true, features = ["alloc"] }
-bytes = "1"
-serde_json = "1"
-rand = { version = "0.8", features = ["small_rng"] }
-libp2p = { workspace = true }
-pin-project = "1.0"
-serde = { version = "1" }
-thiserror = "1.0"
-wc = { workspace = true, features = ["collections", "future", "metrics"] }
-metrics = { workspace = true }
 
-quinn = "0.11.8"
-quinn-proto = "0.11"
-libp2p-tls = "0.5"
-backoff = { version = "0.4", features = ["tokio"] }
-tap = "1"
-socket2 = "0.5.5"
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+
+# Other 
+libp2p = { version = "0.55", default-features = false } # TODO: switch to `libp2p-identity`
+libp2p-tls = { version = "0.5", default-features = false }
+quinn = { version = "0.11.8", default-features = false, features = ["rustls", "runtime-tokio"] }
+quinn-proto = { version = "0.11", default-features = false }
+socket2 = { version = "0.5.5", default-features = false }
 nix = { version = "0.28", default-features = false, features = ["socket", "net"] }
 governor = { version = "0.8", default-features = false, features = ["std"] }
 mini-moka = { version = "0.10", default-features = false, features = ["sync"] }
+
+# TODO: remove
+indexmap = "2"
+derivative = "2.2"
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

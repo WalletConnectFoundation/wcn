@@ -9,6 +9,8 @@ use {
 
 pub mod columns;
 pub mod keys;
+
+#[cfg(test)]
 pub mod test_types;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

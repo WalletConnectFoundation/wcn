@@ -70,11 +70,12 @@ pub fn run(
     };
 
     let primary_rpc_server_fut =
-        storage_api::rpc::server::database(server::Server::new(storage.clone()))
+        wcn_storage_api2::rpc::server::database(server::Server::new(storage.clone()))
             .serve(primary_rpc_server_cfg)?;
 
-    let secondary_rpc_server_fut = storage_api::rpc::server::database(server::Server::new(storage))
-        .serve(secondary_rpc_server_cfg)?;
+    let secondary_rpc_server_fut =
+        wcn_storage_api2::rpc::server::database(server::Server::new(storage))
+            .serve(secondary_rpc_server_cfg)?;
 
     Ok(async move {
         let _metrics_guard = metrics_guard;

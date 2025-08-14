@@ -1,14 +1,22 @@
 use {
-    cluster::{keyspace, Cluster, NodeOperator, PeerId},
     derive_where::derive_where,
     futures::{future::Either, stream, FutureExt, StreamExt},
     futures_concurrency::{future::Join as _, stream::Merge},
     read_repair::ReadRepair,
     std::{future, hash::BuildHasher, pin::pin, sync::Arc},
-    storage_api::{operation, Callback, Error, ErrorKind, Operation, StorageApi},
     tap::Pipe,
     tokio::sync::oneshot,
     wc::metrics,
+    wcn_cluster::{keyspace, Cluster, NodeOperator, PeerId},
+    wcn_storage_api2::{
+        self as storage_api,
+        operation,
+        Callback,
+        Error,
+        ErrorKind,
+        Operation,
+        StorageApi,
+    },
     xxhash_rust::xxh3::Xxh3Builder,
 };
 
@@ -25,7 +33,7 @@ const MAJORITY_QUORUM_THRESHOLD: usize = RF / 2 + 1;
 
 /// [`Coordinator`] config.
 pub trait Config:
-    cluster::Config<KeyspaceShards = keyspace::Shards, Node: AsRef<Self::OutboundReplicaConnection>>
+    wcn_cluster::Config<KeyspaceShards = keyspace::Shards, Node: AsRef<Self::OutboundReplicaConnection>>
 {
     /// Type of the outbound connections to the WCN Replicas.
     type OutboundReplicaConnection: StorageApi;

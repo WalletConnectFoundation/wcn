@@ -3,7 +3,7 @@ use {
         db::{schema::GenericKey, types::Pair},
         util::serde::serialize,
     },
-    rand::{distributions::Alphanumeric, Rng},
+    rand::{distr::Alphanumeric, Rng},
     serde::{Deserialize, Serialize},
 };
 
@@ -86,12 +86,12 @@ impl TestMapValue {
     }
 
     pub fn generate() -> Self {
-        let field: String = rand::thread_rng()
+        let field: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
             .collect();
-        let value: String = rand::thread_rng()
+        let value: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(30)
             .map(char::from)

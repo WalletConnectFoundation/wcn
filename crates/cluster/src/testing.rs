@@ -1,6 +1,6 @@
 use {
     crate::{node_operator, smart_contract, EncryptionKey, Node, NodeOperator},
-    libp2p::{identity::Keypair, PeerId},
+    libp2p_identity::{Keypair, PeerId},
     std::net::Ipv4Addr,
 };
 

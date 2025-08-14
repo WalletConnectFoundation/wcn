@@ -1,6 +1,12 @@
 use {
     crate::Manager,
-    cluster::{
+    derive_more::derive::AsRef,
+    futures::{stream, FutureExt as _, StreamExt},
+    libp2p_identity::PeerId,
+    std::{collections::HashSet, future, hash::BuildHasher as _, time::Duration},
+    tracing_subscriber::EnvFilter,
+    wcn_cluster::{
+        self as cluster,
         keyspace::{self},
         migration,
         node_operator,
@@ -8,12 +14,15 @@ use {
         Cluster,
         EncryptionKey,
     },
-    derive_more::derive::AsRef,
-    futures::{stream, FutureExt as _, StreamExt},
-    std::{collections::HashSet, future, hash::BuildHasher as _, time::Duration},
-    storage_api::{operation, testing::FakeStorage, Operation, Record, RecordVersion, StorageApi},
-    tracing_subscriber::EnvFilter,
-    wcn_rpc::PeerId,
+    wcn_storage_api2::{
+        self as storage_api,
+        operation,
+        testing::FakeStorage,
+        Operation,
+        Record,
+        RecordVersion,
+        StorageApi,
+    },
     xxhash_rust::xxh3::Xxh3Builder,
 };
 

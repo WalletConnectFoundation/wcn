@@ -1,6 +1,6 @@
 //! WalletConnect Network Cluster.
 
-pub use libp2p::PeerId;
+pub use libp2p_identity::PeerId;
 use {
     arc_swap::ArcSwap,
     derive_more::derive::From,

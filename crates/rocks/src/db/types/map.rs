@@ -789,7 +789,7 @@ mod tests {
                     .unwrap();
             }
         });
-        futures_util::future::join_all(vec![h1, h2, h3]).await;
+        futures::future::join_all(vec![h1, h2, h3]).await;
 
         let expected: Vec<Vec<u8>> = (0..N)
             .map(|i| TestValue::new(i.to_string()).into())

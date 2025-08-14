@@ -454,7 +454,7 @@ struct ConnectionInner {
 
     remote_peer_id: PeerId,
 
-    _permit: filter::Permit,
+    _permit: connection_filter::Permit,
     rpc_semaphore: Arc<Semaphore>,
 
     quic: quinn::Connection,

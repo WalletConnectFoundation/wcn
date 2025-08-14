@@ -22,7 +22,7 @@ use {
         PeerId,
         SmartContract,
     },
-    wcn_storage_api2::{self as storage_api, StorageApi},
+    wcn_storage_api::{self as storage_api, StorageApi},
 };
 
 #[cfg(test)]

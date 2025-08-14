@@ -5,7 +5,7 @@ use {
     tap::TapFallible,
     wc::metrics,
     wcn_cluster::NodeOperator,
-    wcn_storage_api2::{operation, MapEntryBorrowed, Operation},
+    wcn_storage_api::{operation, MapEntryBorrowed, Operation},
 };
 
 /// Max number of [`ReadRepair`] tagrets.

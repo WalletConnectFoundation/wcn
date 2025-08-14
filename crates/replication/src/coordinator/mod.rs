@@ -8,7 +8,7 @@ use {
     tokio::sync::oneshot,
     wc::metrics,
     wcn_cluster::{keyspace, Cluster, NodeOperator, PeerId},
-    wcn_storage_api2::{
+    wcn_storage_api::{
         self as storage_api,
         operation,
         Callback,

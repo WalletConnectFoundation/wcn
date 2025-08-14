@@ -20,10 +20,10 @@ workspace = true
 wcn_logging = { workspace = true }
 wcn_rpc = { workspace = true, features = ["client", "server"] }
 wcn_cluster = { workspace = true }
-wcn_storage_api2 = { workspace = true, features = ["rpc_client", "rpc_server"] }
+wcn_storage_api = { workspace = true, features = ["rpc_client", "rpc_server"] }
 wcn_cluster_api = { workspace = true, features = ["rpc_server"] }
 wcn_migration = { workspace = true }
-wcn_replication2 = { workspace = true }
+wcn_replication = { workspace = true }
 
 # Org
 wc = { workspace = true, features = ["alloc"] }

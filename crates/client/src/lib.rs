@@ -21,7 +21,7 @@ use {
     },
     wcn_cluster::{node_operator::Id as NodeOperatorId, smart_contract},
     wcn_cluster_api::Error as ClusterError,
-    wcn_storage_api2::{
+    wcn_storage_api::{
         Error as CoordinatorError,
         MapEntryBorrowed,
         Namespace,
@@ -36,7 +36,7 @@ use {
 };
 pub use {
     wcn_cluster::EncryptionKey,
-    wcn_storage_api2::{ErrorKind as CoordinatorErrorKind, MapPage},
+    wcn_storage_api::{ErrorKind as CoordinatorErrorKind, MapPage},
 };
 
 mod cluster;
@@ -129,7 +129,7 @@ impl Client {
         let cluster_api_client = wcn_rpc::client::Client::new(cluster_api_client_cfg, cluster_api)?;
 
         let coordinator_api =
-            wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2));
+            wcn_storage_api::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2));
 
         let coordinator_api_client_cfg = wcn_rpc::client::Config {
             keypair: config.keypair,

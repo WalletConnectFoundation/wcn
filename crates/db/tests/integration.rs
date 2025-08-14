@@ -12,7 +12,7 @@ use {
         client::{Api as _, Connection},
         server::ShutdownSignal,
     },
-    wcn_storage_api2::{
+    wcn_storage_api::{
         operation::*,
         rpc::DatabaseApi,
         MapEntry,
@@ -57,7 +57,7 @@ async fn test_e2e() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let client = wcn_storage_api2::rpc::DatabaseApi::new()
+    let client = wcn_storage_api::rpc::DatabaseApi::new()
         .with_rpc_timeout(Duration::from_millis(500))
         .try_into_client(wcn_rpc::client::Config {
             keypair: Keypair::generate_ed25519(),

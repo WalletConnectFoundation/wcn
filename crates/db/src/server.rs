@@ -10,7 +10,7 @@ use {
         schema,
         types::{common::iterators::ScanOptions, MapStorage as _, Pair, StringStorage as _},
     },
-    wcn_storage_api2::{
+    wcn_storage_api::{
         self as storage_api,
         operation::{self, Output},
         DataFrame,

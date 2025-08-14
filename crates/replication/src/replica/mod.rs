@@ -3,7 +3,7 @@ use {
     futures::Stream,
     std::{ops::RangeInclusive, sync::Arc},
     wcn_cluster::{Cluster, PeerId},
-    wcn_storage_api2::{
+    wcn_storage_api::{
         self as storage_api,
         operation,
         DataItem,

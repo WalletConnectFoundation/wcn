@@ -11,7 +11,7 @@ use {
         StorageError,
         StorageResult,
     },
-    wcn_storage_api2::Namespace,
+    wcn_storage_api::Namespace,
     xxhash_rust::xxh3::Xxh3Builder,
 };
 

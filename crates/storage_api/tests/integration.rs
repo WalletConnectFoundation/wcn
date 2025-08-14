@@ -20,7 +20,7 @@ use {
         server::{Api as _, Server as _, ShutdownSignal},
         transport,
     },
-    wcn_storage_api2::{
+    wcn_storage_api::{
         operation,
         rpc::Api,
         DataFrame,
@@ -49,27 +49,27 @@ async fn test_rpc() {
 
     for _ in 0..10 {
         test_rpc_api(
-            wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2)),
+            wcn_storage_api::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2)),
         )
         .await;
 
         test_rpc_api(
-            wcn_storage_api2::rpc::ReplicaApi::new().with_rpc_timeout(Duration::from_secs(2)),
+            wcn_storage_api::rpc::ReplicaApi::new().with_rpc_timeout(Duration::from_secs(2)),
         )
         .await;
 
         test_rpc_api(
-            wcn_storage_api2::rpc::DatabaseApi::new().with_rpc_timeout(Duration::from_secs(2)),
+            wcn_storage_api::rpc::DatabaseApi::new().with_rpc_timeout(Duration::from_secs(2)),
         )
         .await;
     }
 }
 
-async fn test_rpc_api<Kind>(api: wcn_storage_api2::rpc::Api<Kind>)
+async fn test_rpc_api<Kind>(api: wcn_storage_api::rpc::Api<Kind>)
 where
-    Api<Kind>: wcn_rpc::client::Api<ConnectionParameters = (), RpcId = wcn_storage_api2::rpc::Id>,
-    Api<Kind, TestStorage>: wcn_rpc::server::Api<RpcId = wcn_storage_api2::rpc::Id>,
-    Connection<wcn_storage_api2::rpc::Api<Kind>>: StorageApi,
+    Api<Kind>: wcn_rpc::client::Api<ConnectionParameters = (), RpcId = wcn_storage_api::rpc::Id>,
+    Api<Kind, TestStorage>: wcn_rpc::server::Api<RpcId = wcn_storage_api::rpc::Id>,
+    Connection<wcn_storage_api::rpc::Api<Kind>>: StorageApi,
 {
     let storage = TestStorage::default();
 

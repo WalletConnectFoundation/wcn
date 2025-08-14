@@ -1,5 +1,5 @@
 [package]
-name = "wcn_storage_api2"
+name = "wcn_storage_api"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -48,7 +48,7 @@ libp2p-identity = { workspace = true }
 xxhash-rust = { workspace = true, optional = true }
 
 [dev-dependencies]
-wcn_storage_api2 = { workspace = true, features = ["rpc_client", "rpc_server"] }
+wcn_storage_api = { workspace = true, features = ["rpc_client", "rpc_server"] }
 
 rand = { workspace = true }
 

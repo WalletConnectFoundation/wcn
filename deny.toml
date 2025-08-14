@@ -18,3 +18,6 @@ allow = [
 
 [licenses.private]
 ignore = true
+
+# TODO We should be able to remove `ignore-sources` once we add `publish = false` to all the crates sourced from here.
+ignore-sources = ["https://github.com/WalletConnect/utils-rs.git"]

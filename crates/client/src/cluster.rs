@@ -19,7 +19,7 @@ use {
         Read,
         rpc::client::{Cluster as ClusterClient, ClusterConnection},
     },
-    wcn_storage_api2::rpc::client::{Coordinator as CoordinatorClient, CoordinatorConnection},
+    wcn_storage_api::rpc::client::{Coordinator as CoordinatorClient, CoordinatorConnection},
 };
 
 #[derive(Clone)]

@@ -16,7 +16,7 @@ use {
         NodeOperator,
         PeerId,
     },
-    wcn_storage_api2::{
+    wcn_storage_api::{
         self as storage_api,
         operation,
         testing::FakeStorage,

@@ -14,7 +14,7 @@ name = "wcn_db"
 
 [features]
 default = ["testing"]
-testing = ["wcn_storage_api2/rpc_client", "wcn_rpc/client"]
+testing = ["wcn_storage_api/rpc_client", "wcn_rpc/client"]
 
 [lints]
 workspace = true
@@ -24,7 +24,7 @@ workspace = true
 wcn_logging = { workspace = true }
 wcn_rpc = { workspace = true, features = ["server"] }
 wcn_rocks = { workspace = true }
-wcn_storage_api2 = { workspace = true, features = ["rpc_server"] }
+wcn_storage_api = { workspace = true, features = ["rpc_server"] }
 
 # Org
 wc = { workspace = true, features = ["alloc", "future", "metrics"] }

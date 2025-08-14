@@ -5820,7 +5820,7 @@ dependencies = [
  "wcn_cluster",
  "wcn_cluster_api",
  "wcn_rpc",
- "wcn_storage_api2",
+ "wcn_storage_api",
 ]
 
 [[package]]
@@ -5907,7 +5907,7 @@ dependencies = [
  "wcn_logging",
  "wcn_rocks",
  "wcn_rpc",
- "wcn_storage_api2",
+ "wcn_storage_api",
  "xxhash-rust",
 ]
 
@@ -5936,7 +5936,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wcn_cluster",
- "wcn_storage_api2",
+ "wcn_storage_api",
  "xxhash-rust",
 ]
 
@@ -5974,14 +5974,14 @@ dependencies = [
  "wcn_db",
  "wcn_logging",
  "wcn_migration",
- "wcn_replication2",
+ "wcn_replication",
  "wcn_rpc",
- "wcn_storage_api2",
+ "wcn_storage_api",
  "xxhash-rust",
 ]
 
 [[package]]
-name = "wcn_replication2"
+name = "wcn_replication"
 version = "0.1.0"
 dependencies = [
  "derive-where",
@@ -5995,7 +5995,7 @@ dependencies = [
  "tracing",
  "wc",
  "wcn_cluster",
- "wcn_storage_api2",
+ "wcn_storage_api",
  "xxhash-rust",
 ]
 
@@ -6071,7 +6071,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wcn_storage_api2"
+name = "wcn_storage_api"
 version = "0.1.0"
 dependencies = [
  "const-hex",
@@ -6091,7 +6091,7 @@ dependencies = [
  "tracing-subscriber",
  "wc",
  "wcn_rpc",
- "wcn_storage_api2",
+ "wcn_storage_api",
  "xxhash-rust",
 ]
 

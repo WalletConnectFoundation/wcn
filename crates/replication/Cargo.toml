@@ -1,12 +1,12 @@
 [package]
-name = "wcn_replication2"
+name = "wcn_replication"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
 # Local 
-wcn_storage_api2 = { workspace = true }
+wcn_storage_api = { workspace = true }
 wcn_cluster = { workspace = true }
 
 # Org
@@ -34,7 +34,7 @@ tracing = { workspace = true }
 xxhash-rust = { workspace = true }
 
 [dev-dependencies]
-wcn_storage_api2 = { workspace = true, features = ["testing"] }
+wcn_storage_api = { workspace = true, features = ["testing"] }
 wcn_cluster = { workspace = true, features = ["testing"] }
 
 derive_more = { workspace = true, features = ["as_ref"] }

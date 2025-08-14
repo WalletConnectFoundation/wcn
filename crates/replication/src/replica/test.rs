@@ -12,7 +12,7 @@ use {
         Node,
         PeerId,
     },
-    wcn_storage_api2::{
+    wcn_storage_api::{
         operation,
         testing::FakeStorage,
         Error,

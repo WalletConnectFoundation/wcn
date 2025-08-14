@@ -16,7 +16,6 @@ use {
 ///
 /// The IP address is currently being encrypted using a format-preserving
 /// encryption algorithm.
-// TODO: encrypt
 #[derive(AsRef, Debug, Clone, Copy)]
 pub struct Node {
     /// [`PeerId`] of the [`Node`].

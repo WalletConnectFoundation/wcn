@@ -6,10 +6,9 @@ use {
     strum::IntoStaticStr,
     wcn_rpc::{
         metrics::{ErrorResponse, FallibleResponse},
+        transport::PostcardCodec,
         ApiName,
         Message,
-        PostcardCodec,
-        RpcV2,
     },
 };
 

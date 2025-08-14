@@ -5,6 +5,7 @@ use {
         StreamExt,
         TryStreamExt as _,
     },
+    libp2p_identity::Keypair,
     rand::{random, Rng},
     std::{
         net::{Ipv4Addr, SocketAddrV4},
@@ -15,9 +16,8 @@ use {
     tracing_subscriber::EnvFilter,
     wc::future::StaticFutureExt,
     wcn_rpc::{
-        client2::{self as wcn_rpc_client, Api as _, Connection},
-        identity::Keypair,
-        server2::{self as wcn_rpc_server, Api as _, Server as _, ShutdownSignal},
+        client::{Api as _, Connection},
+        server::{Api as _, Server as _, ShutdownSignal},
         transport,
     },
     wcn_storage_api2::{
@@ -67,8 +67,8 @@ async fn test_rpc() {
 
 async fn test_rpc_api<Kind>(api: wcn_storage_api2::rpc::Api<Kind>)
 where
-    Api<Kind>: wcn_rpc_client::Api<ConnectionParameters = (), RpcId = wcn_storage_api2::rpc::Id>,
-    Api<Kind, TestStorage>: wcn_rpc_server::Api<RpcId = wcn_storage_api2::rpc::Id>,
+    Api<Kind>: wcn_rpc::client::Api<ConnectionParameters = (), RpcId = wcn_storage_api2::rpc::Id>,
+    Api<Kind, TestStorage>: wcn_rpc::server::Api<RpcId = wcn_storage_api2::rpc::Id>,
     Connection<wcn_storage_api2::rpc::Api<Kind>>: StorageApi,
 {
     let storage = TestStorage::default();
@@ -76,7 +76,7 @@ where
     let server_port = find_available_port();
     let server_keypair = Keypair::generate_ed25519();
     let server_peer_id = server_keypair.public().to_peer_id();
-    let server_cfg = wcn_rpc::server2::Config {
+    let server_cfg = wcn_rpc::server::Config {
         name: "test",
         port: server_port,
         keypair: server_keypair,
@@ -97,7 +97,7 @@ where
         .unwrap()
         .spawn();
 
-    let client_config = wcn_rpc::client2::Config {
+    let client_config = wcn_rpc::client::Config {
         keypair: Keypair::generate_ed25519(),
         connection_timeout: Duration::from_secs(10),
         reconnect_interval: Duration::from_secs(1),
@@ -125,12 +125,12 @@ where
     server_handle.abort();
 }
 
-struct TestContext<API: wcn_rpc_client::Api> {
+struct TestContext<API: wcn_rpc::client::Api> {
     storage: TestStorage,
     client_conn: Connection<API>,
 }
 
-impl<API: wcn_rpc_client::Api> TestContext<API>
+impl<API: wcn_rpc::client::Api> TestContext<API>
 where
     Connection<API>: StorageApi,
 {

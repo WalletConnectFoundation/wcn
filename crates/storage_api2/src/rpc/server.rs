@@ -7,14 +7,14 @@ use {
         StorageApi,
     },
     futures::{SinkExt as _, StreamExt, TryStreamExt},
+    libp2p_identity::PeerId,
     tap::{Pipe as _, TapFallible as _},
     wcn_rpc::{
-        server2::{Api, Error, Inbound, PendingConnection, Responder, Result},
+        server::{Api, Error, Inbound, PendingConnection, Responder, Result},
+        transport::Serializer,
         BorrowedMessage,
-        MessageV2,
-        PeerId,
+        Message,
         Request,
-        Serializer,
     },
 };
 
@@ -68,9 +68,9 @@ pub struct RpcHandler<S: StorageApi> {
     storage_api: S,
 }
 
-impl<T, RPC: RpcV2<Response = rpc::Result<T>>> Callback for Responder<RPC>
+impl<T, RPC: wcn_rpc::Rpc<Response = rpc::Result<T>>> Callback for Responder<RPC>
 where
-    T: MessageV2,
+    T: Message,
     for<'a, 'b> Result<&'a T, ErrorBorrowed<'b>>: BorrowedMessage<Owned = RPC::Response>,
     for<'a, 'b> RPC::Codec: Serializer<Result<&'a T, ErrorBorrowed<'b>>>,
     for<'a> &'a operation::Output:

@@ -1,11 +1,8 @@
 #[cfg(target_os = "linux")]
 use nix::sys::socket::{setsockopt, sockopt};
 use {
-    crate::{
-        transport::{self, Priority},
-        ServerName,
-    },
-    libp2p::{identity::Keypair, multiaddr::Protocol, Multiaddr, PeerId},
+    crate::transport::{self, Priority},
+    libp2p_identity::{Keypair, PeerId},
     quinn::{crypto::rustls::QuicClientConfig, rustls::pki_types::CertificateDer, VarInt},
     std::{
         io,
@@ -14,28 +11,6 @@ use {
         time::Duration,
     },
 };
-
-#[cfg(feature = "client")]
-pub mod client;
-#[cfg(feature = "client")]
-pub use client::Client;
-
-#[cfg(feature = "server")]
-pub mod server;
-
-// TODO: Consider re-enabling
-#[allow(dead_code)]
-mod metrics;
-
-const PROTOCOL_VERSION: u32 = 1;
-
-pub(crate) struct ConnectionHeader {
-    pub server_name: Option<ServerName>,
-}
-
-#[derive(Clone, Debug, thiserror::Error, Eq, PartialEq)]
-#[error("{0}: invalid QUIC Multiaddr")]
-pub struct InvalidMultiaddrError(Multiaddr);
 
 pub(crate) fn new_quinn_transport_config(
     max_concurrent_streams: u32,
@@ -118,51 +93,6 @@ fn new_udp_socket(addr: SocketAddr, priority: Priority) -> io::Result<UdpSocket>
     Ok(socket.into())
 }
 
-pub fn multiaddr_to_socketaddr(addr: &Multiaddr) -> Result<SocketAddr, InvalidMultiaddrError> {
-    try_multiaddr_to_socketaddr(addr).ok_or_else(|| InvalidMultiaddrError(addr.clone()))
-}
-
-pub fn socketaddr_to_multiaddr(addr: impl Into<SocketAddr>) -> Multiaddr {
-    use libp2p::multiaddr::Protocol;
-
-    let addr = addr.into();
-
-    let mut result = Multiaddr::from(addr.ip());
-    result.push(Protocol::Udp(addr.port()));
-    result.push(Protocol::QuicV1);
-    result
-}
-
-/// Tries to turn a QUIC multiaddress into a UDP [`SocketAddr`]. Returns None if
-/// the format of the multiaddr is wrong.
-fn try_multiaddr_to_socketaddr(addr: &Multiaddr) -> Option<SocketAddr> {
-    use libp2p::multiaddr::Protocol;
-
-    let mut iter = addr.iter();
-    let proto1 = iter.next()?;
-    let proto2 = iter.next()?;
-    let proto3 = iter.next()?;
-
-    match proto3 {
-        Protocol::Quic | Protocol::QuicV1 => {}
-        _ => return None,
-    };
-
-    Some(match (proto1, proto2) {
-        (Protocol::Ip4(ip), Protocol::Udp(port)) => SocketAddr::new(ip.into(), port),
-        (Protocol::Ip6(ip), Protocol::Udp(port)) => SocketAddr::new(ip.into(), port),
-        _ => return None,
-    })
-}
-
-/// Tries to extract [`PeerId`] from a [`Multiaddr`].
-pub fn try_peer_id_from_multiaddr(addr: &Multiaddr) -> Option<PeerId> {
-    addr.iter().last().and_then(|proto| match proto {
-        Protocol::P2p(peer_id) => Some(peer_id),
-        _ => None,
-    })
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("failed to generate a TLS certificate: {0}")]
@@ -170,9 +100,6 @@ pub enum Error {
 
     #[error("failed to create, configure or bind a UDP socket")]
     Socket(#[from] io::Error),
-
-    #[error(transparent)]
-    InvalidMultiaddr(#[from] InvalidMultiaddrError),
 
     #[error("invalid connection rate limit")]
     InvalidConnectionRate,

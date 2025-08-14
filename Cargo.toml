@@ -125,5 +125,3 @@ unnecessary_box_returns = "warn"
 unnecessary_self_imports = "warn"
 unused_peekable = "warn"
 useless_let_if_seq = "warn"
-result_large_err = "allow"                # TODO: Remove after fixing code.
-large_enum_variant = "allow"              # TODO: Remove after fixing code.

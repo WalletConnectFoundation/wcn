@@ -8,6 +8,7 @@ use {
     wc::future::FutureExt,
     wcn_cluster::{
         EncryptionKey,
+        PeerId,
         node_operator,
         smart_contract::{ReadError, ReadResult},
     },
@@ -18,7 +19,6 @@ use {
         Read,
         rpc::client::{Cluster as ClusterClient, ClusterConnection},
     },
-    wcn_rpc::PeerId,
     wcn_storage_api2::rpc::client::{Coordinator as CoordinatorClient, CoordinatorConnection},
 };
 

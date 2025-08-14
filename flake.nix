@@ -73,9 +73,7 @@
               text = ''cargo "$@"'';
             })
 
-            # TODO: seems to be broken currently, restore later
             fenixPackages.rust-analyzer 
-            # rust-analyzer
             cargo-nextest
             cargo-udeps
             just
@@ -99,7 +97,6 @@
             alias glog="$(which git) log"
             alias lsa="ls -lah"
           '';
-
         };
       }
     );

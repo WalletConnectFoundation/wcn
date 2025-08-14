@@ -56,6 +56,7 @@ sysinfo = { workspace = true, features = ["system", "network", "disk"] }
 proc-mounts = { version = "0.3", default-features = false }
 
 # Other
+libp2p-identity = { workspace = true }
 xxhash-rust = { workspace = true }
 axum = { workspace = true }
 envy = { workspace = true }
@@ -64,6 +65,8 @@ vergen-pretty = { workspace = true }
 [dev-dependencies]
 const-hex = { workspace = true }
 rand = { workspace = true }
+
+libp2p-identity = { workspace = true, features = ["rand"] }
 
 [build-dependencies]
 vergen = { workspace = true }

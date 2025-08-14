@@ -30,5 +30,8 @@ tokio = { workspace = true, features = ["sync"] }
 # O11y
 tracing = { workspace = true }
 
+# Other
+libp2p-identity = { workspace = true }
+
 [lints]
 workspace = true

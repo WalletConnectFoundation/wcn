@@ -44,6 +44,7 @@ futures = { workspace = true }
 tracing = { workspace = true }
 
 # Other
+libp2p-identity = { workspace = true }
 xxhash-rust = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -54,3 +55,5 @@ rand = { workspace = true }
 tokio = { workspace = true }
 
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+
+libp2p-identity = { workspace = true, features = ["rand"] }

@@ -5,6 +5,7 @@ use {
     },
     derive_more::derive::AsRef,
     futures::{stream, StreamExt},
+    libp2p_identity::Keypair,
     metrics_exporter_prometheus::PrometheusRecorder,
     std::{
         net::{Ipv4Addr, SocketAddrV4},
@@ -26,7 +27,7 @@ use {
         EncryptionKey,
         Settings,
     },
-    wcn_rpc::{identity::Keypair, server2::ShutdownSignal},
+    wcn_rpc::server::ShutdownSignal,
 };
 
 #[derive(AsRef, Clone, Copy)]

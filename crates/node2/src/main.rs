@@ -3,12 +3,13 @@ use {
     base64::Engine as _,
     futures::FutureExt as _,
     futures_concurrency::future::Race as _,
+    libp2p_identity::Keypair,
     metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle},
     serde::Deserialize,
     std::pin::pin,
     wcn_cluster::smart_contract,
     wcn_node::Config,
-    wcn_rpc::{identity::Keypair, server2::ShutdownSignal},
+    wcn_rpc::server::ShutdownSignal,
 };
 
 #[global_allocator]

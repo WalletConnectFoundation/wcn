@@ -1,10 +1,10 @@
-pub use wcn_rpc::client2::Config;
+pub use wcn_rpc::client::Config;
 use {
     super::*,
     crate::{operation, rpc, KeyspaceVersion, Operation, Result, StorageApi},
     futures::{SinkExt, Stream, StreamExt as _, TryFutureExt as _},
     std::ops::RangeInclusive,
-    wcn_rpc::client2::{Client, Connection, Outbound},
+    wcn_rpc::client::{Client, Connection, Outbound},
 };
 
 /// RPC [`Client`] of [`CoordinatorApi`].
@@ -25,7 +25,7 @@ pub type Database = Client<DatabaseApi>;
 /// Outbound [`Connection`] to [`DatabaseApi`].
 pub type DatabaseConnection = Connection<DatabaseApi>;
 
-impl<Kind, S> wcn_rpc::client2::Api for Api<Kind, S>
+impl<Kind, S> wcn_rpc::client::Api for Api<Kind, S>
 where
     Self: wcn_rpc::Api,
 {
@@ -34,7 +34,7 @@ where
 
 impl<Kind> StorageApi for Connection<Api<Kind>>
 where
-    Api<Kind>: wcn_rpc::client2::Api<ConnectionParameters = ()>,
+    Api<Kind>: wcn_rpc::client::Api<ConnectionParameters = ()>,
 {
     async fn execute_ref(&self, operation: &Operation<'_>) -> Result<operation::Output> {
         use operation::{Borrowed, Owned};
@@ -120,8 +120,8 @@ where
     result.map(Into::into).map_err(Into::into)
 }
 
-impl From<wcn_rpc::client2::Error> for crate::Error {
-    fn from(err: wcn_rpc::client2::Error) -> Self {
+impl From<wcn_rpc::client::Error> for crate::Error {
+    fn from(err: wcn_rpc::client::Error) -> Self {
         Self::new(crate::ErrorKind::Transport)
             .with_message(format!("wcn_rpc::client::Error: {err}"))
     }

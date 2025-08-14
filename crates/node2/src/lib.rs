@@ -3,6 +3,7 @@ use {
     derive_where::derive_where,
     futures::{future::OptionFuture, FutureExt as _},
     futures_concurrency::future::Join as _,
+    libp2p_identity::Keypair,
     metrics_exporter_prometheus::PrometheusHandle,
     std::{
         future::Future,
@@ -18,12 +19,11 @@ use {
         smart_contract::{self, evm},
         Cluster,
         EncryptionKey,
+        PeerId,
     },
     wcn_rpc::{
-        client2::{self as rpc_client, Api as _},
-        identity::Keypair,
-        server2::{self as rpc_server, Api as _, Server as _, ShutdownSignal},
-        PeerId,
+        client::{self as rpc_client, Api as _},
+        server::{self as rpc_server, Api as _, Server as _, ShutdownSignal},
     },
     wcn_storage_api2::rpc::client as storage_api_client,
 };
@@ -286,7 +286,7 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
         app_cfg.database_low_prio_connection,
     );
 
-    let primary_rpc_server_cfg = wcn_rpc::server2::Config {
+    let primary_rpc_server_cfg = wcn_rpc::server::Config {
         name: "primary",
         port: config.primary_rpc_server_port,
         keypair: config.keypair.clone(),
@@ -299,7 +299,7 @@ async fn run_(config: Config) -> Result<impl Future<Output = ()>, ErrorInner> {
         shutdown_signal: config.shutdown_signal.clone(),
     };
 
-    let secondary_rcp_server_cfg = wcn_rpc::server2::Config {
+    let secondary_rcp_server_cfg = wcn_rpc::server::Config {
         name: "secondary",
         port: config.secondary_rpc_server_port,
         keypair: config.keypair.clone(),

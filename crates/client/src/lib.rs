@@ -1,5 +1,6 @@
 use {
     arc_swap::ArcSwap,
+    libp2p_identity::{Keypair, PeerId},
     std::{
         net::SocketAddrV4,
         sync::Arc,
@@ -35,7 +36,6 @@ use {
 };
 pub use {
     wcn_cluster::EncryptionKey,
-    wcn_rpc::{PeerId, identity::Keypair},
     wcn_storage_api2::{ErrorKind as CoordinatorErrorKind, MapPage},
 };
 
@@ -53,7 +53,7 @@ pub enum Error {
     ClusterCreation(#[from] wcn_cluster::CreationError),
 
     #[error("RPC client error: {0}")]
-    Rpc(#[from] wcn_rpc::client2::Error),
+    Rpc(#[from] wcn_rpc::client::Error),
 
     #[error("Cluster API error: {0}")]
     ClusterApi(#[from] ClusterError),
@@ -118,7 +118,7 @@ impl Client {
         let cluster_api =
             wcn_cluster_api::rpc::ClusterApi::new().with_rpc_timeout(Duration::from_secs(5));
 
-        let cluster_api_client_cfg = wcn_rpc::client2::Config {
+        let cluster_api_client_cfg = wcn_rpc::client::Config {
             keypair: config.keypair.clone(),
             connection_timeout: config.connection_timeout,
             reconnect_interval: config.reconnect_interval,
@@ -126,13 +126,12 @@ impl Client {
             priority: wcn_rpc::transport::Priority::High,
         };
 
-        let cluster_api_client =
-            wcn_rpc::client2::Client::new(cluster_api_client_cfg, cluster_api)?;
+        let cluster_api_client = wcn_rpc::client::Client::new(cluster_api_client_cfg, cluster_api)?;
 
         let coordinator_api =
             wcn_storage_api2::rpc::CoordinatorApi::new().with_rpc_timeout(Duration::from_secs(2));
 
-        let coordinator_api_client_cfg = wcn_rpc::client2::Config {
+        let coordinator_api_client_cfg = wcn_rpc::client::Config {
             keypair: config.keypair,
             connection_timeout: config.connection_timeout,
             reconnect_interval: config.reconnect_interval,
@@ -141,7 +140,7 @@ impl Client {
         };
 
         let coordinator_api_client =
-            wcn_rpc::client2::Client::new(coordinator_api_client_cfg, coordinator_api)?;
+            wcn_rpc::client::Client::new(coordinator_api_client_cfg, coordinator_api)?;
 
         // Initialize the client using one or more bootstrap nodes:
         // - fetch the current version of the cluster view;

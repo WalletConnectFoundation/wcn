@@ -8,11 +8,11 @@ use {
     wcn_rpc::{
         Request,
         Response,
-        server2::{Inbound, PendingConnection, Result},
+        server::{Inbound, PendingConnection, Result},
     },
 };
 
-impl<S> wcn_rpc::server2::Api for ClusterApi<S>
+impl<S> wcn_rpc::server::Api for ClusterApi<S>
 where
     S: smart_contract::Read + Clone,
 {

@@ -44,8 +44,6 @@ mod start {
     }
 
     pub async fn exec(cmd: StartCmd, client: SmartContractClient) -> anyhow::Result<()> {
-        // Implementation for starting a migration
-
         let operators = todo!();
         let strategy = ReplicationStrategy::default();
         let version = 0; // grab from contract then increment

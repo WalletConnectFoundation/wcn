@@ -1,4 +1,5 @@
 use {
+    libp2p_identity::Keypair,
     rand::prelude::*,
     std::{
         net::{Ipv4Addr, SocketAddrV4},
@@ -8,11 +9,10 @@ use {
     tap::Pipe,
     wc::future::FutureExt,
     wcn_rpc::{
-        client2::{Api as _, Connection},
-        identity::Keypair,
-        server2::ShutdownSignal,
+        client::{Api as _, Connection},
+        server::ShutdownSignal,
     },
-    wcn_storage_api2::{
+    wcn_storage_api::{
         operation::*,
         rpc::DatabaseApi,
         MapEntry,
@@ -57,9 +57,9 @@ async fn test_e2e() {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let client = wcn_storage_api2::rpc::DatabaseApi::new()
+    let client = wcn_storage_api::rpc::DatabaseApi::new()
         .with_rpc_timeout(Duration::from_millis(500))
-        .try_into_client(wcn_rpc::client2::Config {
+        .try_into_client(wcn_rpc::client::Config {
             keypair: Keypair::generate_ed25519(),
             connection_timeout: Duration::from_secs(10),
             reconnect_interval: Duration::from_secs(1),

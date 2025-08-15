@@ -30,6 +30,7 @@
           pkg-config
           openssl
           clang
+          libclang
           gcc13 # jemalloc fails to build on gcc14 (in debug builds)
         ];
         rustc = {
@@ -54,7 +55,6 @@
 
           RUST_SRC_PATH = "${rust-src}/bin/rust-lib/src";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath nativeBuildInputs;
-          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
           # Use the dyn library for local development to improve build times.
           # Name of this var is defined here https://github.com/rust-rocksdb/rust-rocksdb/blob/master/librocksdb-sys/build.rs 
@@ -73,19 +73,9 @@
               text = ''cargo "$@"'';
             })
 
-            # TODO: seems to be broken currently, restore later
             fenixPackages.rust-analyzer 
-            # rust-analyzer
-            cargo-nextest
             cargo-udeps
-            just
             docker-compose
-            terraform
-            ssm-session-manager-plugin
-            awscli2
-            jq
-            jsonnet
-            jsonnet-language-server
 
             solc
             foundry
@@ -99,7 +89,6 @@
             alias glog="$(which git) log"
             alias lsa="ls -lah"
           '';
-
         };
       }
     );

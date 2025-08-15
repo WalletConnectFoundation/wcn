@@ -146,9 +146,9 @@ jobs:
           if [[ $TEST_KIND == 'doc' ]] ; then
             cargo test --workspace --doc --all-features
           elif [[ $TEST_KIND == 'unit' ]]; then
-            RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node2
+            RUST_LOG=info cargo test --all-features --workspace --exclude wcn_node
           elif [[ $TEST_KIND == 'integration' ]]; then
-            RUST_LOG=info,relay_rocks=warn cargo test -p wcn_node2 --all-features
+            RUST_LOG=info,relay_rocks=warn cargo test -p wcn_node --all-features
           else
             echo Unexpected test kind $TEST_KIND
             exit 1

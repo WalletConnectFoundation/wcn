@@ -4,7 +4,7 @@ use {
     futures_concurrency::future::Join as _,
     metrics_exporter_prometheus::BuildError as PrometheusBuildError,
     std::{future::Future, io, time::Duration},
-    wcn_rpc::server2::{Api as _, Server, ShutdownSignal},
+    wcn_rpc::server::{Api as _, Server, ShutdownSignal},
 };
 
 pub mod metrics;
@@ -25,7 +25,7 @@ pub enum Error {
     MetricsServer(io::Error),
 
     #[error("Database server error: {0}")]
-    DatabaseServer(#[from] wcn_rpc::server2::Error),
+    DatabaseServer(#[from] wcn_rpc::server::Error),
 }
 
 pub fn run(
@@ -43,7 +43,7 @@ pub fn run(
         rocksdb: cfg.rocksdb.enable_metrics.then(|| storage.db().clone()),
     });
 
-    let primary_rpc_server_cfg = wcn_rpc::server2::Config {
+    let primary_rpc_server_cfg = wcn_rpc::server::Config {
         name: "primary",
         port: cfg.primary_rpc_server_port,
         keypair: cfg.keypair.clone(),
@@ -56,7 +56,7 @@ pub fn run(
         shutdown_signal: shutdown_signal.clone(),
     };
 
-    let secondary_rpc_server_cfg = wcn_rpc::server2::Config {
+    let secondary_rpc_server_cfg = wcn_rpc::server::Config {
         name: "secondary",
         port: cfg.secondary_rpc_server_port,
         keypair: cfg.keypair,
@@ -69,7 +69,7 @@ pub fn run(
         shutdown_signal,
     };
 
-    let database_api = wcn_storage_api2::rpc::DatabaseApi::new()
+    let database_api = wcn_storage_api::rpc::DatabaseApi::new()
         .with_rpc_timeout(Duration::from_millis(500))
         .with_state(server::Server::new(storage));
 

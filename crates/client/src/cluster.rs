@@ -8,6 +8,7 @@ use {
     wc::future::FutureExt,
     wcn_cluster::{
         EncryptionKey,
+        PeerId,
         node_operator,
         smart_contract::{ReadError, ReadResult},
     },
@@ -18,8 +19,7 @@ use {
         Read,
         rpc::client::{Cluster as ClusterClient, ClusterConnection},
     },
-    wcn_rpc::PeerId,
-    wcn_storage_api2::rpc::client::{Coordinator as CoordinatorClient, CoordinatorConnection},
+    wcn_storage_api::rpc::client::{Coordinator as CoordinatorClient, CoordinatorConnection},
 };
 
 #[derive(Clone)]
@@ -95,6 +95,7 @@ async fn select_open_connection(cluster: &ArcSwap<View>) -> ClusterConnection {
 // The reason why we're using the same [`wcn_cluster::Config`] for both clusters
 // is that [`wcn_cluster::View`] is also parametrized over this config, and we
 // need them to be compatible.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SmartContract {
     Static(ClusterView),
     Dynamic(Arc<ArcSwap<View>>),

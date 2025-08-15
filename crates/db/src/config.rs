@@ -1,10 +1,10 @@
 use {
     base64::Engine as _,
+    libp2p_identity::{Keypair, PeerId},
     serde::{Deserialize, Deserializer},
     std::{path::PathBuf, time::Duration},
     tap::{Pipe as _, TapOptional as _},
     wcn_rocks::RocksdbDatabaseConfig,
-    wcn_rpc::{identity::Keypair, PeerId},
 };
 
 #[derive(Debug, thiserror::Error)]

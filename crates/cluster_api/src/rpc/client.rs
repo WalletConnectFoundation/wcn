@@ -1,8 +1,8 @@
-pub use wcn_rpc::client2::Config;
+pub use wcn_rpc::client::Config;
 use {
     super::*,
     futures::{Stream, StreamExt},
-    wcn_rpc::client2::{Client, Connection, Outbound},
+    wcn_rpc::client::{Client, Connection, Outbound},
 };
 
 /// RPC [`Client`] of [`ClusterApi`].
@@ -11,7 +11,7 @@ pub type Cluster = Client<ClusterApi>;
 /// Outbound [`Connection`] to [`ClusterApi`].
 pub type ClusterConnection = Connection<ClusterApi>;
 
-impl wcn_rpc::client2::Api for ClusterApi {
+impl wcn_rpc::client::Api for ClusterApi {
     type ConnectionParameters = ();
 }
 
@@ -42,8 +42,8 @@ impl crate::ClusterApi for Connection<ClusterApi> {
     }
 }
 
-impl From<wcn_rpc::client2::Error> for crate::Error {
-    fn from(err: wcn_rpc::client2::Error) -> Self {
+impl From<wcn_rpc::client::Error> for crate::Error {
+    fn from(err: wcn_rpc::client::Error) -> Self {
         Self::new(crate::ErrorKind::Transport)
             .with_message(format!("wcn_cluster_api::client::Error: {err}"))
     }

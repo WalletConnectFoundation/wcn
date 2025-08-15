@@ -4,7 +4,7 @@ use {
     metrics_exporter_prometheus::PrometheusBuilder,
     std::pin,
     wcn_db::{config, Error},
-    wcn_rpc::server2::ShutdownSignal,
+    wcn_rpc::server::ShutdownSignal,
 };
 
 #[global_allocator]

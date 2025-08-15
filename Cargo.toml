@@ -21,9 +21,9 @@ wcn_cluster_api = { path = "crates/cluster_api", default-features = false }
 wcn_logging = { path = "crates/logging", default-features = false }
 wcn_rocks = { path = "crates/rocks", default-features = false }
 wcn_rpc = { path = "crates/rpc", default-features = false }
-wcn_storage_api2 = { path = "crates/storage_api2", default-features = false }
+wcn_storage_api = { path = "crates/storage_api", default-features = false }
 wcn_migration = { path = "crates/migration", default-features = false }
-wcn_replication2 = { path = "crates/replication2", default-features = false }
+wcn_replication = { path = "crates/replication", default-features = false }
 wcn_client = { path = "crates/client", default-features = false }
 wcn_db = { path = "crates/db", default-features = false }
 
@@ -59,7 +59,7 @@ const-hex = { version = "1.14", default-features = false, features = ["alloc"] }
 # Serialization
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
-postcard = { version = "1.0", default-features = false }
+postcard = { version = "1.0", default-features = false, features = ["use-std"] }
 
 # Async
 futures = { version = "0.3", default-features = false }
@@ -67,8 +67,7 @@ futures-concurrency = { version = "7.6", default-features = false }
 tokio = { version = "1.0", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
-tokio-serde = { git = "https://github.com/xDarksome/tokio-serde.git", rev = "6df9ff9" }
-tokio-serde-postcard = { git = "https://github.com/xDarksome/tokio-serde-postcard.git", rev = "5e1b77a" }
+tokio-serde = { version = "0.9", default-features = false }
 
 # O11y
 tracing = { version = "0.1", default-features = false }
@@ -125,5 +124,3 @@ unnecessary_box_returns = "warn"
 unnecessary_self_imports = "warn"
 unused_peekable = "warn"
 useless_let_if_seq = "warn"
-result_large_err = "allow"                # TODO: Remove after fixing code.
-large_enum_variant = "allow"              # TODO: Remove after fixing code.

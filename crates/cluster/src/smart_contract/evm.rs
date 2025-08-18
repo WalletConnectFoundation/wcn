@@ -403,6 +403,7 @@ impl From<Settings> for bindings::Cluster::Settings {
         Self {
             maxOperatorDataBytes: settings.max_node_operator_data_bytes,
             minOperators: const { crate::MIN_OPERATORS },
+            extra: alloy::primitives::Bytes::default(),
         }
     }
 }

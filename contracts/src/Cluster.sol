@@ -159,9 +159,9 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         if (maintenanceSlot != address(0)) revert MaintenanceInProgress();
         if (migration.pullingOperatorBitmask > 0) revert MigrationInProgress();
 
-        uint16 newOperatorsCount = newKeyspace.operatorBitmask.countSet();
-        if (newOperatorsCount > MAX_OPERATORS) revert TooManyOperators();
-        if (newOperatorsCount < settings.minOperators) revert InsufficientOperators();
+        if (newKeyspace.operatorBitmask.countSet() < settings.minOperators) {
+            revert InsufficientOperators();
+        }
 
         if (!newKeyspace.operatorBitmask.isSubsetOf(operatorBitmask)) {
             revert OperatorNotFound();

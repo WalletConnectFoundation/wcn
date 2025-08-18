@@ -1,20 +1,16 @@
 [package]
-name = "wcn_db"
+name = "wcn_node"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
 path = "src/lib.rs"
-name = "wcn_db"
+name = "wcn_node"
 
 [[bin]]
 path = "src/main.rs"
-name = "wcn_db"
-
-[features]
-default = ["testing"]
-testing = ["wcn_storage_api/rpc_client", "wcn_rpc/client"]
+name = "wcn_node"
 
 [lints]
 workspace = true
@@ -22,14 +18,19 @@ workspace = true
 [dependencies]
 # Local
 wcn_logging = { workspace = true }
-wcn_rpc = { workspace = true, features = ["server"] }
-wcn_rocks = { workspace = true }
-wcn_storage_api = { workspace = true, features = ["rpc_server"] }
+wcn_rpc = { workspace = true, features = ["client", "server"] }
+wcn_cluster = { workspace = true }
+wcn_storage_api = { workspace = true, features = ["rpc_client", "rpc_server"] }
+wcn_cluster_api = { workspace = true, features = ["rpc_server"] }
+wcn_migration = { workspace = true }
+wcn_replication = { workspace = true }
 
 # Org
-wc = { workspace = true, features = ["alloc", "future", "metrics"] }
+wc = { workspace = true, features = ["alloc"] }
 
 # Derives
+derive_more = { workspace = true, features = ["as_ref"] }
+derive-where = { workspace = true }
 thiserror = { workspace = true}
 
 # General purpose
@@ -52,8 +53,7 @@ tokio = { version = "1", default-features = false, features = ["signal"] }
 tracing = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-sysinfo = { workspace = true, features = ["system", "network", "disk"] }
-proc-mounts = { version = "0.3", default-features = false }
+sysinfo = { workspace = true, features = ["system", "network"] }
 
 # Other
 libp2p-identity = { workspace = true }
@@ -63,10 +63,25 @@ envy = { workspace = true }
 vergen-pretty = { workspace = true }
 
 [dev-dependencies]
+wcn_client = { workspace = true }
+wcn_cluster = { workspace = true, features = ["testing"] }
+wcn_db = { workspace = true }
+
 const-hex = { workspace = true }
-rand = { workspace = true }
+
+tokio = { workspace = true }
+
+tracing-subscriber = { workspace = true, features = [
+    "env-filter",
+    "parking_lot",
+    "json",
+] }
 
 libp2p-identity = { workspace = true, features = ["rand"] }
+alloy = { workspace = true, features = [
+    "provider-anvil-node",
+    "node-bindings",
+] }
 
 [build-dependencies]
 vergen = { workspace = true }

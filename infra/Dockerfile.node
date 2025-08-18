@@ -11,7 +11,7 @@ ARG                 MAINTAINER="WalletConnect"
 ARG                 PROFILE="release"
 ARG                 LOG_LEVEL="debug"
 ARG                 WORK_DIR="/app"
-ARG                 TARGET_BIN="wcn_node2"
+ARG                 TARGET_BIN="wcn_node"
 
 ################################################################################
 #

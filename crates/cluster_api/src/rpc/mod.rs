@@ -7,7 +7,14 @@ use {
         Event,
         smart_contract::{Address, ClusterView},
     },
-    wcn_rpc::{ApiName, BorrowedMessage, JsonCodec, Message, RpcImpl, metrics::FallibleResponse},
+    wcn_rpc::{
+        ApiName,
+        BorrowedMessage,
+        Message,
+        RpcImpl,
+        metrics::FallibleResponse,
+        transport::JsonCodec,
+    },
 };
 
 #[cfg(feature = "rpc_client")]

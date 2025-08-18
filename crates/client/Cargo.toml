@@ -9,7 +9,7 @@ publish = false
 wcn_cluster = { workspace = true }
 wcn_cluster_api = { workspace = true, features = ["rpc_client"] }
 wcn_rpc = { workspace = true, features = ["client"] }
-wcn_storage_api2 = { workspace = true, features = ["rpc_client"] }
+wcn_storage_api = { workspace = true, features = ["rpc_client"] }
 
 # Org
 wc = { workspace = true, features = ["metrics"] }
@@ -29,6 +29,9 @@ tokio = { workspace = true, features = ["sync"] }
 
 # O11y
 tracing = { workspace = true }
+
+# Other
+libp2p-identity = { workspace = true }
 
 [lints]
 workspace = true

@@ -44,6 +44,7 @@ wcn_logging = { workspace = true }
 
 tokio = { workspace = true, default-features = false }
 
+libp2p-identity = { workspace = true, features = ["rand"] }
 alloy = { version = "1.0", default-features = false, features = [
     "provider-anvil-node",
     "node-bindings",

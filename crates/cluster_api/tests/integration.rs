@@ -5,6 +5,7 @@ use {
     },
     derive_more::derive::AsRef,
     futures::{StreamExt as _, TryStreamExt},
+    libp2p_identity::Keypair,
     std::{net::Ipv4Addr, time::Duration},
     tap::{Pipe, Tap as _},
     wcn_cluster::{
@@ -22,10 +23,7 @@ use {
         testing,
     },
     wcn_cluster_api::{ClusterApi, Read},
-    wcn_rpc::{
-        identity::Keypair,
-        server2::{Server, ShutdownSignal},
-    },
+    wcn_rpc::server::{Server, ShutdownSignal},
 };
 
 #[tokio::test]
@@ -66,8 +64,8 @@ async fn test_rpc() {
 
     let api = wcn_cluster_api::rpc::ClusterApi::new().with_rpc_timeout(Duration::from_secs(2));
 
-    let server = wcn_rpc::server2::new(api.with_state(smart_contract.clone()))
-        .serve(wcn_rpc::server2::Config {
+    let server = wcn_rpc::server::new(api.with_state(smart_contract.clone()))
+        .serve(wcn_rpc::server::Config {
             name: "test_cluster_api",
             port,
             keypair: server_keypair,
@@ -83,14 +81,14 @@ async fn test_rpc() {
         .pipe(tokio::spawn);
 
     let client_keypair = Keypair::generate_ed25519();
-    let client_cfg = wcn_rpc::client2::Config {
+    let client_cfg = wcn_rpc::client::Config {
         keypair: client_keypair,
         connection_timeout: Duration::from_secs(10),
         reconnect_interval: Duration::from_secs(1),
         max_concurrent_rpcs: 500,
         priority: wcn_rpc::transport::Priority::High,
     };
-    let client = wcn_rpc::client2::Client::new(client_cfg, api).unwrap();
+    let client = wcn_rpc::Client::new(client_cfg, api).unwrap();
 
     let client_conn = client
         .connect(

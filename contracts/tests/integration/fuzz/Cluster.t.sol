@@ -3,7 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import {Cluster, NodeOperator, Settings} from "src/Cluster.sol";
+import {Cluster, Keyspace, NodeOperator, Settings, Bitmask} from "src/Cluster.sol";
+import {keyspace} from "tests/Utils.sol";
 
 contract ClusterIntegrationFuzzTest is Test {
     Cluster cluster;
@@ -14,7 +15,8 @@ contract ClusterIntegrationFuzzTest is Test {
     function _defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             maxOperatorDataBytes: 1024,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
     }
     
@@ -58,34 +60,27 @@ contract ClusterIntegrationFuzzTest is Test {
             vm.prank(operator);
             cluster.setMaintenance(true);
             
-            (address stateSlot, bool isOwnerMaintenance) = cluster.maintenance();
-            assertEq(stateSlot, operator);
-            assertFalse(isOwnerMaintenance);
+            assertEq(cluster.maintenanceSlot(), operator);
             
             if (ownerIntervenes) {
                 // Owner can always end maintenance
                 vm.prank(owner);
                 cluster.setMaintenance(false);
                 
-                (stateSlot, isOwnerMaintenance) = cluster.maintenance();
-                assertEq(stateSlot, address(0));
-                assertFalse(isOwnerMaintenance);
+                assertEq(cluster.maintenanceSlot(), address(0));
             } else {
                 // Only the same operator can end their maintenance
                 vm.prank(operator);
                 cluster.setMaintenance(false);
                 
-                (stateSlot, isOwnerMaintenance) = cluster.maintenance();
-                assertEq(stateSlot, address(0));
+                assertEq(cluster.maintenanceSlot(), address(0));
             }
         } else {
             // Owner starts maintenance
             vm.prank(owner);
             cluster.setMaintenance(true);
             
-            (address stateSlot, bool isOwnerMaintenance) = cluster.maintenance();
-            assertEq(stateSlot, owner);
-            assertTrue(isOwnerMaintenance);
+            assertEq(cluster.maintenanceSlot(), owner);
             
             if (ownerIntervenes) {
                 // Owner ends their own maintenance
@@ -129,8 +124,7 @@ contract ClusterIntegrationFuzzTest is Test {
         vm.prank(op2);
         cluster.setMaintenance(true);
         
-        (address stateSlot,) = cluster.maintenance();
-        assertEq(stateSlot, op2);
+        assertEq(cluster.maintenanceSlot(), op2);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -163,7 +157,7 @@ contract ClusterIntegrationFuzzTest is Test {
         
         // Start migration
         vm.prank(owner);
-        cluster.startMigration(validSlots, replicationStrategy);
+        cluster.startMigration(keyspace(validSlots, replicationStrategy));
         
         (uint64 migrationId, uint16 remaining, bool inProgress) = cluster.getMigrationStatus();
         assertTrue(inProgress);
@@ -218,7 +212,7 @@ contract ClusterIntegrationFuzzTest is Test {
         
         // Start migration
         vm.prank(owner);
-        cluster.startMigration(validSlots, 1);
+        cluster.startMigration(keyspace(validSlots, 1));
         
         (uint64 migrationId,,) = cluster.getMigrationStatus();
         
@@ -272,7 +266,7 @@ contract ClusterIntegrationFuzzTest is Test {
         // Migration should fail during maintenance
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(Cluster.MaintenanceInProgress.selector));
-        cluster.startMigration(validSlots, 1);
+        cluster.startMigration(keyspace(validSlots, 1));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -307,7 +301,7 @@ contract ClusterIntegrationFuzzTest is Test {
         
         // Start migration
         vm.prank(owner);
-        cluster.startMigration(validSlots, 1);
+        cluster.startMigration(keyspace(validSlots, 1));
         
         // Transfer ownership during migration
         vm.prank(owner);
@@ -416,7 +410,8 @@ contract ClusterIntegrationFuzzTest is Test {
             // Update settings (owner only)
             Settings memory newSettings = Settings({
                 maxOperatorDataBytes: 2048,
-                minOperators: 2
+                minOperators: 2,
+                extra: ""
             });
             vm.prank(owner);
             cluster.updateSettings(newSettings);

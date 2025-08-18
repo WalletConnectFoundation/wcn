@@ -4,10 +4,12 @@ pragma solidity ^0.8.20;
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {LibSort} from "solady/utils/LibSort.sol";
+import {LibBit} from "solady/utils/LibBit.sol";
 
 struct Settings {
     uint16 maxOperatorDataBytes;
     uint8 minOperators;
+    bytes extra;
 }
 
 struct NodeOperator {
@@ -16,17 +18,15 @@ struct NodeOperator {
 }
 
 struct Keyspace {
-    uint8[] members;
+    uint256 operatorBitmask;
     uint8 replicationStrategy;
 }
 
-/// @notice Represents the maintenance state of the cluster
-/// @dev Used to track whether the cluster is in maintenance mode and who initiated it
-/// @param slot The address of the operator or owner who initiated maintenance. address(0) means no maintenance is active
-/// @param isOwnerMaintenance True if maintenance was initiated by the owner, false if by an operator
-struct MaintenanceState {
-    address slot;
-    bool isOwnerMaintenance;
+struct Migration {
+    uint64 id;
+    uint64 startedAt;
+    uint64 abortedAt;
+    uint256 pullingOperatorBitmask;
 }
 
 struct ClusterView {
@@ -34,17 +34,15 @@ struct ClusterView {
     Settings settings;
     uint128 version;
     uint64 keyspaceVersion;
-    uint16 operatorCount;
-    address[] operators;
-    bytes[] operatorData;
+    NodeOperator[] operatorSlots;
     Keyspace[2] keyspaces;
-    uint64 migrationId;
-    uint8[] pullingOperators;
-    MaintenanceState maintenance;
+    Migration migration;
+    address maintenanceSlot;
 }
 
 contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     using LibSort for *;
+    using Bitmask for uint256;
 
     /*//////////////////////////////////////////////////////////////////////////
                             CONSTANTS & ERRORS
@@ -74,7 +72,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////////////////*/
 
     event ClusterInitialized(NodeOperator[] operators, Settings settings, uint128 version);
-    event MigrationStarted(uint64 indexed id, uint8[] operators, uint8 replicationStrategy, uint64 keyspaceVersion, uint128 version);
+    event MigrationStarted(uint64 indexed id, Keyspace newKeyspace, uint64 keyspaceVersion, uint128 version);
     event MigrationDataPullCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
@@ -94,27 +92,19 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     uint128 public version;
     
     // Slot-based operator storage (stable u8 indexing)
-    mapping(uint8 => address) public operatorSlots; // slot => operator address
-    mapping(uint8 => bool) public slotOccupied; // which slots are occupied
-    mapping(address => uint8) public operatorToSlot; // operator address => slot
-    mapping(address => bytes) public operatorData; // operator data
-
-    uint16 public operatorCount;
+    NodeOperator[256] public operatorSlots;
+    mapping(address => uint8) public operatorSlotIndexes;
+    uint256 public operatorBitmask;
     
     // Keyspaces
     Keyspace[2] public keyspaces;
     uint64 public keyspaceVersion;
     
     // Migration
-    uint64 public migrationId;
-    mapping(uint8 => bool) public slotPulling;
-    uint16 public pullingCount;
+    Migration public migration;
 
-    // Maintenance mutex
-    MaintenanceState public maintenance;
-
-    // Gas optimization: cache next free slot for O(1) operator addition
-    uint8 public nextFreeSlot;
+    // Maintenance
+    address public maintenanceSlot;
 
     // Storage gap for future variables (reserves space for rewards layer)
     uint256[45] private __gap;
@@ -141,28 +131,17 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
             NodeOperator memory op = initialOperators[i];
             _validateOperatorData(op.data);
             
-            uint8 slot = uint8(i); // Use sequential slots for initial operators
-            if (operatorSlots[slot] != address(0)) revert OperatorExists();
+            uint8 slotIdx = uint8(i); // Use sequential slots for initial operators
+            if (operatorBitmask.isSet(slotIdx)) revert OperatorExists();
             
-            operatorSlots[slot] = op.addr;
-            slotOccupied[slot] = true;
-            operatorToSlot[op.addr] = slot;
-            operatorData[op.addr] = op.data;
+            operatorSlots[slotIdx] = op;
+            operatorSlotIndexes[op.addr] = slotIdx;
+            operatorBitmask = operatorBitmask.set(slotIdx);
             
             unchecked { ++i; }
         }
-        operatorCount = uint16(initialOperators.length);
-        
-        // Initialize next free slot
-        nextFreeSlot = uint8(initialOperators.length);
-        
-        // Initialize first keyspace with all operator slots (sorted)
-        uint8[] memory operatorSlotsList = new uint8[](initialOperators.length);
-        for (uint256 i = 0; i < initialOperators.length;) {
-            operatorSlotsList[i] = uint8(i);
-            unchecked { ++i; }
-        }
-        keyspaces[0].members = operatorSlotsList;
+              
+        keyspaces[0].operatorBitmask = Bitmask.fill(initialOperators.length);
 
         emit ClusterInitialized(initialOperators, settings, ++version);
     }
@@ -176,88 +155,63 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
                             MIGRATION FUNCTIONS
     //////////////////////////////////////////////////////////////////////////*/
 
-    function startMigration(uint8[] calldata newOperatorSlots, uint8 replicationStrategy) external onlyOwner {
-        if (maintenance.slot != address(0)) revert MaintenanceInProgress();
-        if (pullingCount > 0) revert MigrationInProgress();
-        if (newOperatorSlots.length > MAX_OPERATORS) revert TooManyOperators();
-        if (newOperatorSlots.length < settings.minOperators) revert InsufficientOperators();
-        
-        // Validate operator slots are sorted, unique, and exist
-        if (newOperatorSlots.length > 1) {
-            for (uint256 i = 1; i < newOperatorSlots.length;) {
-                if (newOperatorSlots[i] <= newOperatorSlots[i-1]) revert InvalidOperator();
-                unchecked { ++i; }
-            }
+    function startMigration(Keyspace calldata newKeyspace) external onlyOwner {
+        if (maintenanceSlot != address(0)) revert MaintenanceInProgress();
+        if (migration.pullingOperatorBitmask > 0) revert MigrationInProgress();
+
+        if (newKeyspace.operatorBitmask.countSet() < settings.minOperators) {
+            revert InsufficientOperators();
         }
-        
-        for (uint256 i = 0; i < newOperatorSlots.length;) {
-            uint8 slot = newOperatorSlots[i];
-            if (!slotOccupied[slot]) revert OperatorNotFound();
-            slotPulling[slot] = true;
-            unchecked { ++i; }
+
+        if (!newKeyspace.operatorBitmask.isSubsetOf(operatorBitmask)) {
+            revert OperatorNotFound();
         }
-        pullingCount = uint16(newOperatorSlots.length);
-        
+       
         // Check if different from current keyspace
-        Keyspace storage current = keyspaces[keyspaceVersion % 2];
-        if (current.replicationStrategy == replicationStrategy && 
-            current.members.length == newOperatorSlots.length) {
-            bool same = true;
-            for (uint256 i = 0; i < current.members.length;) {
-                if (current.members[i] != newOperatorSlots[i]) {
-                    same = false;
-                    break;
-                }
-                unchecked { ++i; }
-            }
-            if (same) revert SameKeyspace();
+        Keyspace storage keyspace = keyspaces[keyspaceVersion % 2];
+        if (keyspace.operatorBitmask == newKeyspace.operatorBitmask && keyspace.replicationStrategy == newKeyspace.replicationStrategy) {
+            revert SameKeyspace();
         }
         
-        migrationId++;
-        keyspaceVersion++;
-        
+        migration.id++;
+        migration.startedAt = uint64(block.timestamp);
+        migration.pullingOperatorBitmask = newKeyspace.operatorBitmask;
+
         // Set new keyspace
-        Keyspace storage newKeyspace = keyspaces[keyspaceVersion % 2];
-        newKeyspace.members = newOperatorSlots;
-        newKeyspace.replicationStrategy = replicationStrategy;
+        keyspaceVersion++;
+        keyspaces[keyspaceVersion % 2] = newKeyspace;
         
-        emit MigrationStarted(migrationId, newOperatorSlots, replicationStrategy, keyspaceVersion, ++version);
+        emit MigrationStarted(migration.id, newKeyspace, keyspaceVersion, ++version);
     }
 
     function completeMigration(uint64 id) external {
-        if (pullingCount == 0) revert NoMigrationInProgress();
-        if (id != migrationId) revert WrongMigrationId();
+        if (migration.pullingOperatorBitmask == 0) revert NoMigrationInProgress();
+        if (id != migration.id) revert WrongMigrationId();
         
-        uint8 operatorSlot = operatorToSlot[msg.sender];
-        if (operatorSlots[operatorSlot] != msg.sender) revert CallerNotOperator();
-        if (!slotPulling[operatorSlot]) revert OperatorNotPulling();
+        uint8 slotIdx = operatorSlotIndexes[msg.sender];
+        if (operatorSlots[slotIdx].addr != msg.sender) revert CallerNotOperator();
+        if (migration.pullingOperatorBitmask.isUnset(slotIdx)) revert OperatorNotPulling();
+
+        migration.pullingOperatorBitmask = migration.pullingOperatorBitmask.unset(slotIdx);
         
-        slotPulling[operatorSlot] = false;
-        unchecked { --pullingCount; }
-        
-        if (pullingCount == 0) {
-            emit MigrationCompleted(migrationId, msg.sender, ++version);
+        if (migration.pullingOperatorBitmask == 0) {
+            emit MigrationCompleted(id, msg.sender, ++version);
         } else {
-            emit MigrationDataPullCompleted(migrationId, msg.sender, ++version);
+            emit MigrationDataPullCompleted(id, msg.sender, ++version);
         }
     }
 
     function abortMigration(uint64 id) external onlyOwner {
-        if (pullingCount == 0) revert NoMigrationInProgress();
-        if (id != migrationId) revert WrongMigrationId();
-        
-        // Clear pulling state efficiently
-        uint8[] memory currentOperatorSlots = keyspaces[keyspaceVersion % 2].members;
-        for (uint256 i = 0; i < currentOperatorSlots.length;) {
-            slotPulling[currentOperatorSlots[i]] = false;
-            unchecked { ++i; }
-        }
-        pullingCount = 0;
+        if (migration.pullingOperatorBitmask == 0) revert NoMigrationInProgress();
+        if (id != migration.id) revert WrongMigrationId();
+
+        migration.abortedAt = uint64(block.timestamp);
+        migration.pullingOperatorBitmask = 0;
         
         // Revert keyspace
         keyspaceVersion--;
         
-        emit MigrationAborted(migrationId, ++version);
+        emit MigrationAborted(id, ++version);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -265,83 +219,67 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////////////////*/
 
     function addNodeOperator(NodeOperator calldata operator) external onlyOwner {
-        if (operatorCount >= MAX_OPERATORS) revert TooManyOperators();
+        if (operatorBitmask == type(uint256).max) revert TooManyOperators();
         if (operator.addr == address(0)) revert InvalidOperator();
-        if (operatorToSlot[operator.addr] != 0 || operatorSlots[0] == operator.addr) revert OperatorExists();
+        if (operatorSlotIndexes[operator.addr] != 0 || operatorSlots[0].addr == operator.addr) revert OperatorExists();
         
         _validateOperatorData(operator.data);
         
-        // Find first available slot using cached value
-        uint8 slot = _findAvailableSlot();
+        uint8 slotIdx = operatorBitmask.findFirstUnset();
         
-        operatorSlots[slot] = operator.addr;
-        slotOccupied[slot] = true;
-        operatorToSlot[operator.addr] = slot;
-        operatorData[operator.addr] = operator.data;
-        operatorCount++;
+        operatorSlots[slotIdx] = operator;
+        operatorSlotIndexes[operator.addr] = slotIdx;
+        operatorBitmask = operatorBitmask.set(slotIdx);
         
-        // Update next free slot cache
-        _updateNextFreeSlot();
-        
-        emit NodeOperatorAdded(operator.addr, slot, operator.data, ++version);
+        emit NodeOperatorAdded(operator.addr, slotIdx, operator.data, ++version);
     }
 
     function updateNodeOperatorData(address operatorAddress, bytes calldata newData) external {
         if (msg.sender != operatorAddress && msg.sender != owner()) revert Unauthorized();
 
         _validateOperatorData(newData);
-        uint8 slot = operatorToSlot[operatorAddress];
-        if (operatorSlots[slot] != operatorAddress) revert OperatorNotFound();
+        uint8 slotIdx = operatorSlotIndexes[operatorAddress];
+        if (operatorSlots[slotIdx].addr != operatorAddress) revert OperatorNotFound();
         
-        operatorData[operatorAddress] = newData;
-        emit NodeOperatorUpdated(operatorAddress, slot, newData, ++version);
+        operatorSlots[slotIdx].data = newData;
+        emit NodeOperatorUpdated(operatorAddress, slotIdx, newData, ++version);
     }
 
     function removeNodeOperator(address operatorAddr) external onlyOwner {
-        uint8 slot = operatorToSlot[operatorAddr];
-        if (operatorSlots[slot] != operatorAddr) revert OperatorNotFound();
-        if (operatorCount <= settings.minOperators) revert InsufficientOperators();
+        uint8 slotIdx = operatorSlotIndexes[operatorAddr];
+        if (operatorSlots[slotIdx].addr != operatorAddr) revert OperatorNotFound();
+        if (operatorBitmask.countSet() <= settings.minOperators) revert InsufficientOperators();
         
         // Check not in active keyspaces
-        if (pullingCount > 0) {
+        if (migration.pullingOperatorBitmask > 0) {
             // During migration, check both keyspaces
-            if (_isSlotInKeyspace(slot, 0) || _isSlotInKeyspace(slot, 1)) revert OperatorInKeyspace();
+            if (_isSlotInKeyspace(slotIdx, 0) || _isSlotInKeyspace(slotIdx, 1)) revert OperatorInKeyspace();
         } else {
             // No migration, check current keyspace
-            if (_isSlotInKeyspace(slot, uint8(keyspaceVersion % 2))) revert OperatorInKeyspace();
+            if (_isSlotInKeyspace(slotIdx, uint8(keyspaceVersion % 2))) revert OperatorInKeyspace();
         }
         
-        operatorSlots[slot] = address(0);
-        slotOccupied[slot] = false;
-        delete operatorToSlot[operatorAddr];
-        delete operatorData[operatorAddr];
-        operatorCount--;
+        delete operatorSlots[slotIdx];
+        delete operatorSlotIndexes[operatorAddr];
+        operatorBitmask = operatorBitmask.unset(slotIdx);
         
-        // Update next free slot cache if this slot is lower
-        if (slot < nextFreeSlot) {
-            nextFreeSlot = slot;
-        }
-        
-        emit NodeOperatorRemoved(operatorAddr, slot, ++version);
+        emit NodeOperatorRemoved(operatorAddr, slotIdx, ++version);
     }
 
     function setMaintenance(bool active) external {
         if (active) {
             // Starting maintenance - check mutex
-            if (maintenance.slot != address(0)) revert MaintenanceInProgress();
-            maintenance.slot = msg.sender;
-            maintenance.isOwnerMaintenance = (msg.sender == owner());
+            if (maintenanceSlot != address(0)) revert MaintenanceInProgress();
+            maintenanceSlot = msg.sender;
         } else {
             // Ending maintenance - only the one who started can end it, OR the owner can always end it
-            if (maintenance.slot != msg.sender && msg.sender != owner()) revert Unauthorized();
-            maintenance.slot = address(0);
-            maintenance.isOwnerMaintenance = false;
-        }
-        
-        // Update operator info if it's not the owner
+            if (maintenanceSlot != msg.sender && msg.sender != owner()) revert Unauthorized();
+            maintenanceSlot = address(0);
+        }      
+
         if (msg.sender != owner()) {
-            uint8 slot = operatorToSlot[msg.sender];
-            if (operatorSlots[slot] != msg.sender) revert Unauthorized();
+            uint8 slotIdx = operatorSlotIndexes[msg.sender];
+            if (operatorSlots[slotIdx].addr != msg.sender) revert Unauthorized();
         }
         
         emit MaintenanceToggled(msg.sender, active, ++version);
@@ -352,7 +290,7 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////////////////*/
 
     function updateSettings(Settings calldata newSettings) external onlyOwner {
-        if (operatorCount < newSettings.minOperators) revert InsufficientOperators();
+        if (operatorBitmask.countSet() < newSettings.minOperators) revert InsufficientOperators();
         settings = newSettings;
         emit SettingsUpdated(newSettings, msg.sender, ++version);
     }
@@ -362,113 +300,70 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
     //////////////////////////////////////////////////////////////////////////*/
 
     function getOperatorCount() external view returns (uint16) {
-        return operatorCount;
+        return operatorBitmask.countSet();
     }
 
-    function getOperatorAt(uint8 slot) external view returns (address) {
-        if (!slotOccupied[slot]) revert OperatorNotFound();
-        return operatorSlots[slot];
+    function getOperatorAt(uint8 slotIdx) external view returns (address) {
+        if (operatorBitmask.isUnset(slotIdx)) revert OperatorNotFound();
+        return operatorSlots[slotIdx].addr;
     }
 
     function isOperator(address addr) external view returns (bool) {
-        uint8 slot = operatorToSlot[addr];
-        return operatorSlots[slot] == addr;
+        uint8 slotIdx = operatorSlotIndexes[addr];
+        return operatorSlots[slotIdx].addr == addr;
     }
 
     function getAllOperators() external view returns (address[] memory) {
-        address[] memory operators = new address[](operatorCount);
+        uint16 operatorCount = operatorBitmask.countSet();
+    
+        address[] memory operatorAddresses = new address[](operatorCount);
         uint256 count = 0;
         
         for (uint8 i = 0; i < MAX_OPERATORS && count < operatorCount;) {
-            if (slotOccupied[i]) {
-                operators[count] = operatorSlots[i];
+            if (operatorBitmask.isSet(i)) {
+                operatorAddresses[count] = operatorSlots[i].addr;
                 unchecked { ++count; }
             }
             unchecked { ++i; }
         }
         
-        operators.sort();
-        return operators;
+        operatorAddresses.sort();
+        return operatorAddresses;
     }
 
     function getCurrentKeyspace() external view returns (uint8[] memory, uint8) {
-        Keyspace storage current = keyspaces[keyspaceVersion % 2];
-        return (current.members, current.replicationStrategy);
+        Keyspace storage currentKeyspace = keyspaces[keyspaceVersion % 2];
+        return (currentKeyspace.operatorBitmask.intoArray(), currentKeyspace.replicationStrategy);
     }
 
     function getMigrationStatus() external view returns (uint64 id, uint16 remaining, bool inProgress) {
-        return (migrationId, pullingCount, pullingCount > 0);
+        return (migration.id, migration.pullingOperatorBitmask.countSet(), migration.pullingOperatorBitmask > 0);
     }
 
     function getPullingOperators() external view returns (uint8[] memory) {
-        if (pullingCount == 0) return new uint8[](0);
-        
-        uint8[] memory pulling = new uint8[](pullingCount);
-        uint8[] memory currentOperatorSlots = keyspaces[keyspaceVersion % 2].members;
-        uint256 count = 0;
-        
-        for (uint256 i = 0; i < currentOperatorSlots.length;) {
-            if (slotPulling[currentOperatorSlots[i]]) {
-                pulling[count++] = currentOperatorSlots[i];
-            }
-            unchecked { ++i; }
-        }
-        
-        assembly {
-            mstore(pulling, count)
-        }
-        
-        return pulling;
+        return migration.pullingOperatorBitmask.intoArray();
     }
 
-
     function getView() external view returns (ClusterView memory) {
-        address[] memory operators;
-        bytes[] memory opData;
+        uint16 highestOccupiedSlot = operatorBitmask.findLastSet();
 
-        if (operatorCount == 0) {
-            operators = new address[](0);
-            opData = new bytes[](0);
-        } else {
-            uint8 highestOccupiedSlot = 0;
-            // Find the highest occupied slot to truncate trailing empty slots
-            // Looping from MAX_OPERATORS - 1 down to 0
-            for (uint256 i = MAX_OPERATORS - 1; i < MAX_OPERATORS; --i) {
-                if (slotOccupied[uint8(i)]) {
-                    highestOccupiedSlot = uint8(i);
-                    break;
-                }
-            }
-            
-            uint256 bufferSize = highestOccupiedSlot + 1;
-            operators = new address[](bufferSize);
-            opData = new bytes[](bufferSize);
+        NodeOperator[] memory operators = new NodeOperator[](highestOccupiedSlot + 1);
 
-            for (uint256 i = 0; i < bufferSize; ++i) {
-                uint8 slot = uint8(i);
-                if (slotOccupied[slot]) {
-                    address op = operatorSlots[slot];
-                    operators[i] = op;
-                    opData[i] = operatorData[op];
-                }
-                // Unoccupied slots will have address(0) and empty bytes by default.
+        for (uint16 i = 0; i <= highestOccupiedSlot; i++) {
+            if (operatorBitmask.isSet(uint8(i))) {
+                operators[i] = operatorSlots[uint8(i)];
             }
         }
-        
-        uint8[] memory pullingOps = this.getPullingOperators();
         
         return ClusterView({
             owner: owner(),
             settings: settings,
             version: version,
             keyspaceVersion: keyspaceVersion,
-            operatorCount: operatorCount,
-            operators: operators,
-            operatorData: opData,
+            operatorSlots: operators,
             keyspaces: keyspaces,
-            migrationId: migrationId,
-            pullingOperators: pullingOps,
-            maintenance: maintenance
+            migration: migration,
+            maintenanceSlot: maintenanceSlot
         });
     }
 
@@ -485,60 +380,77 @@ contract Cluster is Ownable2StepUpgradeable, UUPSUpgradeable {
         if (data.length > settings.maxOperatorDataBytes) revert InvalidOperatorData();
     }
 
-    function _findAvailableSlot() internal view returns (uint8) {
-        // Use cached next free slot for O(1) lookup
-        if (nextFreeSlot < MAX_OPERATORS && !slotOccupied[uint8(nextFreeSlot)]) {
-            return uint8(nextFreeSlot);
-        }
-        
-        // Fallback to linear scan if cache is stale
-        for (uint8 i = nextFreeSlot; i < 255;) {
-            if (!slotOccupied[i]) {
-                return i;
-            }
-            unchecked { ++i; }
-        }
-        
-        // Scan from beginning if needed
-        for (uint8 i = 0; i < nextFreeSlot;) {
-            if (!slotOccupied[i]) {
-                return i;
-            }
-            unchecked { ++i; }
-        }
-        
-        revert TooManyOperators();
-    }
-
-    function _updateNextFreeSlot() internal {
-        // Find next available slot starting from current nextFreeSlot + 1
-        for (uint8 i = nextFreeSlot + 1; i < 255;) {
-            if (!slotOccupied[i]) {
-                nextFreeSlot = i;
-                return;
-            }
-            unchecked { ++i; }
-        }
-        
-        // If no slots found after current position, scan from beginning
-        for (uint8 i = 0; i <= nextFreeSlot;) {
-            if (!slotOccupied[i]) {
-                nextFreeSlot = i;
-                return;
-            }
-            unchecked { ++i; }
-        }
-        
-        // All slots occupied - this should never happen due to operatorCount check
-        nextFreeSlot = 255;
-    }
-
     function _isSlotInKeyspace(uint8 slot, uint8 keyspaceIndex) internal view returns (bool) {
-        uint8[] memory members = keyspaces[keyspaceIndex].members;
-        for (uint256 i = 0; i < members.length;) {
-            if (members[i] == slot) return true;
+        return keyspaces[keyspaceIndex].operatorBitmask.isSet(slot);
+    }
+}
+
+library Bitmask {
+    /// Creates a new bitmask with first `n` least significant bits set.
+    function fill(uint256 n) internal pure returns (uint256) {
+        return (n == 256) ? type(uint256).max : (1 << n) - 1;
+    }
+
+    /// Sets the bit under the specified index.
+    function set(uint256 self, uint8 idx) internal pure returns (uint256) {
+         return self | 1 << uint256(idx);
+    }
+
+    /// Unsets the bit under the specified index.
+    function unset(uint256 self, uint8 idx) internal pure returns (uint256) {
+         return self & ~(1 << uint256(idx));
+    }
+
+    /// Indicates whether the bit under the specified index is set.
+    function isSet(uint256 self, uint8 idx) internal pure returns (bool) {
+         return (self & (1 << uint256(idx))) != 0;
+    }
+
+    /// Indicates whether the bit under the specified index is unset.
+    function isUnset(uint256 self, uint8 idx) internal pure returns (bool) {
+         return (self & (1 << uint256(idx))) == 0;
+    }
+
+    /// Counts the number of set bits.
+    function countSet(uint256 self) internal pure returns (uint16) {
+        return uint16(LibBit.popCount(self));
+    }
+
+    /// Finds the index of the first unset bit.
+    function findFirstUnset(uint256 self) internal pure returns (uint8) {
+        return uint8(LibBit.ffs(~self));
+    }
+
+    /// Finds the index of the last set bit.
+    function findLastSet(uint256 self) internal pure returns (uint8) {
+        return uint8(LibBit.fls(self));
+    }
+
+    /// Indicates whether `self` is a subset of `other`.
+    /// Meaning whether every set bit in `self` has a corresponding set bit in `other`.
+    function isSubsetOf(uint256 self, uint256 other) internal pure returns (bool) {
+        return self & ~other == 0;
+    }
+
+    /// Constructs bitmask from an array of indexes of set bits.
+    function fromArray(uint8[] memory array) internal pure returns (uint256 bitmask) {
+        for (uint256 i = 0; i < array.length;) {
+            bitmask = Bitmask.set(bitmask, array[i]);
             unchecked { ++i; }
         }
-        return false;
+    }
+
+    /// Converts the bitmask into an array of indexes of set bits.
+    function intoArray(uint256 self) internal pure returns (uint8[] memory) {
+        uint8[] memory array = new uint8[](Bitmask.countSet(self));
+        uint256 idx = 0;
+        
+        for (uint16 i = 0; i <= Bitmask.findLastSet(self); i++) {
+            if (Bitmask.isSet(self, uint8(i))) {
+                array[idx++] = uint8(i);
+            }
+        }
+
+        return array;
     }
 }

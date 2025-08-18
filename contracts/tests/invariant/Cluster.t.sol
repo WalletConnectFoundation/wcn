@@ -105,7 +105,7 @@ contract ClusterInvariants is StdInvariant, Test {
         }
         
         // Pulling operators must be valid slots
-        for (uint256 i = 0; i < clusterView.migration.pullingOperatorBitmask.findLastSet(); i++) {
+        for (uint256 i = 0; i <= clusterView.migration.pullingOperatorBitmask.findLastSet(); i++) {
             if (clusterView.migration.pullingOperatorBitmask.isSet(uint8(i))) {
                 assertTrue(
                     cluster.operatorBitmask().isSet(uint8(i)),

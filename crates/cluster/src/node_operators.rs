@@ -29,7 +29,7 @@ pub struct NodeOperators<N = Node> {
 }
 
 impl<N> NodeOperators<N> {
-    pub(super) fn from_slots(
+    pub fn from_slots(
         slots: impl IntoIterator<Item = Option<NodeOperator<N>>>,
     ) -> Result<Self, CreationError> {
         let mut slots: Vec<_> = slots.into_iter().collect();
@@ -152,7 +152,7 @@ impl<N> NodeOperators<N> {
         self.slots[idx as usize].as_ref().unwrap()
     }
 
-    pub(super) fn into_slots(self) -> Vec<Option<NodeOperator<N>>> {
+    pub fn into_slots(self) -> Vec<Option<NodeOperator<N>>> {
         self.slots
     }
 

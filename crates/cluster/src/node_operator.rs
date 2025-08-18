@@ -62,7 +62,7 @@ impl Name {
 pub struct Data(pub(crate) Vec<u8>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
-#[derive(AsRef, Clone, Debug)]
+#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
 pub struct NodeOperator<N = Node> {
     /// ID of this [`NodeOperator`].
     #[as_ref]
@@ -217,10 +217,7 @@ pub struct Removed {
 }
 
 impl NodeOperator {
-    pub(super) fn serialize(
-        self,
-        key: &EncryptionKey,
-    ) -> Result<Serialized, DataSerializationError> {
+    pub fn serialize(self, key: &EncryptionKey) -> Result<Serialized, DataSerializationError> {
         use DataSerializationError as Error;
 
         let nodes = self

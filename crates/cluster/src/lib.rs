@@ -149,6 +149,17 @@ pub enum Event {
 #[derive_where(Debug)]
 pub struct EncryptionKey(#[derive_where(skip)] pub [u8; 32]);
 
+impl EncryptionKey {
+    /// Creates a new [`EncryptionKey`] from a base64 encoded string.
+    pub fn from_base64(s: &str) -> Result<Self, const_hex::FromHexError> {
+        const_hex::decode_to_array(s).map(Self)
+    }
+
+    pub fn to_base64(&self) -> String {
+        const_hex::encode(self.0)
+    }
+}
+
 impl<C: Config> Cluster<C>
 where
     Keyspace: keyspace::sealed::Calculate<C::KeyspaceShards>,

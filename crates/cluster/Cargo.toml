@@ -4,12 +4,15 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[lints]
-workspace = true
-
 [features]
+# TODO: remove default after CLI is ready
+# default = ["cli"]
+# cli = ["dep:clap"]
 default = []
 testing = []
+
+[lints]
+workspace = true
 
 [dependencies]
 # Local
@@ -42,7 +45,7 @@ aes = { version = "0.8", default-features = false }
 
 # Async
 futures = { workspace = true }
-tokio = { workspace = true, features = ["time", "rt"] }
+tokio = { workspace = true, features = ["time", "rt", "full"] }
 tokio-stream = { workspace = true }
 
 # Domain specific
@@ -53,9 +56,13 @@ alloy = { workspace = true, features = [
     "contract",
     "signer-local",
     "reqwest",
+    "provider-http",
     "provider-ws",
     "rpc-types",
 ] }
+anyhow.workspace = true
+data-encoding = "2.6"
+clap = { version = "4.5.40", features = ["derive", "env"] }
 
 [dev-dependencies]
 libp2p-identity = { workspace = true, features = ["rand"] }
@@ -65,10 +72,16 @@ alloy = { version = "1.0", default-features = false, features = [
     "provider-anvil-node",
     "node-bindings",
 ] }
-tokio = { version = "1", default-features = false }
+tokio = { version = "1", features = ["full"] }
+arc-swap = "1.7"
+indexmap = "2"
+clap = { version = "4.5.40", features = ["derive", "env"] }
+data-encoding = "2.6"
+assert_cmd = "2.0.17"
 
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
     "parking_lot",
     "json",
 ] }
+hex = "0.4.3"

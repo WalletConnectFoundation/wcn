@@ -210,10 +210,7 @@ pub struct Removed {
 }
 
 impl NodeOperator {
-    pub(super) fn serialize(
-        self,
-        key: &EncryptionKey,
-    ) -> Result<Serialized, DataSerializationError> {
+    pub fn serialize(self, key: &EncryptionKey) -> Result<Serialized, DataSerializationError> {
         use DataSerializationError as Error;
 
         let nodes = self

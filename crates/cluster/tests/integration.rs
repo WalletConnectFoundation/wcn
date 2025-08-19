@@ -196,7 +196,7 @@ pub async fn cli_test_suite() {
 
     let operators: Vec<_> = (1..=5).map(|n| new_node_operator(n, &anvil)).collect();
 
-    let cluster = Cluster::deploy(cfg, &provider, settings, operators.clone())
+    let cluster = Cluster::deploy(cfg.clone(), &provider, settings, operators.clone())
         .await
         .unwrap();
 
@@ -212,7 +212,7 @@ pub async fn cli_test_suite() {
     file.write_all(&key_bytes).unwrap();
 
     // test_migration_start(&anvil, &tempdir, sc).unwrap();
-    test_deploy(&anvil, &tempdir, sc, operators).unwrap();
+    test_deploy(&anvil, &tempdir, sc, operators, cfg).unwrap();
 }
 
 fn test_migration_start(
@@ -242,15 +242,20 @@ fn test_deploy(
     dir: &PathBuf,
     sc: &impl SmartContract,
     initial_operators: Vec<NodeOperator>,
+    cfg: Config,
 ) -> anyhow::Result<()> {
     let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
     let operators = serde_json::to_string_pretty(&initial_operators).unwrap();
+
+    let encryption_key = cfg.encryption_key.to_base64();
 
     cmd.arg("deploy")
         .arg("--key-file")
         .arg(dir.display().to_string())
         .arg("--provider-url")
         .arg(anvil.ws_endpoint_url().to_string())
+        .arg("--encryption-key")
+        .arg(encryption_key)
         .arg("--operators")
         .arg(operators)
         .assert()

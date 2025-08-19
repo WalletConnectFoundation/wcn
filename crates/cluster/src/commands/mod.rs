@@ -121,3 +121,5 @@ pub enum CliError {
     #[error("Text encoding must be utf8")]
     TextEncoding,
 }
+
+

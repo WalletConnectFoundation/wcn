@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use derive_more::AsRef;
 use tokio::{fs::File, io::AsyncReadExt};
 use wcn_cluster::{
-    node_operator::{Id, Name},
-    smart_contract::{self, Deployer, Read},
-    Node, NodeOperator, NodeOperators, Settings,
+    node_operator::{self, Id, Name},
+    smart_contract::{self, evm, Deployer, Read},
+    Config, EncryptionKey, Node, NodeOperator, NodeOperators, Settings,
 };
+
+use itertools::Itertools;
 
 // TODO: discuss if ideal
 /// Maximum number of on-chain bytes stored for a single
@@ -25,6 +27,10 @@ pub struct DeployCmd {
     #[clap(long = "operators", short = 'o')]
     /// JSON string containing a serialized list of initial node operators.
     operators: Option<String>,
+
+    #[clap(long = "encryption-key", short = 'k')]
+    /// Key used to encrypt the node operator data stored on-chain.
+    encryption_key: String,
 }
 
 pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
@@ -42,7 +48,7 @@ pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
         ));
     }
 
-    let operators = {
+    let initial_operators = {
         if let Some(operators) = cmd.operators {
             parse_operators_from_str(&operators)?
         } else if let Some(path) = cmd.operators_file {
@@ -52,17 +58,25 @@ pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
         }
     };
 
-    // let operators: Vec<_> = operators
-    //     .into_iter()
-    //     .map(NodeOperator::serialize)
-    //     .collect()?;
-    //
-    // let operators = NodeOperators::new(operators.into_iter().map(Some))?;
-    //
-    // let contract = provider.deploy(settings, operators).await?;
-    // let address = contract.address()?;
-    //
-    // println!("Cluster contract deployed at address: {}", address);
+    let encryption_key = EncryptionKey::from_base64(&cmd.encryption_key)
+        .map_err(|e| anyhow::anyhow!("Failed to decode encryption key: {}", e))?;
+
+    let cfg = DeployConfig { encryption_key };
+    let slots = initial_operators.into_iter().map(Some);
+
+    let operators = NodeOperators::from_slots(slots)?
+        .into_slots()
+        .into_iter()
+        .filter_map(|slot| slot.map(|operator| operator.serialize(cfg.as_ref())))
+        .try_collect()?;
+
+    let contract = provider.deploy(settings, operators).await?;
+    let address = contract.address()?;
+
+    println!(
+        "Cluster contract deployed at address: {}",
+        address.to_string()
+    );
 
     Ok(())
 }
@@ -82,4 +96,21 @@ async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOper
         .map_err(|e| anyhow::anyhow!("Failed to parse operators file: {}", e))?;
 
     Ok(operators)
+}
+
+#[derive(AsRef, Clone, Copy)]
+/// Transient struct to enable node serialization for cluste contract deployment.
+struct DeployConfig {
+    #[as_ref]
+    encryption_key: EncryptionKey,
+}
+
+impl wcn_cluster::Config for DeployConfig {
+    type SmartContract = evm::SmartContract;
+    type KeyspaceShards = ();
+    type Node = Node;
+
+    fn new_node(&self, _operator_id: node_operator::Id, node: Node) -> Self::Node {
+        node
+    }
 }

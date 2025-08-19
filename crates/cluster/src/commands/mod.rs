@@ -1,8 +1,8 @@
 use wcn_cluster::smart_contract::{
-            self,
-            evm::{RpcProvider, SmartContract},
-            Connector,
-        };
+    self,
+    evm::{RpcProvider, SmartContract},
+    Connector,
+};
 
 pub mod deploy;
 pub mod maintenance;

@@ -5,7 +5,12 @@ use {
     tokio::{fs::File, io::AsyncReadExt},
     wcn_cluster::{
         node_operator::{self},
-        smart_contract::{evm, Deployer, Read}, EncryptionKey, Node, NodeOperator, NodeOperators, Settings,
+        smart_contract::{evm, Deployer, Read},
+        EncryptionKey,
+        Node,
+        NodeOperator,
+        NodeOperators,
+        Settings,
     },
 };
 
@@ -72,10 +77,7 @@ pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
     let contract = provider.deploy(settings, operators).await?;
     let address = contract.address()?;
 
-    println!(
-        "Cluster contract deployed at address: {}",
-        address
-    );
+    println!("Cluster contract deployed at address: {}", address);
 
     Ok(())
 }

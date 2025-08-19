@@ -15,7 +15,14 @@ use {
 
 #[allow(unused_imports)] // for doc comments
 use crate::{
-    keyspace, maintenance, settings, Cluster, Maintenance, Migration, NodeOperator, MAX_OPERATORS,
+    keyspace,
+    maintenance,
+    settings,
+    Cluster,
+    Maintenance,
+    Migration,
+    NodeOperator,
+    MAX_OPERATORS,
 };
 
 /// Snapshot of [`cluster::View`] fetched from a [`SmartContract`] state.

@@ -1,6 +1,4 @@
-use wcn_cluster::smart_contract::Write;
-
-use crate::commands::SharedArgs;
+use {crate::commands::SharedArgs, wcn_cluster::smart_contract::Write};
 
 #[derive(Debug, clap::Args)]
 pub struct MigrationCmd {
@@ -34,7 +32,10 @@ pub async fn exec(cmd: MigrationCmd) -> anyhow::Result<()> {
 
 mod start {
     use wcn_cluster::{
-        keyspace::ReplicationStrategy, smart_contract::Write, Keyspace, SmartContract,
+        keyspace::ReplicationStrategy,
+        smart_contract::Write,
+        Keyspace,
+        SmartContract,
     };
 
     #[derive(Debug, clap::Args)]

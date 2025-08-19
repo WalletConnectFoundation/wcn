@@ -1,23 +1,25 @@
-use std::str::FromStr;
-
-use alloy::providers::bindings;
-use derive_more::derive::Deref;
-use wcn_cluster::{
-    smart_contract::{
-        self,
-        evm::{RpcProvider, SmartContract},
-        Connector, Deployer,
+use {
+    alloy::providers::bindings,
+    derive_more::derive::Deref,
+    std::str::FromStr,
+    wcn_cluster::{
+        smart_contract::{
+            self,
+            evm::{RpcProvider, SmartContract},
+            Connector,
+            Deployer,
+        },
+        Cluster,
     },
-    Cluster,
 };
 
+pub mod deploy;
 pub mod maintenance;
 pub mod migration;
 pub mod operator;
 pub mod settings;
 pub mod show;
 pub mod signer;
-pub mod deploy;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(clap::Subcommand, Debug)]
@@ -34,7 +36,7 @@ pub enum SubCmd {
 #[derive(Debug, clap::Args)]
 pub struct SharedArgs {
     #[arg(
-        short = 'f', 
+        short = 'f',
         long = "key-file", 
         value_hint = clap::ValueHint::FilePath,
         env = "WCN_CLUSTER_KEY_FILE"
@@ -72,7 +74,8 @@ impl SharedArgs {
     }
 
     pub(crate) async fn provider(&self) -> anyhow::Result<RpcProvider> {
-        let private_key = std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
+        let private_key =
+            std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
         let signer = smart_contract::Signer::try_from_private_key(&private_key)?;
 
         let provider_url = self.provider_url.parse().unwrap();
@@ -81,14 +84,16 @@ impl SharedArgs {
         Ok(provider)
     }
 
-    /// Create a new SmartContract client using the provided key file and provider URL.
+    /// Create a new SmartContract client using the provided key file and
+    /// provider URL.
     pub(crate) async fn new_client(&self) -> anyhow::Result<SmartContract> {
         let address = self.contract_address.clone().ok_or(anyhow::anyhow!(
             "No contract address provided. Use --contract-address to specify it."
         ))?;
         let provider_url = self.provider_url.clone();
 
-        let private_key = std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
+        let private_key =
+            std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
         let signer = smart_contract::Signer::try_from_private_key(&private_key)?;
 
         let provider_url = provider_url.parse().unwrap();
@@ -98,7 +103,6 @@ impl SharedArgs {
 
         Ok(sc)
     }
-
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -121,5 +125,3 @@ pub enum CliError {
     #[error("Text encoding must be utf8")]
     TextEncoding,
 }
-
-

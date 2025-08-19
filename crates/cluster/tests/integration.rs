@@ -13,9 +13,16 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read, Signer,
+            Read,
+            Signer,
         },
-        testing, Cluster, EncryptionKey, Node, NodeOperator, Settings, SmartContract,
+        testing,
+        Cluster,
+        EncryptionKey,
+        Node,
+        NodeOperator,
+        Settings,
+        SmartContract,
     },
 };
 

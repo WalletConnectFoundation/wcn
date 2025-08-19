@@ -1,14 +1,19 @@
-use std::path::PathBuf;
-
-use derive_more::AsRef;
-use tokio::{fs::File, io::AsyncReadExt};
-use wcn_cluster::{
-    node_operator::{self, Id, Name},
-    smart_contract::{self, evm, Deployer, Read},
-    Config, EncryptionKey, Node, NodeOperator, NodeOperators, Settings,
+use {
+    derive_more::AsRef,
+    itertools::Itertools,
+    std::path::PathBuf,
+    tokio::{fs::File, io::AsyncReadExt},
+    wcn_cluster::{
+        node_operator::{self, Id, Name},
+        smart_contract::{self, evm, Deployer, Read},
+        Config,
+        EncryptionKey,
+        Node,
+        NodeOperator,
+        NodeOperators,
+        Settings,
+    },
 };
-
-use itertools::Itertools;
 
 // TODO: discuss if ideal
 /// Maximum number of on-chain bytes stored for a single
@@ -99,7 +104,8 @@ async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOper
 }
 
 #[derive(AsRef, Clone, Copy)]
-/// Transient struct to enable node serialization for cluste contract deployment.
+/// Transient struct to enable node serialization for cluste contract
+/// deployment.
 struct DeployConfig {
     #[as_ref]
     encryption_key: EncryptionKey,

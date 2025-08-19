@@ -1,17 +1,8 @@
-use {
-    alloy::providers::bindings,
-    derive_more::derive::Deref,
-    std::str::FromStr,
-    wcn_cluster::{
-        smart_contract::{
+use wcn_cluster::smart_contract::{
             self,
             evm::{RpcProvider, SmartContract},
             Connector,
-            Deployer,
-        },
-        Cluster,
-    },
-};
+        };
 
 pub mod deploy;
 pub mod maintenance;
@@ -87,7 +78,7 @@ impl SharedArgs {
     /// Create a new SmartContract client using the provided key file and
     /// provider URL.
     pub(crate) async fn new_client(&self) -> anyhow::Result<SmartContract> {
-        let address = self.contract_address.clone().ok_or(anyhow::anyhow!(
+        let address = self.contract_address.ok_or(anyhow::anyhow!(
             "No contract address provided. Use --contract-address to specify it."
         ))?;
         let provider_url = self.provider_url.clone();

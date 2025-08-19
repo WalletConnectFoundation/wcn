@@ -4,14 +4,8 @@ use {
     std::path::PathBuf,
     tokio::{fs::File, io::AsyncReadExt},
     wcn_cluster::{
-        node_operator::{self, Id, Name},
-        smart_contract::{self, evm, Deployer, Read},
-        Config,
-        EncryptionKey,
-        Node,
-        NodeOperator,
-        NodeOperators,
-        Settings,
+        node_operator::{self},
+        smart_contract::{evm, Deployer, Read}, EncryptionKey, Node, NodeOperator, NodeOperators, Settings,
     },
 };
 
@@ -80,7 +74,7 @@ pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
 
     println!(
         "Cluster contract deployed at address: {}",
-        address.to_string()
+        address
     );
 
     Ok(())

@@ -1,4 +1,4 @@
-use {crate::commands::SharedArgs, wcn_cluster::smart_contract::Write};
+use crate::commands::SharedArgs;
 
 #[derive(Debug, clap::Args)]
 pub struct MigrationCmd {

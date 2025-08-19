@@ -13,16 +13,9 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read,
-            Signer,
+            Read, Signer,
         },
-        testing,
-        Cluster,
-        EncryptionKey,
-        Node,
-        NodeOperator,
-        Settings,
-        SmartContract,
+        testing, Cluster, EncryptionKey, Node, NodeOperator, Settings, SmartContract,
     },
 };
 
@@ -218,8 +211,8 @@ pub async fn cli_test_suite() {
     let mut file = std::fs::File::create(&tempdir).unwrap();
     file.write_all(&key_bytes).unwrap();
 
-    // test_migration_start(&anvil, &tempdir, sc).unwrap();
     test_deploy(&anvil, &tempdir, sc, operators, cfg).unwrap();
+    test_migration_start(&anvil, &tempdir, sc).unwrap();
 }
 
 fn test_migration_start(

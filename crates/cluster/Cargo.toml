@@ -45,7 +45,7 @@ aes = { version = "0.8", default-features = false }
 
 # Async
 futures = { workspace = true }
-tokio = { workspace = true, features = ["time", "rt"] }
+tokio = { workspace = true, features = ["time", "rt", "full"] }
 tokio-stream = { workspace = true }
 
 # Domain specific

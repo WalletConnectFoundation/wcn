@@ -26,13 +26,13 @@ pub enum SubCmd {
 
 #[derive(Debug, clap::Args)]
 pub struct SharedArgs {
+    /// Private key used to sign transactions.
     #[arg(
-        short = 'f',
-        long = "key-file", 
-        value_hint = clap::ValueHint::FilePath,
-        env = "WCN_CLUSTER_KEY_FILE"
+        env = "WCN_SIGNER_PRIVATE_KEY", 
+        short = 's', // TODO: consider document as env var using after_help 
+        long = None
     )]
-    key_file: String,
+    signer_key: String,
 
     #[clap(
         short = 'p',
@@ -50,24 +50,8 @@ pub struct SharedArgs {
 }
 
 impl SharedArgs {
-    /// Reads a base64 encoded key file and returngm s the decoded bytes.
-    #[allow(clippy::allow_unused)]
-    pub(crate) fn key_from_file(&self) -> anyhow::Result<Vec<u8>> {
-        let contents =
-            std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
-
-        let bytes: Vec<u8> = data_encoding::BASE64
-            .decode(contents.as_bytes())
-            .map_err(|_| CliError::KeyEncoding)?[..]
-            .into();
-
-        Ok(bytes)
-    }
-
     pub(crate) async fn provider(&self) -> anyhow::Result<RpcProvider> {
-        let private_key =
-            std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
-        let signer = smart_contract::Signer::try_from_private_key(&private_key)?;
+        let signer = smart_contract::Signer::try_from_private_key(&self.signer_key)?;
 
         let provider_url = self.provider_url.parse().unwrap();
         let provider = RpcProvider::new(provider_url, signer).await?;
@@ -83,9 +67,7 @@ impl SharedArgs {
         ))?;
         let provider_url = self.provider_url.clone();
 
-        let private_key =
-            std::fs::read_to_string(&self.key_file).map_err(|_| CliError::KeyEncoding)?;
-        let signer = smart_contract::Signer::try_from_private_key(&private_key)?;
+        let signer = smart_contract::Signer::try_from_private_key(&self.signer_key)?;
 
         let provider_url = provider_url.parse().unwrap();
         let provider = RpcProvider::new(provider_url, signer).await?;

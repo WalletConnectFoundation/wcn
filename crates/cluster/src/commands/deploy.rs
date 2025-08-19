@@ -6,11 +6,7 @@ use {
     wcn_cluster::{
         node_operator::{self},
         smart_contract::{evm, Deployer, Read},
-        EncryptionKey,
-        Node,
-        NodeOperator,
-        NodeOperators,
-        Settings,
+        EncryptionKey, Node, NodeOperator, NodeOperators, Settings,
     },
 };
 
@@ -32,7 +28,11 @@ pub struct DeployCmd {
     /// JSON string containing a serialized list of initial node operators.
     operators: Option<String>,
 
-    #[clap(long = "encryption-key", short = 'k')]
+    #[clap(
+        long = "encryption-key",
+        short = 'k',
+        env = "WCN_CLUSTER_ENCRYPTION_KEY"
+    )]
     /// Key used to encrypt the node operator data stored on-chain.
     encryption_key: String,
 }
@@ -77,14 +77,14 @@ pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
     let contract = provider.deploy(settings, operators).await?;
     let address = contract.address()?;
 
-    println!("Cluster contract deployed at address: {}", address);
+    println!("Cluster contract deployed at address: {address}");
 
     Ok(())
 }
 
 fn parse_operators_from_str(operators_str: &str) -> anyhow::Result<Vec<NodeOperator>> {
     serde_json::from_str::<Vec<NodeOperator>>(operators_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse operators JSON: {}", e))
+        .map_err(|e| anyhow::anyhow!("Failed to parse operators JSON: {e}"))
 }
 
 async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOperator>> {
@@ -94,7 +94,7 @@ async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOper
     contents.read_to_string(&mut buf).await?;
 
     let operators = serde_json::from_str::<Vec<NodeOperator>>(buf.as_str())
-        .map_err(|e| anyhow::anyhow!("Failed to parse operators file: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to parse operators file: {e}"))?;
 
     Ok(operators)
 }

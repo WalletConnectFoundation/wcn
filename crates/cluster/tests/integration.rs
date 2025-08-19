@@ -13,16 +13,9 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read,
-            Signer,
+            Read, Signer,
         },
-        testing,
-        Cluster,
-        EncryptionKey,
-        Node,
-        NodeOperator,
-        Settings,
-        SmartContract,
+        testing, Cluster, EncryptionKey, Node, NodeOperator, Settings, SmartContract,
     },
 };
 
@@ -209,30 +202,24 @@ pub async fn cli_test_suite() {
 
     let sc = cluster.smart_contract();
 
-    let mut tempdir = std::env::temp_dir();
-    tempdir.push("test_key_file");
-
     let key_bytes = anvil.keys()[0].to_bytes().to_vec();
-    let key_bytes = hex::encode(key_bytes).into_bytes();
+    let key = hex::encode(key_bytes);
 
-    let mut file = std::fs::File::create(&tempdir).unwrap();
-    file.write_all(&key_bytes).unwrap();
-
-    test_deploy(&anvil, &tempdir, sc, operators, cfg).unwrap();
-    // test_migration_start(&anvil, &tempdir, sc).unwrap();
+    test_deploy(&anvil, &key, sc, operators, cfg).unwrap();
+    // test_migration_start(&anvil, key, sc).unwrap();
 }
 
 fn test_migration_start(
     anvil: &AnvilInstance,
-    dir: &PathBuf,
+    key: &str,
     sc: &impl SmartContract,
 ) -> anyhow::Result<()> {
     let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
     let sc_addr = sc.address().unwrap().to_string();
 
     cmd.arg("migration")
-        .arg("--key-file")
-        .arg(dir.display().to_string())
+        .arg("-k")
+        .arg(key)
         .arg("--provider-url")
         .arg(anvil.ws_endpoint_url().to_string())
         .arg("--contract-address")
@@ -246,7 +233,7 @@ fn test_migration_start(
 
 fn test_deploy(
     anvil: &AnvilInstance,
-    dir: &PathBuf,
+    key: &str,
     sc: &impl SmartContract,
     initial_operators: Vec<NodeOperator>,
     cfg: Config,
@@ -257,8 +244,8 @@ fn test_deploy(
     let encryption_key = cfg.encryption_key.to_base64();
 
     cmd.arg("deploy")
-        .arg("--key-file")
-        .arg(dir.display().to_string())
+        .arg("-s")
+        .arg(key)
         .arg("--provider-url")
         .arg(anvil.ws_endpoint_url().to_string())
         .arg("--encryption-key")

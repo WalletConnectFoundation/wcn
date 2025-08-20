@@ -22,7 +22,7 @@ use {
 };
 
 /// Minimum number of [`Node`]s each [`NodeOperator`] is required to have.
-pub const MIN_NODES: usize = 2;
+pub const MIN_NODES: usize = 1;
 
 /// Globally unique identifier of a [`NodeOperator`];
 pub type Id = smart_contract::AccountAddress;

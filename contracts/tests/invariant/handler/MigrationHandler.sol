@@ -4,10 +4,13 @@ pragma solidity ^0.8.20;
 import {BaseHandler} from "./BaseHandler.sol";
 import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
 import {ClusterStore} from "tests/invariant/store/ClusterStore.sol";
-import {Cluster} from "src/Cluster.sol";
+import {Cluster, Bitmask} from "src/Cluster.sol";
+import {keyspace} from "tests/Utils.sol";
 
 /// @dev Handler for migration-related actions following the Lockup pattern
 contract MigrationHandler is BaseHandler {
+    using Bitmask for uint256;
+
     /*//////////////////////////////////////////////////////////////////////////
                                    CONSTRUCTOR
     //////////////////////////////////////////////////////////////////////////*/
@@ -32,8 +35,7 @@ contract MigrationHandler is BaseHandler {
     {
         // Assume no migration in progress and no maintenance
         vm.assume(cluster.getPullingOperators().length == 0);
-        (address maintainer,) = cluster.maintenance();
-        vm.assume(maintainer == address(0));
+        vm.assume(cluster.maintenanceSlot() == address(0));
         
         // Bound strategy to valid range
         strategy = uint8(_bound(strategy, 0, 2));
@@ -47,12 +49,13 @@ contract MigrationHandler is BaseHandler {
         vm.assume(!_sameKeyspace(slots, strategy, currentSlots, currentStrategy));
         
         // Call function - fail_on_revert will catch bugs
-        cluster.startMigration(slots, strategy);
+        cluster.startMigration(keyspace(slots, strategy));
         
         // Track migration in store
         address[] memory migrationOps = new address[](slots.length);
         for (uint256 i = 0; i < slots.length; i++) {
-            migrationOps[i] = cluster.operatorSlots(slots[i]);
+            (address addr, ) = cluster.operatorSlots(slots[i]);
+            migrationOps[i] = addr;
         }
         (uint64 migrationId,,) = cluster.getMigrationStatus();
         store.pushMigration(migrationId, migrationOps);
@@ -72,7 +75,8 @@ contract MigrationHandler is BaseHandler {
         
         // Select a pulling operator to act as
         uint8 slot = pullingOps[_bound(actorSeed, 0, pullingOps.length - 1)];
-        address pullingOperator = cluster.operatorSlots(slot);
+        (address addr, ) = cluster.operatorSlots(slot);
+        address pullingOperator = addr;
         
         (uint64 migrationId,,) = cluster.getMigrationStatus();
         
@@ -118,7 +122,7 @@ contract MigrationHandler is BaseHandler {
         if (slots.length == 0) {
             // Return a single valid slot
             uint8[] memory singleSlot = new uint8[](1);
-            singleSlot[0] = cluster.operatorToSlot(operators[0]);
+            singleSlot[0] = cluster.operatorSlotIndexes(operators[0]);
             return singleSlot;
         }
         
@@ -126,8 +130,8 @@ contract MigrationHandler is BaseHandler {
         for (uint256 i = 0; i < slots.length; i++) {
             slots[i] = uint8(_bound(slots[i], 0, 254));
             // Make sure slot is occupied
-            if (!cluster.slotOccupied(slots[i])) {
-                slots[i] = cluster.operatorToSlot(operators[i % operators.length]);
+            if (cluster.operatorBitmask().isUnset(slots[i])) {
+                slots[i] = cluster.operatorSlotIndexes(operators[i % operators.length]);
             }
         }
         

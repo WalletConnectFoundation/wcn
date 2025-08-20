@@ -29,8 +29,7 @@ contract MaintenanceHandler is BaseHandler {
         useOwner 
     {
         // Assume maintenance is not already active
-        (address maintainer,) = cluster.maintenance();
-        vm.assume(maintainer == address(0));
+        vm.assume(cluster.maintenanceSlot() == address(0));
         
         // Assume no migration in progress
         vm.assume(cluster.getPullingOperators().length == 0);
@@ -50,8 +49,7 @@ contract MaintenanceHandler is BaseHandler {
         useFuzzedOperator(operatorSeed)
     {
         // Assume maintenance is not already active
-        (address maintainer,) = cluster.maintenance();
-        vm.assume(maintainer == address(0));
+        vm.assume(cluster.maintenanceSlot() == address(0));
         
         // Assume no migration in progress
         vm.assume(cluster.getPullingOperators().length == 0);
@@ -68,8 +66,7 @@ contract MaintenanceHandler is BaseHandler {
         useOwner 
     {
         // Assume maintenance is active
-        (address maintainer,) = cluster.maintenance();
-        vm.assume(maintainer != address(0));
+        vm.assume(cluster.maintenanceSlot() != address(0));
         
         // Call function - fail_on_revert will catch bugs
         cluster.setMaintenance(false);

@@ -169,13 +169,6 @@ ClusterTest::exposed_validateOperatorData
     └── It should not revert.
 
 
-ClusterTest::exposed_findAvailableSlot
-├── When all slots are occupied
-│   └── It should revert with TooManyOperators.
-└── When slots are available
-    └── It should return the first available slot.
-
-
 ClusterTest::exposed_isSlotInKeyspace
 ├── When slot is in keyspace
 │   └── It should return true.

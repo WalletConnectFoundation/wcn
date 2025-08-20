@@ -4,7 +4,7 @@ use {
         signers::local::PrivateKeySigner,
     },
     derive_more::derive::AsRef,
-    std::{collections::HashSet, time::Duration},
+    std::{collections::HashSet, io::Write, path::PathBuf, time::Duration},
     tap::Tap,
     tracing_subscriber::EnvFilter,
     wcn_cluster::{
@@ -13,15 +13,9 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read,
-            Signer,
+            Read, Signer,
         },
-        testing,
-        Cluster,
-        EncryptionKey,
-        Node,
-        NodeOperator,
-        Settings,
+        testing, Cluster, EncryptionKey, Node, NodeOperator, Settings, SmartContract,
     },
 };
 
@@ -174,4 +168,92 @@ async fn connect(
 ) -> Cluster<Config> {
     let provider = provider(new_signer(operator, anvil), anvil).await;
     Cluster::connect(*cfg, &provider, address).await.unwrap()
+}
+
+#[tokio::test]
+pub async fn cli_test_suite() {
+    // Spin up a local Anvil instance automatically
+    let anvil = Anvil::new()
+        .block_time(1)
+        .chain_id(31337)
+        .try_spawn()
+        .unwrap();
+
+    let cfg = Config {
+        encryption_key: wcn_cluster::testing::encryption_key(),
+    };
+
+    let settings = Settings {
+        max_node_operator_data_bytes: 4096,
+    };
+
+    // Use Anvil's first key for deployment - convert PrivateKeySigner to our Signer
+    let private_key_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let signer =
+        Signer::try_from_private_key(&format!("{:#x}", private_key_signer.to_bytes())).unwrap();
+
+    let provider = provider(signer, &anvil).await;
+
+    let operators: Vec<_> = (1..=5).map(|n| new_node_operator(n, &anvil)).collect();
+
+    let cluster = Cluster::deploy(cfg.clone(), &provider, settings, operators.clone())
+        .await
+        .unwrap();
+
+    let sc = cluster.smart_contract();
+
+    let key_bytes = anvil.keys()[0].to_bytes().to_vec();
+    let key = hex::encode(key_bytes);
+
+    test_deploy(&anvil, &key, sc, operators, cfg).unwrap();
+    // test_migration_start(&anvil, key, sc).unwrap();
+}
+
+fn test_migration_start(
+    anvil: &AnvilInstance,
+    key: &str,
+    sc: &impl SmartContract,
+) -> anyhow::Result<()> {
+    let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
+    let sc_addr = sc.address().unwrap().to_string();
+
+    cmd.arg("migration")
+        .arg("-k")
+        .arg(key)
+        .arg("--provider-url")
+        .arg(anvil.ws_endpoint_url().to_string())
+        .arg("--contract-address")
+        .arg(sc_addr)
+        .arg("start")
+        .assert()
+        .success();
+
+    Ok(())
+}
+
+fn test_deploy(
+    anvil: &AnvilInstance,
+    key: &str,
+    sc: &impl SmartContract,
+    initial_operators: Vec<NodeOperator>,
+    cfg: Config,
+) -> anyhow::Result<()> {
+    let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
+    let operators = serde_json::to_string_pretty(&initial_operators).unwrap();
+
+    let encryption_key = cfg.encryption_key.to_base64();
+
+    cmd.arg("deploy")
+        .arg("-s")
+        .arg(key)
+        .arg("--provider-url")
+        .arg(anvil.ws_endpoint_url().to_string())
+        .arg("--encryption-key")
+        .arg(encryption_key)
+        .arg("--operators")
+        .arg(operators)
+        .assert()
+        .success();
+
+    Ok(())
 }

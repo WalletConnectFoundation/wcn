@@ -3,7 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-import {Cluster, NodeOperator, Settings} from "src/Cluster.sol";
+import {Cluster, NodeOperator, Settings, Bitmask} from "src/Cluster.sol";
+import {keyspace} from "tests/Utils.sol";
 
 contract MockClusterV2 is Cluster {
     uint256 public newVariable;
@@ -24,6 +25,8 @@ contract MockClusterV2 is Cluster {
 }
 
 contract ClusterIntegrationTest is Test {
+    using Bitmask for uint256;
+
     Cluster cluster;
     address proxy;
     address owner;
@@ -32,7 +35,8 @@ contract ClusterIntegrationTest is Test {
     function _defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             maxOperatorDataBytes: 1024,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
     }
     
@@ -203,7 +207,7 @@ contract ClusterIntegrationTest is Test {
         newSlots[0] = 0;
         
         vm.prank(owner);
-        cluster.startMigration(newSlots, 1);
+        cluster.startMigration(keyspace(newSlots, 1));
         
         // Transfer ownership during migration
         vm.prank(owner);
@@ -228,7 +232,7 @@ contract ClusterIntegrationTest is Test {
         newSlots[0] = 0;
         
         vm.prank(owner);
-        cluster.startMigration(newSlots, 1);
+        cluster.startMigration(keyspace(newSlots, 1));
         
         // Upgrade should work during migration
         address newImpl = address(new MockClusterV2());

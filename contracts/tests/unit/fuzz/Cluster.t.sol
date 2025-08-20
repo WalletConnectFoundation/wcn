@@ -4,15 +4,19 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
-import {Cluster, Settings, NodeOperator} from "src/Cluster.sol";
+import {Cluster, Settings, NodeOperator, Bitmask} from "src/Cluster.sol";
+import {keyspace} from "tests/Utils.sol";
 
 contract ClusterFuzzTest is Test {
+    using Bitmask for uint256;
+
     ClusterHarness public cluster;
     
     function _defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             maxOperatorDataBytes: 4096,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
     }
     
@@ -91,7 +95,8 @@ contract ClusterFuzzTest is Test {
         maxBytes = uint16(bound(maxBytes, 1, 8192)); // Reasonable range
         Settings memory customSettings = Settings({
             maxOperatorDataBytes: maxBytes,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
         
         ClusterHarness customCluster = _freshClusterWithSettings(3, customSettings);
@@ -106,62 +111,7 @@ contract ClusterFuzzTest is Test {
             // Should not revert
             customCluster.exposed_validateOperatorData(blob);
         }
-    }
-    
-    /*//////////////////////////////////////////////////////////////////////////
-                            FIND AVAILABLE SLOT FUZZ TESTS
-    //////////////////////////////////////////////////////////////////////////*/
-    
-    /// @dev Fuzz test for _findAvailableSlot correctness
-    function testFuzz_FindAvailableSlot_Correctness(uint8 operatorCount) public {
-        operatorCount = uint8(bound(operatorCount, 1, cluster.MAX_OPERATORS() - 1)); // Leave room for one more
-        
-        ClusterHarness testCluster = _freshCluster(operatorCount);
-        
-        uint8 availableSlot = testCluster.exposed_findAvailableSlot();
-        
-        // The returned slot should not be occupied
-        assertFalse(testCluster.slotOccupied(availableSlot));
-        
-        // Should be less than MAX_OPERATORS
-        assertLt(availableSlot, cluster.MAX_OPERATORS());
-    }
-    
-    /// @dev Fuzz test for _findAvailableSlot with gaps in slot allocation
-    function testFuzz_FindAvailableSlot_WithGaps(uint8 slotsToFree) public {
-        // Start with a cluster that has some operators
-        ClusterHarness testCluster = _freshCluster(10);
-        
-        slotsToFree = uint8(bound(slotsToFree, 1, 5)); // Free some slots
-        
-        // Remove some operators to create gaps
-        address[] memory operators = testCluster.getAllOperators();
-        for (uint256 i = 0; i < slotsToFree && i < operators.length; i++) {
-            // Only remove if it won't violate minOperators and isn't in keyspace
-            if (testCluster.getOperatorCount() > _defaultSettings().minOperators) {
-                try testCluster.removeNodeOperator(operators[i]) {
-                    // Success - slot should now be available
-                } catch {
-                    // May fail if operator is in keyspace, that's ok
-                }
-            }
-        }
-        
-        uint8 availableSlot = testCluster.exposed_findAvailableSlot();
-        
-        // The returned slot should not be occupied
-        assertFalse(testCluster.slotOccupied(availableSlot));
-        assertLt(availableSlot, cluster.MAX_OPERATORS());
-    }
-    
-    /// @dev Fuzz test that _findAvailableSlot reverts when full
-    function testFuzz_FindAvailableSlot_RevertWhenFull() public {
-        // Create a cluster at max capacity
-        ClusterHarness maxCluster = _freshCluster(cluster.MAX_OPERATORS());
-        
-        vm.expectRevert(Cluster.TooManyOperators.selector);
-        maxCluster.exposed_findAvailableSlot();
-    }
+    }  
     
     /*//////////////////////////////////////////////////////////////////////////
                             KEYSPACE SORTING FUZZ TESTS
@@ -222,42 +172,12 @@ contract ClusterFuzzTest is Test {
         // - Increments keyspaceVersion for proper keyspace indexing
         // - Sets up migration tracking state
         vm.prank(OWNER);
-        testCluster.startMigration(validSlots, 0);
+        testCluster.startMigration(keyspace(validSlots, 0));
         
         // STEP 5: Verify internal sorting invariant is maintained
         (uint8[] memory keyspaceMembers,) = testCluster.getCurrentKeyspace();
         _assertArrayIsSorted(keyspaceMembers);
-    }
-    
-    /// @dev Fuzz test that migration rejects unsorted slots
-    function testFuzz_Migration_RejectsUnsortedSlots(uint8[] calldata slots) public {
-        vm.assume(slots.length > 1);
-        vm.assume(slots.length <= 10);
-        
-        // Create an intentionally unsorted array
-        uint8[] memory unsortedSlots = new uint8[](slots.length);
-        bool isUnsorted = false;
-        
-        for (uint256 i = 0; i < slots.length; i++) {
-            unsortedSlots[i] = uint8(bound(slots[i], 0, 9)); // Bound to reasonable range
-        }
-        
-        // Check if array is actually unsorted
-        for (uint256 i = 1; i < unsortedSlots.length; i++) {
-            if (unsortedSlots[i] <= unsortedSlots[i-1]) {
-                isUnsorted = true;
-                break;
-            }
-        }
-        
-        if (isUnsorted) {
-            ClusterHarness testCluster = _freshCluster(10);
-            
-            vm.expectRevert(Cluster.InvalidOperator.selector);
-            vm.prank(OWNER);
-            testCluster.startMigration(unsortedSlots, 0);
-        }
-    }
+    }  
     
     /*//////////////////////////////////////////////////////////////////////////
                             OPERATOR COUNT INVARIANT FUZZ TESTS
@@ -350,13 +270,14 @@ contract ClusterFuzzTest is Test {
         address[] memory operators = testCluster.getAllOperators();
         for (uint256 i = 0; i < operators.length; i++) {
             address operator = operators[i];
-            uint8 slot = testCluster.operatorToSlot(operator);
+            uint8 slotIdx = testCluster.operatorSlotIndexes(operator);
             
             // Slot should be occupied
-            assertTrue(testCluster.slotOccupied(slot));
+            assert(testCluster.operatorBitmask().isSet(slotIdx));
             
             // Slot should map back to the same operator
-            assertEq(testCluster.operatorSlots(slot), operator);
+            (address addr, ) = testCluster.operatorSlots(slotIdx);
+            assertEq(addr, operator);
         }
     }
     

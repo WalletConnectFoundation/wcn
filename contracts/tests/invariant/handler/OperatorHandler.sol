@@ -127,7 +127,7 @@ contract OperatorHandler is BaseHandler {
     
     /// @dev Check if an operator is in the current keyspace
     function _isOperatorInCurrentKeyspace(address operatorAddr) internal view returns (bool) {
-        uint8 operatorSlot = cluster.operatorToSlot(operatorAddr);
+        uint8 operatorSlot = cluster.operatorSlotIndexes(operatorAddr);
         
         // Get migration status to determine which keyspaces to check
         (, , bool migrationInProgress) = cluster.getMigrationStatus();

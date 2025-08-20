@@ -10,9 +10,11 @@ import {ClusterStore} from "tests/invariant/store/ClusterStore.sol";
 import {OperatorHandler} from "tests/invariant/handler/OperatorHandler.sol";
 import {MigrationHandler} from "tests/invariant/handler/MigrationHandler.sol";
 import {MaintenanceHandler} from "tests/invariant/handler/MaintenanceHandler.sol";
-import {Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "src/Cluster.sol";
+import {Bitmask, Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "src/Cluster.sol";
 
 contract ClusterInvariants is StdInvariant, Test {
+    using Bitmask for uint256;
+
     /*//////////////////////////////////////////////////////////////////////////
                                      VARIABLES
     //////////////////////////////////////////////////////////////////////////*/
@@ -54,41 +56,18 @@ contract ClusterInvariants is StdInvariant, Test {
     
     /*//////////////////////////////////////////////////////////////////////////
                                      INVARIANTS
-    //////////////////////////////////////////////////////////////////////////*/
-    
-    /// @dev Operator count consistency
-    function invariant_OperatorCountConsistency() public view {
-        ClusterView memory clusterView = cluster.getView();
-        
-        uint16 activeOperators = 0;
-        for (uint256 i = 0; i < clusterView.operators.length; i++) {
-            if (clusterView.operators[i] != address(0)) {
-                activeOperators++;
-            }
-        }
-        
-        assertEq(
-            clusterView.operatorCount,
-            activeOperators,
-            "Operator count must match number of active operators in view"
-        );
-        assertLe(
-            clusterView.operatorCount,
-            cluster.MAX_OPERATORS(),
-            "Operator count must not exceed maximum"
-        );
-    }
+    //////////////////////////////////////////////////////////////////////////*/ 
     
     /// @dev Keyspace members must exist and be sorted
     function invariant_KeyspaceIntegrity() public view {
         ClusterView memory clusterView = cluster.getView();
         Keyspace memory currentKeyspace = clusterView.keyspaces[clusterView.keyspaceVersion % 2];
-        uint8[] memory members = currentKeyspace.members;
+        uint8[] memory members = currentKeyspace.operatorBitmask.intoArray();
         
         // All keyspace members must correspond to actual operators
         for (uint256 i = 0; i < members.length; i++) {
             assertTrue(
-                cluster.slotOccupied(members[i]),
+                cluster.operatorBitmask().isSet(members[i]),
                 "Keyspace member slot must be occupied"
             );
         }
@@ -105,19 +84,17 @@ contract ClusterInvariants is StdInvariant, Test {
         // Keyspace size cannot exceed operator count
         assertLe(
             members.length,
-            clusterView.operatorCount,
+            clusterView.operatorSlots.length,
             "Keyspace size cannot exceed operator count"
         );
-    }
-    
-
+    }  
     
     /// @dev Migration state consistency
     function invariant_MigrationStateConsistency() public view {
         ClusterView memory clusterView = cluster.getView();
         
         // If pulling operators exist, migration should be in progress
-        bool hasPullingOps = clusterView.pullingOperators.length > 0;
+        bool hasPullingOps = clusterView.migration.pullingOperatorBitmask > 0;
         (,, bool migrationInProgress) = cluster.getMigrationStatus();
         
         if (hasPullingOps) {
@@ -128,12 +105,13 @@ contract ClusterInvariants is StdInvariant, Test {
         }
         
         // Pulling operators must be valid slots
-        for (uint256 i = 0; i < clusterView.pullingOperators.length; i++) {
-            uint8 slot = clusterView.pullingOperators[i];
-            assertTrue(
-                cluster.slotOccupied(slot),
-                "Pulling operator slot must be occupied"
-            );
+        for (uint256 i = 0; i <= clusterView.migration.pullingOperatorBitmask.findLastSet(); i++) {
+            if (clusterView.migration.pullingOperatorBitmask.isSet(uint8(i))) {
+                assertTrue(
+                    cluster.operatorBitmask().isSet(uint8(i)),
+                    "Pulling operator slot must be occupied"
+                );
+            }
         }
     }
     
@@ -161,9 +139,9 @@ contract ClusterInvariants is StdInvariant, Test {
         assertTrue(clusterView.keyspaceVersion >= 0, "Keyspace version should be valid");
         
         // Current keyspace should have valid data when operators exist, unless a migration is in progress
-        if (clusterView.operatorCount > 0 && !migrationInProgress) {
+        if (clusterView.operatorSlots.length > 0 && !migrationInProgress) {
             assertTrue(
-                currentKeyspace.members.length > 0,
+                currentKeyspace.operatorBitmask > 0,
                 "Current keyspace should have members when operators exist and no migration is in progress"
             );
         }
@@ -194,11 +172,11 @@ contract ClusterInvariants is StdInvariant, Test {
         
         // Log final state
         console.log("=== INVARIANT CAMPAIGN COMPLETED ===");
-        console.log("Final operator count:", finalClusterView.operatorCount);
+        console.log("Final operator count:", finalClusterView.operatorSlots.length);
         console.log("Final cluster version:", finalClusterView.version);
         console.log("Final keyspace version:", finalClusterView.keyspaceVersion);
-        console.log("Migration in progress:", finalClusterView.pullingOperators.length > 0);
-        console.log("Maintenance active:", finalClusterView.maintenance.slot != address(0));
+        console.log("Migration in progress:", finalClusterView.migration.pullingOperatorBitmask > 0);
+        console.log("Maintenance active:", finalClusterView.maintenanceSlot != address(0));
         
         // Log call distribution from handlers (Lockup pattern)
         console.log("\n=== HANDLER CALL STATISTICS ===");
@@ -254,7 +232,8 @@ contract ClusterInvariants is StdInvariant, Test {
     function _defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             maxOperatorDataBytes: 4096,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
     }
 } 

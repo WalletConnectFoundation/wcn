@@ -5,9 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ClusterHarness} from "tests/unit/ClusterHarness.sol";
-import {Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "src/Cluster.sol";
+import {Bitmask, Cluster, Settings, NodeOperator, ClusterView, Keyspace} from "src/Cluster.sol";
+import {keyspace} from "tests/Utils.sol";
 
 contract ClusterTest is Test {
+    using Bitmask for uint256;
+
     ClusterHarness public cluster;
     
     // Events from Cluster contract
@@ -16,7 +19,7 @@ contract ClusterTest is Test {
     event NodeOperatorUpdated(address indexed operator, uint8 indexed slot, bytes operatorData, uint128 version);
     event NodeOperatorRemoved(address indexed operator, uint8 indexed slot, uint128 version);
     event MaintenanceToggled(address indexed operator, bool active, uint128 version);
-    event MigrationStarted(uint64 indexed id, uint8[] operators, uint8 replicationStrategy, uint64 keyspaceVersion, uint128 version);
+    event MigrationStarted(uint64 indexed id, Keyspace keyspace, uint64 keyspaceVersion, uint128 version);
     event MigrationDataPullCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationCompleted(uint64 indexed id, address indexed operator, uint128 version);
     event MigrationAborted(uint64 indexed id, uint128 version);
@@ -25,7 +28,8 @@ contract ClusterTest is Test {
     function _defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             maxOperatorDataBytes: 4096,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
     }
     
@@ -97,7 +101,8 @@ contract ClusterTest is Test {
         // It should revert with InsufficientOperators.
         Settings memory strictSettings = Settings({
             maxOperatorDataBytes: 4096,
-            minOperators: 3
+            minOperators: 3,
+            extra: ""
         });
         NodeOperator[] memory tooFewOperators = _createInitialOperators(2);
         
@@ -129,7 +134,8 @@ contract ClusterTest is Test {
         // It should revert with InvalidOperatorData.
         Settings memory smallSettings = Settings({
             maxOperatorDataBytes: 10,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
         NodeOperator[] memory operators = new NodeOperator[](1);
         operators[0] = NodeOperator({
@@ -335,9 +341,9 @@ contract ClusterTest is Test {
         // Verify data was updated
         ClusterView memory clusterView = cluster.getView();
         bool found = false;
-        for (uint256 i = 0; i < clusterView.operators.length; i++) {
-            if (clusterView.operators[i] == updatedOperator.addr) {
-                assertEq(clusterView.operatorData[i], updatedOperator.data);
+        for (uint256 i = 0; i < clusterView.operatorSlots.length; i++) {
+            if (clusterView.operatorSlots[i].addr == updatedOperator.addr) {
+                assertEq(clusterView.operatorSlots[i].data, updatedOperator.data);
                 found = true;
                 break;
             }
@@ -368,7 +374,8 @@ contract ClusterTest is Test {
         // Update settings to require more operators than we have after removal
         Settings memory strictSettings = Settings({
             maxOperatorDataBytes: 4096,
-            minOperators: 2 // Same as current count, removal would violate this
+            minOperators: 2, // Same as current count, removal would violate this
+            extra: ""
         });
         
         vm.prank(OWNER);
@@ -467,8 +474,7 @@ contract ClusterTest is Test {
         
         // Check maintenance state
         ClusterView memory clusterView = cluster.getView();
-        assertEq(clusterView.maintenance.slot, OWNER);
-        assertTrue(clusterView.maintenance.isOwnerMaintenance);
+        assertEq(clusterView.maintenanceSlot, OWNER);
     }
 
     function test_StartMigrationWhenCallerIsNotOwner() external {
@@ -477,7 +483,7 @@ contract ClusterTest is Test {
         
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, NON_OWNER));
         vm.prank(NON_OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
     }
 
 
@@ -490,7 +496,7 @@ contract ClusterTest is Test {
         
         vm.expectRevert(Cluster.MaintenanceInProgress.selector);
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
     }
 
     function test_StartMigrationWhenMigrationIsAlreadyInProgress() external {
@@ -498,25 +504,11 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1);
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0); // Start first migration
+        cluster.startMigration(keyspace(operatorSlots, 0)); // Start first migration
         
         vm.expectRevert(Cluster.MigrationInProgress.selector);
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0); // Try to start another
-    }
-
-    function test_StartMigrationWhenNewOperatorSlotsExceedsMAX_OPERATORS() external {
-        // It should revert with TooManyOperators.
-        uint8[] memory tooManySlots = new uint8[](cluster.MAX_OPERATORS() + 1); // Exceeds MAX_OPERATORS
-        for (uint256 i = 0; i < cluster.MAX_OPERATORS() + 1; i++) {
-            tooManySlots[i] = uint8(i);
-        }
-
-        assertEq(tooManySlots.length, cluster.MAX_OPERATORS() + 1, "Too many slots should be equal to MAX_OPERATORS + 1");
-        
-        vm.expectRevert(Cluster.TooManyOperators.selector);
-        vm.prank(OWNER);
-        cluster.startMigration(tooManySlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0)); // Try to start another
     }
 
     function test_StartMigrationWhenNewOperatorSlotsIsLessThanMinOperators() external {
@@ -532,18 +524,7 @@ contract ClusterTest is Test {
         
         vm.expectRevert(Cluster.InsufficientOperators.selector);
         vm.prank(OWNER);
-        cluster.startMigration(newOperatorSlots, 0);
-    }
-
-    function test_StartMigrationWhenNewOperatorSlotsAreNotSorted() external {
-        // It should revert with InvalidOperator.
-        uint8[] memory unsortedSlots = new uint8[](2);
-        unsortedSlots[0] = 1;
-        unsortedSlots[1] = 0; // Not sorted
-        
-        vm.expectRevert(Cluster.InvalidOperator.selector);
-        vm.prank(OWNER);
-        cluster.startMigration(unsortedSlots, 0);
+        cluster.startMigration(keyspace(newOperatorSlots, 0));
     }
 
     function test_StartMigrationWhenSlotDoesNotExist() external {
@@ -553,16 +534,15 @@ contract ClusterTest is Test {
         
         vm.expectRevert(Cluster.OperatorNotFound.selector);
         vm.prank(OWNER);
-        cluster.startMigration(nonExistentSlots, 0);
+        cluster.startMigration(keyspace(nonExistentSlots, 0));
     }
 
     function test_StartMigrationWhenKeyspaceIsIdenticalToCurrent() external {
         // It should revert with SameKeyspace.
         uint8[] memory currentSlots = _getSortedOperatorSlots(2); // Same as current keyspace
-        
         vm.expectRevert(Cluster.SameKeyspace.selector);
         vm.prank(OWNER);
-        cluster.startMigration(currentSlots, 0); // Same slots and strategy
+        cluster.startMigration(keyspace(currentSlots, 0)); // Same slots and strategy
     }
 
     function test_StartMigrationWhenInputsAreValid() external {
@@ -576,10 +556,10 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1); // Migrate to just one operator
         
         vm.expectEmit(true, true, true, true);
-        emit MigrationStarted(1, operatorSlots, 0, initialKeyspaceVersion + 1, initialVersion + 1);
+        emit MigrationStarted(1, keyspace(operatorSlots, 0), initialKeyspaceVersion + 1, initialVersion + 1);
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         assertEq(cluster.version(), initialVersion + 1);
         assertEq(cluster.keyspaceVersion(), initialKeyspaceVersion + 1);
@@ -607,7 +587,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1);
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         vm.expectRevert(Cluster.WrongMigrationId.selector);
         vm.prank(address(uint160(0x1001))); // First operator address
@@ -619,7 +599,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1);
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         vm.expectRevert(Cluster.CallerNotOperator.selector);
         vm.prank(NON_OWNER); // Not an operator
@@ -631,7 +611,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1); // Only first operator is pulling
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         vm.expectRevert(Cluster.OperatorNotPulling.selector);
         vm.prank(address(uint160(0x1002))); // Second operator (not pulling)
@@ -648,7 +628,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1); // Different from current keyspace
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 1); // Different replication strategy
+        cluster.startMigration(keyspace(operatorSlots, 1)); // Different replication strategy
         
         (,uint16 remainingBefore,) = cluster.getMigrationStatus();
         
@@ -665,7 +645,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1); // Only one operator
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         uint128 versionBefore = cluster.version();
         
@@ -686,7 +666,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(2); // Two operators
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 1); // Different replication strategy
+        cluster.startMigration(keyspace(operatorSlots, 1)); // Different replication strategy
         
         uint128 versionBefore = cluster.version();
         
@@ -706,7 +686,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1);
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, NON_OWNER));
         vm.prank(NON_OWNER);
@@ -725,7 +705,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1);
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 0);
+        cluster.startMigration(keyspace(operatorSlots, 0));
         
         vm.expectRevert(Cluster.WrongMigrationId.selector);
         vm.prank(OWNER);
@@ -741,7 +721,7 @@ contract ClusterTest is Test {
         uint8[] memory operatorSlots = _getSortedOperatorSlots(1); // Different from current
         
         vm.prank(OWNER);
-        cluster.startMigration(operatorSlots, 1); // Different replication strategy
+        cluster.startMigration(keyspace(operatorSlots, 1)); // Different replication strategy
         
         uint128 versionBefore = cluster.version();
         uint64 keyspaceVersionBefore = cluster.keyspaceVersion();
@@ -766,7 +746,8 @@ contract ClusterTest is Test {
         // It should revert with OwnableUnauthorizedAccount.
         Settings memory newSettings = Settings({
             maxOperatorDataBytes: 2048,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
         
         vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, NON_OWNER));
@@ -778,7 +759,8 @@ contract ClusterTest is Test {
         // It should revert with InsufficientOperators.
         Settings memory strictSettings = Settings({
             maxOperatorDataBytes: 4096,
-            minOperators: 10 // More than current operator count of 2
+            minOperators: 10, // More than current operator count of 2
+            extra: ""
         });
         
         vm.expectRevert(Cluster.InsufficientOperators.selector);
@@ -792,7 +774,8 @@ contract ClusterTest is Test {
         // It should increment version.
         Settings memory newSettings = Settings({
             maxOperatorDataBytes: 2048,
-            minOperators: 1
+            minOperators: 1,
+            extra: ""
         });
         
         uint128 versionBefore = cluster.version();
@@ -847,17 +830,14 @@ contract ClusterTest is Test {
         ClusterView memory clusterView = cluster.getView();
         Keyspace memory currentKeyspace = clusterView.keyspaces[clusterView.keyspaceVersion % 2];
         
-        assertEq(clusterView.operatorCount, 2);
         assertEq(clusterView.version, 1);
         assertEq(clusterView.keyspaceVersion, 0);
-        assertEq(clusterView.migrationId, 0);
-        assertEq(clusterView.operators.length, 2);
-        assertEq(clusterView.operatorData.length, 2);
-        assertEq(currentKeyspace.members.length, 2);
+        assertEq(clusterView.migration.id, 0);
+        assertEq(clusterView.operatorSlots.length, 2);
+        assertEq(currentKeyspace.operatorBitmask.countSet(), 2);
         assertEq(currentKeyspace.replicationStrategy, 0);
-        assertEq(clusterView.pullingOperators.length, 0);
-        assertEq(clusterView.maintenance.slot, address(0));
-        assertFalse(clusterView.maintenance.isOwnerMaintenance);
+        assertEq(clusterView.migration.pullingOperatorBitmask, 0);
+        assertEq(clusterView.maintenanceSlot, address(0));
         
         // Verify settings
         assertEq(clusterView.settings.maxOperatorDataBytes, _defaultSettings().maxOperatorDataBytes);
@@ -873,7 +853,7 @@ contract ClusterTest is Test {
         uint8[] memory newKeyspace = new uint8[](1);
         newKeyspace[0] = 0;
         vm.prank(OWNER);
-        cluster.startMigration(newKeyspace, 0);
+        cluster.startMigration(keyspace(newKeyspace, 0));
         
         // 3. Complete migration for operator in slot 0 (addr 0x1001).
         vm.prank(address(uint160(0x1001)));
@@ -890,17 +870,16 @@ contract ClusterTest is Test {
         // We have operators in slot 0 and 2. The highest slot is 2.
         // The returned `operators` array should have length 3.
         ClusterView memory clusterView = cluster.getView();
-        assertEq(clusterView.operators.length, 3, "operators array length should be 3 (for slots 0,1,2)");
-        assertEq(clusterView.operatorData.length, 3, "operatorData array length should be 3");
+        assertEq(clusterView.operatorSlots.length, 3, "operators array length should be 3 (for slots 0,1,2)");
 
-        assertEq(clusterView.operators[0], address(uint160(0x1001)), "Slot 0 should have operator");
-        assertEq(clusterView.operatorData[0].length > 0, true, "Slot 0 should have data");
+        assertEq(clusterView.operatorSlots[0].addr, address(uint160(0x1001)), "Slot 0 should have operator");
+        assertEq(clusterView.operatorSlots[0].data.length > 0, true, "Slot 0 should have data");
 
-        assertEq(clusterView.operators[1], address(0), "Slot 1 should be empty");
-        assertEq(clusterView.operatorData[1].length, 0, "Slot 1 should have no data");
+        assertEq(clusterView.operatorSlots[1].addr, address(0), "Slot 1 should be empty");
+        assertEq(clusterView.operatorSlots[1].data.length, 0, "Slot 1 should have no data");
 
-        assertEq(clusterView.operators[2], address(uint160(0x1003)), "Slot 2 should have operator");
-        assertEq(clusterView.operatorData[2].length > 0, true, "Slot 2 should have data");
+        assertEq(clusterView.operatorSlots[2].addr, address(uint160(0x1003)), "Slot 2 should have operator");
+        assertEq(clusterView.operatorSlots[2].data.length > 0, true, "Slot 2 should have data");
     }
 
     function test_Exposed_validateOperatorDataWhenDataIsEmpty() external {
@@ -920,34 +899,6 @@ contract ClusterTest is Test {
         // It should not revert.
         bytes memory validData = "valid operator data";
         cluster.exposed_validateOperatorData(validData); // Should not revert
-    }
-
-    function test_Exposed_findAvailableSlotWhenAllSlotsAreOccupied() external {
-        // It should revert with TooManyOperators.
-        // Create a cluster at max capacity
-        NodeOperator[] memory maxOperators = new NodeOperator[](cluster.MAX_OPERATORS());
-        for (uint256 i = 0; i < cluster.MAX_OPERATORS(); i++) {
-            maxOperators[i] = NodeOperator({
-                addr: address(uint160(0x4000 + i)),
-                data: abi.encodePacked("slot_op", i)
-            });
-        }
-        
-        ClusterHarness implementation = new ClusterHarness();
-        bytes memory initData = abi.encodeCall(Cluster.initialize, (_defaultSettings(), maxOperators));
-        
-        vm.prank(OWNER);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
-        ClusterHarness maxCluster = ClusterHarness(address(proxy));
-        
-        vm.expectRevert(Cluster.TooManyOperators.selector);
-        maxCluster.exposed_findAvailableSlot();
-    }
-
-    function test_Exposed_findAvailableSlotWhenSlotsAreAvailable() external view {
-        // It should return the first available slot.
-        uint8 availableSlot = cluster.exposed_findAvailableSlot();
-        assertEq(availableSlot, 2); // Slots 0,1 are occupied, so slot 2 should be available
     }
 
     function test_Exposed_isSlotInKeyspaceWhenSlotIsInKeyspace() external view {

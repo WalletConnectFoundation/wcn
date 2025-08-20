@@ -21,7 +21,6 @@ pub struct DeployCmd {
 
     #[clap(long = "operators-file", short = 'n')]
     /// Path to a file containing a serialized list initial node operators.
-    /// e.g. --operators-json '[{"peer_id":"abcdefg","addr":"127.0.0.1:40001"}]'
     operators_file: Option<PathBuf>,
 
     #[clap(long = "operators", short = 'o')]
@@ -83,8 +82,15 @@ pub async fn exec(cmd: DeployCmd) -> anyhow::Result<()> {
 }
 
 fn parse_operators_from_str(operators_str: &str) -> anyhow::Result<Vec<NodeOperator>> {
-    serde_json::from_str::<Vec<NodeOperator>>(operators_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse operators JSON: {e}"))
+    let operators = serde_json::from_str::<Vec<Operator>>(operators_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse operators JSON: {e}"))?;
+
+    let operators = operators
+        .into_iter()
+        .map(|op| NodeOperator::new(op.id, op.name, op.nodes, op.clients))
+        .try_collect()?;
+
+    Ok(operators)
 }
 
 async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOperator>> {
@@ -93,8 +99,13 @@ async fn read_operators_from_file(path: &PathBuf) -> anyhow::Result<Vec<NodeOper
 
     contents.read_to_string(&mut buf).await?;
 
-    let operators = serde_json::from_str::<Vec<NodeOperator>>(buf.as_str())
+    let operators = serde_json::from_str::<Vec<Operator>>(buf.as_str())
         .map_err(|e| anyhow::anyhow!("Failed to parse operators file: {e}"))?;
+
+    let operators = operators
+        .into_iter()
+        .map(|op| NodeOperator::new(op.id, op.name, op.nodes, op.clients))
+        .try_collect()?;
 
     Ok(operators)
 }
@@ -115,4 +126,22 @@ impl wcn_cluster::Config for DeployConfig {
     fn new_node(&self, _operator_id: node_operator::Id, node: Node) -> Self::Node {
         node
     }
+}
+
+/// Entity operating a set of [`Node`]s within a WCN cluster.
+#[derive(AsRef, Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Operator<N = Node> {
+    /// ID of this [`NodeOperator`].
+    #[as_ref]
+    pub id: node_operator::Id,
+
+    /// Name of the [`NodeOperator`].
+    pub name: node_operator::Name,
+
+    /// List of [`Client`]s authorized to use the WCN cluster on behalf of the
+    /// [`NodeOperator`].
+    pub clients: Vec<wcn_cluster::Client>,
+
+    /// List of [`Node`]s of the [`NodeOperator`].
+    nodes: Vec<N>,
 }

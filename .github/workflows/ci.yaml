@@ -218,11 +218,6 @@ jobs:
         include:
             - name: wcn-node-legacy
               dockerfile: Dockerfile
-            - name: wcn-node
-              dockerfile: infra/Dockerfile.node
-            - name: wcn-db
-              dockerfile: infra/Dockerfile.db
-
     steps:
       - uses: actions/checkout@v4
 

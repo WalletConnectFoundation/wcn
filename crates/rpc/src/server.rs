@@ -11,7 +11,7 @@ use {
         Rpc,
     },
     derive_where::derive_where,
-    futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt, TryStream as _},
+    futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStream as _},
     futures_concurrency::future::Race as _,
     libp2p_identity::PeerId,
     pin_project::pin_project,

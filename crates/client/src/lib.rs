@@ -34,12 +34,14 @@ use {
     },
 };
 pub use {
+    encryption::{Encryption, Error as EncryptionError},
     libp2p_identity::{Keypair, PeerId},
     wcn_cluster::EncryptionKey,
     wcn_storage_api::{ErrorKind as CoordinatorErrorKind, MapPage, Namespace},
 };
 
 mod cluster;
+mod encryption;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -63,6 +65,9 @@ pub enum Error {
 
     #[error("Failed to read smart contract: {0}")]
     SmartContract(#[from] smart_contract::ReadError),
+
+    #[error("Encryption failed: {0}")]
+    Encryption(#[from] encryption::Error),
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -219,6 +224,13 @@ pub trait ClientBuilder: RequestExecutor + Sized {
         WithRetries {
             core: self,
             max_attempts,
+        }
+    }
+
+    fn with_encryption(self, encryption: Encryption) -> WithEncryption<Self> {
+        WithEncryption {
+            core: self,
+            encryption,
         }
     }
 
@@ -417,6 +429,41 @@ where
         self.observer.observe(metadata);
 
         result
+    }
+}
+
+pub struct WithEncryption<C = Client> {
+    core: C,
+    encryption: Encryption,
+}
+
+impl<C> RequestExecutor for WithEncryption<C>
+where
+    C: RequestExecutor + Send + Sync,
+{
+    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        self.core.using_next_node(cb)
+    }
+
+    async fn execute_request<T>(
+        &self,
+        client_conn: &CoordinatorConnection,
+        op: &op::Operation<'_>,
+    ) -> Result<T, CoordinatorError>
+    where
+        op::Output: op::DowncastOutput<T>,
+    {
+        self.core.execute_request(client_conn, op).await
+    }
+
+    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
+    where
+        op::Output: op::DowncastOutput<T>,
+    {
+        todo!()
     }
 }
 

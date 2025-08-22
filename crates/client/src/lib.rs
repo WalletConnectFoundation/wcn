@@ -1,6 +1,6 @@
 use {
     arc_swap::ArcSwap,
-    libp2p_identity::{Keypair, PeerId},
+    derive_where::derive_where,
     std::{
         net::SocketAddrV4,
         sync::Arc,
@@ -24,7 +24,6 @@ use {
     wcn_storage_api::{
         Error as CoordinatorError,
         MapEntryBorrowed,
-        Namespace,
         Record,
         RecordBorrowed,
         RecordExpiration,
@@ -35,8 +34,9 @@ use {
     },
 };
 pub use {
+    libp2p_identity::{Keypair, PeerId},
     wcn_cluster::EncryptionKey,
-    wcn_storage_api::{ErrorKind as CoordinatorErrorKind, MapPage},
+    wcn_storage_api::{ErrorKind as CoordinatorErrorKind, MapPage, Namespace},
 };
 
 mod cluster;
@@ -420,7 +420,7 @@ where
     }
 }
 
-#[derive(Clone)]
+#[derive_where(Clone)]
 pub struct ReplicaClient<C> {
     inner: Arc<C>,
 }

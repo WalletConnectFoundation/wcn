@@ -463,15 +463,40 @@ struct ConnectionInner {
 }
 
 /// Inbound RPC with yet undefined type.
-pub struct InboundRpc<API: Api> {
-    id: API::RpcId,
+pub struct InboundRpc<API: Api, ID = <API as super::Api>::RpcId> {
+    id: ID,
     stream: BiDirectionalStream,
     permit: OwnedSemaphorePermit,
     shutdown_signal: ShutdownSignal,
     conn: Connection<API>,
 }
 
+impl<API: Api> InboundRpc<API, ()> {
+    async fn read_id(mut self) -> Result<InboundRpc<API>> {
+        let id = tokio::time::timeout(
+            Duration::from_millis(100),
+            self.stream.rx.get_mut().read_u8(),
+        )
+        .await
+        .map_err(|_| ErrorInner::ReadRpcIdTimeout)?
+        .map_err(Error::new)?;
+
+        Ok(InboundRpc {
+            id: id.try_into().map_err(|_| ErrorInner::UnknownRpcId(id))?,
+            stream: self.stream,
+            permit: self.permit,
+            shutdown_signal: self.shutdown_signal,
+            conn: self.conn,
+        })
+    }
+}
+
 impl<API: Api> InboundRpc<API> {
+    /// Returns ID of this [`InboundRpc`].
+    pub fn id(&self) -> API::RpcId {
+        self.id
+    }
+
     /// Handles this RPC using the provided request handler.
     pub async fn handle_request<RPC: Rpc>(
         self,
@@ -573,13 +598,6 @@ impl<API: Api> InboundRpc<API> {
     }
 }
 
-impl<API: Api> InboundRpc<API> {
-    /// Returns ID of this [`InboundRpc`].
-    pub fn id(&self) -> API::RpcId {
-        self.id
-    }
-}
-
 /// Inbound RPC of a specific type.
 pub struct Inbound<RPC: Rpc> {
     pub request_stream: RequestStream<RPC>,
@@ -632,7 +650,7 @@ impl<API: Api> Connection<API> {
         let fut = async {
             loop {
                 let rpc = self.accept_rpc().await?;
-                async move { handler_fn(rpc).await }.spawn();
+                async move { rpc.read_id().and_then(handler_fn).await }.spawn();
             }
         };
 
@@ -647,14 +665,16 @@ impl<API: Api> Connection<API> {
     where
         F: Future<Output = Result<()>> + Send,
     {
-        let rpc = self.accept_rpc().await?;
-        f(rpc).await
+        self.accept_rpc()
+            .and_then(InboundRpc::read_id)
+            .and_then(f)
+            .await
     }
 
     /// Accepts the next [`InboundRpc`].
-    async fn accept_rpc(&self) -> Result<InboundRpc<API>> {
+    async fn accept_rpc(&self) -> Result<InboundRpc<API, ()>> {
         loop {
-            let (tx, mut rx) = self.inner.quic.accept_bi().await.map_err(Error::new)?;
+            let (tx, rx) = self.inner.quic.accept_bi().await.map_err(Error::new)?;
 
             let Some(permit) = self.acquire_stream_permit() else {
                 metrics::counter!(
@@ -665,17 +685,8 @@ impl<API: Api> Connection<API> {
                 continue;
             };
 
-            // when we receive a stream there's always at least some data in it
-            let id = rx
-                .read_u8()
-                .now_or_never()
-                .ok_or_else(|| ErrorInner::ReadRpcId)?
-                .map_err(Error::new)?;
-
-            let id = id.try_into().map_err(|_| ErrorInner::UnknownRpcId(id))?;
-
             return Ok(InboundRpc {
-                id,
+                id: (),
                 stream: BiDirectionalStream::new(tx, rx),
                 permit,
                 shutdown_signal: self.inner.shutdown_signal.clone(),
@@ -768,8 +779,8 @@ enum ErrorInner {
     #[error("Stream unexpectedly finished")]
     StreamFinished,
 
-    #[error("Failed to read RPC ID without blocking")]
-    ReadRpcId,
+    #[error("Timeout reading RPC ID")]
+    ReadRpcIdTimeout,
 
     #[error("Unknown RPC ID: {0}")]
     UnknownRpcId(u8),

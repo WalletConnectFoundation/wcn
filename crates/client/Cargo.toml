@@ -16,6 +16,7 @@ wc = { workspace = true, features = ["metrics"] }
 
 # Dervies
 derive_more = { workspace = true }
+derive-where = { workspace = true }
 thiserror = { workspace = true }
 
 # General purpose
@@ -23,7 +24,7 @@ arc-swap = { workspace = true }
 tap = { workspace = true }
 rand = { workspace = true }
 
-# Async 
+# Async
 futures = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 

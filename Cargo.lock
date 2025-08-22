@@ -5798,6 +5798,7 @@ name = "wcn_client"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "derive-where",
  "derive_more",
  "futures",
  "libp2p-identity",

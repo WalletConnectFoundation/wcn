@@ -107,10 +107,35 @@ impl<N> NodeOperators<N> {
             .unwrap_or_default()
     }
 
-    #[allow(clippy::len_without_is_empty)]
-    /// Returns the number of [`NodeOperator`]s in this collection.
-    pub fn len(&self) -> usize {
-        self.id_to_idx.len()
+    /// Iterates over all [`NodeOperator`]'s to find the one matching a
+    /// predicate.
+    ///
+    /// This is similar to [`NodeOperators::next`] in using a counter for a
+    /// round-robin load-balancing.
+    pub fn find_next_operator<F, R>(&self, cb: F) -> Option<R>
+    where
+        F: Fn(&NodeOperator<N>) -> Option<R>,
+    {
+        // we've checked this in the constructor
+        debug_assert!(!self.id_to_idx.is_empty());
+
+        let num_operators = self.id_to_idx.len();
+        let offset = self.counter.fetch_add(1, atomic::Ordering::Relaxed);
+
+        for idx in 0..num_operators {
+            let idx = idx.wrapping_add(offset) % num_operators;
+            let idx = self.id_to_idx[idx];
+
+            // if `id_to_idx` map contains the index the slot should always exist
+            let operator = self.slots[idx as usize].as_ref().unwrap();
+            let res = cb(operator);
+
+            if res.is_some() {
+                return res;
+            }
+        }
+
+        None
     }
 
     /// Returns a [`NodeOperator`] responsible for the next request.

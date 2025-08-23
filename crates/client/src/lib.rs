@@ -218,23 +218,22 @@ impl Client {
         //   least one available node at all times.
 
         self.cluster.using_view(|view| {
-            let ops = view.node_operators();
+            let operators = view.node_operators();
 
-            // Iterate over all node operators to find one with a connected node.
-            for _ in 0..ops.len() {
-                let res = ops
-                    .next()
-                    .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)));
+            // Iterate over all of the operators to find one with a connected node.
+            let result = operators.find_next_operator(|operator| {
+                operator
+                    .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)))
+            });
 
-                if let Some(res) = res {
-                    // We've found a connected node.
-                    return res;
-                }
+            if let Some(result) = result {
+                // We've found a connected node.
+                result
+            } else {
+                // If the above failed, return the next node in hopes that the connection will
+                // be established during the request.
+                cb(operators.next().next_node())
             }
-
-            // If the above failed, return the next node in hopes that the connection will
-            // be established during the request.
-            cb(ops.next().next_node())
         })
     }
 

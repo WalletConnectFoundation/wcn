@@ -183,7 +183,7 @@ async fn test_encryption(
         .await
         .err()
         .unwrap();
-    assert!(matches!(dbg!(err), wcn_client::Error::Encryption(_)));
+    assert!(matches!(err, wcn_client::Error::Encryption(_)));
 
     client1
         .set(ns, b"encrypted_string_key", b"data", ttl)

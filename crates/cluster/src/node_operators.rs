@@ -107,6 +107,11 @@ impl<N> NodeOperators<N> {
             .unwrap_or_default()
     }
 
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.id_to_idx.len()
+    }
+
     /// Returns a [`NodeOperator`] responsible for the next request.
     ///
     /// [`NodeOperator`]s are being iterated in round-robin fashion for

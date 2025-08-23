@@ -1,6 +1,7 @@
 use {
     arc_swap::ArcSwap,
     derive_where::derive_where,
+    encryption::Encrypt as _,
     std::{
         net::SocketAddrV4,
         sync::Arc,
@@ -20,9 +21,7 @@ use {
         },
     },
     wcn_cluster::{node_operator::Id as NodeOperatorId, smart_contract},
-    wcn_cluster_api::Error as ClusterError,
     wcn_storage_api::{
-        Error as CoordinatorError,
         MapEntryBorrowed,
         Record,
         RecordBorrowed,
@@ -34,10 +33,18 @@ use {
     },
 };
 pub use {
-    encryption::{Encryption, Error as EncryptionError},
+    encryption::{Error as EncryptionError, Key as EncryptionKey},
     libp2p_identity::{Keypair, PeerId},
-    wcn_cluster::EncryptionKey,
-    wcn_storage_api::{ErrorKind as CoordinatorErrorKind, MapPage, Namespace},
+    smart_contract::ReadError as SmartContractError,
+    wcn_cluster::{CreationError as ClusterCreationError, EncryptionKey as ClusterKey},
+    wcn_cluster_api::Error as ClusterError,
+    wcn_rpc::client::Error as RpcError,
+    wcn_storage_api::{
+        Error as CoordinatorError,
+        ErrorKind as CoordinatorErrorKind,
+        MapPage,
+        Namespace,
+    },
 };
 
 mod cluster;
@@ -52,10 +59,10 @@ pub enum Error {
     RetriesExhausted,
 
     #[error("Failed to initialize cluster: {0}")]
-    ClusterCreation(#[from] wcn_cluster::CreationError),
+    ClusterCreation(#[from] ClusterCreationError),
 
     #[error("RPC client error: {0}")]
-    Rpc(#[from] wcn_rpc::client::Error),
+    Rpc(#[from] RpcError),
 
     #[error("Cluster API error: {0}")]
     ClusterApi(#[from] ClusterError),
@@ -64,10 +71,10 @@ pub enum Error {
     CoordinatorApi(#[from] CoordinatorError),
 
     #[error("Failed to read smart contract: {0}")]
-    SmartContract(#[from] smart_contract::ReadError),
+    SmartContract(#[from] SmartContractError),
 
     #[error("Encryption failed: {0}")]
-    Encryption(#[from] encryption::Error),
+    Encryption(#[from] EncryptionError),
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -84,7 +91,7 @@ pub struct Config {
     pub keypair: Keypair,
 
     /// Symmetrical encryption key used for accessing the on-chain data.
-    pub cluster_encryption_key: EncryptionKey,
+    pub cluster_key: ClusterKey,
 
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
@@ -161,7 +168,7 @@ impl Client {
             cluster::fetch_cluster_view(&cluster_api_client, &config.nodes).await?;
 
         let cluster_cfg = cluster::Config {
-            encryption_key: config.cluster_encryption_key,
+            encryption_key: config.cluster_key,
             cluster_api: cluster_api_client,
             coordinator_api: coordinator_api_client,
         };
@@ -196,67 +203,8 @@ impl Client {
             observer,
         }
     }
-}
 
-pub trait RequestExecutor {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R;
-
-    fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> impl Future<Output = Result<T, CoordinatorError>> + Send + Sync
-    where
-        op::Output: op::DowncastOutput<T>;
-
-    fn request<T>(
-        &self,
-        op: &op::Operation<'_>,
-    ) -> impl Future<Output = Result<T, CoordinatorError>> + Send + Sync
-    where
-        op::Output: op::DowncastOutput<T>;
-}
-
-pub trait ClientBuilder: RequestExecutor + Sized {
-    fn with_retries(self, max_attempts: usize) -> WithRetries<Self> {
-        WithRetries {
-            core: self,
-            max_attempts,
-        }
-    }
-
-    fn with_encryption(self, encryption: Encryption) -> WithEncryption<Self> {
-        WithEncryption {
-            core: self,
-            encryption,
-        }
-    }
-
-    fn build(self) -> ReplicaClient<Self> {
-        ReplicaClient {
-            inner: Arc::new(self),
-        }
-    }
-}
-
-impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
-
-pub struct RequestMetadata {
-    pub operator_id: NodeOperatorId,
-    pub node_id: PeerId,
-    pub operation: OperationName,
-    pub duration: Duration,
-    pub result: Result<(), CoordinatorErrorKind>,
-}
-
-pub trait RequestObserver {
-    fn observe(&self, metadata: RequestMetadata);
-}
-
-impl RequestExecutor for Client {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
+    fn using_next_node<F, R>(&self, cb: F) -> R
     where
         F: Fn(&cluster::Node) -> R,
     {
@@ -267,21 +215,31 @@ impl RequestExecutor for Client {
         //   least one available node at all times.
 
         self.cluster.using_view(|view| {
-            view.node_operators()
-                .next()
-                .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)))
-                .ok_or_else(|| Error::NoAvailableNodes)
+            let ops = view.node_operators();
+
+            // Iterate over all node operators to find one with a connected node.
+            for _ in 0..ops.len() {
+                let res = ops
+                    .next()
+                    .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)));
+
+                if let Some(res) = res {
+                    // We've found a connected node.
+                    return res;
+                }
+            }
+
+            // If the above failed, return the next node in hopes that the connection will
+            // be established during the request.
+            cb(ops.next().next_node())
         })
     }
 
-    async fn execute_request<T>(
+    async fn execute_request(
         &self,
         client_conn: &CoordinatorConnection,
         op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
+    ) -> Result<op::Output, Error> {
         let op_name = op_name(op);
 
         let is_connected = client_conn
@@ -291,7 +249,10 @@ impl RequestExecutor for Client {
             .is_ok();
 
         if !is_connected {
-            return Err(CoordinatorError::new(CoordinatorErrorKind::Timeout));
+            // Getting to this point means we've tried every operator to find a connected
+            // node and failed. Then we tried to open connection to the next node and also
+            // failed.
+            return Err(Error::NoAvailableNodes);
         }
 
         client_conn
@@ -309,20 +270,54 @@ impl RequestExecutor for Client {
                     StringLabel<"tag", &'static str> => &self.metrics_tag
                 )
                 .increment(1)
-            })?
-            .try_into()
-            .map_err(|err| CoordinatorError::internal().with_message(err))
+            })
+            .map_err(Into::into)
+    }
+}
+
+pub trait RequestExecutor {
+    fn request(
+        &self,
+        op: op::Operation<'_>,
+    ) -> impl Future<Output = Result<op::Output, Error>> + Send + Sync;
+}
+
+pub trait ClientBuilder: RequestExecutor + Sized {
+    fn with_retries(self, max_attempts: usize) -> WithRetries<Self> {
+        WithRetries {
+            core: self,
+            max_attempts,
+        }
     }
 
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        let conn = self
-            .using_next_node(|node| node.coordinator_conn.clone())
-            .map_err(coordinator_transport_err)?;
+    fn with_encryption(self, key: EncryptionKey) -> WithEncryption<Self> {
+        WithEncryption { core: self, key }
+    }
 
-        self.execute_request(&conn, op).await
+    fn build(self) -> ReplicaClient<Self> {
+        ReplicaClient {
+            inner: Arc::new(self),
+        }
+    }
+}
+
+impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
+
+pub struct RequestMetadata {
+    pub operator_id: NodeOperatorId,
+    pub node_id: PeerId,
+    pub operation: OperationName,
+    pub duration: Duration,
+}
+
+pub trait RequestObserver {
+    fn observe(&self, metadata: RequestMetadata, result: &Result<op::Output, Error>);
+}
+
+impl RequestExecutor for Client {
+    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
+        let conn = self.using_next_node(|node| node.coordinator_conn.clone());
+        self.execute_request(&conn, &op).await
     }
 }
 
@@ -335,43 +330,27 @@ impl<C> RequestExecutor for WithRetries<C>
 where
     C: RequestExecutor + Send + Sync,
 {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R,
-    {
-        self.core.using_next_node(cb)
-    }
-
-    async fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        self.core.execute_request(client_conn, op).await
-    }
-
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
+    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
         let mut attempt = 0;
 
         while attempt < self.max_attempts {
-            match self.core.request(op).await {
+            match self.core.request(op.clone()).await {
                 Ok(data) => return Ok(data),
 
-                Err(err) => match err.kind() {
-                    CoordinatorErrorKind::Timeout | CoordinatorErrorKind::Transport => attempt += 1,
+                Err(err) => match err {
+                    Error::CoordinatorApi(err)
+                        if err.kind() == CoordinatorErrorKind::Timeout
+                            || err.kind() == CoordinatorErrorKind::Transport =>
+                    {
+                        attempt += 1
+                    }
 
-                    _ => return Err(err),
+                    err => return Err(err),
                 },
             }
         }
 
-        Err(CoordinatorError::internal().with_message(Error::RetriesExhausted))
+        Err(Error::RetriesExhausted)
     }
 }
 
@@ -384,49 +363,22 @@ impl<O> RequestExecutor for WithObserver<O>
 where
     O: RequestObserver + Send + Sync,
 {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R,
-    {
-        self.core.using_next_node(cb)
-    }
-
-    async fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        self.core.execute_request(client_conn, op).await
-    }
-
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        let op_name = op_name(op);
+    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
+        let op_name = op_name(&op);
         let start_time = Instant::now();
 
-        let (conn, mut metadata) = self
-            .using_next_node(|node| {
-                (node.coordinator_conn.clone(), RequestMetadata {
-                    operator_id: node.operator_id,
-                    node_id: node.node.peer_id,
-                    operation: op_name,
-                    duration: Duration::ZERO,
-                    result: Ok(()),
-                })
+        let (conn, mut metadata) = self.core.using_next_node(|node| {
+            (node.coordinator_conn.clone(), RequestMetadata {
+                operator_id: node.operator_id,
+                node_id: node.node.peer_id,
+                operation: op_name,
+                duration: Duration::ZERO,
             })
-            .map_err(coordinator_transport_err)?;
+        });
 
-        let result = self.execute_request(&conn, op).await;
-
+        let result = self.core.execute_request(&conn, &op).await;
         metadata.duration = start_time.elapsed();
-        metadata.result = result.as_ref().map(|_| ()).map_err(|err| err.kind());
-
-        self.observer.observe(metadata);
+        self.observer.observe(metadata, &result);
 
         result
     }
@@ -434,36 +386,22 @@ where
 
 pub struct WithEncryption<C = Client> {
     core: C,
-    encryption: Encryption,
+    key: EncryptionKey,
 }
 
 impl<C> RequestExecutor for WithEncryption<C>
 where
     C: RequestExecutor + Send + Sync,
 {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R,
-    {
-        self.core.using_next_node(cb)
-    }
+    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
+        let op = op
+            .encrypt(&self.key)
+            .map_err(|err| CoordinatorError::internal().with_message(err))?;
 
-    async fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        self.core.execute_request(client_conn, op).await
-    }
+        let mut output = self.core.request(op).await?;
+        encryption::decrypt_output(&mut output, &self.key)?;
 
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        todo!()
+        Ok(output)
     }
 }
 
@@ -480,15 +418,13 @@ where
         &self,
         namespace: Namespace,
         key: impl AsRef<[u8]>,
-    ) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self
-            .request::<Option<Record>>(op::GetBorrowed {
-                namespace,
-                key: key.as_ref(),
-                keyspace_version: None,
-            })
-            .await?
-            .map(|rec| rec.value))
+    ) -> Result<Option<Record>, Error> {
+        self.request::<Option<Record>>(op::GetBorrowed {
+            namespace,
+            key: key.as_ref(),
+            keyspace_version: None,
+        })
+        .await
     }
 
     pub async fn set(
@@ -557,16 +493,14 @@ where
         namespace: Namespace,
         key: impl AsRef<[u8]>,
         field: impl AsRef<[u8]>,
-    ) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self
-            .request::<Option<Record>>(op::HGetBorrowed {
-                namespace,
-                key: key.as_ref(),
-                field: field.as_ref(),
-                keyspace_version: None,
-            })
-            .await?
-            .map(|rec| rec.value))
+    ) -> Result<Option<Record>, Error> {
+        self.request::<Option<Record>>(op::HGetBorrowed {
+            namespace,
+            key: key.as_ref(),
+            field: field.as_ref(),
+            keyspace_version: None,
+        })
+        .await
     }
 
     pub async fn hset(
@@ -675,15 +609,11 @@ where
         op::Output: op::DowncastOutput<T>,
     {
         self.inner
-            .request(&op::Operation::Borrowed(op.into()))
-            .await
-            .map_err(Into::into)
+            .request(op::Operation::Borrowed(op.into()))
+            .await?
+            .try_into()
+            .map_err(|err| CoordinatorError::internal().with_message(err).into())
     }
-}
-
-#[inline]
-fn coordinator_transport_err(err: impl ToString) -> CoordinatorError {
-    CoordinatorError::new(CoordinatorErrorKind::Transport).with_message(err)
 }
 
 #[derive(Clone, Copy, Ordinalize)]
@@ -763,21 +693,30 @@ mod test {
     struct Observer;
 
     impl RequestObserver for Observer {
-        fn observe(&self, _metadata: RequestMetadata) {}
+        fn observe(&self, _metadata: RequestMetadata, _result: &Result<op::Output, Error>) {}
     }
 
     async fn _create_observable_client(
         config: Config,
-    ) -> ReplicaClient<WithRetries<WithObserver<Observer>>> {
+    ) -> ReplicaClient<WithEncryption<WithRetries<WithObserver<Observer>>>> {
         Client::new(config)
             .await
             .unwrap()
             .with_observer(Observer)
             .with_retries(3)
+            .with_encryption(EncryptionKey::new(b"12345").unwrap())
             .build()
     }
 
     async fn _create_retryable_client(config: Config) -> ReplicaClient<WithRetries> {
         Client::new(config).await.unwrap().with_retries(3).build()
+    }
+
+    async fn _create_encrypted_client(config: Config) -> ReplicaClient<WithEncryption> {
+        Client::new(config)
+            .await
+            .unwrap()
+            .with_encryption(EncryptionKey::new(b"12345").unwrap())
+            .build()
     }
 }

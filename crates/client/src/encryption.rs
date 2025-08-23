@@ -1,4 +1,7 @@
-use ring::{aead, hkdf};
+use {
+    ring::{aead, hkdf},
+    wcn_storage_api::{MapEntry, Record, RecordBorrowed, operation as op},
+};
 
 const INFO_ENCRYPTION_KEY: &[u8] = b"encryption_key";
 const KEY_SALT: &[u8] = b"wcn_client";
@@ -23,11 +26,11 @@ impl From<ring::error::Unspecified> for Error {
 }
 
 #[derive(Clone)]
-pub struct Encryption {
+pub struct Key {
     key: aead::LessSafeKey,
 }
 
-impl Encryption {
+impl Key {
     pub fn new(secret: &[u8]) -> Result<Self, Error> {
         if secret.is_empty() {
             return Err(Error::Secret);
@@ -47,7 +50,7 @@ impl Encryption {
         Ok(Self { key })
     }
 
-    pub fn seal(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
+    fn seal(&self, data: &[u8]) -> Result<Vec<u8>, Error> {
         if data.is_empty() {
             return Ok(Vec::new());
         }
@@ -62,7 +65,7 @@ impl Encryption {
         out.extend_from_slice(&nonce);
 
         // Write data.
-        out.extend_from_slice(&data);
+        out.extend_from_slice(data);
 
         // Encrypt the data.
         let tag = self.key.seal_in_place_separate_tag(
@@ -77,7 +80,7 @@ impl Encryption {
         Ok(out)
     }
 
-    pub fn open_in_place<'in_out>(&self, data: &'in_out mut [u8]) -> Result<&'in_out [u8], Error> {
+    fn open_in_place<'in_out>(&self, data: &'in_out mut [u8]) -> Result<&'in_out [u8], Error> {
         if data.is_empty() {
             Ok(data)
         } else if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
@@ -108,14 +111,137 @@ fn generate_nonce() -> [u8; aead::NONCE_LEN] {
     data
 }
 
+pub(super) fn decrypt_output(output: &mut op::Output, key: &Key) -> Result<(), Error> {
+    match output {
+        op::Output::Record(Some(rec)) => {
+            let decrypted = key.open_in_place(&mut rec.value)?.into();
+            rec.value = decrypted;
+        }
+
+        op::Output::MapPage(page) => {
+            for entry in &mut page.entries {
+                let decrypted = key.open_in_place(&mut entry.record.value)?.into();
+                entry.record.value = decrypted;
+            }
+        }
+
+        _ => {}
+    }
+
+    Ok(())
+}
+
+pub(super) trait Encrypt {
+    type Output;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error>;
+}
+
+impl Encrypt for RecordBorrowed<'_> {
+    type Output = Record;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(Record {
+            value: key.seal(self.value)?,
+            expiration: self.expiration,
+            version: self.version,
+        })
+    }
+}
+
+impl Encrypt for Record {
+    type Output = Self;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(Self {
+            value: key.seal(&self.value)?,
+            ..self
+        })
+    }
+}
+
+impl Encrypt for op::SetBorrowed<'_> {
+    type Output = op::Set;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(op::Set {
+            namespace: self.namespace,
+            key: self.key.to_owned(),
+            record: self.record.encrypt(key)?,
+            keyspace_version: self.keyspace_version,
+        })
+    }
+}
+
+impl Encrypt for op::Set {
+    type Output = Self;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(Self {
+            record: self.record.encrypt(key)?,
+            ..self
+        })
+    }
+}
+
+impl Encrypt for op::HSetBorrowed<'_> {
+    type Output = op::HSet;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(op::HSet {
+            namespace: self.namespace,
+            key: self.key.to_owned(),
+            entry: MapEntry {
+                field: self.entry.field.to_owned(),
+                record: self.entry.record.encrypt(key)?,
+            },
+            keyspace_version: self.keyspace_version,
+        })
+    }
+}
+
+impl Encrypt for op::HSet {
+    type Output = Self;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(Self {
+            entry: MapEntry {
+                field: self.entry.field,
+                record: self.entry.record.encrypt(key)?,
+            },
+            ..self
+        })
+    }
+}
+
+impl Encrypt for op::Operation<'_> {
+    type Output = Self;
+
+    fn encrypt(self, key: &Key) -> Result<Self::Output, Error> {
+        Ok(match self {
+            op::Operation::Owned(op) => match op {
+                op::Owned::Set(op) => op::Owned::Set(op.encrypt(key)?).into(),
+                op::Owned::HSet(op) => op::Owned::HSet(op.encrypt(key)?).into(),
+                _ => op.into(),
+            },
+
+            op::Operation::Borrowed(op) => match op {
+                op::Borrowed::Set(op) => op::Owned::Set(op.encrypt(key)?).into(),
+                op::Borrowed::HSet(op) => op::Owned::HSet(op.encrypt(key)?).into(),
+                _ => op.into(),
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn encryption() {
-        let auth1 = Encryption::new(b"secret1").unwrap();
-        let auth2 = Encryption::new(b"secret2").unwrap();
+        let auth1 = Key::new(b"secret1").unwrap();
+        let auth2 = Key::new(b"secret2").unwrap();
 
         let data = vec![1u8, 2, 3, 4, 5];
         let encrypted = auth1.seal(&data).unwrap();

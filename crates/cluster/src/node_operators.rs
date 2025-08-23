@@ -108,6 +108,7 @@ impl<N> NodeOperators<N> {
     }
 
     #[allow(clippy::len_without_is_empty)]
+    /// Returns the number of [`NodeOperator`]s in this collection.
     pub fn len(&self) -> usize {
         self.id_to_idx.len()
     }

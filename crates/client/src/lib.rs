@@ -76,6 +76,9 @@ pub enum Error {
     #[error("Encryption failed: {0}")]
     Encryption(#[from] EncryptionError),
 
+    #[error("Invalid response type")]
+    InvalidResponseType,
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -394,13 +397,9 @@ where
     C: RequestExecutor + Send + Sync,
 {
     async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
-        let op = op
-            .encrypt(&self.key)
-            .map_err(|err| CoordinatorError::internal().with_message(err))?;
-
+        let op = op.encrypt(&self.key)?;
         let mut output = self.core.request(op).await?;
         encryption::decrypt_output(&mut output, &self.key)?;
-
         Ok(output)
     }
 }
@@ -612,7 +611,7 @@ where
             .request(op::Operation::Borrowed(op.into()))
             .await?
             .try_into()
-            .map_err(|err| CoordinatorError::internal().with_message(err).into())
+            .map_err(|_| Error::InvalidResponseType)
     }
 }
 

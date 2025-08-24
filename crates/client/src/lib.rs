@@ -2,7 +2,7 @@ use {
     arc_swap::ArcSwap,
     derive_where::derive_where,
     encryption::Encrypt as _,
-    private::{Request, RequestExecutor},
+    sealed::{LoadBalancer, Request},
     std::{
         net::SocketAddrV4,
         sync::Arc,
@@ -238,6 +238,42 @@ impl Client {
     }
 }
 
+mod sealed {
+    use super::*;
+
+    pub trait LoadBalancer {
+        fn using_next_node<F, R>(&self, cb: F) -> R
+        where
+            F: Fn(&cluster::Node) -> R;
+    }
+
+    #[derive(Clone)]
+    pub struct Request<'a> {
+        pub op: op::Operation<'a>,
+        pub conn: Option<CoordinatorConnection>,
+    }
+
+    impl<'a> Request<'a> {
+        pub fn new(op: op::Operation<'a>) -> Self {
+            Self { op, conn: None }
+        }
+
+        pub fn with_connection(self, conn: CoordinatorConnection) -> Self {
+            Self {
+                op: self.op,
+                conn: Some(conn),
+            }
+        }
+    }
+}
+
+pub trait RequestExecutor {
+    fn execute(
+        &self,
+        req: Request<'_>,
+    ) -> impl Future<Output = Result<op::Output, Error>> + Send + Sync;
+}
+
 pub trait ClientBuilder: RequestExecutor + Sized {
     fn with_observer<O>(self, observer: O) -> WithObserver<O, Self>
     where
@@ -269,40 +305,6 @@ pub trait ClientBuilder: RequestExecutor + Sized {
 
 impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
 
-mod private {
-    use super::*;
-
-    #[derive(Clone)]
-    pub struct Request<'a> {
-        pub op: op::Operation<'a>,
-        pub conn: Option<CoordinatorConnection>,
-    }
-
-    impl<'a> Request<'a> {
-        pub fn new(op: op::Operation<'a>) -> Self {
-            Self { op, conn: None }
-        }
-
-        pub fn with_connection(self, conn: CoordinatorConnection) -> Self {
-            Self {
-                op: self.op,
-                conn: Some(conn),
-            }
-        }
-    }
-
-    pub trait RequestExecutor {
-        fn using_next_node<F, R>(&self, cb: F) -> R
-        where
-            F: Fn(&cluster::Node) -> R;
-
-        fn execute(
-            &self,
-            req: Request<'_>,
-        ) -> impl Future<Output = Result<op::Output, Error>> + Send + Sync;
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RequestMetadata {
     pub operator_id: NodeOperatorId,
@@ -315,7 +317,7 @@ pub trait RequestObserver {
     fn observe(&self, metadata: RequestMetadata, result: &Result<op::Output, Error>);
 }
 
-impl RequestExecutor for Client {
+impl LoadBalancer for Client {
     fn using_next_node<F, R>(&self, cb: F) -> R
     where
         F: Fn(&cluster::Node) -> R,
@@ -345,7 +347,9 @@ impl RequestExecutor for Client {
             }
         })
     }
+}
 
+impl RequestExecutor for Client {
     async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
         let op = req.op;
         let conn = req
@@ -361,9 +365,9 @@ pub struct WithRetries<C = Client> {
     max_attempts: usize,
 }
 
-impl<C> RequestExecutor for WithRetries<C>
+impl<C> LoadBalancer for WithRetries<C>
 where
-    C: RequestExecutor + Send + Sync,
+    C: LoadBalancer + Send + Sync,
 {
     fn using_next_node<F, R>(&self, cb: F) -> R
     where
@@ -371,7 +375,12 @@ where
     {
         self.core.using_next_node(cb)
     }
+}
 
+impl<C> RequestExecutor for WithRetries<C>
+where
+    C: RequestExecutor + Send + Sync,
+{
     async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
         let mut attempt = 0;
 
@@ -401,10 +410,9 @@ pub struct WithObserver<O, C = Client> {
     observer: O,
 }
 
-impl<O, C> RequestExecutor for WithObserver<O, C>
+impl<O, C> LoadBalancer for WithObserver<O, C>
 where
-    O: RequestObserver + Send + Sync,
-    C: RequestExecutor + Send + Sync,
+    C: LoadBalancer + Send + Sync,
 {
     fn using_next_node<F, R>(&self, cb: F) -> R
     where
@@ -412,7 +420,13 @@ where
     {
         self.core.using_next_node(cb)
     }
+}
 
+impl<O, C> RequestExecutor for WithObserver<O, C>
+where
+    O: RequestObserver + Send + Sync,
+    C: RequestExecutor + LoadBalancer + Send + Sync,
+{
     async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
         let op_name = op_name(&req.op);
         let start_time = Instant::now();
@@ -439,9 +453,9 @@ pub struct WithEncryption<C = Client> {
     key: EncryptionKey,
 }
 
-impl<C> RequestExecutor for WithEncryption<C>
+impl<C> LoadBalancer for WithEncryption<C>
 where
-    C: RequestExecutor + Send + Sync,
+    C: LoadBalancer + Send + Sync,
 {
     fn using_next_node<F, R>(&self, cb: F) -> R
     where
@@ -449,7 +463,12 @@ where
     {
         self.core.using_next_node(cb)
     }
+}
 
+impl<C> RequestExecutor for WithEncryption<C>
+where
+    C: RequestExecutor + Send + Sync,
+{
     async fn execute(&self, mut req: Request<'_>) -> Result<op::Output, Error> {
         req.op = req.op.encrypt(&self.key)?;
         let mut output = self.core.execute(req).await?;

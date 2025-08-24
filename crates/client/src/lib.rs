@@ -305,6 +305,7 @@ pub trait ClientBuilder: RequestExecutor + Sized {
 
 impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
 
+#[derive(Debug, Clone)]
 pub struct RequestMetadata {
     pub operator_id: NodeOperatorId,
     pub node_id: PeerId,
@@ -614,7 +615,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Ordinalize)]
+#[derive(Debug, Clone, Copy, Ordinalize)]
 pub enum OperationName {
     Get,
     Set,

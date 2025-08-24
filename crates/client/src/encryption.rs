@@ -60,7 +60,8 @@ impl Key {
         let nonce: [u8; aead::NONCE_LEN] = StdRng::from_rng(&mut rand::rng()).random();
 
         // Compute the total data length for `nonce + serialized data + tag`.
-        let mut out = Vec::with_capacity(aead::NONCE_LEN + data.len() + aead::MAX_TAG_LEN);
+        let mut out =
+            Vec::with_capacity(aead::NONCE_LEN + data.len() + aead::CHACHA20_POLY1305.tag_len());
 
         // Write nonce bytes.
         out.extend_from_slice(&nonce);
@@ -87,7 +88,7 @@ impl Key {
     fn open_in_place<'in_out>(&self, data: &'in_out mut [u8]) -> Result<&'in_out [u8], Error> {
         if data.is_empty() {
             Ok(data)
-        } else if data.len() < aead::NONCE_LEN + aead::MAX_TAG_LEN + 1 {
+        } else if data.len() < aead::NONCE_LEN + aead::CHACHA20_POLY1305.tag_len() + 1 {
             Err(Error::Data)
         } else {
             // Safe unwrap as nonce length is guaranteed to be correct.

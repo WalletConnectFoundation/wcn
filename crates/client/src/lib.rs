@@ -2,6 +2,7 @@ use {
     arc_swap::ArcSwap,
     derive_where::derive_where,
     encryption::Encrypt as _,
+    private::{Request, RequestExecutor},
     std::{
         net::SocketAddrV4,
         sync::Arc,
@@ -197,46 +198,6 @@ impl Client {
         })
     }
 
-    pub fn with_observer<O>(self, observer: O) -> WithObserver<O>
-    where
-        O: RequestObserver,
-    {
-        WithObserver {
-            core: self,
-            observer,
-        }
-    }
-
-    fn using_next_node<F, R>(&self, cb: F) -> R
-    where
-        F: Fn(&cluster::Node) -> R,
-    {
-        // Constraints:
-        // - Each next request should go to a different operator.
-        // - Find an available (i.e. connected) node of the next operator, filtering out
-        //   broken connections. The expectation is that each operator should have at
-        //   least one available node at all times.
-
-        self.cluster.using_view(|view| {
-            let operators = view.node_operators();
-
-            // Iterate over all of the operators to find one with a connected node.
-            let result = operators.find_next_operator(|operator| {
-                operator
-                    .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)))
-            });
-
-            if let Some(result) = result {
-                // We've found a connected node.
-                result
-            } else {
-                // If the above failed, return the next node in hopes that the connection will
-                // be established during the request.
-                cb(operators.next().next_node())
-            }
-        })
-    }
-
     async fn execute_request(
         &self,
         client_conn: &CoordinatorConnection,
@@ -277,14 +238,17 @@ impl Client {
     }
 }
 
-pub trait RequestExecutor {
-    fn request(
-        &self,
-        op: op::Operation<'_>,
-    ) -> impl Future<Output = Result<op::Output, Error>> + Send + Sync;
-}
-
 pub trait ClientBuilder: RequestExecutor + Sized {
+    fn with_observer<O>(self, observer: O) -> WithObserver<O, Self>
+    where
+        O: RequestObserver,
+    {
+        WithObserver {
+            core: self,
+            observer,
+        }
+    }
+
     fn with_retries(self, max_attempts: usize) -> WithRetries<Self> {
         WithRetries {
             core: self,
@@ -305,6 +269,40 @@ pub trait ClientBuilder: RequestExecutor + Sized {
 
 impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
 
+mod private {
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct Request<'a> {
+        pub op: op::Operation<'a>,
+        pub conn: Option<CoordinatorConnection>,
+    }
+
+    impl<'a> Request<'a> {
+        pub fn new(op: op::Operation<'a>) -> Self {
+            Self { op, conn: None }
+        }
+
+        pub fn with_connection(self, conn: CoordinatorConnection) -> Self {
+            Self {
+                op: self.op,
+                conn: Some(conn),
+            }
+        }
+    }
+
+    pub trait RequestExecutor {
+        fn using_next_node<F, R>(&self, cb: F) -> R
+        where
+            F: Fn(&cluster::Node) -> R;
+
+        fn execute(
+            &self,
+            req: Request<'_>,
+        ) -> impl Future<Output = Result<op::Output, Error>> + Send + Sync;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestMetadata {
     pub operator_id: NodeOperatorId,
@@ -318,8 +316,42 @@ pub trait RequestObserver {
 }
 
 impl RequestExecutor for Client {
-    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
-        let conn = self.using_next_node(|node| node.coordinator_conn.clone());
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        // Constraints:
+        // - Each next request should go to a different operator.
+        // - Find an available (i.e. connected) node of the next operator, filtering out
+        //   broken connections. The expectation is that each operator should have at
+        //   least one available node at all times.
+
+        self.cluster.using_view(|view| {
+            let operators = view.node_operators();
+
+            // Iterate over all of the operators to find one with a connected node.
+            let result = operators.find_next_operator(|operator| {
+                operator
+                    .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)))
+            });
+
+            if let Some(result) = result {
+                // We've found a connected node.
+                result
+            } else {
+                // If the above failed, return the next node in hopes that the connection will
+                // be established during the request.
+                cb(operators.next().next_node())
+            }
+        })
+    }
+
+    async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
+        let op = req.op;
+        let conn = req
+            .conn
+            .unwrap_or_else(|| self.using_next_node(|node| node.coordinator_conn.clone()));
+
         self.execute_request(&conn, &op).await
     }
 }
@@ -333,11 +365,18 @@ impl<C> RequestExecutor for WithRetries<C>
 where
     C: RequestExecutor + Send + Sync,
 {
-    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        self.core.using_next_node(cb)
+    }
+
+    async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
         let mut attempt = 0;
 
         while attempt < self.max_attempts {
-            match self.core.request(op.clone()).await {
+            match self.core.execute(req.clone()).await {
                 Ok(data) => return Ok(data),
 
                 Err(err) => match err {
@@ -357,17 +396,25 @@ where
     }
 }
 
-pub struct WithObserver<O> {
-    core: Client,
+pub struct WithObserver<O, C = Client> {
+    core: C,
     observer: O,
 }
 
-impl<O> RequestExecutor for WithObserver<O>
+impl<O, C> RequestExecutor for WithObserver<O, C>
 where
     O: RequestObserver + Send + Sync,
+    C: RequestExecutor + Send + Sync,
 {
-    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
-        let op_name = op_name(&op);
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        self.core.using_next_node(cb)
+    }
+
+    async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
+        let op_name = op_name(&req.op);
         let start_time = Instant::now();
 
         let (conn, mut metadata) = self.core.using_next_node(|node| {
@@ -379,7 +426,7 @@ where
             })
         });
 
-        let result = self.core.execute_request(&conn, &op).await;
+        let result = self.core.execute(req.with_connection(conn)).await;
         metadata.duration = start_time.elapsed();
         self.observer.observe(metadata, &result);
 
@@ -396,9 +443,16 @@ impl<C> RequestExecutor for WithEncryption<C>
 where
     C: RequestExecutor + Send + Sync,
 {
-    async fn request(&self, op: op::Operation<'_>) -> Result<op::Output, Error> {
-        let op = op.encrypt(&self.key)?;
-        let mut output = self.core.request(op).await?;
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        self.core.using_next_node(cb)
+    }
+
+    async fn execute(&self, mut req: Request<'_>) -> Result<op::Output, Error> {
+        req.op = req.op.encrypt(&self.key)?;
+        let mut output = self.core.execute(req).await?;
         encryption::decrypt_output(&mut output, &self.key)?;
         Ok(output)
     }
@@ -418,7 +472,7 @@ where
         namespace: Namespace,
         key: impl AsRef<[u8]>,
     ) -> Result<Option<Record>, Error> {
-        self.request::<Option<Record>>(op::GetBorrowed {
+        self.execute_request::<Option<Record>>(op::GetBorrowed {
             namespace,
             key: key.as_ref(),
             keyspace_version: None,
@@ -433,7 +487,7 @@ where
         value: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::SetBorrowed {
+        self.execute_request(op::SetBorrowed {
             namespace,
             key: key.as_ref(),
             record: RecordBorrowed {
@@ -447,7 +501,7 @@ where
     }
 
     pub async fn del(&self, namespace: Namespace, key: impl AsRef<[u8]>) -> Result<(), Error> {
-        self.request(op::DelBorrowed {
+        self.execute_request(op::DelBorrowed {
             namespace,
             key: key.as_ref(),
             version: RecordVersion::now(),
@@ -462,7 +516,7 @@ where
         key: impl AsRef<[u8]>,
     ) -> Result<Option<Duration>, Error> {
         Ok(self
-            .request::<Option<RecordExpiration>>(op::GetExpBorrowed {
+            .execute_request::<Option<RecordExpiration>>(op::GetExpBorrowed {
                 namespace,
                 key: key.as_ref(),
                 keyspace_version: None,
@@ -477,7 +531,7 @@ where
         key: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::SetExpBorrowed {
+        self.execute_request(op::SetExpBorrowed {
             namespace,
             key: key.as_ref(),
             expiration: ttl.into(),
@@ -493,7 +547,7 @@ where
         key: impl AsRef<[u8]>,
         field: impl AsRef<[u8]>,
     ) -> Result<Option<Record>, Error> {
-        self.request::<Option<Record>>(op::HGetBorrowed {
+        self.execute_request::<Option<Record>>(op::HGetBorrowed {
             namespace,
             key: key.as_ref(),
             field: field.as_ref(),
@@ -510,7 +564,7 @@ where
         value: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::HSetBorrowed {
+        self.execute_request(op::HSetBorrowed {
             namespace,
             key: key.as_ref(),
             entry: MapEntryBorrowed {
@@ -532,7 +586,7 @@ where
         key: impl AsRef<[u8]>,
         field: impl AsRef<[u8]>,
     ) -> Result<(), Error> {
-        self.request(op::HDelBorrowed {
+        self.execute_request(op::HDelBorrowed {
             namespace,
             key: key.as_ref(),
             field: field.as_ref(),
@@ -549,7 +603,7 @@ where
         field: impl AsRef<[u8]>,
     ) -> Result<Option<Duration>, Error> {
         Ok(self
-            .request::<Option<RecordExpiration>>(op::HGetExpBorrowed {
+            .execute_request::<Option<RecordExpiration>>(op::HGetExpBorrowed {
                 namespace,
                 key: key.as_ref(),
                 field: field.as_ref(),
@@ -566,7 +620,7 @@ where
         field: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::HSetExpBorrowed {
+        self.execute_request(op::HSetExpBorrowed {
             namespace,
             key: key.as_ref(),
             field: field.as_ref(),
@@ -578,7 +632,7 @@ where
     }
 
     pub async fn hcard(&self, namespace: Namespace, key: impl AsRef<[u8]>) -> Result<u64, Error> {
-        self.request(op::HCardBorrowed {
+        self.execute_request(op::HCardBorrowed {
             namespace,
             key: key.as_ref(),
             keyspace_version: None,
@@ -593,7 +647,7 @@ where
         count: u32,
         cursor: Option<impl AsRef<[u8]>>,
     ) -> Result<MapPage, Error> {
-        self.request::<MapPage>(op::HScanBorrowed {
+        self.execute_request::<MapPage>(op::HScanBorrowed {
             namespace,
             key: key.as_ref(),
             count,
@@ -603,12 +657,12 @@ where
         .await
     }
 
-    async fn request<T>(&self, op: impl Into<op::Borrowed<'_>>) -> Result<T, Error>
+    async fn execute_request<T>(&self, op: impl Into<op::Borrowed<'_>>) -> Result<T, Error>
     where
         op::Output: op::DowncastOutput<T>,
     {
         self.inner
-            .request(op::Operation::Borrowed(op.into()))
+            .execute(Request::new(op::Operation::Borrowed(op.into())))
             .await?
             .try_into()
             .map_err(|_| Error::InvalidResponseType)

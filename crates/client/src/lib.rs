@@ -1,6 +1,8 @@
 use {
     arc_swap::ArcSwap,
     derive_where::derive_where,
+    encryption::Encrypt as _,
+    sealed::{LoadBalancer, Request},
     std::{
         net::SocketAddrV4,
         sync::Arc,
@@ -20,9 +22,7 @@ use {
         },
     },
     wcn_cluster::{node_operator::Id as NodeOperatorId, smart_contract},
-    wcn_cluster_api::Error as ClusterError,
     wcn_storage_api::{
-        Error as CoordinatorError,
         MapEntryBorrowed,
         Record,
         RecordBorrowed,
@@ -34,12 +34,22 @@ use {
     },
 };
 pub use {
+    encryption::{Error as EncryptionError, Key as EncryptionKey},
     libp2p_identity::{Keypair, PeerId},
-    wcn_cluster::EncryptionKey,
-    wcn_storage_api::{ErrorKind as CoordinatorErrorKind, MapPage, Namespace},
+    smart_contract::ReadError as SmartContractError,
+    wcn_cluster::{CreationError as ClusterCreationError, EncryptionKey as ClusterKey},
+    wcn_cluster_api::Error as ClusterError,
+    wcn_rpc::client::Error as RpcError,
+    wcn_storage_api::{
+        Error as CoordinatorError,
+        ErrorKind as CoordinatorErrorKind,
+        MapPage,
+        Namespace,
+    },
 };
 
 mod cluster;
+mod encryption;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -50,10 +60,10 @@ pub enum Error {
     RetriesExhausted,
 
     #[error("Failed to initialize cluster: {0}")]
-    ClusterCreation(#[from] wcn_cluster::CreationError),
+    ClusterCreation(#[from] ClusterCreationError),
 
     #[error("RPC client error: {0}")]
-    Rpc(#[from] wcn_rpc::client::Error),
+    Rpc(#[from] RpcError),
 
     #[error("Cluster API error: {0}")]
     ClusterApi(#[from] ClusterError),
@@ -62,7 +72,13 @@ pub enum Error {
     CoordinatorApi(#[from] CoordinatorError),
 
     #[error("Failed to read smart contract: {0}")]
-    SmartContract(#[from] smart_contract::ReadError),
+    SmartContract(#[from] SmartContractError),
+
+    #[error("Encryption failed: {0}")]
+    Encryption(#[from] EncryptionError),
+
+    #[error("Invalid response type")]
+    InvalidResponseType,
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -79,7 +95,7 @@ pub struct Config {
     pub keypair: Keypair,
 
     /// Symmetrical encryption key used for accessing the on-chain data.
-    pub cluster_encryption_key: EncryptionKey,
+    pub cluster_key: ClusterKey,
 
     /// Timeout of establishing a network connection.
     pub connection_timeout: Duration,
@@ -156,7 +172,7 @@ impl Client {
             cluster::fetch_cluster_view(&cluster_api_client, &config.nodes).await?;
 
         let cluster_cfg = cluster::Config {
-            encryption_key: config.cluster_encryption_key,
+            encryption_key: config.cluster_key,
             cluster_api: cluster_api_client,
             coordinator_api: coordinator_api_client,
         };
@@ -182,94 +198,11 @@ impl Client {
         })
     }
 
-    pub fn with_observer<O>(self, observer: O) -> WithObserver<O>
-    where
-        O: RequestObserver,
-    {
-        WithObserver {
-            core: self,
-            observer,
-        }
-    }
-}
-
-pub trait RequestExecutor {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R;
-
-    fn execute_request<T>(
+    async fn execute_request(
         &self,
         client_conn: &CoordinatorConnection,
         op: &op::Operation<'_>,
-    ) -> impl Future<Output = Result<T, CoordinatorError>> + Send + Sync
-    where
-        op::Output: op::DowncastOutput<T>;
-
-    fn request<T>(
-        &self,
-        op: &op::Operation<'_>,
-    ) -> impl Future<Output = Result<T, CoordinatorError>> + Send + Sync
-    where
-        op::Output: op::DowncastOutput<T>;
-}
-
-pub trait ClientBuilder: RequestExecutor + Sized {
-    fn with_retries(self, max_attempts: usize) -> WithRetries<Self> {
-        WithRetries {
-            core: self,
-            max_attempts,
-        }
-    }
-
-    fn build(self) -> ReplicaClient<Self> {
-        ReplicaClient {
-            inner: Arc::new(self),
-        }
-    }
-}
-
-impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
-
-pub struct RequestMetadata {
-    pub operator_id: NodeOperatorId,
-    pub node_id: PeerId,
-    pub operation: OperationName,
-    pub duration: Duration,
-    pub result: Result<(), CoordinatorErrorKind>,
-}
-
-pub trait RequestObserver {
-    fn observe(&self, metadata: RequestMetadata);
-}
-
-impl RequestExecutor for Client {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R,
-    {
-        // Constraints:
-        // - Each next request should go to a different operator.
-        // - Find an available (i.e. connected) node of the next operator, filtering out
-        //   broken connections. The expectation is that each operator should have at
-        //   least one available node at all times.
-
-        self.cluster.using_view(|view| {
-            view.node_operators()
-                .next()
-                .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)))
-                .ok_or_else(|| Error::NoAvailableNodes)
-        })
-    }
-
-    async fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
+    ) -> Result<op::Output, Error> {
         let op_name = op_name(op);
 
         let is_connected = client_conn
@@ -279,7 +212,10 @@ impl RequestExecutor for Client {
             .is_ok();
 
         if !is_connected {
-            return Err(CoordinatorError::new(CoordinatorErrorKind::Timeout));
+            // Getting to this point means we've tried every operator to find a connected
+            // node and failed. Then we tried to open connection to the next node and also
+            // failed.
+            return Err(Error::NoAvailableNodes);
         }
 
         client_conn
@@ -297,20 +233,130 @@ impl RequestExecutor for Client {
                     StringLabel<"tag", &'static str> => &self.metrics_tag
                 )
                 .increment(1)
-            })?
-            .try_into()
-            .map_err(|err| CoordinatorError::internal().with_message(err))
+            })
+            .map_err(Into::into)
+    }
+}
+
+mod sealed {
+    use super::*;
+
+    pub trait LoadBalancer {
+        fn using_next_node<F, R>(&self, cb: F) -> R
+        where
+            F: Fn(&cluster::Node) -> R;
     }
 
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        let conn = self
-            .using_next_node(|node| node.coordinator_conn.clone())
-            .map_err(coordinator_transport_err)?;
+    #[derive(Clone)]
+    pub struct Request<'a> {
+        pub op: op::Operation<'a>,
+        pub conn: Option<CoordinatorConnection>,
+    }
 
-        self.execute_request(&conn, op).await
+    impl<'a> Request<'a> {
+        pub fn new(op: op::Operation<'a>) -> Self {
+            Self { op, conn: None }
+        }
+
+        pub fn with_connection(self, conn: CoordinatorConnection) -> Self {
+            Self {
+                op: self.op,
+                conn: Some(conn),
+            }
+        }
+    }
+}
+
+pub trait RequestExecutor {
+    fn execute(
+        &self,
+        req: Request<'_>,
+    ) -> impl Future<Output = Result<op::Output, Error>> + Send + Sync;
+}
+
+pub trait ClientBuilder: RequestExecutor + Sized {
+    fn with_observer<O>(self, observer: O) -> WithObserver<O, Self>
+    where
+        O: RequestObserver,
+    {
+        WithObserver {
+            core: self,
+            observer,
+        }
+    }
+
+    fn with_retries(self, max_attempts: usize) -> WithRetries<Self> {
+        WithRetries {
+            core: self,
+            max_attempts,
+        }
+    }
+
+    fn with_encryption(self, key: EncryptionKey) -> WithEncryption<Self> {
+        WithEncryption { core: self, key }
+    }
+
+    fn build(self) -> ReplicaClient<Self> {
+        ReplicaClient {
+            inner: Arc::new(self),
+        }
+    }
+}
+
+impl<T> ClientBuilder for T where T: RequestExecutor + Sized {}
+
+#[derive(Debug, Clone)]
+pub struct RequestMetadata {
+    pub operator_id: NodeOperatorId,
+    pub node_id: PeerId,
+    pub operation: OperationName,
+    pub duration: Duration,
+}
+
+pub trait RequestObserver {
+    fn observe(&self, metadata: RequestMetadata, result: &Result<op::Output, Error>);
+}
+
+impl LoadBalancer for Client {
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        // Constraints:
+        // - Each next request should go to a different operator.
+        // - Find an available (i.e. connected) node of the next operator, filtering out
+        //   broken connections. The expectation is that each operator should have at
+        //   least one available node at all times.
+
+        self.cluster.using_view(|view| {
+            let operators = view.node_operators();
+
+            // Iterate over all of the operators to find one with a connected node.
+            let result = operators.find_next_operator(|operator| {
+                operator
+                    .find_next_node(|node| (!node.coordinator_conn.is_closed()).then(|| cb(node)))
+            });
+
+            if let Some(result) = result {
+                // We've found a connected node.
+                result
+            } else {
+                // If the above failed, return the next node in hopes that the connection will
+                // be established during the request.
+                cb(operators.next().next_node())
+            }
+        })
+    }
+}
+
+impl RequestExecutor for Client {
+    async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
+        let op = req.op;
+        let conn = req
+            .conn
+            .unwrap_or_else(|| self.using_next_node(|node| node.coordinator_conn.clone()));
+
+        self.execute_request(&conn, &op).await
     }
 }
 
@@ -319,104 +365,115 @@ pub struct WithRetries<C = Client> {
     max_attempts: usize,
 }
 
+impl<C> LoadBalancer for WithRetries<C>
+where
+    C: LoadBalancer + Send + Sync,
+{
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        self.core.using_next_node(cb)
+    }
+}
+
 impl<C> RequestExecutor for WithRetries<C>
 where
     C: RequestExecutor + Send + Sync,
 {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
-    where
-        F: Fn(&cluster::Node) -> R,
-    {
-        self.core.using_next_node(cb)
-    }
-
-    async fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        self.core.execute_request(client_conn, op).await
-    }
-
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
+    async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
         let mut attempt = 0;
 
         while attempt < self.max_attempts {
-            match self.core.request(op).await {
+            match self.core.execute(req.clone()).await {
                 Ok(data) => return Ok(data),
 
-                Err(err) => match err.kind() {
-                    CoordinatorErrorKind::Timeout | CoordinatorErrorKind::Transport => attempt += 1,
+                Err(err) => match err {
+                    Error::CoordinatorApi(err)
+                        if err.kind() == CoordinatorErrorKind::Timeout
+                            || err.kind() == CoordinatorErrorKind::Transport =>
+                    {
+                        attempt += 1
+                    }
 
-                    _ => return Err(err),
+                    err => return Err(err),
                 },
             }
         }
 
-        Err(CoordinatorError::internal().with_message(Error::RetriesExhausted))
+        Err(Error::RetriesExhausted)
     }
 }
 
-pub struct WithObserver<O> {
-    core: Client,
+pub struct WithObserver<O, C = Client> {
+    core: C,
     observer: O,
 }
 
-impl<O> RequestExecutor for WithObserver<O>
+impl<O, C> LoadBalancer for WithObserver<O, C>
 where
-    O: RequestObserver + Send + Sync,
+    C: LoadBalancer + Send + Sync,
 {
-    fn using_next_node<F, R>(&self, cb: F) -> Result<R, Error>
+    fn using_next_node<F, R>(&self, cb: F) -> R
     where
         F: Fn(&cluster::Node) -> R,
     {
         self.core.using_next_node(cb)
     }
+}
 
-    async fn execute_request<T>(
-        &self,
-        client_conn: &CoordinatorConnection,
-        op: &op::Operation<'_>,
-    ) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        self.core.execute_request(client_conn, op).await
-    }
-
-    async fn request<T>(&self, op: &op::Operation<'_>) -> Result<T, CoordinatorError>
-    where
-        op::Output: op::DowncastOutput<T>,
-    {
-        let op_name = op_name(op);
+impl<O, C> RequestExecutor for WithObserver<O, C>
+where
+    O: RequestObserver + Send + Sync,
+    C: RequestExecutor + LoadBalancer + Send + Sync,
+{
+    async fn execute(&self, req: Request<'_>) -> Result<op::Output, Error> {
+        let op_name = op_name(&req.op);
         let start_time = Instant::now();
 
-        let (conn, mut metadata) = self
-            .using_next_node(|node| {
-                (node.coordinator_conn.clone(), RequestMetadata {
-                    operator_id: node.operator_id,
-                    node_id: node.node.peer_id,
-                    operation: op_name,
-                    duration: Duration::ZERO,
-                    result: Ok(()),
-                })
+        let (conn, mut metadata) = self.core.using_next_node(|node| {
+            (node.coordinator_conn.clone(), RequestMetadata {
+                operator_id: node.operator_id,
+                node_id: node.node.peer_id,
+                operation: op_name,
+                duration: Duration::ZERO,
             })
-            .map_err(coordinator_transport_err)?;
+        });
 
-        let result = self.execute_request(&conn, op).await;
-
+        let result = self.core.execute(req.with_connection(conn)).await;
         metadata.duration = start_time.elapsed();
-        metadata.result = result.as_ref().map(|_| ()).map_err(|err| err.kind());
-
-        self.observer.observe(metadata);
+        self.observer.observe(metadata, &result);
 
         result
+    }
+}
+
+pub struct WithEncryption<C = Client> {
+    core: C,
+    key: EncryptionKey,
+}
+
+impl<C> LoadBalancer for WithEncryption<C>
+where
+    C: LoadBalancer + Send + Sync,
+{
+    fn using_next_node<F, R>(&self, cb: F) -> R
+    where
+        F: Fn(&cluster::Node) -> R,
+    {
+        self.core.using_next_node(cb)
+    }
+}
+
+impl<C> RequestExecutor for WithEncryption<C>
+where
+    C: RequestExecutor + Send + Sync,
+{
+    async fn execute(&self, mut req: Request<'_>) -> Result<op::Output, Error> {
+        req.op = req.op.encrypt(&self.key)?;
+        let mut output = self.core.execute(req).await?;
+        encryption::decrypt_output(&mut output, &self.key)?;
+        Ok(output)
     }
 }
 
@@ -433,15 +490,13 @@ where
         &self,
         namespace: Namespace,
         key: impl AsRef<[u8]>,
-    ) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self
-            .request::<Option<Record>>(op::GetBorrowed {
-                namespace,
-                key: key.as_ref(),
-                keyspace_version: None,
-            })
-            .await?
-            .map(|rec| rec.value))
+    ) -> Result<Option<Record>, Error> {
+        self.execute_request::<Option<Record>>(op::GetBorrowed {
+            namespace,
+            key: key.as_ref(),
+            keyspace_version: None,
+        })
+        .await
     }
 
     pub async fn set(
@@ -451,7 +506,7 @@ where
         value: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::SetBorrowed {
+        self.execute_request(op::SetBorrowed {
             namespace,
             key: key.as_ref(),
             record: RecordBorrowed {
@@ -465,7 +520,7 @@ where
     }
 
     pub async fn del(&self, namespace: Namespace, key: impl AsRef<[u8]>) -> Result<(), Error> {
-        self.request(op::DelBorrowed {
+        self.execute_request(op::DelBorrowed {
             namespace,
             key: key.as_ref(),
             version: RecordVersion::now(),
@@ -480,7 +535,7 @@ where
         key: impl AsRef<[u8]>,
     ) -> Result<Option<Duration>, Error> {
         Ok(self
-            .request::<Option<RecordExpiration>>(op::GetExpBorrowed {
+            .execute_request::<Option<RecordExpiration>>(op::GetExpBorrowed {
                 namespace,
                 key: key.as_ref(),
                 keyspace_version: None,
@@ -495,7 +550,7 @@ where
         key: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::SetExpBorrowed {
+        self.execute_request(op::SetExpBorrowed {
             namespace,
             key: key.as_ref(),
             expiration: ttl.into(),
@@ -510,16 +565,14 @@ where
         namespace: Namespace,
         key: impl AsRef<[u8]>,
         field: impl AsRef<[u8]>,
-    ) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self
-            .request::<Option<Record>>(op::HGetBorrowed {
-                namespace,
-                key: key.as_ref(),
-                field: field.as_ref(),
-                keyspace_version: None,
-            })
-            .await?
-            .map(|rec| rec.value))
+    ) -> Result<Option<Record>, Error> {
+        self.execute_request::<Option<Record>>(op::HGetBorrowed {
+            namespace,
+            key: key.as_ref(),
+            field: field.as_ref(),
+            keyspace_version: None,
+        })
+        .await
     }
 
     pub async fn hset(
@@ -530,7 +583,7 @@ where
         value: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::HSetBorrowed {
+        self.execute_request(op::HSetBorrowed {
             namespace,
             key: key.as_ref(),
             entry: MapEntryBorrowed {
@@ -552,7 +605,7 @@ where
         key: impl AsRef<[u8]>,
         field: impl AsRef<[u8]>,
     ) -> Result<(), Error> {
-        self.request(op::HDelBorrowed {
+        self.execute_request(op::HDelBorrowed {
             namespace,
             key: key.as_ref(),
             field: field.as_ref(),
@@ -569,7 +622,7 @@ where
         field: impl AsRef<[u8]>,
     ) -> Result<Option<Duration>, Error> {
         Ok(self
-            .request::<Option<RecordExpiration>>(op::HGetExpBorrowed {
+            .execute_request::<Option<RecordExpiration>>(op::HGetExpBorrowed {
                 namespace,
                 key: key.as_ref(),
                 field: field.as_ref(),
@@ -586,7 +639,7 @@ where
         field: impl AsRef<[u8]>,
         ttl: Duration,
     ) -> Result<(), Error> {
-        self.request(op::HSetExpBorrowed {
+        self.execute_request(op::HSetExpBorrowed {
             namespace,
             key: key.as_ref(),
             field: field.as_ref(),
@@ -598,7 +651,7 @@ where
     }
 
     pub async fn hcard(&self, namespace: Namespace, key: impl AsRef<[u8]>) -> Result<u64, Error> {
-        self.request(op::HCardBorrowed {
+        self.execute_request(op::HCardBorrowed {
             namespace,
             key: key.as_ref(),
             keyspace_version: None,
@@ -613,7 +666,7 @@ where
         count: u32,
         cursor: Option<impl AsRef<[u8]>>,
     ) -> Result<MapPage, Error> {
-        self.request::<MapPage>(op::HScanBorrowed {
+        self.execute_request::<MapPage>(op::HScanBorrowed {
             namespace,
             key: key.as_ref(),
             count,
@@ -623,23 +676,19 @@ where
         .await
     }
 
-    async fn request<T>(&self, op: impl Into<op::Borrowed<'_>>) -> Result<T, Error>
+    async fn execute_request<T>(&self, op: impl Into<op::Borrowed<'_>>) -> Result<T, Error>
     where
         op::Output: op::DowncastOutput<T>,
     {
         self.inner
-            .request(&op::Operation::Borrowed(op.into()))
-            .await
-            .map_err(Into::into)
+            .execute(Request::new(op::Operation::Borrowed(op.into())))
+            .await?
+            .try_into()
+            .map_err(|_| Error::InvalidResponseType)
     }
 }
 
-#[inline]
-fn coordinator_transport_err(err: impl ToString) -> CoordinatorError {
-    CoordinatorError::new(CoordinatorErrorKind::Transport).with_message(err)
-}
-
-#[derive(Clone, Copy, Ordinalize)]
+#[derive(Debug, Clone, Copy, Ordinalize)]
 pub enum OperationName {
     Get,
     Set,
@@ -716,21 +765,30 @@ mod test {
     struct Observer;
 
     impl RequestObserver for Observer {
-        fn observe(&self, _metadata: RequestMetadata) {}
+        fn observe(&self, _metadata: RequestMetadata, _result: &Result<op::Output, Error>) {}
     }
 
     async fn _create_observable_client(
         config: Config,
-    ) -> ReplicaClient<WithRetries<WithObserver<Observer>>> {
+    ) -> ReplicaClient<WithEncryption<WithRetries<WithObserver<Observer>>>> {
         Client::new(config)
             .await
             .unwrap()
             .with_observer(Observer)
             .with_retries(3)
+            .with_encryption(EncryptionKey::new(b"12345").unwrap())
             .build()
     }
 
     async fn _create_retryable_client(config: Config) -> ReplicaClient<WithRetries> {
         Client::new(config).await.unwrap().with_retries(3).build()
+    }
+
+    async fn _create_encrypted_client(config: Config) -> ReplicaClient<WithEncryption> {
+        Client::new(config)
+            .await
+            .unwrap()
+            .with_encryption(EncryptionKey::new(b"12345").unwrap())
+            .build()
     }
 }

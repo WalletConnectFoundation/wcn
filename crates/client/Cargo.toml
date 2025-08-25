@@ -31,6 +31,9 @@ tokio = { workspace = true, features = ["sync"] }
 # O11y
 tracing = { workspace = true }
 
+# Crypto
+ring = "0.17"
+
 # Other
 libp2p-identity = { workspace = true }
 

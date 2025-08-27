@@ -14,7 +14,7 @@ use {
     },
     tap::Pipe as _,
     tracing_subscriber::EnvFilter,
-    wcn_client::{ClientBuilder, PeerAddr},
+    wcn_client::{ClientBuilder, Namespace, PeerAddr},
     wcn_cluster::{
         node_operator,
         smart_contract::{
@@ -102,34 +102,131 @@ async fn test_suite() {
         ),
     };
 
+    let namespace = format!("{}/0", operators[0].signer.address())
+        .parse()
+        .unwrap();
+
     let client = wcn_client::Client::new(wcn_client::Config {
         keypair: operators[0].clients[0].keypair.clone(),
-        cluster_encryption_key: encryption_key,
+        cluster_key: encryption_key,
         connection_timeout: Duration::from_secs(1),
         operation_timeout: Duration::from_secs(2),
         reconnect_interval: Duration::from_millis(100),
         max_concurrent_rpcs: 5000,
-        nodes: vec![bootstrap_node],
+        nodes: vec![bootstrap_node.clone()],
         metrics_tag: "mainnet",
     })
     .await
     .unwrap()
     .build();
 
-    // Give some time for the client to open connections to the nodes.
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let namespace = format!("{}/0", operators[0].signer.address())
-        .parse()
-        .unwrap();
-
     client
         .set(namespace, b"foo", b"bar", Duration::from_secs(60))
         .await
         .unwrap();
 
-    let res = client.get(namespace, b"foo").await.unwrap();
-    assert_eq!(res, Some(b"bar".into()));
+    let rec = client.get(namespace, b"foo").await.unwrap().unwrap();
+    assert_eq!(rec.value, b"bar");
+
+    test_encryption(
+        bootstrap_node,
+        operators[0].clients[0].keypair.clone(),
+        encryption_key,
+        namespace,
+    )
+    .await;
+}
+
+async fn test_encryption(
+    node: PeerAddr,
+    keypair: Keypair,
+    cluster_key: EncryptionKey,
+    ns: Namespace,
+) {
+    let create_client = || {
+        wcn_client::Client::new(wcn_client::Config {
+            keypair: keypair.clone(),
+            cluster_key,
+            connection_timeout: Duration::from_secs(1),
+            operation_timeout: Duration::from_secs(2),
+            reconnect_interval: Duration::from_millis(100),
+            max_concurrent_rpcs: 5000,
+            nodes: vec![node.clone()],
+            metrics_tag: "mainnet",
+        })
+    };
+
+    let client1 = create_client()
+        .await
+        .unwrap()
+        .with_encryption(wcn_client::EncryptionKey::new(b"12345").unwrap())
+        .build();
+
+    let client2 = create_client()
+        .await
+        .unwrap()
+        .with_encryption(wcn_client::EncryptionKey::new(b"23456").unwrap())
+        .build();
+
+    let unencrypted_client = create_client().await.unwrap().build();
+
+    let ttl = Duration::from_secs(60);
+
+    unencrypted_client
+        .set(ns, b"unencrypted_string_key", b"data", ttl)
+        .await
+        .unwrap();
+
+    // Fails to decrypt unencrypted data.
+    let err = client1
+        .get(ns, b"unencrypted_string_key")
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, wcn_client::Error::Encryption(_)));
+
+    client1
+        .set(ns, b"encrypted_string_key", b"data", ttl)
+        .await
+        .unwrap();
+
+    // Successfully decrypts data.
+    let rec = client1
+        .get(ns, b"encrypted_string_key")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rec.value, b"data");
+
+    // Fails to decrypt with different key.
+    let err = client2
+        .get(ns, b"encrypted_string_key")
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, wcn_client::Error::Encryption(_)));
+
+    // Encryption for hset/hget.
+    client1
+        .hset(ns, b"encrypted_map_key", b"field", b"data", ttl)
+        .await
+        .unwrap();
+
+    // Successfully decrypts data.
+    let rec = client1
+        .hget(ns, b"encrypted_map_key", b"field")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rec.value, b"data");
+
+    // Fails to decrypt with different key.
+    let err = client2
+        .hget(ns, b"encrypted_map_key", b"field")
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, wcn_client::Error::Encryption(_)));
 }
 
 struct NodeOperator {

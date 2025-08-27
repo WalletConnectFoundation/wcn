@@ -31,12 +31,13 @@ use {
     alloy::{
         contract::{CallBuilder, CallDecoder},
         network::EthereumWallet,
+        primitives::U256,
         providers::{DynProvider, Provider, ProviderBuilder, WsConnect},
         rpc::types::{Filter, Log},
         sol_types::{SolCall, SolEventInterface, SolInterface},
     },
     futures::{Stream, StreamExt},
-    std::{fmt, time::Duration},
+    std::{collections::HashSet, fmt, time::Duration},
 };
 
 mod bindings {
@@ -167,11 +168,7 @@ impl smart_contract::Write for SmartContract {
 
     async fn start_migration(&self, new_keyspace: Keyspace) -> WriteResult<()> {
         let new_keyspace: bindings::Cluster::Keyspace = new_keyspace.into();
-        check_receipt(
-            self.alloy
-                .startMigration(new_keyspace.members, new_keyspace.replicationStrategy),
-        )
-        .await
+        check_receipt(self.alloy.startMigration(new_keyspace)).await
     }
 
     async fn complete_migration(&self, id: migration::Id) -> WriteResult<()> {
@@ -284,14 +281,9 @@ impl TryFrom<bindings::Cluster::MigrationStarted> for Event {
     type Error = ReadError;
 
     fn try_from(evt: bindings::Cluster::MigrationStarted) -> ReadResult<Self> {
-        let new_keyspace = bindings::Cluster::Keyspace {
-            members: evt.operators,
-            replicationStrategy: evt.replicationStrategy,
-        };
-
         Ok(Self::MigrationStarted(migration::Started {
             migration_id: evt.id,
-            new_keyspace: Keyspace::try_from_alloy(&new_keyspace, evt.keyspaceVersion)?,
+            new_keyspace: Keyspace::try_from_alloy(&evt.newKeyspace, evt.keyspaceVersion)?,
             cluster_version: evt.version,
         }))
     }
@@ -411,6 +403,7 @@ impl From<Settings> for bindings::Cluster::Settings {
         Self {
             maxOperatorDataBytes: settings.max_node_operator_data_bytes,
             minOperators: const { crate::MIN_OPERATORS },
+            extra: alloy::primitives::Bytes::default(),
         }
     }
 }
@@ -425,12 +418,13 @@ impl From<bindings::Cluster::Settings> for Settings {
 
 impl From<Keyspace> for bindings::Cluster::Keyspace {
     fn from(keyspace: Keyspace) -> Self {
-        let mut members: Vec<_> = keyspace.operators().collect();
-        // SC requires this list to be sorted.
-        members.sort();
+        let mut operator_bitmask = U256::default();
+        for idx in keyspace.operators() {
+            operator_bitmask.set_bit(idx as usize, true);
+        }
 
         Self {
-            members,
+            operatorBitmask: operator_bitmask,
             replicationStrategy: keyspace.replication_strategy() as u8,
         }
     }
@@ -441,7 +435,7 @@ impl Keyspace {
         keyspace: &bindings::Cluster::Keyspace,
         version: u64,
     ) -> Result<Self, ReadError> {
-        let operators = keyspace.members.iter().copied().collect();
+        let operators = bitmask_to_hashset(keyspace.operatorBitmask);
 
         let replication_strategy = keyspace.replicationStrategy.try_into().map_err(|err| {
             ReadError::InvalidData(format!("Invalid ReplicationStrategy: {err:?}"))
@@ -452,30 +446,24 @@ impl Keyspace {
     }
 }
 
-impl From<bindings::Cluster::MaintenanceState> for Option<Maintenance> {
-    fn from(maintenance: bindings::Cluster::MaintenanceState) -> Self {
-        if maintenance.slot.is_zero() {
-            None
-        } else {
-            Some(Maintenance::new(maintenance.slot.into()))
-        }
-    }
-}
-
 impl TryFrom<bindings::Cluster::ClusterView> for ClusterView {
     type Error = ReadError;
 
     fn try_from(view: bindings::Cluster::ClusterView) -> Result<Self, Self::Error> {
         let node_operators = view
-            .operators
+            .operatorSlots
             .into_iter()
-            .zip(view.operatorData)
-            .map(|(addr, data)| {
-                if addr.is_zero() {
-                    None
-                } else {
-                    Some(bindings::Cluster::NodeOperator { addr, data }.into())
+            .map(|slot| {
+                if slot.addr.is_zero() {
+                    return None;
                 }
+
+                let operator = bindings::Cluster::NodeOperator {
+                    addr: slot.addr,
+                    data: slot.data,
+                };
+
+                Some(operator.into())
             })
             .collect();
 
@@ -485,7 +473,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for ClusterView {
         let try_keyspace =
             |version| Keyspace::try_from_alloy(&view.keyspaces[version as usize % 2], version);
 
-        let (keyspace, migration) = if view.pullingOperators.is_empty() {
+        let (keyspace, migration) = if view.migration.pullingOperatorBitmask.is_zero() {
             // migration is not in progress
 
             (try_keyspace(view.keyspaceVersion)?, None)
@@ -500,12 +488,18 @@ impl TryFrom<bindings::Cluster::ClusterView> for ClusterView {
             let keyspace = try_keyspace(prev_keyspace_version)?;
 
             let migration = Migration::new(
-                view.migrationId,
+                view.migration.id,
                 try_keyspace(view.keyspaceVersion)?,
-                view.pullingOperators,
+                bitmask_to_hashset(view.migration.pullingOperatorBitmask),
             );
 
             (keyspace, Some(migration))
+        };
+
+        let maintenance = if view.maintenanceSlot.is_zero() {
+            None
+        } else {
+            Some(Maintenance::new(view.maintenanceSlot.into()))
         };
 
         Ok(Self {
@@ -514,7 +508,7 @@ impl TryFrom<bindings::Cluster::ClusterView> for ClusterView {
             settings: view.settings.into(),
             keyspace,
             migration,
-            maintenance: view.maintenance.into(),
+            maintenance,
             cluster_version: view.version,
         })
     }
@@ -597,4 +591,14 @@ impl From<alloy::transports::TransportError> for RpcProviderCreationError {
     fn from(err: alloy::transports::TransportError) -> Self {
         Self(format!("alloy transport: {err:?}"))
     }
+}
+
+fn bitmask_to_hashset(bitmask: U256) -> HashSet<u8> {
+    let mut set = HashSet::new();
+    for idx in 0..=u8::MAX {
+        if bitmask.bit(idx as usize) {
+            set.insert(idx);
+        }
+    }
+    set
 }

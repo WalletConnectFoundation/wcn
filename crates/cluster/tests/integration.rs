@@ -13,16 +13,9 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read,
-            Signer,
+            Read, Signer,
         },
-        testing,
-        Cluster,
-        EncryptionKey,
-        Node,
-        NodeOperator,
-        Settings,
-        SmartContract,
+        testing, Cluster, EncryptionKey, Node, NodeOperator, Settings, SmartContract,
     },
 };
 
@@ -207,12 +200,13 @@ pub async fn cli_test_suite() {
         .await
         .unwrap();
 
-    let _sc = cluster.smart_contract();
+    let sc = cluster.smart_contract();
 
     let key_bytes = anvil.keys()[0].to_bytes().to_vec();
     let key = hex::encode(key_bytes);
 
-    test_deploy(&anvil, &key, operators, cfg).unwrap();
+    test_deploy(&anvil, &key, operators.clone(), cfg).unwrap();
+    test_update(&anvil, &key, operators, cfg, sc.address().unwrap()).unwrap();
     // test_migration_start(&anvil, key, sc).unwrap();
 }
 
@@ -248,7 +242,7 @@ fn test_deploy(
     let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
     let operators = serde_json::to_string_pretty(&initial_operators).unwrap();
 
-    let encryption_key = cfg.encryption_key.to_base64();
+    let encryption_key = cfg.encryption_key.to_hex();
 
     cmd.arg("deploy")
         .arg("-s")
@@ -261,6 +255,51 @@ fn test_deploy(
         .arg(operators)
         .assert()
         .success();
+
+    Ok(())
+}
+
+fn test_update(
+    anvil: &AnvilInstance,
+    key: &str,
+    operators: Vec<NodeOperator>,
+    cfg: Config,
+    address: smart_contract::Address,
+) -> anyhow::Result<()> {
+    let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
+
+    let mut op = operators.get(2).unwrap().clone();
+    op.name = node_operator::Name::new("UpdatedName").unwrap();
+
+    op.clients = vec!["0x90f79bf6eb2c4f870365e785982e1f101e93b906"];
+
+    let operators = vec![op];
+    let operators = serde_json::to_string(&operators).unwrap();
+
+    let encryption_key = cfg.encryption_key.to_hex();
+
+    let out = cmd
+        .arg("operator")
+        .arg("--signer-key")
+        .arg(key)
+        .arg("--provider-url")
+        .arg(anvil.ws_endpoint_url().to_string())
+        .arg("--encryption-key")
+        .arg(encryption_key)
+        .arg("--contract-address")
+        .arg(address.to_string())
+        .arg("update")
+        .arg("--operators")
+        .arg(operators.clone())
+        .arg("--view-after-update")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let expected = "Updated node operators:\n[{\"id\":\"0x90f79bf6eb2c4f870365e785982e1f101e93b906\",\"name\":\"UpdatedName\",\"clients\":[],\"nodes\":[{\"peer_id\":\"12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN\",\"ipv4_addr\":\"10.0.0.0\",\"primary_port\":3000,\"secondary_port\":3001},{\"peer_id\":\"12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp\",\"ipv4_addr\":\"10.0.0.1\",\"primary_port\":3000,\"secondary_port\":3001}],\"counter\":18446744073709551615}]\nUpdated 1 operators\n";
+
+    assert_eq!(String::from_utf8_lossy(&out.stdout), String::from(expected));
 
     Ok(())
 }

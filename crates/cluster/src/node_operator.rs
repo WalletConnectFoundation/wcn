@@ -62,7 +62,7 @@ impl Name {
 pub struct Data(pub(crate) Vec<u8>);
 
 /// Entity operating a set of [`Node`]s within a WCN cluster.
-#[derive(AsRef, Clone, Debug, Serialize, Deserialize)]
+#[derive(AsRef, Clone, Debug, Serialize)]
 pub struct NodeOperator<N = Node> {
     /// ID of this [`NodeOperator`].
     #[as_ref]
@@ -246,7 +246,7 @@ impl NodeOperator {
 }
 
 impl Serialized {
-    pub(super) fn deserialize<C: Config>(
+    pub fn deserialize<C: Config>(
         self,
         cfg: &C,
     ) -> Result<NodeOperator<C::Node>, DataDeserializationError> {

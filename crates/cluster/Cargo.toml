@@ -63,6 +63,7 @@ alloy = { workspace = true, features = [
 anyhow.workspace = true
 data-encoding = "2.6"
 clap = { version = "4.5.40", features = ["derive", "env"] }
+base64.workspace = true
 
 [dev-dependencies]
 libp2p-identity = { workspace = true, features = ["rand"] }

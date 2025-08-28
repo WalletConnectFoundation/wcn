@@ -27,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
         commands::SubCmd::Operator(args) => commands::operator::exec(args).await,
         commands::SubCmd::Settings(args) => commands::settings::exec(args).await,
         commands::SubCmd::Deploy(args) => commands::deploy::exec(args).await,
+        commands::SubCmd::Key(args) => commands::key::exec(args).await,
         _ => {
             eprintln!("Unsupported command");
             std::process::exit(1);

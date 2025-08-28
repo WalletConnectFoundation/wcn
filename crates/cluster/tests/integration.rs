@@ -13,9 +13,17 @@ use {
         smart_contract::{
             self,
             evm::{self, RpcProvider},
-            Read, Signer,
+            Read,
+            Signer,
         },
-        testing, Cluster, EncryptionKey, Node, NodeOperator, Settings, SmartContract,
+        testing,
+        Client,
+        Cluster,
+        EncryptionKey,
+        Node,
+        NodeOperator,
+        Settings,
+        SmartContract,
     },
 };
 
@@ -271,7 +279,15 @@ fn test_update(
     let mut op = operators.get(2).unwrap().clone();
     op.name = node_operator::Name::new("UpdatedName").unwrap();
 
-    op.clients = vec!["0x90f79bf6eb2c4f870365e785982e1f101e93b906"];
+    // NOTE: in real usage, it shouldn't be a node's peer id
+    let peer_id = op.nodes().get(0).unwrap().peer_id;
+
+    let new_client = Client {
+        peer_id,
+        authorized_namespaces: vec![100, 101].into(),
+    };
+
+    op.clients = vec![new_client];
 
     let operators = vec![op];
     let operators = serde_json::to_string(&operators).unwrap();
@@ -297,7 +313,39 @@ fn test_update(
         .get_output()
         .clone();
 
-    let expected = "Updated node operators:\n[{\"id\":\"0x90f79bf6eb2c4f870365e785982e1f101e93b906\",\"name\":\"UpdatedName\",\"clients\":[],\"nodes\":[{\"peer_id\":\"12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN\",\"ipv4_addr\":\"10.0.0.0\",\"primary_port\":3000,\"secondary_port\":3001},{\"peer_id\":\"12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp\",\"ipv4_addr\":\"10.0.0.1\",\"primary_port\":3000,\"secondary_port\":3001}],\"counter\":18446744073709551615}]\nUpdated 1 operators\n";
+    let expected = r#"Updated node operators:
+[
+  {
+    "id": "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+    "name": "UpdatedName",
+    "clients": [
+      {
+        "peer_id": "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN",
+        "authorized_namespaces": [
+          100,
+          101
+        ]
+      }
+    ],
+    "nodes": [
+      {
+        "peer_id": "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN",
+        "ipv4_addr": "10.0.0.0",
+        "primary_port": 3000,
+        "secondary_port": 3001
+      },
+      {
+        "peer_id": "12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
+        "ipv4_addr": "10.0.0.1",
+        "primary_port": 3000,
+        "secondary_port": 3001
+      }
+    ],
+    "counter": 18446744073709551615
+  }
+]
+Updated 1 operator(s)
+"#;
 
     assert_eq!(String::from_utf8_lossy(&out.stdout), String::from(expected));
 

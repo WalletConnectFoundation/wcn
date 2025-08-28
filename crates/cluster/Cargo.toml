@@ -5,9 +5,7 @@ edition = "2021"
 publish = false
 
 [features]
-# TODO: remove default after CLI is ready
-# default = ["cli"]
-# cli = ["dep:clap"]
+cli = ["clap", "tokio/full"]
 default = []
 testing = []
 
@@ -45,11 +43,11 @@ aes = { version = "0.8", default-features = false }
 
 # Async
 futures = { workspace = true }
-tokio = { workspace = true, features = ["time", "rt", "full"] }
+tokio = { workspace = true, features = ["time", "rt"] }
 tokio-stream = { workspace = true }
 
 # Domain specific
-libp2p-identity = { workspace = true, features = ["serde"] }
+libp2p-identity = { workspace = true, features = ["serde","rand"] }
 xxhash-rust = { workspace = true }
 multihash = { version = "0.19", default-features = false }
 alloy = { workspace = true, features = [
@@ -62,8 +60,9 @@ alloy = { workspace = true, features = [
 ] }
 anyhow.workspace = true
 data-encoding = "2.6"
-clap = { version = "4.5.40", features = ["derive", "env"] }
+clap = { version = "4.5.40", features = ["derive", "env"], optional = true }
 base64.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 libp2p-identity = { workspace = true, features = ["rand"] }

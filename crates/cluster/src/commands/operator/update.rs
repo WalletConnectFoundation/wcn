@@ -25,10 +25,14 @@ pub struct UpdateCmd {
     /// updating.
     view_after_update: bool,
 
+    #[clap(long = "dry-run", short = 'd', default_value_t = false)]
+    dry: bool,
+
     #[clap(long = "verbose", short = 'v', default_value_t = false)]
     verbose: bool,
 }
 
+// TODO: refactor to cleanup and improve error handling and reporting
 pub async fn exec<S: SmartContract>(
     cmd: UpdateCmd,
     client: S,
@@ -51,18 +55,23 @@ pub async fn exec<S: SmartContract>(
     let cfg = ClusterConfig { encryption_key };
 
     // TODO: dont stop on first error
+    // TODO: refactor to fold
     for operator in operators {
         if cmd.verbose {
-            println!("Updating node operator: {:?}", operator);
+            println!("Updating node operator: {}", &operator.id);
         }
 
+        if cmd.dry {
+            println!("Dry run, not updating operator {}", &operator.id);
+            continue;
+        }
+
+        if cmd.verbose {
+            println!("serializing operator: {}", &operator.id);
+        }
         let op = operator.serialize(&cfg.encryption_key)?;
 
         client.update_node_operator(op).await?;
-
-        if cmd.verbose {
-            println!("Update result: {:?}", ());
-        }
 
         successful_updates += 1;
     }
@@ -78,12 +87,12 @@ pub async fn exec<S: SmartContract>(
             .filter_ok(|op| target_ids.contains(&op.id))
             .try_collect()?;
 
-        let operators = serde_json::to_string(&operators_read).unwrap();
+        let operators = serde_json::to_string_pretty(&operators_read).unwrap();
 
         println!("Updated node operators:\n{}", operators);
     }
 
-    println!("Updated {} operators", successful_updates);
+    println!("Updated {} operator(s)", successful_updates);
 
     Ok(())
 }

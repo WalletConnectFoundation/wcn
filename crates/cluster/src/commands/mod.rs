@@ -16,6 +16,7 @@ use {
 };
 
 pub mod deploy;
+pub mod key;
 pub mod maintenance;
 pub mod migration;
 pub mod operator;
@@ -33,6 +34,7 @@ pub enum SubCmd {
     Operator(operator::OperatorCmd),
     Settings(settings::SettingsCmd),
     Deploy(deploy::DeployCmd),
+    Key(key::KeyCmd),
 }
 
 #[derive(Debug, clap::Args)]
@@ -105,6 +107,9 @@ pub enum CliError {
 
     #[error("Invalid key encoding: must be base64")]
     KeyEncoding,
+
+    #[error("failed to generate new keypair")]
+    Keygen,
 
     #[error("Invalid key length: must be 32 byte ed25519 private key")]
     KeyLength,

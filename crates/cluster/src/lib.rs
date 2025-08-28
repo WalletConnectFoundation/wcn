@@ -149,6 +149,9 @@ pub enum Event {
 #[derive_where(Debug)]
 pub struct EncryptionKey(#[derive_where(skip)] pub [u8; 32]);
 
+// TODO: zeroize on drop
+// TODO: impl display and deprecate to_hex
+// TODO: rely on FromStr impl instead of from_hex
 impl EncryptionKey {
     /// Creates a new [`EncryptionKey`] from a hex encoded string.
     pub fn from_hex(s: &str) -> Result<Self, const_hex::FromHexError> {

@@ -73,10 +73,18 @@ impl RpcProvider {
             SignerKind::PrivateKey(key) => key.clone().into(),
         };
 
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_ws(WsConnect::new(url.0))
-            .await?;
+        let builder = ProviderBuilder::new().wallet(wallet);
+
+        let provider = match url.0.scheme() {
+            "ws" | "wss" => builder.connect_ws(WsConnect::new(url.0)).await?,
+            "http" | "https" => builder.connect_http(url.0),
+            _ => {
+                return Err(RpcProviderCreationError(format!(
+                    "Unsupported URL scheme: {}",
+                    url.0.scheme()
+                )));
+            }
+        };
 
         Ok(RpcProvider {
             signer: Some(signer),

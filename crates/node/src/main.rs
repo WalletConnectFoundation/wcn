@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
     wc::metrics::gauge!("wcn_node_version").set(version);
 
     let env: EnvConfig = envy::from_env()?;
+
     let cfg = new_config(&env, prometheus_handle).context("failed to parse config")?;
 
     tokio::runtime::Builder::new_multi_thread()

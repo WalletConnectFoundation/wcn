@@ -213,6 +213,7 @@ pub async fn cli_test_suite() {
     let key_bytes = anvil.keys()[0].to_bytes().to_vec();
     let key = hex::encode(key_bytes);
 
+    test_keygen().unwrap();
     test_deploy(&anvil, &key, operators.clone(), cfg).unwrap();
     test_update(&anvil, &key, operators, cfg, sc.address().unwrap()).unwrap();
     // test_migration_start(&anvil, key, sc).unwrap();
@@ -348,6 +349,45 @@ Updated 1 operator(s)
 "#;
 
     assert_eq!(String::from_utf8_lossy(&out.stdout), String::from(expected));
+
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TestKeygenOutput {
+    secret_key: String,
+    public_key: String,
+    peer_id: String,
+}
+
+fn test_keygen() -> anyhow::Result<()> {
+    let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
+
+    let k1_str = cmd
+        .arg("key")
+        .arg("generate")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let k1: TestKeygenOutput = serde_json::from_slice(&k1_str.stdout).unwrap();
+
+    let mut cmd = assert_cmd::Command::cargo_bin("wcn_cluster").unwrap();
+    let k2_str = cmd
+        .arg("key")
+        .arg("generate")
+        .arg("--secret-key")
+        .arg(k1.secret_key.clone())
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let k2: TestKeygenOutput = serde_json::from_slice(&k2_str.stdout).unwrap();
+
+    assert_eq!(k1.public_key, k2.public_key);
+    assert_eq!(k1.peer_id, k2.peer_id);
 
     Ok(())
 }
